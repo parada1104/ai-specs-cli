@@ -240,7 +240,8 @@ cannot each be one PR.
 | U6d-1 — recipe config write + `recipe configure`, native | **delivered, judgment approved** | `fc803bf` (PR #392); `internal/config` owns the writer; 30-case differential; Judgment Day found one MAJOR (`mcp.present` order) and six more, all closed, 10/10 verified |
 | U6d-2 — the wizard core + `recipe add`'s "Configure now?" flip | **delivered** | `dd57960` (PR #394); `tui.TextValidated` + `runConfigWizard`; the seam narrowed to the env offer and the dep gate |
 | U6e — `configure-recipes` + the dispatcher close | **delivered, review approved** | `f467fde` (PR #397); review `review-ea5e3ea49a8c6e1a` approved 4/4 lenses, 11 advisories triaged; **the shim map is EMPTY**; `recipe-init.py` and the native dep gate are U7's |
-| U7 — the native dep gate, `recipe-init`, the substrate tail and the physical retirement | **next** | scope and order in the `## Next` section below |
+| U7-2 — `recipe init`, native (the brief and its wrapper grammar) | **delivered** | `internal/recipe/init.go` + `init_test.go`; `recipe init` stops executing `lib/recipe-init.sh`, so the wrapper leaves the binary's route and `runShim` keeps one named caller (the `AI_SPECS_INIT_TUI_PY` hatch, U2); 16-case differential against the Python, byte-identical |
+| U7 items 3-7 — the env-offer scope, the PTY pins, rc-3, the substrate tail, the physical retirement | **next** | scope and order in the `## Next` section below |
 | U8 — program closure | pending | |
 
 ## Next — the resume plan for the next session
@@ -250,7 +251,9 @@ left open, and one worktree (`.worktrees/epic-go-single-binary`). Every delivery
 `epic/go-single-binary` through a PR; `development` never received a migration commit.
 
 **U7, in the order it should be built.** Each item names the seam or the file it retires, because a
-retirement without a name is how a program lies to itself:
+retirement without a name is how a program lies to itself. **Items 1 and 2 are delivered** (the native
+dep gate in #402, `recipe init` in `go-20-u7-recipe-init.md`); the list below keeps their original text
+so the remaining order still reads from the same plan.
 
 1. **The native CLI-dep gate** — `_dep_gate` + `dep_install` are the last interactive surface with no Go
    side. Porting it retires **S37** (the `runLegacyInitDepGate` seam in `init`'s wizard) and the matching
