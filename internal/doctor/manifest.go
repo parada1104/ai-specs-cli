@@ -27,6 +27,18 @@ func (d *Doctor) manifestPath() string {
 	return filepath.Join(d.Root, "ai-specs", "ai-specs.toml")
 }
 
+// hasRecipeTables is _check_recipe_cli_deps' own guard: the manifest must
+// declare at least one [recipes.*] table before the dep aggregate is worth
+// building. It lives here, next to the cache it reads, so the dep checker never
+// has to name the TOML type for a single local variable.
+func (d *Doctor) hasRecipeTables() bool {
+	if d.manifest.data == nil {
+		return false
+	}
+	recipes, ok := d.manifest.data.Table("recipes")
+	return ok && recipes != nil && len(recipes.Keys()) > 0
+}
+
 func (d *Doctor) loadManifest() {
 	if d.manifest.loaded {
 		return
