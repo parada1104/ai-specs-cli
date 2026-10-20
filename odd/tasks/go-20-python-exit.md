@@ -240,7 +240,11 @@ cannot each be one PR.
 | U6d-1 — recipe config write + `recipe configure`, native | **delivered, judgment approved** | `fc803bf` (PR #392); `internal/config` owns the writer; 30-case differential; Judgment Day found one MAJOR (`mcp.present` order) and six more, all closed, 10/10 verified |
 | U6d-2 — the wizard core + `recipe add`'s "Configure now?" flip | **delivered** | `dd57960` (PR #394); `tui.TextValidated` + `runConfigWizard`; the seam narrowed to the env offer and the dep gate |
 | U6e — `configure-recipes` + the dispatcher close | **delivered, review approved** | `f467fde` (PR #397); review `review-ea5e3ea49a8c6e1a` approved 4/4 lenses, 11 advisories triaged; **the shim map is EMPTY**; `recipe-init.py` and the native dep gate are U7's |
-| U7 — the native dep gate, `recipe-init`, the substrate tail and the physical retirement | **next** | scope and order in the `## Next` section below |
+| U7-1 T1 — the dep probe, the plans and the panel, native | **delivered** | `b40525c` (PR #400); `internal/deps` becomes the probe's single authority (doctor delegates) + `ResolvePlan`/`Describe`/`PanelLines`; 14-case plan differential |
+| U7-1 T2 — the provider install half, native | **delivered** | `ff5e81b` (PR #401); `internal/provider/install.go` (download, SHA256SUMS, extraction, atomic publish, receipt); 25 tests, RED reconstructed by mutation |
+| U7-1 T3 — the gate itself, native | **delivered** | `internal/deps/gate.go` + `internal/cli/depgate.go`; panel/offer/recheck/`Configure anyway?` wired into init's wizard, `configure-recipes` and `recipe add`; **S37's `runLegacyInitDepGate` + its `python3 -c` driver are GONE**, and with them the rc-3 (Python vendor) and rc-11 (driver re-read) arms; 13-case differential drives the REAL `_dep_gate` |
+| U7-1 T4 — the dead-code check | **delivered, with a correction** | the verb→script map went (dead by construction); `runShim`/`routeShim` are ALIVE on two named, owned callers (`recipe init` → item 2, the `AI_SPECS_INIT_TUI_PY` hatch → U2) — recorded in `go-20-u7-dep-gate.md` L17 |
+| U7 items 2-7 — `recipe-init`, the env-offer scope, the PTY pins, rc-3, the substrate tail, the physical retirement | **next** | scope and order in the `## Next` section below |
 | U8 — program closure | pending | |
 
 ## Next — the resume plan for the next session
