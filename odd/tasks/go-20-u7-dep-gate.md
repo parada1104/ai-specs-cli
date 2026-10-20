@@ -45,10 +45,40 @@ Unit document for **U7 item 1** of the program (`odd/tasks/go-20-python-exit.md`
 
 | ID | Task | Specs | Commit |
 | --- | --- | --- | --- |
-| T1 | `internal/provider.BuildReleasePlan` + `internal/deps` (the probe promoted, plans resolving, panel rendering); doctor delegates | S3-S7, S9 | — |
+| T1 | `internal/provider.BuildReleasePlan` + `internal/deps` (the probe promoted, plans resolving, panel rendering); doctor delegates | S3-S7, S9 | `e72a3a4`, `f4a734e` |
 | T2 | `internal/provider`'s install half: download, SHA256SUMS verification, extraction, managed receipt | S1 | — |
 | T3 | `deps.Gate` (panel, per-plan offer, install, recheck, `Configure anyway?`) wired into init's wizard, `configure-recipes` and `recipe add`; S37's seam and driver deleted | S1, S4, S6 | — |
 | T4 | Verify `runShim`/`routeShim`/`shims` are unreachable and delete them; update the program doc's Progress row | S1 | — |
+
+## T1 — verification
+
+Gates, run from `.worktrees/go-20-u7-dep-gate` with `PATH=/tmp/pybin:$PATH` (the interpreter decides
+this suite's green: `/usr/bin/python3` is 3.9 and resurrects an unrelated Unicode-version failure in
+`internal/provider`'s own tests):
+
+| gate | command | result |
+| --- | --- | --- |
+| Go suite (through the real entry) | `./tests/validate.sh` → `go test ./cmd/... ./internal/...` + the gate binary's packages | 31 packages `ok`, 0 `FAIL` |
+| differential parity harness | `tests/parity/run.py` | `gate-absent failing=0, gate-present failing=0 — PASS` |
+| Python suites | `python3 -m unittest discover -s tests -p 'test_*.py'` | `Ran 2405 tests … OK (skipped=165)` — this run's own count, quoted not asserted (program S5) |
+| formatting | `gofmt -l internal/ catalog/recipes/worktree-flow/gate` | empty |
+| manifest untouched | `git diff --quiet -- ai-specs/ai-specs.toml` | exit 0 |
+| plan differential | `go test ./internal/deps/ -run TestResolvePlanDifferential` | 14 cases, decoded projections value-for-value equal |
+
+- RED, observed twice. First the new APIs did not exist (`undefined: Result`, `PlanRequest`, `Plan`,
+  `BuildReleasePlan`) — the seam's shape was not there. Second, a real behavioural pin: with the probe
+  returning the id the `recipe.toml` DECLARES, `TestCheckProjectDepsUsesTheManifestKey` failed
+  (`RecipeID = "declared-id", want the manifest key dir-name`), because `check_project_deps`
+  overwrites the id with the manifest key AFTER probing. Removing the overwrite reproduced the failure
+  and restoring it went green.
+- What this closes: **nothing user-visible**. T1 is the read-only half of the gate — the probe became a
+  shared authority, and the plans and the panel exist but nothing calls them. The gate still runs
+  through S37's seam on all three callers (S6).
+- What U7-1 still owes: **T2** the provider install half (`install_github_release`: download,
+  `SHA256SUMS`, extraction, managed receipt), **T3** the gate itself (panel, per-plan offer, install,
+  recheck, `Configure anyway?`) wired into init's wizard, `configure-recipes` and `recipe add`, with
+  S37's seam and driver deleted, and **T4** the dead-code check (`runShim`/`routeShim`/`shims`) plus the
+  program doc's Progress row.
 
 ## Log
 
@@ -71,3 +101,8 @@ Unit document for **U7 item 1** of the program (`odd/tasks/go-20-python-exit.md`
   §8 "Network and external process surface" does NOT list the gate's installs (`brew install`,
   `sudo apt-get install -y`, the provider download), although they are the tree's most consequential
   external calls. T2/T3 own the row once the installs are native.
+- L5 — Slice boundary, recorded because the commit tool measures against `origin/main` and this branch
+  sits on a stacked epic: the boundary is the EPIC TIP (`494b028`), never `origin/main`. Against the
+  epic, T1 is two work units — `e72a3a4` (the probe move: +781/−452, mostly relocation) and `f4a734e`
+  (plans, panel and the differential: ~+880) — and each one compiles and passes its packages alone
+  (verified in a scratch worktree at `e72a3a4`).
