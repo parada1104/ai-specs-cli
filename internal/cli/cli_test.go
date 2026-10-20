@@ -12,9 +12,9 @@ import (
 // map (EMPTY since U6e), the native verbs and their aliases, mirroring the
 // case statement of bin/ai-specs. The map stays declared with its lookup —
 // the strangler mechanism itself — because runShim still execs legacy
-// scripts directly (the init TUI hatch, `recipe init`'s route to
-// recipe-init.sh, and the dep-gate seams' python3 -c), but no top-level verb
-// resolves through the map anymore.
+// scripts directly (the init TUI hatch and the dep-gate seams' python3 -c),
+// but no top-level verb resolves through the map anymore. `recipe init` is
+// native since GO-20 U7-2.
 func TestRouteTableCoversEveryVerb(t *testing.T) {
 	if len(shims) != 0 {
 		t.Errorf("shims map = %v, want EMPTY — U6e retires every verb-level shim", shims)
@@ -122,9 +122,8 @@ func TestRouteSkillsListIsNativeBeforeTheShim(t *testing.T) {
 // `recipe configure` resolve native, the dispatcher's REMAINING arms of
 // lib/recipe.sh's case statement — the bare `recipe`, `--help`/`-h`/`help`
 // and unknown subcommands — resolve to the native dispatcher route (U6e, S4),
-// and `init` routes STRAIGHT to lib/recipe-init.sh: recipe-init.py is
-// unported (no U6 slicing row owns it), so that wrapper stays alive, but
-// recipe.sh itself has no work left for this binary — the U6e retirement.
+// and since GO-20 U7-2 `init` is native too: the wrapper grammar and the
+// brief moved to internal/recipe, so no recipe arm reaches a shell script.
 // `recipe add` has NO delegation left either (U6e flipped its tail onto the
 // native wizard, the dep-gate seam and the env offer): Route cannot see the
 // streams, and the tail's wiring is pinned by
@@ -167,10 +166,10 @@ func TestRouteRecipeListIsNativeBeforeTheShim(t *testing.T) {
 		{[]string{"recipe", "listx"}, routeRecipe, ""},
 		{[]string{"recipe", "-list"}, routeRecipe, ""},
 		{[]string{"recipe", "List"}, routeRecipe, ""},
-		// `init` skips recipe.sh and routes straight to its own wrapper —
-		// the one recipe subcommand no U6 row ports.
-		{[]string{"recipe", "init"}, routeRecipeInit, "recipe-init.sh"},
-		{[]string{"recipe", "init", "worktree-flow"}, routeRecipeInit, "recipe-init.sh"},
+		// `init` is native since U7-2: the wrapper grammar and the brief both
+		// live in internal/recipe, so no script is exec'd.
+		{[]string{"recipe", "init"}, routeRecipeInitVerb, ""},
+		{[]string{"recipe", "init", "worktree-flow"}, routeRecipeInitVerb, ""},
 		{[]string{"recipe", "list", "a", "b"}, routeRecipeList, ""},
 	}
 	for _, tc := range cases {
