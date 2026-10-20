@@ -140,3 +140,14 @@ this suite's green: `/usr/bin/python3` is 3.9 and resurrects an unrelated Unicod
   longer imports `toml` at all. Behaviour unchanged, doctor's and deps' suites green. Recorded because
   a deterministic claim from a reviewer is still a claim: the compiler decides, and here it had
   already decided.
+- L10 — The review on the corrected candidate (`review-aa5e96c9b4183ea7`) ended in state **`escalated`**,
+  and the escalation is the benign kind: the provider recorded `R3-001` as a **non-candidate-causal,
+  downgraded** finding — `downgraded_causal_findings: [{finding_id: R3-001, reason: unverified_location}]`
+  with `candidate_causal_finding_ids: []`. The claim ("the doctor test file no longer imports `os` but
+  `writeCatalogRecipe` calls `os.MkdirAll`/`os.WriteFile`, so the test package cannot compile") is false:
+  the helper calls doctor's own `writeFile`, and `go test ./internal/doctor/ -run TestNothingMatches`
+  compiles and runs the package. `escalated` is informational for the maintainer, so nothing blocks and
+  nothing is approved either. Recorded because it is a pattern worth naming: both review cycles on this
+  unit produced a FALSE deterministic BLOCKER from the same class of misread (R3-COMPILE-UNUSED-TOML,
+  then R3-001), and the compiler was the tie-breaker both times. Rule: when a reviewer's claim is
+  "this does not compile", run the compiler before believing or correcting anything.
