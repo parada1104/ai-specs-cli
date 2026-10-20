@@ -106,3 +106,37 @@ this suite's green: `/usr/bin/python3` is 3.9 and resurrects an unrelated Unicod
   epic, T1 is two work units — `e72a3a4` (the probe move: +781/−452, mostly relocation) and `f4a734e`
   (plans, panel and the differential: ~+880) — and each one compiles and passes its packages alone
   (verified in a scratch worktree at `e72a3a4`).
+- L6 — Native review `review-0accf2e7e86e68a2` (tier high, 3 lenses: risk, readability,
+  reliability): **risk and readability admitted** (103 083 B and 103 129 B prompts, `completed`).
+  **`review-reliability` hit the relay bound twice**: 988 499 ms and then 988 506 ms against the same
+  988 499 ms ceiling, on a 103 108-byte prompt — the two runs land within 7 ms of the wall, so this is
+  not the transient case the program already met once; the lens's configured model cannot finish this
+  candidate inside the bound. Both failures were withdrawn with the exact
+  `capture-unachievable --withdraw=true` binding, so the slot is re-offered and the lineage stays
+  resumable with the candidate tree untouched (`54b6ba2`). Levers, in the program's own order: the
+  human's `~/.gentle-shell/config/gentle-ai/models.json` row for `review-reliability`
+  (`anthropic/claude-sonnet-5-5` or `opencode-go/glm-5.3`), raising
+  `GENTLE_PI_REVIEW_RELAY_PI_TIMEOUT_MS` above the reviewer's real wall time (ceiling 7 200 000 ms), or
+  a smaller candidate — which is a NEW transaction and needs this lineage's `ABANDON` approved first.
+- L7 — Push and the PR wait for L6's decision: the branch stays local so the review binding and the
+  published bytes cannot diverge (`e72a3a4`, `f4a734e`, `63f0884` are the reviewed range).
+- L8 — Third attempt after the human's roster change ("lo cambié al deepseek de opencode-go"): **the same
+  wall to the millisecond** — 988 499 ms, the third identical number. Diagnosis, and it is not the
+  reviewer being slow: `~/.gentle-shell/config/gentle-ai/models.json` (mtime 00:17, i.e. after the
+  change) STILL routes `review-reliability` to `opencode-go/mimo-v2.6-pro` with `thinking: "off"`.
+  The edit did not land on that row, so the run repeated the configuration that had already failed
+  twice. The catalog (`~/.gentle-shell/agent/models-store.json`) has no bare `deepseek` under
+  `opencode-go`: the ids are `deepseek-v4-pro` and `deepseek-v4.1-flash`. Slot withdrawn again, so the
+  lineage stays resumable and the next attempt is one capture away.
+  RULE this costs the next session: three identical ceilings mean the ROSTER is the problem; before
+  spending another 16 minutes, read the roster row back and confirm the model id it names exists in the
+  catalog. `opencode-go/deepseek-v4.1-flash` (the corrected row) finished the same 103 108-byte prompt
+  that three `mimo-v2.6-pro` runs could not.
+- L9 — The refuter's one BLOCKER was **factually wrong**: `R3-COMPILE-UNUSED-TOML` claimed the `toml`
+  import was left behind in `internal/doctor/depcheck.go` and that "the candidate cannot build". The
+  frozen candidate used `toml.Table` in `checkRecipeCLIDeps` and built and passed every gate. The
+  correction the finding asked for was still cheap and worth taking, so it was taken instead of argued:
+  the guard moved to `manifest.go:hasRecipeTables()` (next to the cache it reads) and `depcheck.go` no
+  longer imports `toml` at all. Behaviour unchanged, doctor's and deps' suites green. Recorded because
+  a deterministic claim from a reviewer is still a claim: the compiler decides, and here it had
+  already decided.

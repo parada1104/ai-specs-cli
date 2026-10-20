@@ -7,7 +7,6 @@ import (
 
 	"ai-specs.dev/ai-specs/internal/deps"
 	"ai-specs.dev/ai-specs/internal/schema"
-	"ai-specs.dev/ai-specs/internal/toml"
 )
 
 // doctor's dep_check.py surface. The PROBE itself is internal/deps' — doctor
@@ -22,11 +21,7 @@ type depResult = deps.Result
 // checkRecipeCLIDeps is doctor._check_recipe_cli_deps.
 func (d *Doctor) checkRecipeCLIDeps() {
 	d.loadManifest()
-	var recipes *toml.Table
-	if d.manifest.data != nil {
-		recipes, _ = d.manifest.data.Table("recipes")
-	}
-	if recipes == nil || len(recipes.Keys()) == 0 {
+	if !d.hasRecipeTables() {
 		return
 	}
 	d.emitRecipeDepChecks(d.collectRecipeDepResults())
