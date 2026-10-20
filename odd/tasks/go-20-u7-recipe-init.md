@@ -143,3 +143,6 @@ Quoted verbatim from `lib/_internal/recipe-init.py` and `tests/test_recipe_init.
   `init_test.go` (1164 lines, one artifact — the brief and its grammar — with the review map in the
   commit body), **T2** the four `internal/cli` files (~105 lines), **T4** this document and the program
   doc. No slice mixes another unit's behaviour.
+- L12 — **`./tests/validate.sh` green on the final tree** (exit 0, 32m21s): 31 Go packages ok, 0 FAIL; the
+  differential parity harness PASS (gate-absent and gate-present, 0 failing); 2405 Python tests OK with
+  165 skipped. `PATH` prefixed with the python3.14 bridge as the program requires.
