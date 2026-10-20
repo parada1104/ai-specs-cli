@@ -935,6 +935,88 @@ func TestRecipeAddTailIsNativeOnATerminal(t *testing.T) {
 		}
 	})
 
+	// A gate ERROR is not a decline: gateOutcome reports it with Proceed still
+	// false, so the error arm must be tested FIRST — otherwise the decline path
+	// swallows it and the command reports a skip where it should word its own
+	// catch (review R3-001).
+	t.Run("dep gate error keeps its own catch instead of the decline path", func(t *testing.T) {
+		boom := errors.New("open /dev/tty: no such device or address")
+
+		t.Run("with config fields", func(t *testing.T) {
+			project, manifest := setup(t)
+			p := &scriptedWizardPrompts{t: t}
+			p.confirmQ = []scriptedConfirm{{answer: true, ok: true}}
+			seams := recipeTailSeams{
+				openWizard: func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
+					return p, func() {}, 0
+				},
+				depGate: func(loaded *schema.Recipe) wizardDepGateOutcome {
+					return wizardDepGateOutcome{Err: boom}
+				},
+			}
+			var stdout, stderr bytes.Buffer
+			code := runRecipeAddFlow([]string{"recipe", "add", "cfgdep", project}, home,
+				strings.NewReader(""), &stdout, &stderr, "", true, seams)
+			if code != 0 {
+				t.Fatalf("exit = %d, want 0 (configure_selected_recipes' except); stderr = %q", code, stderr.String())
+			}
+			if strings.Contains(stderr.String(), "Skipped cfgdep (missing CLI deps)") {
+				t.Errorf("a gate error must not be worded as a decline: stderr = %q", stderr.String())
+			}
+			if !strings.Contains(stdout.String(), "  ! could not open the configuration wizard\n") {
+				t.Errorf("stdout = %q, want recipe-add.py:266-267's frozen catch line", stdout.String())
+			}
+			if len(p.textQ) != 0 || len(p.transcript) != 1 {
+				t.Errorf("the wizard must not run after a gate error: transcript = %#v", p.transcript)
+			}
+			if strings.Contains(readManifest(t, manifest), `board_id = "B-7"`) {
+				t.Errorf("a gate error must leave the placeholders unwritten")
+			}
+		})
+
+		t.Run("without config fields", func(t *testing.T) {
+			project, _ := setup(t)
+			skillsWriteFile(t, filepath.Join(home, "catalog", "recipes", "enverr", "recipe.toml"),
+				"[recipe]\n"+
+					"id = \"enverr\"\n"+
+					"name = \"enverr recipe\"\n"+
+					"description = \"fixture recipe enverr\"\n"+
+					"version = \"1.0.0\"\n"+
+					"\n[deps]\ncli = [{ binary = \"jinn\", purpose = \"provider CLI\" }]\n"+
+					recipeAddMcpEnvTail)
+			p := &scriptedWizardPrompts{t: t}
+			p.confirmQ = []scriptedConfirm{{answer: true, ok: true}}
+			envCalled := false
+			seams := recipeTailSeams{
+				openWizard: func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
+					return p, func() {}, 0
+				},
+				depGate: func(loaded *schema.Recipe) wizardDepGateOutcome {
+					return wizardDepGateOutcome{Err: boom}
+				},
+				envOffer: func(string) error {
+					envCalled = true
+					return nil
+				},
+			}
+			var stdout, stderr bytes.Buffer
+			code := runRecipeAddFlow([]string{"recipe", "add", "enverr", project}, home,
+				strings.NewReader(""), &stdout, &stderr, "", true, seams)
+			if code != 0 {
+				t.Fatalf("exit = %d, want 0; stderr = %q", code, stderr.String())
+			}
+			if want := "  ! CLI dependency check skipped: " + boom.Error() + "\n"; !strings.Contains(stdout.String(), want) {
+				t.Errorf("stdout = %q, want recipe-add.py:76's frozen catch line %q", stdout.String(), want)
+			}
+			if strings.Contains(stdout.String(), "required CLI dependencies are still missing") {
+				t.Errorf("a gate error must not print the decline's guidance block: stdout = %q", stdout.String())
+			}
+			if !envCalled {
+				t.Errorf("the env leg must still run after a gate error (recipe-add.py:269)")
+			}
+		})
+	})
+
 	// recipe-add.py:256-261's OTHER gate position: a recipe with NO config
 	// fields gates in the tail itself, and a decline prints the guidance block
 	// (the dep_install guidance half ported) before the env leg still runs.

@@ -291,3 +291,18 @@ the two frozen confirm messages and every panel/offer line now come from Go — 
   unit produced a FALSE deterministic BLOCKER from the same class of misread (R3-COMPILE-UNUSED-TOML,
   then R3-001), and the compiler was the tie-breaker both times. Rule: when a reviewer's claim is
   "this does not compile", run the compiler before believing or correcting anything.
+- L20 — Native review `review-172f8ed806b45d1b` (3 lenses: risk, resilience, reliability) reached the
+  provider refuter and came back **`correction_required`** with one candidate-caused deterministic
+  BLOCKER, and this one is real — unlike L10's homonym. `R3-001` @ `internal/cli/recipe.go:474`:
+  `gateOutcome` reports a failure as `{Err: err}` with `Proceed` still false, so the `!outcome.Proceed`
+  arm authored first shadowed the `outcome.Err != nil` arm, leaving it unreachable. Consequence: a gate
+  error (terminal could not be opened, unusable stdin) was worded as a decline — `Skipped <id> (missing
+  CLI deps)` on stderr with config fields, the guidance block without — and the command carried on as if
+  the gate had answered. The `configure-recipes` call site (:2917) always had the correct order, which is
+  why only one line was named: the defect was per-call-site, not per-seam. RED first (both legs, exact
+  bytes: the decline's `Skipped` line and the decline's guidance block), then the arm swap, then GREEN.
+  Two lessons. (1) A shared outcome type that encodes failure as "false plus an error" makes arm order
+  load-bearing; the failing test has to exercise the CALL SITE, not the seam — `depgate_test.go` pinned
+  `recipeDepGate` in isolation and stayed green through the bug. (2) The review's own finding ids repeat
+  across cycles (`R3-001` twice on this unit, opposite verdicts), so the id is not evidence; the
+  compiler/test is.

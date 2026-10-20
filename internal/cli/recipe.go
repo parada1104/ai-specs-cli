@@ -470,14 +470,11 @@ func runRecipeAddVerb(target, recipeID, home, exePath string, stdin io.Reader, s
 		configureNow := hasConfig
 		if len(loaded.CliDeps) > 0 {
 			outcome := seams.depGate(loaded)
+			// The error arm goes FIRST: gateOutcome reports a failure with
+			// Proceed still false, so testing !Proceed first would word every
+			// gate error as a decline and report success the gate never
+			// granted.
 			switch {
-			case !outcome.Proceed:
-				if hasConfig {
-					fmt.Fprintf(stderr, "Skipped %s (missing CLI deps)\n", recipeID)
-					configureNow = false
-				} else {
-					recipePrintCLIDepGuidance(loaded, stdout)
-				}
 			case outcome.Err != nil:
 				if hasConfig {
 					// recipe-add.py:266-267 wraps configure_selected_recipes in
@@ -487,6 +484,13 @@ func runRecipeAddVerb(target, recipeID, home, exePath string, stdin io.Reader, s
 				} else {
 					// recipe-add.py:76's _run_cli_dep_gate catch — its own line.
 					fmt.Fprintf(stdout, "  ! CLI dependency check skipped: %v\n", outcome.Err)
+				}
+			case !outcome.Proceed:
+				if hasConfig {
+					fmt.Fprintf(stderr, "Skipped %s (missing CLI deps)\n", recipeID)
+					configureNow = false
+				} else {
+					recipePrintCLIDepGuidance(loaded, stdout)
 				}
 			}
 		}
