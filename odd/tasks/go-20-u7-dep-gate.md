@@ -40,13 +40,26 @@ Unit document for **U7 item 1** of the program (`odd/tasks/go-20-python-exit.md`
   across the matrix (brew, apt, both, neither, Darwin, Linux, guidance-only, unknown binary, and the
   provider plan with its rejection paths); then `go test ./cmd/... ./internal/...`, the parity corpus,
   `gofmt -l`, and the manifest diff.
+- S10 — T2's scope, measured (verbatim, `odd/tasks/go-20-u6-recipe.md` L10): "`provider_install.py`'s
+  install half (597 — network download, checksums, extraction; only its READ-ONLY resolution was
+  ported, into `internal/provider`)". T2 ports exactly that half: `_fetch_bytes`, `parse_release`,
+  `parse_release_metadata`, `parse_sha256sums`, `_safe_member_name`/`_expected_members`/
+  `extract_release_archive`, `install_github_release`.
+- S11 — The install's rejection strings are part of the observable contract: `_dep_gate` renders them
+  inside its `install offer skipped: <exc>` line and `offer_and_install` prints
+  `  ! install <binary> failed: <exc>`. Every message is reproduced verbatim from the Python.
+- S12 — The safety invariants are the point of the slice, not decoration: allowlisted HTTPS hosts only
+  (`api.github.com`, `github.com`), checksum verified BEFORE extraction, work done in a sibling temp
+  directory and published with one atomic rename, an existing managed target never touched, a required
+  member set with no symlinks/hardlinks/traversal/duplicates, and size caps on the response, the
+  metadata and every member.
 
 ## Tasks
 
 | ID | Task | Specs | Commit |
 | --- | --- | --- | --- |
 | T1 | `internal/provider.BuildReleasePlan` + `internal/deps` (the probe promoted, plans resolving, panel rendering); doctor delegates | S3-S7, S9 | `e72a3a4`, `f4a734e` |
-| T2 | `internal/provider`'s install half: download, SHA256SUMS verification, extraction, managed receipt | S1 | — |
+| T2 | `internal/provider`'s install half: download, SHA256SUMS verification, extraction, managed receipt | S10-S12 | `143722f` |
 | T3 | `deps.Gate` (panel, per-plan offer, install, recheck, `Configure anyway?`) wired into init's wizard, `configure-recipes` and `recipe add`; S37's seam and driver deleted | S1, S4, S6 | — |
 | T4 | Verify `runShim`/`routeShim`/`shims` are unreachable and delete them; update the program doc's Progress row | S1 | — |
 
@@ -140,6 +153,18 @@ this suite's green: `/usr/bin/python3` is 3.9 and resurrects an unrelated Unicod
   longer imports `toml` at all. Behaviour unchanged, doctor's and deps' suites green. Recorded because
   a deterministic claim from a reviewer is still a claim: the compiler decides, and here it had
   already decided.
+- L11 — T2 delivered as `143722f` (one commit, ~1724 added lines — the size exception is argued in the commit
+  message and the PR: a brand-new package whose fixture suite shares archive builders reads better whole
+  than hand-carved across two commits). The porting worker skipped RED by writing the implementation
+  first, so RED was reconstructed by MUTATION and it bit: flipping the checksum comparison failed
+  `TestInstallReleaseHappyPath`, `TestInstallReleaseChecksumMismatch`, `TestInstallReleaseVersionMismatch`
+  and `TestInstallReleaseBelowMinVersion`, and disabling the missing-member check failed
+  `TestExtractReleaseArchiveMissingMember` and `TestExtractReleaseArchiveMissingBinary` — each with its
+  exact message — and restoring both went green. `go test ./internal/provider/`, `go vet` and `gofmt -l`
+  clean under `PATH=/tmp/pybin:$PATH`; `./tests/validate.sh` was launched on the final tree.
+  METHOD note for the next delegation: say "write the tests first" AND "if you write the implementation
+  first, reconstruct RED by mutation and report both mutations" — the writer reported the gap honestly,
+  which is the only reason it was cheap to close.
 - L10 — The review on the corrected candidate (`review-aa5e96c9b4183ea7`) ended in state **`escalated`**,
   and the escalation is the benign kind: the provider recorded `R3-001` as a **non-candidate-causal,
   downgraded** finding — `downgraded_causal_findings: [{finding_id: R3-001, reason: unverified_location}]`
