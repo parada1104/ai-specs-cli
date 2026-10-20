@@ -4,8 +4,9 @@ package cli
 // lib/_internal/init_tui.py:234-400 (run_wizard), and U4b-2 (S35-S40) ported
 // the step T4b-1 deferred — _configure_recipes (:204-233), the per-recipe
 // configuration — so S19's deferral line is gone. After the recipes prompt the
-// wizard reads each selected recipe, runs the CLI-dep gate through its
-// documented legacy seam (S37, runLegacyInitDepGate below), asks the
+// wizard reads each selected recipe, runs the CLI-dep gate natively (U7-1
+// T3: internal/deps.Gate through depgate.go's adapter, which suspends this
+// wizard's raw-mode window around every install child), asks the
 // `Configure <id> now?` confirm and collects the field answers with
 // runConfigWizard (U6d-2's core); the values reach the staged manifest
 // through _render_manifest's configured tables (S16/S36), exactly where the
@@ -24,11 +25,9 @@ package cli
 // branch does.
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -72,8 +71,8 @@ const initWizardHeader = `# ai-specs.toml — project root manifest (generated b
 // target, the name prefill (init.sh passes the basename), the CLI home for
 // the catalog, and the three streams. OpenKeys produces the keystrokes — the
 // production seam opens a raw-mode terminal, a test scripts one. DepGate is
-// the CLI-dep gate seam (S37); nil selects the production runner that spawns
-// the legacy script over the same TTY.
+// the CLI-dep gate; nil selects the native production wiring over this
+// wizard's own terminal.
 type initWizardRequest struct {
 	Target   string
 	Name     string
@@ -85,25 +84,26 @@ type initWizardRequest struct {
 	DepGate  wizardDepGate
 }
 
-// wizardDepGate runs the CLI-dep gate for one selected recipe (S37).
-// config_wizard._dep_gate — check_cli_deps' panel, dep_install's TTY offer and
-// the "Configure anyway?" confirm — has no native side, so init keeps that leg
-// on the legacy script for recipes declaring [[deps.cli]] instead of
-// half-porting it or silently skipping them. U6e kept the same decision on its
-// own route, so the native dep gate is U7's; this seam retires when that lands.
-type wizardDepGate func(recipeID string) wizardDepGateOutcome
+// wizardDepGate runs the CLI-dep gate for one already-read recipe.
+// internal/deps.Gate owns it (U7-1 T3); depgate.go supplies the terminal. The
+// recipe travels by value because the caller has already parsed it — the old
+// seam re-read it only because it was a separate process.
+type wizardDepGate func(recipe *schema.Recipe) wizardDepGateOutcome
 
 // wizardDepGateOutcome is how one gate run answered:
 //
 //	Proceed — configure the recipe;
-//	Skip    — declined: print the legacy `Skipped <id> (missing CLI deps)` line and go on;
-//	neither — the child already printed its own line (its read failure): continue quietly;
-//	Rc      — non-zero aborts the wizard with that code (Err, when set, is
-//	          worded through init_tui.py's `ERROR: interactive init failed`).
+//	!Proceed — the `Configure anyway?` confirm was declined: each caller
+//	           prints its own frozen line and moves on;
+//	Err     — the gate could not run (its terminal could not be opened or
+//	           handed back): each caller words it through its own failure arm.
+//
+// The rc-3 and rc-11 arms S37 carried are gone with the driver that produced
+// them: 3 was Python's vendor bootstrap refusing, 11 was the driver's own
+// read failure — the native gate has no vendor tree to bootstrap and no
+// second read to fail.
 type wizardDepGateOutcome struct {
 	Proceed bool
-	Skip    bool
-	Rc      int
 	Err     error
 }
 
@@ -255,8 +255,8 @@ func runInitWizard(req initWizardRequest) (res initWizardResult, rc int) {
 	configured := map[string]map[string]any{}
 	depGate := req.DepGate
 	if depGate == nil {
-		depGate = func(rid string) wizardDepGateOutcome {
-			return runLegacyInitDepGate(req, keys, rid, recipe.CatalogDir(req.Home))
+		depGate = func(loaded *schema.Recipe) wizardDepGateOutcome {
+			return initDepGate(req, keys, loaded)
 		}
 	}
 	for _, rid := range recipes {
@@ -271,19 +271,12 @@ func runInitWizard(req initWizardRequest) (res initWizardResult, rc int) {
 		// The gate fires BEFORE the fields check — _configure_recipes' order,
 		// even for a recipe that declares no config at all (S37).
 		if len(loaded.CliDeps) > 0 {
-			outcome := depGate(rid)
+			outcome := depGate(loaded)
 			if outcome.Err != nil {
 				return fail(outcome.Err)
 			}
-			if outcome.Rc != 0 {
-				return initWizardResult{}, outcome.Rc
-			}
-			if outcome.Skip {
-				fmt.Fprintf(req.Stderr, "Skipped %s (missing CLI deps)\n", rid)
-				continue
-			}
 			if !outcome.Proceed {
-				// The child already printed its own line (its read failure).
+				fmt.Fprintf(req.Stderr, "Skipped %s (missing CLI deps)\n", rid)
 				continue
 			}
 		}
@@ -594,110 +587,6 @@ func wizardPromptSchema(cs *schema.ConfigSchema) *schema.ConfigSchema {
 		return cs
 	}
 	return &schema.ConfigSchema{Fields: promptable, Extra: cs.Extra, Tables: cs.Tables}
-}
-
-// The dep-gate seam's own exit codes (S37): the language with the legacy
-// driver. 0/10/11/3 are the driver's; ANY other code is a crash — Python's
-// traceback already went to stderr, and the wizard words it through
-// init_tui main's failure arm instead of mistaking it for a decline.
-const (
-	initDepGatePass      = 0
-	initDepGateDeclined  = 10
-	initDepGateReadError = 11
-	initDepGateNoTUI     = 3
-)
-
-// initDepGateDriver is the seam's Python side, run as `python3 -c` against the
-// wizard's own install root. It loads init_tui.py at module level only (main
-// is guarded), runs the SAME vendor bootstrap the legacy wizard runs before
-// its first prompt (_ensure_deps — its offer lines land on the wizard's TTY,
-// late rather than at start: recorded in the unit document), reads the recipe
-// through recipe-read, and hands it to config_wizard._dep_gate — panel,
-// dep_install TTY offer and the "Configure anyway?" confirm all the legacy
-// script's own bytes. Exit codes: 0 configure, 10 declined, 11 read failed
-// (its `skip config for …` line already printed), 3 _ensure_deps' own rc.
-const initDepGateDriver = `import runpy, sys
-from pathlib import Path
-home = Path(sys.argv[1])
-recipe_id = sys.argv[2]
-catalog = Path(sys.argv[3])
-wizard = runpy.run_path(str(home / "lib" / "_internal" / "init_tui.py"), run_name="ai_specs_init_dep_gate")
-rc = wizard["_ensure_deps"]()
-if rc is not None:
-    sys.exit(rc)
-try:
-    recipe = wizard["_load_sibling"]("recipe-read").read_recipe(catalog, recipe_id)
-except Exception as exc:
-    print(f"skip config for {recipe_id}: {exc}", file=sys.stderr)
-    sys.exit(11)
-from rich.console import Console
-ok = wizard["_load_sibling"]("config_wizard")._dep_gate(recipe, Console(stderr=True))
-sys.exit(0 if ok else 10)`
-
-// runLegacyInitDepGate is S37's seam, the hub delegate's tactic applied to one
-// wizard step: raw mode is SUSPENDED around the child (internal/tui's
-// Terminal documents exactly this use), the child inherits the wizard's own
-// TTY streams so questionary prompts on the same terminal the Go prompts do,
-// and raw mode resumes before the next prompt. AI_SPECS_HOME is pinned to the
-// wizard's home through childEnv — the env builder shim.go already owns —
-// because the driver's _ensure_deps and _dep_gate resolve the install root
-// from it. A non-terminal stream answers the wizard's rc 3: the seam never
-// runs over pipes, where questionary could neither draw nor read.
-func runLegacyInitDepGate(req initWizardRequest, keys tui.KeySource, recipeID, catalogDir string) wizardDepGateOutcome {
-	failWith := func(err error) wizardDepGateOutcome {
-		return wizardDepGateOutcome{Rc: 3, Err: err}
-	}
-	stdin, ok := req.Stdin.(*os.File)
-	if !ok {
-		return failWith(fmt.Errorf("the CLI-dep gate for %s needs a terminal stdin", recipeID))
-	}
-	stdout, ok := req.Stdout.(*os.File)
-	if !ok {
-		return failWith(fmt.Errorf("the CLI-dep gate for %s needs a terminal stdout", recipeID))
-	}
-	term, _ := keys.(interface {
-		Suspend()
-		Resume() error
-	})
-	if term != nil {
-		term.Suspend()
-	}
-	cmd := exec.Command("python3", "-c", initDepGateDriver, req.Home, recipeID, catalogDir)
-	cmd.Stdin = stdin
-	cmd.Stdout = stdout
-	cmd.Stderr = req.Stderr
-	cmd.Env = childEnv(req.Home, "", "")
-	runErr := cmd.Run()
-	if term != nil {
-		if resumeErr := term.Resume(); resumeErr != nil {
-			return failWith(resumeErr)
-		}
-	}
-	code := 0
-	if runErr != nil {
-		var exitErr *exec.ExitError
-		if !errors.As(runErr, &exitErr) {
-			return failWith(fmt.Errorf("the CLI-dep gate for %s did not start: %v", recipeID, runErr))
-		}
-		if code = exitErr.ExitCode(); code < 0 {
-			return failWith(fmt.Errorf("the CLI-dep gate for %s was killed before exiting", recipeID))
-		}
-	}
-	switch code {
-	case initDepGatePass:
-		return wizardDepGateOutcome{Proceed: true}
-	case initDepGateDeclined:
-		return wizardDepGateOutcome{Skip: true}
-	case initDepGateReadError:
-		return wizardDepGateOutcome{} // the driver printed `skip config for …`
-	case initDepGateNoTUI:
-		// _ensure_deps' own answer (vendor missing and declined): the legacy
-		// wizard returns 3 for it too and init.sh's rc-3 branch takes over,
-		// with no message of its own.
-		return wizardDepGateOutcome{Rc: 3}
-	default:
-		return failWith(fmt.Errorf("the CLI-dep gate for %s exited %d", recipeID, code))
-	}
 }
 
 // renderWizardManifest is init_tui._render_manifest (S16): header, [project]

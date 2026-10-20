@@ -7,13 +7,15 @@ package cli
 // over a user's one), S17's key quoting, and since U4b-2 the per-recipe
 // configuration step (S35-S39): the Configure-now confirm, the scripted
 // field prompts whose values reach the staged manifest, the no-fields skip,
-// the repo_topology promotion (S18) and the CLI-dep gate's documented legacy
-// seam (S37). The PTY suite in tests/test_init_tui.py drives the built binary
+// the repo_topology promotion (S18) and the CLI-dep gate (native since
+// U7-1 T3: internal/deps.Gate through depgate.go). The PTY suite in
+// tests/test_init_tui.py drives the built binary
 // for these flows too (S40); these scripted-key tests are the step's own
 // in-process gate.
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"ai-specs.dev/ai-specs/internal/schema"
 	"ai-specs.dev/ai-specs/internal/tui"
 )
 
@@ -797,18 +800,18 @@ purpose = "test dep gate"
 required = true
 `
 
-// TestInitWizardDepGateSeam pins S37's documented legacy seam: the loop's
-// exact position (after the read, BEFORE the fields check — _configure_recipes'
-// order), the legacy Skipped line on a declined gate, the quiet continuation
-// when the child already printed its own line, the wizard abort on the gate's
-// rc, and that a recipe without cli_deps never reaches the seam at all.
+// TestInitWizardDepGateSeam pins the native gate's call position in the
+// loop (after the read, BEFORE the fields check — _configure_recipes'
+// order), the frozen Skipped line on a declined gate, the wizard abort on a
+// gate error, and that a recipe without cli_deps never reaches the seam at
+// all.
 func TestInitWizardDepGateSeam(t *testing.T) {
 	t.Run("declined skips the recipe with the legacy line", func(t *testing.T) {
 		f := newWizardFixture(t)
 		f.seedRecipe(t, "cfg-deps", wizardRecipeBody("cfg-deps", "1.0.0", "gated")+wizardBaseBranchField+wizardCliDepBlock)
-		f.depGate = func(string) wizardDepGateOutcome {
+		f.depGate = func(*schema.Recipe) wizardDepGateOutcome {
 			f.gateCalls++
-			return wizardDepGateOutcome{Skip: true}
+			return wizardDepGateOutcome{}
 		}
 		_, rc := runInitWizard(f.request(wizardScript(enterText(),
 			tui.KeyEnter, tui.KeyEnter,
@@ -836,7 +839,7 @@ func TestInitWizardDepGateSeam(t *testing.T) {
 	t.Run("passed reaches the per-recipe confirm", func(t *testing.T) {
 		f := newWizardFixture(t)
 		f.seedRecipe(t, "cfg-deps", wizardRecipeBody("cfg-deps", "1.0.0", "gated")+wizardBaseBranchField+wizardCliDepBlock)
-		f.depGate = func(string) wizardDepGateOutcome {
+		f.depGate = func(*schema.Recipe) wizardDepGateOutcome {
 			f.gateCalls++
 			return wizardDepGateOutcome{Proceed: true}
 		}
@@ -860,48 +863,25 @@ func TestInitWizardDepGateSeam(t *testing.T) {
 		}
 	})
 
-	t.Run("the child's own read-failure line continues quietly", func(t *testing.T) {
+	t.Run("a gate error takes the wizard down before any write", func(t *testing.T) {
 		f := newWizardFixture(t)
 		f.seedRecipe(t, "cfg-deps", wizardRecipeBody("cfg-deps", "1.0.0", "gated")+wizardBaseBranchField+wizardCliDepBlock)
-		f.depGate = func(string) wizardDepGateOutcome {
+		f.depGate = func(*schema.Recipe) wizardDepGateOutcome {
 			f.gateCalls++
-			return wizardDepGateOutcome{} // exit 11: the child printed `skip config for …`
-		}
-		_, rc := runInitWizard(f.request(wizardScript(enterText(),
-			tui.KeyEnter, tui.KeyEnter,
-			tui.KeySpace, tui.KeyEnter,
-			tui.KeyEnter, // wizard confirm
-		)))
-		if rc != 0 {
-			t.Fatalf("exit = %d, want 0; stderr=%q", rc, f.stderr.String())
-		}
-		if f.gateCalls != 1 {
-			t.Errorf("gate calls = %d, want 1", f.gateCalls)
-		}
-		if strings.Contains(f.stderr.String(), "Skipped cfg-deps") {
-			t.Errorf("the quiet outcome must not print a second line:\n%s", f.stderr.String())
-		}
-		if strings.Contains(f.stdout.String(), "Configure cfg-deps now?") {
-			t.Errorf("the quiet outcome reached the confirm:\n%s", f.stdout.String())
-		}
-	})
-
-	t.Run("the gate's rc takes the wizard down before any write", func(t *testing.T) {
-		f := newWizardFixture(t)
-		f.seedRecipe(t, "cfg-deps", wizardRecipeBody("cfg-deps", "1.0.0", "gated")+wizardBaseBranchField+wizardCliDepBlock)
-		f.depGate = func(string) wizardDepGateOutcome {
-			f.gateCalls++
-			return wizardDepGateOutcome{Rc: 3}
+			return wizardDepGateOutcome{Err: errors.New("no terminal")}
 		}
 		_, rc := runInitWizard(f.request(wizardScript(enterText(),
 			tui.KeyEnter, tui.KeyEnter,
 			tui.KeySpace, tui.KeyEnter,
 		)))
 		if rc != 3 {
-			t.Fatalf("exit = %d, want the gate's rc 3; stderr=%q", rc, f.stderr.String())
+			t.Fatalf("exit = %d, want 3 (the unexpected-failure arm); stderr=%q", rc, f.stderr.String())
+		}
+		if want := "ERROR: interactive init failed: no terminal\n"; !strings.Contains(f.stderr.String(), want) {
+			t.Errorf("stderr lacks %q:\n%s", want, f.stderr.String())
 		}
 		if strings.Contains(f.stderr.String(), "Cancelled") {
-			t.Errorf("the gate's rc printed the cancel line:\n%s", f.stderr.String())
+			t.Errorf("a gate error printed the cancel line:\n%s", f.stderr.String())
 		}
 		f.assertNoProjectWrites(t)
 	})
@@ -909,9 +889,9 @@ func TestInitWizardDepGateSeam(t *testing.T) {
 	t.Run("the gate runs before the fields check", func(t *testing.T) {
 		f := newWizardFixture(t)
 		f.seedRecipe(t, "dep-only", wizardRecipeBody("dep-only", "1.0.0", "deps, no config")+wizardCliDepBlock)
-		f.depGate = func(string) wizardDepGateOutcome {
+		f.depGate = func(*schema.Recipe) wizardDepGateOutcome {
 			f.gateCalls++
-			return wizardDepGateOutcome{Skip: true}
+			return wizardDepGateOutcome{}
 		}
 		_, rc := runInitWizard(f.request(wizardScript(enterText(),
 			tui.KeyEnter, tui.KeyEnter,
@@ -932,7 +912,7 @@ func TestInitWizardDepGateSeam(t *testing.T) {
 	t.Run("a recipe without cli_deps never reaches the seam", func(t *testing.T) {
 		f := newWizardFixture(t)
 		f.seedRecipe(t, "plain-cfg", wizardRecipeBody("plain-cfg", "1.0.0", "no deps")+wizardBaseBranchField)
-		f.depGate = func(string) wizardDepGateOutcome {
+		f.depGate = func(*schema.Recipe) wizardDepGateOutcome {
 			f.gateCalls++
 			return wizardDepGateOutcome{Proceed: true}
 		}
@@ -952,20 +932,6 @@ func TestInitWizardDepGateSeam(t *testing.T) {
 			t.Errorf("the per-recipe confirm was skipped:\n%s", f.stdout.String())
 		}
 	})
-}
-
-// TestRunLegacyInitDepGateNeedsATerminal pins the production seam's refusal:
-// without file-backed TTY streams it answers the wizard's rc 3 with an error
-// instead of spawning the legacy script over pipes.
-func TestRunLegacyInitDepGateNeedsATerminal(t *testing.T) {
-	f := newWizardFixture(t)
-	out := runLegacyInitDepGate(initWizardRequest{
-		Target: f.target, Name: "demo", Home: f.home,
-		Stdin: strings.NewReader(""), Stdout: &f.stdout, Stderr: &f.stderr,
-	}, nil, "cfg-one", filepath.Join(f.home, "catalog", "recipes"))
-	if out.Rc == 0 || out.Err == nil {
-		t.Errorf("gate over pipes = %+v, want a non-zero rc and an error", out)
-	}
 }
 
 // TestInitWizardEmptyCatalogSkipsTheRecipesPrompt pins S14's "skipped entirely
