@@ -57,16 +57,17 @@ type route struct {
 	invokedAs string // AI_SPECS_INVOKED_AS label (add-dep and skills add, U5c)
 }
 
-// shims maps the verbs the Go dispatcher still forwards to their legacy lib
-// script (strangler pattern). U6e EMPTIED it and U7-2 ported its last recipe
-// consumer (`init` now lives in internal/recipe), so every arm of
-// lib/recipe.sh and all of lib/recipe-config.sh this dispatcher reaches has a
-// native route. The map and the mechanism stay: runShim still execs legacy
-// scripts (init.go's AI_SPECS_INIT_TUI_PY whole-verb hatch), and the CLI-dep
-// gate seam keeps exec'ing its python3 driver directly — the strangler's exec
-// path is alive even though no verb resolves through the map anymore.
-// add-dep and skills have been out of it since GO-20 U5c.
-var shims = map[string]route{}
+// NO SHIM MAP (U7-1 T4): the strangler's verb→script table is gone. U6e emptied
+// it — every arm of lib/recipe.sh and lib/recipe-config.sh this dispatcher
+// reached had a native route — and U7-2 ported the last verb that ever resolved
+// through it, so no verb is left for the map to route: keeping an always-empty
+// map and a lookup that can never succeed was dead code, not a mechanism.
+//
+// The EXEC path stays, because one consumer is still alive: runShim + routeShim
+// serve init.go's AI_SPECS_INIT_TUI_PY whole-verb hatch, which leaves with U2's
+// launcher flip. Add-dep and skills have had native routes since GO-20 U5c, the
+// CLI-dep gate stopped exec'ing anything in U7-1 T3, and `recipe init` became
+// native in U7-2.
 
 // native maps the native verbs and their aliases to their route kind.
 // Like the legacy dispatcher, version and help ignore any extra arguments
@@ -158,9 +159,6 @@ func Route(args []string) route {
 			}
 		}
 		return route{kind: routeRecipe}
-	}
-	if r, ok := shims[args[0]]; ok {
-		return r
 	}
 	return route{kind: routeUnknown}
 }

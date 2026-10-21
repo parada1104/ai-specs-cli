@@ -8,18 +8,12 @@ import (
 	"testing"
 )
 
-// TestRouteTableCoversEveryVerb checks the full dispatcher table: the shim
-// map (EMPTY since U6e), the native verbs and their aliases, mirroring the
-// case statement of bin/ai-specs. The map stays declared with its lookup —
-// the strangler mechanism itself — because runShim still execs legacy
-// scripts directly (the init TUI hatch and the dep-gate seams' python3 -c),
-// but no top-level verb resolves through the map anymore. `recipe init` is
-// native since GO-20 U7-2.
+// TestRouteTableCoversEveryVerb checks the full dispatcher table — the native
+// verbs and their aliases, mirroring the case statement of bin/ai-specs — plus
+// the one shim route that survives: init.go's AI_SPECS_INIT_TUI_PY hatch (U2's
+// flip). The verb→script MAP is gone (U7-1 T4) and so is `recipe init`'s shim
+// route (U7-2); the exec path itself is not.
 func TestRouteTableCoversEveryVerb(t *testing.T) {
-	if len(shims) != 0 {
-		t.Errorf("shims map = %v, want EMPTY — U6e retires every verb-level shim", shims)
-	}
-
 	natives := map[string]routeKind{
 		"configure-recipes": routeConfigureRecipes,
 		"refresh-bundled":   routeRefreshBundled,
