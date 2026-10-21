@@ -12,7 +12,10 @@ import (
 )
 
 // runShim execs the legacy implementation for an unported verb — the
-// strangler mechanism. It mirrors bin/ai-specs:
+// strangler's exec path. Two consumers are left (U7-1 T4): `recipe init`
+// (recipe-init.py, U7's second item) and init.go's AI_SPECS_INIT_TUI_PY
+// whole-verb hatch (U2's flip). No verb resolves through a map any more. It
+// mirrors bin/ai-specs:
 //
 //	bash "$LIB_DIR/<script>" "$@"   # args after the verb shift
 //

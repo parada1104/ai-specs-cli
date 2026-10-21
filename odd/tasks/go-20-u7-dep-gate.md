@@ -60,8 +60,8 @@ Unit document for **U7 item 1** of the program (`odd/tasks/go-20-python-exit.md`
 | --- | --- | --- | --- |
 | T1 | `internal/provider.BuildReleasePlan` + `internal/deps` (the probe promoted, plans resolving, panel rendering); doctor delegates | S3-S7, S9 | `e72a3a4`, `f4a734e` |
 | T2 | `internal/provider`'s install half: download, SHA256SUMS verification, extraction, managed receipt | S10-S12 | `143722f` |
-| T3 | `deps.Gate` (panel, per-plan offer, install, recheck, `Configure anyway?`) wired into init's wizard, `configure-recipes` and `recipe add`; S37's seam and driver deleted | S1, S4, S6 | — |
-| T4 | Verify `runShim`/`routeShim`/`shims` are unreachable and delete them; update the program doc's Progress row | S1 | — |
+| T3 | `deps.Gate` (panel, per-plan offer, install, recheck, `Configure anyway?`) wired into init's wizard, `configure-recipes` and `recipe add`; S37's seam and driver deleted | S1, S4, S6 | `internal/deps/gate.go` + `internal/cli/depgate.go` |
+| T4 | Verify `runShim`/`routeShim`/`shims` are unreachable and delete them; update the program doc's Progress row | S1 | see the T4 section: the map went, the exec path stayed (two named consumers) |
 
 ## T1 — verification
 
@@ -92,6 +92,45 @@ this suite's green: `/usr/bin/python3` is 3.9 and resurrects an unrelated Unicod
   recheck, `Configure anyway?`) wired into init's wizard, `configure-recipes` and `recipe add`, with
   S37's seam and driver deleted, and **T4** the dead-code check (`runShim`/`routeShim`/`shims`) plus the
   program doc's Progress row.
+
+## T4 — the dead-code check, and the correction the check forced
+
+The row said: "Verify `runShim`/`routeShim`/`shims` are unreachable and delete them." Two of the
+three are NOT unreachable, and saying otherwise would have been the lie S8 warns about:
+
+| name | verdict | consumer |
+| --- | --- | --- |
+| `shims` (the verb→script map) | **unreachable, deleted** | nothing: U6e left it empty, so `Route`'s lookup could never succeed |
+| `routeShim` (the route kind) | **alive, kept** | `recipe init` (`Route`'s own switch) and init.go's `AI_SPECS_INIT_TUI_PY` hatch |
+| `runShim` (the exec path) | **alive, kept** | the same two: `recipe init` → `lib/recipe-init.sh`, and the hatch → `lib/init.sh` |
+
+So T4 retired the map and its lookup, and documented the exec path instead of deleting it: it leaves
+when `recipe-init.py` is ported (program item 2) and when U2's launcher flip removes the hatch. What
+T4 does change is the reason `runShim` exists — from "legacy verbs might still need it" (a map) to
+two named, owned calls.
+
+## T3/T4 — verification
+
+Gates, run from `.worktrees/go-20-u7-t3-gate` with `PATH=/tmp/pybin:$PATH` (the interpreter decides
+this suite's green).
+
+| gate | command | result |
+| --- | --- | --- |
+| build | `go build ./...` | exit 0 |
+| Go suite (through the real entry) | `./tests/validate.sh` → `go test ./cmd/... ./internal/...` + the gate binary's packages | 31 packages `ok`, 0 `FAIL` |
+| formatting | `gofmt -l internal/` | empty |
+| vet | `go vet ./internal/cli/ ./internal/deps/` | exit 0 |
+| manifest untouched | `git diff --quiet -- ai-specs/ai-specs.toml` | exit 0 |
+| gate contract | `go test ./internal/deps/ -run TestGate` | unit matrix + 13 differential cases, value for value |
+| Python suites | `python3 -m unittest discover -s tests -p 'test_*.py'` | `Ran 2405 tests … OK (skipped=165)` — this run's own count, quoted not asserted (program S5) |
+| differential parity harness | `tests/parity/run.py` | `gate-absent failing=0, gate-present failing=0 — PASS` |
+| dead code | `grep -rn "\bshims\b" --include=*.go .` | no reference outside the deleted declaration |
+
+RED, in the two forms this unit allows: the compile RED (`undefined: Gate`, `undefined:
+GateRequest`, `undefined: runPackageCommand`) against tests written first, and the mutation RED that
+makes the byte assertions mean something (L14). T3 changes user-visible output in one place only —
+the two frozen confirm messages and every panel/offer line now come from Go — so the parity corpus
+(`tests/parity/run.py`) is part of the gate, not an extra.
 
 ## Log
 
@@ -167,6 +206,80 @@ this suite's green: `/usr/bin/python3` is 3.9 and resurrects an unrelated Unicod
   METHOD note for the next delegation: say "write the tests first" AND "if you write the implementation
   first, reconstruct RED by mutation and report both mutations" — the writer reported the gap honestly,
   which is the only reason it was cheap to close.
+- L12 — T3 design, decided before the code. The gate is `internal/deps.Gate` (`gate.go`), the
+  legacy function arm by arm: probe → panel → (TTY only) one plan per missing required dep → offer
+  each plan → recheck → panel → `N required CLI tool(s) missing. Configure anyway?`. Two things are
+  deliberately NOT in it: nothing re-reads the recipe (the caller already holds the parsed
+  `*schema.Recipe`; the Python re-read existed only because the seam was a separate process) and
+  nothing bootstraps a vendor tree (the port has no Python packages to install). Every outside
+  world is an injected seam — `Probe`, `Prompt`, `Run`, `InstallProvider`, `Suspend`/`Resume` — which
+  is what makes the sequencing and the bytes pinnable in-process. The CLI half is
+  `internal/cli/depgate.go`: two thin adapters, because the three callers differ only in who owns
+  the raw-mode window (`init`'s wizard holds it and the gate suspends it around every install child;
+  `recipe add` and `configure-recipes` open one window for the gate's own questions and close it on
+  the way out).
+- L13 — T3 retires the seam's whole vocabulary, not just its driver. `wizardDepGate` now takes the
+  recipe the caller already loaded (`func(*schema.Recipe)`), and `wizardDepGateOutcome` is
+  `{Proceed, Err}`: **rc 3 and rc 11 are gone with the driver that produced them** — 3 was Python's
+  `_ensure_deps` refusing to run without rich/questionary, 11 was the driver's own `read_recipe`
+  failure, and the native gate has neither a vendor tree to bootstrap nor a second read to fail.
+  The three call sites lose their dead `Rc == 3` arms and their frozen lines
+  (`  ! CLI dependency check skipped: interactive dependencies are unavailable` in `recipe add`,
+  the loop's silent exit 3, the wizard's bare rc-3 return); each keeps its own `Err` wording
+  verbatim, and the two surviving answers are Proceed (configure) and !Proceed (the declined
+  confirm, which every caller already worded). The one arm with no Python analogue is
+  `Resume` failing after a child: a terminal that cannot go back to raw mode is an error, because
+  nothing after it can prompt.
+- L14 — T3's RED, and the mutation that makes it honest. The first RED is the compile one
+  (`undefined: Gate`, `undefined: GateRequest`, `undefined: runPackageCommand` against the tests
+  written first). Byte-level RED cannot come from writing the port *after* its tests in one pass, so
+  it was reconstructed by mutation and it bit in all three directions: the guidance arrow turned
+  into a dash failed `01-two-missing-declined`; the panel's status precedence inverted failed the
+  same case; skipping the recheck after the offer failed that case and two unit tests
+  (`TestGateInstallsPackagePlan`, `TestGateProviderPlanDescribesThenInstalls`) that read the second
+  panel. Method note for the next unit: same lesson as T2's, one level up — "write the tests first"
+  buys the compile RED, and the mutations buy the rest.
+- L15 — T3's contract test is a differential that drives the REAL `_dep_gate`:
+  `internal/deps/testdata/gate_driver.py` fakes only the outside world, at the seams the frozen
+  module itself uses — `config_wizard._dep_check.check_cli_deps` (the probe, scripted per case),
+  `questionary` in `sys.modules` (every `confirm(...).ask()` records its message and answers from the
+  script), `dep_install`'s `platform.system`/`shutil.which`/`subprocess.run` and its
+  `_load_provider_install` (which keeps the REAL `provider_install` module, because
+  `resolve_install_plan` calls `build_release_plan` on it — only the network install is scripted) —
+  and `sys.stdin/stdout.isatty` for the TTY guard. 13 cases compare the verdict, both streams, the
+  confirm messages in order and the commands run, value for value. Two fixture rules worth
+  recording: the driver sets `COLUMNS=1000` because rich wraps the console at the terminal width
+  (the port emits one unwrapped line per result — recorded as a deviation below, not silently), and
+  the Python side had to be given a `StringIO` subclass whose `isatty()` returns the scripted answer,
+  because `redirect_stdout` REPLACES `sys.stdout` and `_dep_gate` asks the replacement.
+- L16 — T3 documented deviations (the ADR 0002 class, pinned where reachable): rich wraps a long
+  panel line at the terminal width and the port does not (one line per result); the package arm's
+  `OSError` wording is Go's (`exec` error text) where Python narrated its own, while
+  `TimeoutExpired`'s message IS reproduced because `_dep_gate` renders it inside the frozen
+  `install offer skipped:`/`failed:` lines; and a prompt that cannot be answered (EOF, interrupt)
+  is a decline, following the port's existing questionary-`None` precedent rather than inventing an
+  error.
+- L19 — Slice boundary and size exceptions (L5's rule restated, because the commit tool measures
+  against `origin/main` and this branch sits on a stacked epic): the boundary is the EPIC TIP
+  `ff5e81b`, never `origin/main`. Against it this unit is 15 files, +1766/−349, in five commits:
+  `gate.go`+unit matrix (862, a new package plus the matrix that grades it — splitting the tests out
+  would leave the behaviour ungraded in its own commit), the differential+driver (519, a pure
+  contract-test commit), the CLI wiring (570 across 6 files, of which 319 are deletions — one
+  retirement, not several), T4's dead code (49), and the docs (115). T2's precedent applies: a
+  brand-new package whose fixture suite shares builders reads better whole than hand-carved.
+- L18 — The full gate on the final tree: `./tests/validate.sh` **exit 0** — 31 Go packages `ok`,
+  `parity summary: gate-absent failing=0, gate-present failing=0 — PASS`, `Ran 2405 tests in
+  1577.699s … OK (skipped=165)`, `gofmt -l` empty, manifest diff empty. Time note for the next
+  session: the Python suite alone needs ~26 minutes on this machine, so a shorter timeout is not a
+  hang — two 8- and 25-minute timeouts were spent learning that before the run was given a full hour.
+- L17 — T4's premise was half wrong, recorded rather than quietly narrowed. `runShim` and
+  `routeShim` are LIVE: `recipe init` routes to `lib/recipe-init.sh` through them, and init.go's
+  `AI_SPECS_INIT_TUI_PY` hatch hands the whole verb to `lib/init.sh` the same way. Only the
+  verb→script map was dead (U6e left it empty, so `Route`'s lookup could never fire), and only it
+  was deleted, along with the test assertion that read it. The two survivors now carry a comment
+  naming their consumers and the unit that retires each: `recipe-init.py` is U7's second item, the
+  hatch leaves with U2's launcher flip. Recorded because the difference between "the mechanism is
+  dead" and "the mechanism is down to two callers" is exactly what a program forgets.
 - L10 — The review on the corrected candidate (`review-aa5e96c9b4183ea7`) ended in state **`escalated`**,
   and the escalation is the benign kind: the provider recorded `R3-001` as a **non-candidate-causal,
   downgraded** finding — `downgraded_causal_findings: [{finding_id: R3-001, reason: unverified_location}]`
@@ -178,3 +291,18 @@ this suite's green: `/usr/bin/python3` is 3.9 and resurrects an unrelated Unicod
   unit produced a FALSE deterministic BLOCKER from the same class of misread (R3-COMPILE-UNUSED-TOML,
   then R3-001), and the compiler was the tie-breaker both times. Rule: when a reviewer's claim is
   "this does not compile", run the compiler before believing or correcting anything.
+- L20 — Native review `review-172f8ed806b45d1b` (3 lenses: risk, resilience, reliability) reached the
+  provider refuter and came back **`correction_required`** with one candidate-caused deterministic
+  BLOCKER, and this one is real — unlike L10's homonym. `R3-001` @ `internal/cli/recipe.go:474`:
+  `gateOutcome` reports a failure as `{Err: err}` with `Proceed` still false, so the `!outcome.Proceed`
+  arm authored first shadowed the `outcome.Err != nil` arm, leaving it unreachable. Consequence: a gate
+  error (terminal could not be opened, unusable stdin) was worded as a decline — `Skipped <id> (missing
+  CLI deps)` on stderr with config fields, the guidance block without — and the command carried on as if
+  the gate had answered. The `configure-recipes` call site (:2917) always had the correct order, which is
+  why only one line was named: the defect was per-call-site, not per-seam. RED first (both legs, exact
+  bytes: the decline's `Skipped` line and the decline's guidance block), then the arm swap, then GREEN.
+  Two lessons. (1) A shared outcome type that encodes failure as "false plus an error" makes arm order
+  load-bearing; the failing test has to exercise the CALL SITE, not the seam — `depgate_test.go` pinned
+  `recipeDepGate` in isolation and stayed green through the bug. (2) The review's own finding ids repeat
+  across cycles (`R3-001` twice on this unit, opposite verdicts), so the id is not evidence; the
+  compiler/test is.

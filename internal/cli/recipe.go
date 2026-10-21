@@ -167,8 +167,9 @@ func runRecipeList(args []string, home, exePath string, stdout, stderr io.Writer
 // now?" confirm (U6d-2's runConfigWizard on internal/tui), the CLI dep gate
 // at the script's TWO positions (:258's own gate before the guidance block,
 // and the gate inside configure_selected_recipes before the wizard — both
-// S37's python3 driver seam, U6e's dep-gate decision recorded in L10), and
-// the env offer at :269 through sync.OfferHarnessEnv (U4d-2). lib/recipe.sh
+// NATIVE since U7-1 T3: internal/deps.Gate through depgate.go's
+// recipeDepGate adapter, which opens its own raw-mode window per question),
+// and the env offer at :269 through sync.OfferHarnessEnv (U4d-2). lib/recipe.sh
 // never runs for this verb anymore — pinned by
 // TestRecipeAddTailIsNativeOnATerminal.
 //
@@ -177,8 +178,8 @@ func runRecipeList(args []string, home, exePath string, stdout, stderr io.Writer
 // counterpart and does not need one: the native wizard's only TUI dependency
 // is internal/tui itself, which cannot be missing from the running binary,
 // so nothing is vendored and no run is refused for Python packages (recorded
-// in L9; the dep-gate driver's OWN late vendor answer inherits the same
-// rule — L10). What retires for this route (S9): the BINARY's use of
+// in L9; the native gate has no vendor tree, so S37's rc-3 arm died with the
+// driver — L10). What retires for this route (S9): the BINARY's use of
 // recipe-add.sh/recipe-add.py on EVERY run, TTY included — nothing in this
 // verb execs a legacy file anymore, and physical deletion stays U7/U8.
 //
@@ -218,8 +219,8 @@ func runRecipeAdd(args []string, home string, stdin io.Reader, stdout, stderr io
 
 // runRecipeAddFlow is runRecipeAdd with the TTY tail's seams injected — the
 // runInit/openInitWizardKeys pattern: the dispatcher keeps calling
-// runRecipeAdd, which supplies the PRODUCTION seams (the S37 dep-gate driver,
-// openRecipeWizardPrompts over the raw-mode terminal, and the
+// runRecipeAdd, which supplies the PRODUCTION seams (recipeDepGate over the
+// native gate, openRecipeWizardPrompts over the raw-mode terminal, and the
 // sync.OfferHarnessEnv offer), while a test scripts the gate answers, the
 // wizard's answers and the env offer instead of driving a PTY.
 func runRecipeAddFlow(args []string, home string, stdin io.Reader, stdout, stderr io.Writer, exePath string, ttyNow bool, seams recipeTailSeams) int {
@@ -461,21 +462,19 @@ func runRecipeAddVerb(target, recipeID, home, exePath string, stdin io.Reader, s
 		// tail itself when there are no config fields (a decline prints the
 		// guidance block), and configure_selected_recipes gates internally
 		// when there are (a decline prints ITS frozen Skipped line on stderr).
-		// An unreadable gate words each call site's own frozen catch; the
-		// driver's vendor rc 3 degrades to the dependency-skip framing (L10:
-		// recipe add never refuses a run for Python packages — L9 deviation
-		// 1 — so there is no pre-write ensure_deps for it to answer at).
+		// internal/deps.Gate owns both; an erroring gate (its terminal could
+		// not be opened) words each call site's own frozen catch. The rc-3
+		// arm (the driver's vendor bootstrap) and the rc-11 arm (the driver's
+		// own read failure) died with the driver: the native gate has neither
+		// a vendor tree to refuse over nor a second read to fail.
 		configureNow := hasConfig
 		if len(loaded.CliDeps) > 0 {
-			outcome := seams.depGate(recipeID)
+			outcome := seams.depGate(loaded)
+			// The error arm goes FIRST: gateOutcome reports a failure with
+			// Proceed still false, so testing !Proceed first would word every
+			// gate error as a decline and report success the gate never
+			// granted.
 			switch {
-			case outcome.Skip:
-				if hasConfig {
-					fmt.Fprintf(stderr, "Skipped %s (missing CLI deps)\n", recipeID)
-					configureNow = false
-				} else {
-					recipePrintCLIDepGuidance(loaded, stdout)
-				}
 			case outcome.Err != nil:
 				if hasConfig {
 					// recipe-add.py:266-267 wraps configure_selected_recipes in
@@ -486,12 +485,13 @@ func runRecipeAddVerb(target, recipeID, home, exePath string, stdin io.Reader, s
 					// recipe-add.py:76's _run_cli_dep_gate catch — its own line.
 					fmt.Fprintf(stdout, "  ! CLI dependency check skipped: %v\n", outcome.Err)
 				}
-			case outcome.Rc == 3:
-				fmt.Fprintln(stdout, "  ! CLI dependency check skipped: interactive dependencies are unavailable")
-				configureNow = false
 			case !outcome.Proceed:
-				// rc 11: the driver already printed its own read-failure line.
-				configureNow = false
+				if hasConfig {
+					fmt.Fprintf(stderr, "Skipped %s (missing CLI deps)\n", recipeID)
+					configureNow = false
+				} else {
+					recipePrintCLIDepGuidance(loaded, stdout)
+				}
 			}
 		}
 
@@ -2657,24 +2657,21 @@ func runRecipeConfigure(args []string, home string, stdout, stderr io.Writer) in
 // U6 slicing row owns it), so that wrapper stays the brief's legacy route
 // while recipe.sh itself retires from the binary (S9).
 //
-// THE CLI-DEP GATE (U4b-2's S37 seam, goal 4): DECISION (b) — keep the same
-// named seam, runLegacyInitDepGate's python3 -c driver, now used by THREE
-// callers (init's wizard, this loop, recipe add's tail) and now OWNED BY U7,
-// which must port `_dep_gate` plus dep_install's OFFER half (the brew/apt
-// plans, the consent prompt, the network install through provider_install)
-// or retire the gate with the scripts (L10). Porting it inside this slice
-// would mean ~1 100 lines across surfaces outside its edit edges
-// (internal/doctor's dep probe is unexported; internal/provider carries only
-// the read-only resolution half), while the check half already exists. The
-// gate is not removed from any route: every path Python gated reaches the
-// driver now.
+// THE CLI-DEP GATE (U4b-2's S37 seam, goal 4): NATIVE since U7-1 T3.
+// internal/deps.Gate owns `_dep_gate` plus dep_install's OFFER half (the
+// brew/apt plans, the consent prompt, the recheck, the provider install),
+// and depgate.go's recipeDepGate adapter wires it to all THREE callers
+// (init's wizard, this loop, recipe add's tail) — S37's python3 driver and
+// its initwizard.go entry point are gone. The gate is therefore not removed
+// from any route: every path Python gated reaches it, in-process.
 //
 // NO ensure_deps (L9 deviation 1's class): nothing before the first gated
 // recipe needs Python in this port — the wizard is internal/tui, the env
-// offer is internal/sync, and the driver runs its OWN vendor bootstrap at the
-// first gated recipe (S37's recorded timing). config_wizard.main's
+// offer is internal/sync, and the gate is internal/deps. config_wizard.main's
 // ensure_deps would exit 3 silently when rich/questionary are missing; this
-// port answers 3 the same way only when a gate actually fires (rc 3 below).
+// port had no such precondition to inherit, and S37's rc-3 answer (the
+// driver's own vendor bootstrap) died with the driver: the native gate never
+// refuses a run over Python packages, so this loop has no rc-3 arm either.
 //
 // Documented deviations (the S12/ADR 0002 class, pinned by tests): a `cd`
 // failure keeps exit 1 and the `cd: <path>: <reason>` shape but drops bash's
@@ -2747,9 +2744,12 @@ type recipeTailSeams struct {
 	// (production openRecipeWizardPrompts); `recipe add`'s confirm uses the
 	// same opener, opening and closing per prompt like questionary does.
 	openWizard recipeAddWizardOpener
-	// depGate runs the CLI-dep gate for one recipe (production:
-	// runLegacyInitDepGate — S37's python3 driver, U7-owned decision in L10).
-	depGate func(recipeID string) wizardDepGateOutcome
+	// depGate runs the CLI-dep gate for one already-read recipe (production:
+	// recipeDepGate over internal/deps.Gate — the native gate, U7-1 T3). The
+	// recipe travels by value because the caller has already parsed it; the
+	// old seam took an id only because it was a separate process that had to
+	// re-read the catalog.
+	depGate func(recipe *schema.Recipe) wizardDepGateOutcome
 	// envOffer runs the harness env offer against the project root, returning
 	// the error its caller words (production: openInitWizardKeys +
 	// sync.OfferHarnessEnv — which soft-fails internally, so the error only
@@ -2763,15 +2763,12 @@ type recipeTailSeams struct {
 func productionRecipeTailSeams(home string, stdin io.Reader, stdout, stderr io.Writer) recipeTailSeams {
 	return recipeTailSeams{
 		openWizard: openRecipeWizardPrompts,
-		depGate: func(recipeID string) wizardDepGateOutcome {
-			// keys=nil: both callers run the gate with NO raw-mode window
-			// open (`recipe add` closes the confirm's window first,
-			// configure-recipes opens per recipe), so there is nothing to
-			// suspend around the child — it inherits a normal terminal,
-			// exactly like Python's questionary between prompts.
-			return runLegacyInitDepGate(initWizardRequest{
-				Home: home, Stdin: stdin, Stdout: stdout, Stderr: stderr,
-			}, nil, recipeID, recipe.CatalogDir(home))
+		depGate: func(loaded *schema.Recipe) wizardDepGateOutcome {
+			// No raw-mode window is open at either call site (`recipe add`
+			// closes the confirm's first, this loop opens per recipe), so
+			// recipeDepGate opens ONE for the gate's own questions and closes
+			// it before returning — questionary's per-prompt takeover.
+			return recipeDepGate(home, stdin, stdout, stderr, loaded)
 		},
 		envOffer: func(root string) (err error) {
 			defer func() {
@@ -2917,25 +2914,17 @@ func runConfigureRecipesFlow(args []string, home string, stdin io.Reader, stdout
 			continue
 		}
 		// The gate BEFORE the fields check — configure_selected_recipes'
-		// order, even for a recipe that declares no config at all (S37).
+		// order, even for a recipe that declares no config at all.
 		if len(loaded.CliDeps) > 0 {
-			outcome := seams.depGate(rid)
+			outcome := seams.depGate(loaded)
 			switch {
 			case outcome.Err != nil:
 				// configure_selected_recipes is NOT wrapped in main (Python:
 				// traceback, exit 1) — our own line, same code.
 				fmt.Fprintf(stderr, "ERROR: configure-recipes failed: %v\n", outcome.Err)
 				return 1
-			case outcome.Rc == 3:
-				// _ensure_deps' own answer at the first gated recipe — main's
-				// ensure_deps position, shifted (S37's recorded timing) —
-				// silent exit 3 like Python's non-TTY vendor failure.
-				return 3
-			case outcome.Skip:
-				fmt.Fprintf(stderr, "Skipped %s (missing CLI deps)\n", rid)
-				continue
 			case !outcome.Proceed:
-				// rc 11: the driver already printed its own read-failure line.
+				fmt.Fprintf(stderr, "Skipped %s (missing CLI deps)\n", rid)
 				continue
 			}
 		}
@@ -3024,9 +3013,9 @@ var depGuidanceOnly = map[string]bool{"npx": true}
 // `_print_cli_dep_guidance`'s one line: guidance-only or unknown binaries
 // fall to the install_url (or `install '<binary>' manually`), a known formula
 // renders `brew install <formula>` when brew is on PATH (Darwin/Linux) or
-// `sudo apt-get install -y <pkg>` on Linux when apt-get is. The OFFER half
-// (command execution, the GitHub-release install) is the S37 driver's side
-// and stays legacy — L10's dep-gate decision.
+// `sudo apt-get install -y <pkg>` on Linux when apt-get is. This is the
+// GUIDANCE half only: since U7-1 T3 the OFFER half (command execution, the
+// GitHub-release install) lives in internal/deps, which owns it natively.
 func depGuidanceDisplay(binary, installURL string) string {
 	if depGuidanceOnly[binary] {
 		if installURL != "" {

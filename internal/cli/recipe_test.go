@@ -37,6 +37,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/ai-specs/internal/schema"
 )
 
 // recipeSeedCatalog seeds real fixture recipes into home/catalog/recipes/<id>
@@ -617,16 +619,17 @@ const (
 	// env_scaffold.offer_harness_env — the leg U6e wires to sync.OfferHarnessEnv.
 	recipeAddMcpEnvTail = "\n[[provides.mcp]]\nid = \"m1\"\ncommand = \"m1\"\nenv = { M1_TOKEN = \"$M1_TOKEN\" }\n"
 	// recipeAddCliDepTail makes recipe.cli_deps non-empty: with config fields
-	// the tail's wizard leg runs config_wizard._dep_gate first — the gate U6e
-	// keeps on the S37 seam.
+	// the tail's wizard leg runs the native CLI-dep gate first — internal/deps
+	// through depgate.go's adapter, U7-1 T3.
 	recipeAddCliDepTail = "\n[deps]\ncli = [{ binary = \"jinn\", purpose = \"provider CLI\" }]\n"
 )
 
 // TestRecipeAddTailIsNativeOnATerminal pins the FLIPPED TTY tail (U6e, T3b
 // second half): off the TTY the port owns the verb end to end, unchanged. On
 // a TTY there is NO delegation left — U6e wires recipe-add.py:247-275's two
-// remaining legs onto their seams, the CLI dep gate (S37's python3 driver,
-// the runLegacyInitDepGate seam) and the env offer (sync.OfferHarnessEnv),
+// remaining legs onto their seams, the CLI dep gate (native since U7-1 T3:
+// recipeDepGate over internal/deps.Gate) and the env offer
+// (sync.OfferHarnessEnv),
 // and the wizard runs natively — so lib/recipe.sh never executes for any
 // recipe anymore. Every subtest pins legacyRan() FALSE, the native manifest
 // result and the seam call in the script's own order: blank line →
@@ -877,8 +880,8 @@ func TestRecipeAddTailIsNativeOnATerminal(t *testing.T) {
 			openWizard: func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
 				return p, func() {}, 0
 			},
-			depGate: func(id string) wizardDepGateOutcome {
-				gated = append(gated, id)
+			depGate: func(loaded *schema.Recipe) wizardDepGateOutcome {
+				gated = append(gated, loaded.ID)
 				return wizardDepGateOutcome{Proceed: true}
 			},
 		}
@@ -910,7 +913,7 @@ func TestRecipeAddTailIsNativeOnATerminal(t *testing.T) {
 			openWizard: func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
 				return p, func() {}, 0
 			},
-			depGate: func(string) wizardDepGateOutcome { return wizardDepGateOutcome{Skip: true} },
+			depGate: func(loaded *schema.Recipe) wizardDepGateOutcome { return wizardDepGateOutcome{} },
 		}
 		var stdout, stderr bytes.Buffer
 		code := runRecipeAddFlow([]string{"recipe", "add", "cfgdep", project}, home,
@@ -932,37 +935,86 @@ func TestRecipeAddTailIsNativeOnATerminal(t *testing.T) {
 		}
 	})
 
-	// The driver's vendor answer rc 3 (S37's recorded late bootstrap) has no
-	// legacy position inside the tail — recipe-add.py answered its vendor
-	// problems at a pre-write ensure_deps this port deliberately does not
-	// have (L9 deviation 1: no run is refused for Python packages). The tail
-	// words recipe-add.py's own catch framing and moves on.
-	t.Run("dep gate vendor decline degrades to the catch line", func(t *testing.T) {
-		project, _ := setup(t)
-		p := &scriptedWizardPrompts{t: t}
-		p.confirmQ = []scriptedConfirm{{answer: true, ok: true}}
-		seams := recipeTailSeams{
-			openWizard: func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
-				return p, func() {}, 0
-			},
-			depGate: func(string) wizardDepGateOutcome { return wizardDepGateOutcome{Rc: 3} },
-		}
-		var stdout, stderr bytes.Buffer
-		code := runRecipeAddFlow([]string{"recipe", "add", "cfgdep", project}, home,
-			strings.NewReader(""), &stdout, &stderr, "", true, seams)
-		if code != 0 {
-			t.Fatalf("exit = %d, want 0 (no run refused for Python packages); stderr = %q", code, stderr.String())
-		}
-		if legacyRan() {
-			t.Errorf("the legacy script ran although the vendor decline is handled natively")
-		}
-		if !strings.Contains(stdout.String(),
-			"  ! CLI dependency check skipped: interactive dependencies are unavailable\n") {
-			t.Errorf("stdout = %q, want the dependency-skip catch line", stdout.String())
-		}
-		if len(p.textQ) != 0 || len(p.transcript) != 1 {
-			t.Errorf("the wizard must not run when the gate could not answer: transcript = %#v", p.transcript)
-		}
+	// A gate ERROR is not a decline: gateOutcome reports it with Proceed still
+	// false, so the error arm must be tested FIRST — otherwise the decline path
+	// swallows it and the command reports a skip where it should word its own
+	// catch (review R3-001).
+	t.Run("dep gate error keeps its own catch instead of the decline path", func(t *testing.T) {
+		boom := errors.New("open /dev/tty: no such device or address")
+
+		t.Run("with config fields", func(t *testing.T) {
+			project, manifest := setup(t)
+			p := &scriptedWizardPrompts{t: t}
+			p.confirmQ = []scriptedConfirm{{answer: true, ok: true}}
+			seams := recipeTailSeams{
+				openWizard: func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
+					return p, func() {}, 0
+				},
+				depGate: func(loaded *schema.Recipe) wizardDepGateOutcome {
+					return wizardDepGateOutcome{Err: boom}
+				},
+			}
+			var stdout, stderr bytes.Buffer
+			code := runRecipeAddFlow([]string{"recipe", "add", "cfgdep", project}, home,
+				strings.NewReader(""), &stdout, &stderr, "", true, seams)
+			if code != 0 {
+				t.Fatalf("exit = %d, want 0 (configure_selected_recipes' except); stderr = %q", code, stderr.String())
+			}
+			if strings.Contains(stderr.String(), "Skipped cfgdep (missing CLI deps)") {
+				t.Errorf("a gate error must not be worded as a decline: stderr = %q", stderr.String())
+			}
+			if !strings.Contains(stdout.String(), "  ! could not open the configuration wizard\n") {
+				t.Errorf("stdout = %q, want recipe-add.py:266-267's frozen catch line", stdout.String())
+			}
+			if len(p.textQ) != 0 || len(p.transcript) != 1 {
+				t.Errorf("the wizard must not run after a gate error: transcript = %#v", p.transcript)
+			}
+			if strings.Contains(readManifest(t, manifest), `board_id = "B-7"`) {
+				t.Errorf("a gate error must leave the placeholders unwritten")
+			}
+		})
+
+		t.Run("without config fields", func(t *testing.T) {
+			project, _ := setup(t)
+			skillsWriteFile(t, filepath.Join(home, "catalog", "recipes", "enverr", "recipe.toml"),
+				"[recipe]\n"+
+					"id = \"enverr\"\n"+
+					"name = \"enverr recipe\"\n"+
+					"description = \"fixture recipe enverr\"\n"+
+					"version = \"1.0.0\"\n"+
+					"\n[deps]\ncli = [{ binary = \"jinn\", purpose = \"provider CLI\" }]\n"+
+					recipeAddMcpEnvTail)
+			p := &scriptedWizardPrompts{t: t}
+			p.confirmQ = []scriptedConfirm{{answer: true, ok: true}}
+			envCalled := false
+			seams := recipeTailSeams{
+				openWizard: func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
+					return p, func() {}, 0
+				},
+				depGate: func(loaded *schema.Recipe) wizardDepGateOutcome {
+					return wizardDepGateOutcome{Err: boom}
+				},
+				envOffer: func(string) error {
+					envCalled = true
+					return nil
+				},
+			}
+			var stdout, stderr bytes.Buffer
+			code := runRecipeAddFlow([]string{"recipe", "add", "enverr", project}, home,
+				strings.NewReader(""), &stdout, &stderr, "", true, seams)
+			if code != 0 {
+				t.Fatalf("exit = %d, want 0; stderr = %q", code, stderr.String())
+			}
+			if want := "  ! CLI dependency check skipped: " + boom.Error() + "\n"; !strings.Contains(stdout.String(), want) {
+				t.Errorf("stdout = %q, want recipe-add.py:76's frozen catch line %q", stdout.String(), want)
+			}
+			if strings.Contains(stdout.String(), "required CLI dependencies are still missing") {
+				t.Errorf("a gate error must not print the decline's guidance block: stdout = %q", stdout.String())
+			}
+			if !envCalled {
+				t.Errorf("the env leg must still run after a gate error (recipe-add.py:269)")
+			}
+		})
 	})
 
 	// recipe-add.py:256-261's OTHER gate position: a recipe with NO config
@@ -986,9 +1038,9 @@ func TestRecipeAddTailIsNativeOnATerminal(t *testing.T) {
 			openWizard: func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
 				return p, func() {}, 0
 			},
-			depGate: func(id string) wizardDepGateOutcome {
-				gated = append(gated, id)
-				return wizardDepGateOutcome{Skip: true}
+			depGate: func(loaded *schema.Recipe) wizardDepGateOutcome {
+				gated = append(gated, loaded.ID)
+				return wizardDepGateOutcome{}
 			},
 			envOffer: func(string) error {
 				envCalled = true
@@ -2569,9 +2621,10 @@ func TestRecipeDispatcherNativeNeedsNoBashOrPython(t *testing.T) {
 
 // configureRecipesLoopSeams is the scripted tail for the loop: a recording
 // dep gate, a wizard opener handing out one shared scripted prompt set, and a
-// recording env offer. The production wiring (runLegacyInitDepGate's python3
-// driver, openRecipeWizardPrompts, sync.OfferHarnessEnv) lives behind the
-// same seams the init wizard and this slice's add tail already use — the loop
+// recording env offer. The production wiring (recipeDepGate over
+// internal/deps.Gate, openRecipeWizardPrompts, sync.OfferHarnessEnv) lives
+// behind the same seams the init wizard and this slice's add tail already
+// use — the loop
 // itself needs a terminal, so it is pinned HERE, never through a PTY.
 type configureRecipesLoopSeams struct {
 	seams       recipeTailSeams
@@ -2591,8 +2644,8 @@ func newConfigureRecipesLoopSeams(t *testing.T) *configureRecipesLoopSeams {
 			c.opened++
 			return c.prompts, func() {}, 0
 		},
-		depGate: func(id string) wizardDepGateOutcome {
-			c.gated = append(c.gated, id)
+		depGate: func(loaded *schema.Recipe) wizardDepGateOutcome {
+			c.gated = append(c.gated, loaded.ID)
 			return c.gateOutcome
 		},
 		envOffer: func(root string) error {
@@ -2808,7 +2861,7 @@ func TestConfigureRecipesFlow(t *testing.T) {
 			"\n[recipes.wired]\nenabled = true\n\n[recipes.wired.config]\nboard_id = \"OLD-GATE\"\n")
 		before := readManifest(t, manifest)
 		c := newConfigureRecipesLoopSeams(t)
-		c.gateOutcome = wizardDepGateOutcome{Skip: true}
+		c.gateOutcome = wizardDepGateOutcome{}
 		code, out, errOut := runFlow(t, project, true, c)
 		if code != 0 {
 			t.Errorf("exit = %d, want 0; stderr = %q", code, errOut)
@@ -2827,26 +2880,6 @@ func TestConfigureRecipesFlow(t *testing.T) {
 		}
 		if got := readManifest(t, manifest); got != before {
 			t.Errorf("a declined gate must leave the manifest untouched:\n got %q\nwant %q", got, before)
-		}
-	})
-
-	// The driver's vendor answer rc 3: config_wizard.main would have died at
-	// ITS ensure_deps with exit 3 and no message of its own (the S37 recorded
-	// timing shift moves that answer to the first gated recipe). Silent exit 3,
-	// no env offer.
-	t.Run("gate vendor decline exits 3 silently", func(t *testing.T) {
-		project, _ := setup(t, initializedManifest+"\n[recipes.wired]\nenabled = true\n")
-		c := newConfigureRecipesLoopSeams(t)
-		c.gateOutcome = wizardDepGateOutcome{Rc: 3}
-		code, out, errOut := runFlow(t, project, true, c)
-		if code != 3 {
-			t.Errorf("exit = %d, want 3 (ensure_deps' own rc)", code)
-		}
-		if out != "" || errOut != "" {
-			t.Errorf("the vendor answer prints nothing: stdout=%q stderr=%q", out, errOut)
-		}
-		if c.opened != 0 || len(c.envRoots) != 0 {
-			t.Errorf("no wizard, no env offer past an rc-3 abort: %+v", c)
 		}
 	})
 
