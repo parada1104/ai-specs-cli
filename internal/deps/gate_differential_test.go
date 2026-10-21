@@ -260,6 +260,8 @@ func TestGateDifferential(t *testing.T) {
 	missingJinna := gateDriverResult{Binary: "jinna", Purpose: "Jinna MCP", Detail: "no managed version",
 		Required: true}
 	presentJinna := gateDriverResult{Binary: "jinna", Purpose: "Jinna MCP", Required: true, OK: true, Found: true}
+	missingCustom := gateDriverResult{Binary: "custom-tool", Purpose: "Custom tool", Detail: "not found on PATH",
+		InstallURL: "https://example.com/custom", Required: true}
 
 	jqDep := gateDriverDep{Binary: "jq", Purpose: "JSON processor", Required: true, InstallURL: "https://example.com/jq"}
 	npxDep := gateDriverDep{Binary: "npx", Purpose: "Node runner", Required: true}
@@ -268,6 +270,8 @@ func TestGateDifferential(t *testing.T) {
 		Installer: "github-release", Repository: provider.Repository, ReleasePolicy: "latest-stable"}
 	badProviderDep := gateDriverDep{Binary: "jinna", Purpose: "Jinna MCP", Required: true,
 		Installer: "github-release", Repository: "evil/repo", ReleasePolicy: "latest-stable"}
+	customDep := gateDriverDep{Binary: "custom-tool", Purpose: "Custom tool", Required: true,
+		InstallURL: "https://example.com/custom"}
 
 	cases := []gateDifferentialCase{
 		{Name: "nothing-missing", TTY: true, Deps: []gateDriverDep{jqDep}, Probe: [][]gateDriverResult{{presentJQ}}},
@@ -298,6 +302,15 @@ func TestGateDifferential(t *testing.T) {
 			Install: gateDriverInstall{ProviderError: "provider download URL is not an allowlisted HTTPS URL"}},
 		{Name: "plan-resolution-aborts-the-batch", TTY: true, Deps: []gateDriverDep{ghDep, badProviderDep},
 			Probe: [][]gateDriverResult{{missingGH, missingJinna}}, Answers: []bool{false}},
+		// T1 (S6): one batch whose plans have DIFFERENT kinds — a github-release
+		// describe+question, a guidance arrow and a package question — emitted in
+		// the probe's own order (jinna, custom-tool, jq: not alphabetical, not
+		// grouped by kind), each arm in that single pass.
+		{Name: "mixed-kind-loop-order", TTY: true, Deps: []gateDriverDep{customDep, jqDep, jinnaDep},
+			Probe:   [][]gateDriverResult{{missingJinna, missingCustom, missingJQ}},
+			Answers: []bool{true, true, false},
+			Which:   []string{"brew"}, System: "darwin",
+			Install: gateDriverInstall{Verified: true, Version: "1.4.2"}},
 		{Name: "off-tty", TTY: false, Deps: []gateDriverDep{jqDep},
 			Probe: [][]gateDriverResult{{missingJQ}}, Answers: []bool{false}},
 		{Name: "unanswered-confirm", TTY: false, Deps: []gateDriverDep{jqDep},
