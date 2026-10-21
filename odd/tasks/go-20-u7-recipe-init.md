@@ -153,3 +153,19 @@ Quoted verbatim from `lib/_internal/recipe-init.py` and `tests/test_recipe_init.
   nothing was created, nothing was burned, and no verdict exists. A decline is candidate-scoped, not the
   clone's switch. The tier path is unchanged and holds on its own: the differential (16/16), the Go
   tests, and `validate.sh` are the evidence, and `assess` asked for no independent verifier.
+- L14 — **Review `review-cdee0a5277f62d1a`: APPROVED, 3 lenses (`risk`, `readability`, `reliability`),
+  authority burned.** Candidate `ff5e81b..d5c4dd4` (2 files, 1164 lines), frozen tree `cadeb6a6`, base
+  `03074890`, tier medium, correction budget 200. History worth keeping: the first START was
+  `consent-declined-this-candidate` (L13) and the retry at the human's instruction created the lineage;
+  the refuter's first admitted payload was malformed (`refuter provider result admission incomplete:
+  ... scan ended at byte 690`) and was refused **without consuming the slot**, and one clean retry on the
+  reoffered binding closed the review. Three advisories, none blocking, none reopening:
+  - `R1-redact-args` (risk, WARNING → informational) at `init.go:640-662`: redaction is key-based, so a
+    literal token carried inside `args` (`args = ["--token=abc"]`) prints verbatim. The Python does
+    exactly the same, so this is inherited, not introduced — and "fixing" it would break the differential
+    parity the unit is built on. It needs a spec decision, not a patch here.
+  - `R3-002` (reliability, WARNING → informational) at `init.go:107-126`: the path-resolution block,
+    i.e. the same deviation L9 already records (the wrapper's `cd` refused a bogus path; the port
+    resolves it and reports the uninitialized project).
+  - `R3-001` (reliability, BLOCKER → **refuted**) at `init.go:671-696`: `initRepr`/`initStr`. No
+    correction was opened, so nothing was edited and the candidate stands byte-identical.
