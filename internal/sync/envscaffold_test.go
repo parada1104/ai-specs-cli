@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -548,10 +549,13 @@ env = { OPENPROJECT_BASE_URL = "$OPENPROJECT_BASE_URL", OPENPROJECT_API_TOKEN = 
 env_allowed = { OPENPROJECT_AUTH = ["basic", "bearer"] }
 `
 
-// envRecipeFixture is one enabled catalog recipe for newEnvOfferWorkspace.
+// envRecipeFixture is one catalog recipe for newEnvOfferWorkspace.
 type envRecipeFixture struct {
 	id   string
 	body string
+	// disabled writes `enabled = false`: the recipe is in the catalog and in
+	// the manifest, and _mcp_env_declarations' enabled filter must drop it.
+	disabled bool
 }
 
 // newEnvOfferWorkspace builds a project + home whose manifest enables every
@@ -564,7 +568,8 @@ func newEnvOfferWorkspace(t *testing.T, fixtures ...envRecipeFixture) (root, hom
 	manifest := "[project]\nname = \"p\"\n"
 	for _, fx := range fixtures {
 		writeSyncCatalogRecipe(t, filepath.Join(home, "catalog", "recipes"), fx.id, fx.body)
-		manifest += "\n[recipes." + fx.id + "]\nenabled = true\nversion = \"1.0.0\"\n"
+		manifest += "\n[recipes." + fx.id + "]\nenabled = " + strconv.FormatBool(!fx.disabled) +
+			"\nversion = \"1.0.0\"\n"
 	}
 	if err := os.MkdirAll(filepath.Join(root, "ai-specs"), 0o755); err != nil {
 		t.Fatal(err)
@@ -999,7 +1004,7 @@ func TestPromptEnvVarsBannerAndPromptKinds(t *testing.T) {
 	root, home := newEnvOfferWorkspace(t, bothPromptFixtures()...)
 	p := &scriptedEnvPrompts{confirm: true}
 	var out bytes.Buffer
-	values, err := promptEnvVars(root, home, p, &out)
+	values, err := promptEnvVars(root, home, nil, p, &out)
 	if err != nil {
 		t.Fatalf("promptEnvVars: %v", err)
 	}
@@ -1095,7 +1100,7 @@ func TestPromptEnvVarsSelectDefaultPrefersExistingValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := &scriptedEnvPrompts{confirm: true}
-	if _, err := promptEnvVars(root, home, p, &bytes.Buffer{}); err != nil {
+	if _, err := promptEnvVars(root, home, nil, p, &bytes.Buffer{}); err != nil {
 		t.Fatalf("promptEnvVars: %v", err)
 	}
 	selects := p.callsOf("select")
@@ -1115,7 +1120,7 @@ func TestPromptEnvVarsCancelAtEachPrompt(t *testing.T) {
 
 	t.Run("declining the offer question", func(t *testing.T) {
 		p := &scriptedEnvPrompts{confirm: false}
-		values, err := promptEnvVars(root, home, p, &bytes.Buffer{})
+		values, err := promptEnvVars(root, home, nil, p, &bytes.Buffer{})
 		if !errors.Is(err, ErrEnvOfferCancelled) {
 			t.Errorf("err = %v, want ErrEnvOfferCancelled", err)
 		}
@@ -1128,7 +1133,7 @@ func TestPromptEnvVarsCancelAtEachPrompt(t *testing.T) {
 		kind := kind
 		t.Run("cancel at the "+kind+" prompt", func(t *testing.T) {
 			p := &scriptedEnvPrompts{confirm: true, cancelAt: kind}
-			values, err := promptEnvVars(root, home, p, &bytes.Buffer{})
+			values, err := promptEnvVars(root, home, nil, p, &bytes.Buffer{})
 			if !errors.Is(err, ErrEnvOfferCancelled) {
 				t.Errorf("err = %v, want ErrEnvOfferCancelled", err)
 			}
@@ -1147,7 +1152,7 @@ func TestPromptEnvVarsReturnsTheRawBuffer(t *testing.T) {
 		confirm: true,
 		answers: map[string]string{"CANONICAL_VAULT_PATH": "  /padded/path  "},
 	}
-	values, err := promptEnvVars(root, home, p, &bytes.Buffer{})
+	values, err := promptEnvVars(root, home, nil, p, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("promptEnvVars: %v", err)
 	}
@@ -1186,7 +1191,7 @@ func TestOfferHarnessEnvFullFlow(t *testing.T) {
 		},
 	}
 	var out, errW bytes.Buffer
-	OfferHarnessEnv(root, home, p, &out, &errW)
+	OfferHarnessEnv(root, home, nil, p, &out, &errW)
 
 	resolved := envEvalPath(t, root)
 	// The scripted answers land, the blank ones are skipped, the select's
@@ -1235,7 +1240,7 @@ func TestOfferHarnessEnvDeclineStopsEverything(t *testing.T) {
 
 	p := &scriptedEnvPrompts{confirm: false}
 	var out, errW bytes.Buffer
-	OfferHarnessEnv(root, home, p, &out, &errW)
+	OfferHarnessEnv(root, home, nil, p, &out, &errW)
 
 	for _, path := range []string{
 		filepath.Join(root, "ai-specs.env"),
@@ -1270,7 +1275,7 @@ func TestOfferHarnessEnvCancelMidPromptWritesNothing(t *testing.T) {
 
 	p := &scriptedEnvPrompts{confirm: true, cancelAt: "password"}
 	var out, errW bytes.Buffer
-	OfferHarnessEnv(root, home, p, &out, &errW)
+	OfferHarnessEnv(root, home, nil, p, &out, &errW)
 
 	for _, path := range []string{
 		filepath.Join(root, "ai-specs.env"),
@@ -1305,7 +1310,7 @@ func TestOfferHarnessEnvBlankAnswersKeepSecrets(t *testing.T) {
 
 	p := &scriptedEnvPrompts{confirm: true} // every answer blank / the select default
 	var out, errW bytes.Buffer
-	OfferHarnessEnv(root, home, p, &out, &errW)
+	OfferHarnessEnv(root, home, nil, p, &out, &errW)
 
 	body := envBody(t, envPath)
 	if !strings.Contains(body, "TRELLO_API_KEY=keep-key\n") || !strings.Contains(body, "TRELLO_TOKEN=keep-tok\n") {
@@ -1334,7 +1339,7 @@ func TestOfferHarnessEnvSoftFailMigrationSkipped(t *testing.T) {
 
 	p := &scriptedEnvPrompts{confirm: false} // stop right after the banner
 	var out, errW bytes.Buffer
-	OfferHarnessEnv(root, home, p, &out, &errW)
+	OfferHarnessEnv(root, home, nil, p, &out, &errW)
 
 	wantPrefix := "Legacy harness env migration skipped: cannot read " +
 		filepath.Join(envEvalPath(t, root), "ai-specs", ".env") + ": invalid UTF-8\n"
@@ -1368,7 +1373,7 @@ func TestOfferHarnessEnvSoftFailCouldNotWrite(t *testing.T) {
 
 	p := &scriptedEnvPrompts{confirm: true, answers: map[string]string{"TRELLO_API_KEY": "sekret"}}
 	var out, errW bytes.Buffer
-	OfferHarnessEnv(root, home, p, &out, &errW)
+	OfferHarnessEnv(root, home, nil, p, &out, &errW)
 
 	if !strings.Contains(out.String(), "Could not write harness env: ") {
 		t.Errorf("stdout lacks the soft-fail line:\n%s", out.String())
@@ -1396,7 +1401,7 @@ func TestOfferHarnessEnvSoftFailConfigure(t *testing.T) {
 
 	p := &scriptedEnvPrompts{confirm: true, failAt: "confirm"}
 	var out, errW bytes.Buffer
-	OfferHarnessEnv(root, home, p, &out, &errW)
+	OfferHarnessEnv(root, home, nil, p, &out, &errW)
 
 	want := "Could not configure environment variables: scripted prompt failure\n"
 	if !strings.Contains(out.String(), want) {
@@ -1419,7 +1424,7 @@ func TestOfferHarnessEnvDirenvAbsentPrintsTheThreeLines(t *testing.T) {
 
 	p := &scriptedEnvPrompts{confirm: true}
 	var out, errW bytes.Buffer
-	OfferHarnessEnv(root, home, p, &out, &errW)
+	OfferHarnessEnv(root, home, nil, p, &out, &errW)
 
 	if got := errW.String(); got != envOracleDirenvMissing {
 		t.Errorf("stderr =\n%q\nwant\n%q", got, envOracleDirenvMissing)
@@ -1440,7 +1445,7 @@ func TestOfferHarnessEnvWithoutVarsIsSilent(t *testing.T) {
 
 	p := &scriptedEnvPrompts{confirm: true}
 	var out, errW bytes.Buffer
-	OfferHarnessEnv(root, home, p, &out, &errW)
+	OfferHarnessEnv(root, home, nil, p, &out, &errW)
 
 	if out.String() != "" {
 		t.Errorf("stdout = %q, want empty", out.String())
@@ -1485,4 +1490,276 @@ func TestWriteHarnessEnvIsOwnerOnly(t *testing.T) {
 	if got := efi.Mode().Perm(); got&0o400 == 0 {
 		t.Errorf("ai-specs.env.example mode = %o, want it readable by the owner", got)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// U7-3 (S1-S7): the offer's optional scope. nil keeps the aggregate map every
+// pre-U7 caller saw; a non-nil slice restricts collection, prompts and
+// env_allowed to those enabled recipes; an empty slice collects nothing. The
+// example files, the root .envrc block and direnv stay aggregate.
+// ---------------------------------------------------------------------------
+
+// envDisabledRecipe is the disabled catalog recipe: its variable must never
+// reach a collection, not even when a scope names it.
+const envDisabledRecipe = `[recipe]
+id = "disabled-fixture"
+name = "Disabled Fixture"
+description = "d"
+version = "1.0.0"
+
+[[provides.mcp]]
+id = "disabledpreset"
+command = "echo"
+env = { DISABLED_ONLY_VAR = "$DISABLED_ONLY_VAR" }
+`
+
+// scopedFixtures is the two-enabled-plus-one-disabled fixture set: each recipe
+// contributes distinct variables, so every scoped result is checkable
+// variable by variable.
+func scopedFixtures() []envRecipeFixture {
+	return []envRecipeFixture{
+		{id: "warn-fixture", body: envWarnRecipe},
+		{id: "allowed-fixture", body: envAllowedRecipe},
+		{id: "disabled-fixture", body: envDisabledRecipe, disabled: true},
+	}
+}
+
+// envWarnVars is the aggregate purpose map the warn fixture contributes — the
+// exact bytes collect_env_vars (:90) returns today (S6).
+var envWarnVars = map[string]string{
+	"TRELLO_API_KEY":       "required by warnpreset (warn-fixture)",
+	"TRELLO_TOKEN":         "required by warnpreset (warn-fixture)",
+	"CANONICAL_VAULT_PATH": "required by warnpreset (warn-fixture)",
+}
+
+// envAllowedVars is the allowed fixture's share of the aggregate map.
+var envAllowedVars = map[string]string{
+	"OPENPROJECT_BASE_URL":  "required by allowedpreset (allowed-fixture)",
+	"OPENPROJECT_API_TOKEN": "required by allowedpreset (allowed-fixture)",
+	"OPENPROJECT_AUTH":      "required by allowedpreset (allowed-fixture)",
+}
+
+// envCollected is a small deep-equal for the map collections: same keys, same
+// purpose bytes, nothing extra.
+func envCollected(got, want map[string]string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for key, value := range want {
+		if got[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+// S1/S2/S6/S7: the scope thread through collect_env_vars — nil is today's
+// aggregate map byte for byte, a list keeps only the enabled in-scope recipes,
+// and the empty list and a disabled or unknown id collect nothing.
+func TestCollectEnvVarsScopedToRecipeIDs(t *testing.T) {
+	root, home := newEnvOfferWorkspace(t, scopedFixtures()...)
+
+	// nil: aggregate. The whole point of S6 is that these bytes never move.
+	aggregate := CollectEnvVars(root, home, nil)
+	wantAggregate := map[string]string{}
+	for key, value := range envWarnVars {
+		wantAggregate[key] = value
+	}
+	for key, value := range envAllowedVars {
+		wantAggregate[key] = value
+	}
+	if !envCollected(aggregate, wantAggregate) {
+		t.Errorf("aggregate CollectEnvVars = %#v, want %#v", aggregate, wantAggregate)
+	}
+
+	// A list restricts to the enabled, in-scope recipe.
+	if got := CollectEnvVars(root, home, []string{"warn-fixture"}); !envCollected(got, envWarnVars) {
+		t.Errorf("scoped to warn-fixture = %#v, want %#v", got, envWarnVars)
+	}
+
+	// S7: an empty slice is set() — nothing in scope.
+	if got := CollectEnvVars(root, home, []string{}); len(got) != 0 {
+		t.Errorf("empty scope = %#v, want nothing in scope", got)
+	}
+
+	// S2: the scope never resurrects a disabled recipe.
+	if got := CollectEnvVars(root, home, []string{"disabled-fixture"}); len(got) != 0 {
+		t.Errorf("scope naming a disabled recipe = %#v, want nothing", got)
+	}
+
+	// An in-scope enabled recipe survives beside a disabled and an unknown id.
+	if got := CollectEnvVars(root, home, []string{"disabled-fixture", "ghost", "warn-fixture"}); !envCollected(got, envWarnVars) {
+		t.Errorf("mixed scope = %#v, want only the enabled recipe's vars %#v", got, envWarnVars)
+	}
+}
+
+// S3: collect_env_allowed takes the same scope, so a scoped offer cannot
+// preselect an out-of-scope recipe's env_allowed values.
+func TestCollectEnvAllowedScopedToRecipeIDs(t *testing.T) {
+	root, home := newEnvOfferWorkspace(t, scopedFixtures()...)
+
+	aggregate := collectEnvAllowed(root, home, nil)
+	if len(aggregate) != 1 {
+		t.Fatalf("aggregate collectEnvAllowed = %#v, want only OPENPROJECT_AUTH", aggregate)
+	}
+	if got := aggregate["OPENPROJECT_AUTH"]; len(got) != 2 || got[0] != "basic" || got[1] != "bearer" {
+		t.Errorf("OPENPROJECT_AUTH choices = %#v, want [basic bearer]", got)
+	}
+	if got := collectEnvAllowed(root, home, []string{"warn-fixture"}); len(got) != 0 {
+		t.Errorf("scoped to warn-fixture = %#v, want no allowed values", got)
+	}
+	if got := collectEnvAllowed(root, home, []string{"allowed-fixture"}); len(got) != 1 || len(got["OPENPROJECT_AUTH"]) != 2 {
+		t.Errorf("scoped to allowed-fixture = %#v, want OPENPROJECT_AUTH with both choices", got)
+	}
+	if got := collectEnvAllowed(root, home, []string{}); len(got) != 0 {
+		t.Errorf("empty scope = %#v, want no allowed values", got)
+	}
+}
+
+// envPromptedNames is the set of variables a scripted prompt run asked for.
+func envPromptedNames(p *scriptedEnvPrompts) []string {
+	var names []string
+	for _, call := range p.calls {
+		if call.kind != "confirm" {
+			names = append(names, call.message)
+		}
+	}
+	return names
+}
+
+// S3: prompt_env_vars takes the scope too — a scoped offer prompts and selects
+// only what the scoped collection found.
+func TestPromptEnvVarsScopedToRecipeIDs(t *testing.T) {
+	root, home := newEnvOfferWorkspace(t, scopedFixtures()...)
+
+	prompts := &scriptedEnvPrompts{confirm: true, answers: map[string]string{}}
+	var out bytes.Buffer
+	values, err := promptEnvVars(root, home, []string{"warn-fixture"}, prompts, &out)
+	if err != nil {
+		t.Fatalf("promptEnvVars: %v", err)
+	}
+	if len(values) != 3 {
+		t.Errorf("values = %#v, want the three warn variables", values)
+	}
+	if got := envPromptedNames(prompts); strings.Join(got, ",") != "CANONICAL_VAULT_PATH,TRELLO_API_KEY,TRELLO_TOKEN" {
+		t.Errorf("prompted %v, want only the scoped recipe's variables", got)
+	}
+	if selects := prompts.callsOf("select"); len(selects) != 0 {
+		t.Errorf("the scoped offer asked %d selects; OPENPROJECT_AUTH is out of scope", len(selects))
+	}
+
+	// The other recipe scoped on its own: its select and its three variables.
+	prompts = &scriptedEnvPrompts{confirm: true, answers: map[string]string{}}
+	values, err = promptEnvVars(root, home, []string{"allowed-fixture"}, prompts, &out)
+	if err != nil {
+		t.Fatalf("promptEnvVars: %v", err)
+	}
+	if len(values) != 3 {
+		t.Errorf("values = %#v, want the three allowed-fixture variables", values)
+	}
+	selects := prompts.callsOf("select")
+	if len(selects) != 1 || selects[0].message != "OPENPROJECT_AUTH" {
+		t.Fatalf("selects = %#v, want exactly the OPENPROJECT_AUTH select", selects)
+	}
+	if strings.Join(selects[0].choices, ",") != "basic,bearer" {
+		t.Errorf("choices = %v, want the declared env_allowed values", selects[0].choices)
+	}
+
+	// An empty scope prompts nothing at all.
+	empty := &scriptedEnvPrompts{confirm: true}
+	values, err = promptEnvVars(root, home, []string{}, empty, &out)
+	if err != nil {
+		t.Fatalf("promptEnvVars: %v", err)
+	}
+	if len(values) != 0 || len(empty.calls) != 0 {
+		t.Errorf("empty scope prompted %#v (calls %#v), want nothing", values, empty.calls)
+	}
+}
+
+// S1/S4: a scoped offer writes only the scoped prompted values into
+// ai-specs.env, while the example and the .envrc managed block stay aggregate.
+func TestOfferHarnessEnvScopedKeepsExampleAndEnvrcAggregate(t *testing.T) {
+	fake := fakeDirenvDir(t, "")
+	t.Setenv("PATH", fake)
+	root, home := newEnvOfferWorkspace(t, scopedFixtures()...)
+
+	prompts := &scriptedEnvPrompts{confirm: true, answers: map[string]string{
+		"TRELLO_API_KEY":       "key",
+		"TRELLO_TOKEN":         "tok",
+		"CANONICAL_VAULT_PATH": "/vault/app",
+	}}
+	var stdout, stderr bytes.Buffer
+	OfferHarnessEnv(root, home, []string{"warn-fixture"}, prompts, &stdout, &stderr)
+
+	env := envBody(t, filepath.Join(root, "ai-specs.env"))
+	for _, want := range []string{"TRELLO_API_KEY=key", "TRELLO_TOKEN=tok", "CANONICAL_VAULT_PATH=/vault/app"} {
+		if !strings.Contains(env, want) {
+			t.Errorf("ai-specs.env lacks %q:\n%s", want, env)
+		}
+	}
+	if strings.Contains(env, "OPENPROJECT") {
+		t.Errorf("the scoped offer wrote out-of-scope values:\n%s", env)
+	}
+
+	// S4: the example is aggregate — every enabled recipe's variable, both.
+	example := envBody(t, filepath.Join(root, "ai-specs.env.example"))
+	for variable := range envAllowedVars {
+		if !strings.Contains(example, variable+"=") {
+			t.Errorf("ai-specs.env.example lacks %q (S4 keeps it aggregate):\n%s", variable, example)
+		}
+	}
+	for variable := range envWarnVars {
+		if !strings.Contains(example, variable+"=") {
+			t.Errorf("ai-specs.env.example lacks %q:\n%s", variable, example)
+		}
+	}
+
+	// S4: the root .envrc managed block is aggregate (it holds no per-recipe
+	// data at all) and still there.
+	if envrc := envBody(t, filepath.Join(root, ".envrc")); !strings.Contains(envrc, envOracleBlock) {
+		t.Errorf("root .envrc = %q, want the managed block", envrc)
+	}
+}
+
+// S7/S6: the empty scope is the offer's silent no-op (the gate collects
+// nothing, so nothing is prompted and nothing written), and nil still offers
+// every enabled recipe's variables in the aggregate run.
+func TestOfferHarnessEnvScopeGate(t *testing.T) {
+	t.Run("empty scope is silent and writes nothing", func(t *testing.T) {
+		root, home := newEnvOfferWorkspace(t, scopedFixtures()...)
+		prompts := &scriptedEnvPrompts{confirm: true}
+		var stdout, stderr bytes.Buffer
+		OfferHarnessEnv(root, home, []string{}, prompts, &stdout, &stderr)
+		if stdout.Len() != 0 || stderr.Len() != 0 {
+			t.Errorf("stdout = %q, stderr = %q, want silence", stdout.String(), stderr.String())
+		}
+		if len(prompts.calls) != 0 {
+			t.Errorf("prompted %#v, want nothing in scope", prompts.calls)
+		}
+		if envExists(filepath.Join(root, "ai-specs.env")) || envExists(filepath.Join(root, "ai-specs.env.example")) {
+			t.Error("the offer wrote files with nothing in scope")
+		}
+	})
+
+	t.Run("nil scope offers both recipes", func(t *testing.T) {
+		fake := fakeDirenvDir(t, "")
+		t.Setenv("PATH", fake)
+		root, home := newEnvOfferWorkspace(t, scopedFixtures()...)
+		prompts := &scriptedEnvPrompts{confirm: true, answers: map[string]string{}}
+		var stdout, stderr bytes.Buffer
+		OfferHarnessEnv(root, home, nil, prompts, &stdout, &stderr)
+
+		got := envPromptedNames(prompts)
+		for _, want := range []string{"TRELLO_API_KEY", "TRELLO_TOKEN", "CANONICAL_VAULT_PATH", "OPENPROJECT_BASE_URL", "OPENPROJECT_API_TOKEN", "OPENPROJECT_AUTH"} {
+			if !slices.Contains(got, want) {
+				t.Errorf("aggregate offer prompted %v, want %s too", got, want)
+			}
+		}
+		if !strings.Contains(stdout.String(), "Required environment variables") {
+			t.Errorf("stdout = %q, want the banner", stdout.String())
+		}
+		if selects := prompts.callsOf("select"); len(selects) != 1 {
+			t.Errorf("aggregate selects = %#v, want OPENPROJECT_AUTH", selects)
+		}
+	})
 }
