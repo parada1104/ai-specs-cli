@@ -28,6 +28,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -39,6 +40,8 @@ import (
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/schema"
+	"ai-specs.dev/ai-specs/internal/sync"
+	"ai-specs.dev/ai-specs/internal/tui"
 )
 
 // recipeSeedCatalog seeds real fixture recipes into home/catalog/recipes/<id>
@@ -806,7 +809,7 @@ func TestRecipeAddTailIsNativeOnATerminal(t *testing.T) {
 			openWizard: func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
 				return p, func() {}, 0
 			},
-			envOffer: func(root string) error {
+			envOffer: func(root string, _ []string) error {
 				envRoot = root
 				return nil
 			},
@@ -847,7 +850,7 @@ func TestRecipeAddTailIsNativeOnATerminal(t *testing.T) {
 			openWizard: func(stdin io.Reader, stdout io.Writer) (wizardPrompts, func(), int) {
 				return p, func() {}, 0
 			},
-			envOffer: func(string) error { return errors.New("boom") },
+			envOffer: func(string, []string) error { return errors.New("boom") },
 		}
 		var stdout, stderr bytes.Buffer
 		code := runRecipeAddFlow([]string{"recipe", "add", "cfgenv", project}, home,
@@ -994,7 +997,7 @@ func TestRecipeAddTailIsNativeOnATerminal(t *testing.T) {
 				depGate: func(loaded *schema.Recipe) wizardDepGateOutcome {
 					return wizardDepGateOutcome{Err: boom}
 				},
-				envOffer: func(string) error {
+				envOffer: func(string, []string) error {
 					envCalled = true
 					return nil
 				},
@@ -1042,7 +1045,7 @@ func TestRecipeAddTailIsNativeOnATerminal(t *testing.T) {
 				gated = append(gated, loaded.ID)
 				return wizardDepGateOutcome{}
 			},
-			envOffer: func(string) error {
+			envOffer: func(string, []string) error {
 				envCalled = true
 				return nil
 			},
@@ -2673,7 +2676,7 @@ func newConfigureRecipesLoopSeams(t *testing.T) *configureRecipesLoopSeams {
 			c.gated = append(c.gated, loaded.ID)
 			return c.gateOutcome
 		},
-		envOffer: func(root string) error {
+		envOffer: func(root string, _ []string) error {
 			c.envRoots = append(c.envRoots, root)
 			return c.envOfferErr
 		},
@@ -3069,4 +3072,139 @@ func TestDepGuidanceDisplay(t *testing.T) {
 		// bb has no apt package; without brew it is guidance-only too.
 		t.Errorf("map entry without brew: display = %q, want %q", got, want)
 	}
+}
+
+// envScopeRecipeBody is a catalog recipe whose MCP preset declares one $VAR
+// harness env reference and nothing else: the only leg `recipe add` reaches is
+// the env offer (no config fields, no CLI deps).
+func envScopeRecipeBody(id, variable string) string {
+	return fmt.Sprintf(`[recipe]
+id = %q
+name = %q
+description = "d"
+version = "1.0.0"
+
+[[provides.mcp]]
+id = "%s-mcp"
+command = "echo"
+env = { %s = "$%s" }
+`, id, id, id, variable, variable)
+}
+
+// S5 (U7-3): the env offer's scope splits the two call sites. `recipe add`
+// scopes the offer to the recipe it just added (recipe-add.py:273's
+// `recipe_ids=[recipe_id]`), while the init wizard's tail stays aggregate
+// (init_tui.py:391 passes nothing). Both run the real sync.OfferHarnessEnv over
+// a scripted key source, so the split is proven at the prompt surface and in
+// ai-specs.env — not merely at the seam's arguments.
+func TestEnvOfferScopeSplitsRecipeAddFromInitWizard(t *testing.T) {
+	seed := func(t *testing.T, dir string) {
+		t.Helper()
+		skillsWriteFile(t, filepath.Join(dir, "a-rec", "recipe.toml"), envScopeRecipeBody("a-rec", "A_TOKEN"))
+		skillsWriteFile(t, filepath.Join(dir, "b-rec", "recipe.toml"), envScopeRecipeBody("b-rec", "B_TOKEN"))
+	}
+
+	// `recipe add a-rec` on a project that already enables b-rec: both are
+	// enabled afterwards, and only the added recipe's variable is offered.
+	t.Run("recipe add offers only the added recipe", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir()) // no direnv: the S33 branch, no subprocess
+		home := t.TempDir()
+		seed(t, filepath.Join(home, "catalog", "recipes"))
+		project := t.TempDir()
+		skillsWriteFile(t, filepath.Join(project, "ai-specs", "ai-specs.toml"),
+			"[project]\nname = \"scope\"\n\n[recipes.b-rec]\nenabled = true\nversion = \"1.0.0\"\n")
+
+		var scoped []string
+		var stdout, stderr bytes.Buffer
+		keys := wizardScript(append(wizardTyped("ka"), enterText()...), tui.KeyEnter)
+		seams := recipeTailSeams{
+			openWizard: func(io.Reader, io.Writer) (wizardPrompts, func(), int) {
+				return &scriptedWizardPrompts{t: t, confirmQ: []scriptedConfirm{{answer: true, ok: true}}}, func() {}, 0
+			},
+			envOffer: func(root string, recipeIDs []string) error {
+				scoped = recipeIDs
+				sync.OfferHarnessEnv(root, home, recipeIDs, &wizardEnvPrompts{out: &stdout, keys: keys}, &stdout, &stderr)
+				return nil
+			},
+		}
+		code := runRecipeAddFlow([]string{"recipe", "add", "a-rec", project}, home,
+			strings.NewReader(""), &stdout, &stderr, "", true, seams)
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0; stderr = %q", code, stderr.String())
+		}
+		if len(scoped) != 1 || scoped[0] != "a-rec" {
+			t.Errorf("offer scope = %v, want exactly [a-rec]", scoped)
+		}
+		out := stdout.String()
+		if !strings.Contains(out, "  A_TOKEN — required by a-rec-mcp (a-rec)") {
+			t.Errorf("stdout lacks the added recipe's variable:\n%s", out)
+		}
+		if strings.Contains(out, "B_TOKEN") {
+			t.Errorf("the offer of one recipe prompted another enabled recipe's variable:\n%s", out)
+		}
+		env := envOfferBody(t, filepath.Join(project, "ai-specs.env"))
+		if !strings.Contains(env, "A_TOKEN=ka") {
+			t.Errorf("ai-specs.env lacks the prompted value:\n%s", env)
+		}
+		if strings.Contains(env, "B_TOKEN") {
+			t.Errorf("ai-specs.env gained an out-of-scope variable:\n%s", env)
+		}
+	})
+
+	// The init wizard's tail passes no scope: both enabled recipes' variables
+	// are offered and both answers are written.
+	t.Run("init wizard offers both enabled recipes", func(t *testing.T) {
+		f := newWizardFixture(t)
+		seed(t, filepath.Join(f.home, "catalog", "recipes"))
+		t.Setenv("PATH", t.TempDir()) // no direnv: the S33 branch, no subprocess
+
+		text := enterText() // name: keep "demo"
+		text = append(text, wizardTyped("ka")...)
+		text = append(text, enterText()...) // A_TOKEN (hidden)
+		text = append(text, wizardTyped("kb")...)
+		text = append(text, enterText()...) // B_TOKEN (hidden)
+		res, rc := runInitWizard(f.request(wizardScript(text,
+			tui.KeyEnter, // topology: auto
+			tui.KeyEnter, // agents: defaults
+			tui.KeySpace, // recipes: toggle a-rec
+			tui.KeyDown,  // recipes: move to b-rec
+			tui.KeySpace, // recipes: toggle b-rec
+			tui.KeyEnter, // recipes: submit
+			tui.KeyEnter, // wizard confirm
+			tui.KeyEnter, // env offer confirm
+		)))
+		if rc != 0 {
+			t.Fatalf("exit = %d, want 0; stderr = %q", rc, f.stderr.String())
+		}
+		if res.Staged == "" {
+			t.Fatal("the wizard returned no staged manifest")
+		}
+		t.Cleanup(func() { cleanupInitStaging(res.Staged) })
+
+		out := f.stdout.String()
+		for _, want := range []string{
+			"  A_TOKEN — required by a-rec-mcp (a-rec)",
+			"  B_TOKEN — required by b-rec-mcp (b-rec)",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the wizard's aggregate offer lacks %q:\n%s", want, out)
+			}
+		}
+		env := envOfferBody(t, filepath.Join(f.target, "ai-specs.env"))
+		for _, want := range []string{"A_TOKEN=ka", "B_TOKEN=kb"} {
+			if !strings.Contains(env, want) {
+				t.Errorf("ai-specs.env lacks %q:\n%s", want, env)
+			}
+		}
+	})
+}
+
+// envOfferBody reads a file the env-offer tests assert on.
+func envOfferBody(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(raw)
 }

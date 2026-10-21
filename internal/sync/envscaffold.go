@@ -211,16 +211,33 @@ type mcpEnvDeclaration struct {
 // values. An unreadable manifest is the legacy is_file()/except → [] guard;
 // a recipe that cannot be read from the catalog is the legacy
 // `except Exception: continue`.
-func mcpEnvDeclarations(projectRoot, home string) []mcpEnvDeclaration {
+//
+// recipeIDs is the Python's optional scope (S1/S2): nil collects every
+// enabled recipe, a list keeps only those enabled ids, and the empty list is
+// Python's set() — nothing in scope. The enabled filter runs FIRST, so a
+// scope never resurrects a disabled recipe.
+func mcpEnvDeclarations(projectRoot, home string, recipeIDs []string) []mcpEnvDeclaration {
 	manifest, err := loadMaterializeManifest(materializeManifestPath(projectRoot))
 	if err != nil {
 		return nil
+	}
+	var selected map[string]struct{}
+	if recipeIDs != nil {
+		selected = make(map[string]struct{}, len(recipeIDs))
+		for _, id := range recipeIDs {
+			selected[id] = struct{}{}
+		}
 	}
 	catalogDir := filepath.Join(home, "catalog", "recipes")
 	var declarations []mcpEnvDeclaration
 	for _, recipe := range loadMaterializeRecipes(manifest) {
 		if !recipe.Enabled {
 			continue
+		}
+		if selected != nil {
+			if _, ok := selected[recipe.ID]; !ok {
+				continue
+			}
 		}
 		loaded, err := readRecipeMCP(catalogDir, recipe.ID)
 		if err != nil {
@@ -302,10 +319,10 @@ type envVarEntry struct {
 	purpose string
 }
 
-func collectEnvVarsInOrder(projectRoot, home string) []envVarEntry {
+func collectEnvVarsInOrder(projectRoot, home string, recipeIDs []string) []envVarEntry {
 	var ordered []envVarEntry
 	index := map[string]int{}
-	for _, decl := range mcpEnvDeclarations(projectRoot, home) {
+	for _, decl := range mcpEnvDeclarations(projectRoot, home, recipeIDs) {
 		for _, key := range decl.declaredKeys {
 			variable := decl.declared[key]
 			purpose := "required by " + decl.presetID + " (" + decl.recipeID + ")"
@@ -326,9 +343,12 @@ func collectEnvVarsInOrder(projectRoot, home string) []envVarEntry {
 // CollectEnvVars mirrors env_scaffold.collect_env_vars (:90): {VAR_NAME:
 // purpose}, first declaration wins for the purpose text. The export is the
 // offer's S28 gate — init_tui.py:390 collects before it offers (U4d-2).
-func CollectEnvVars(projectRoot, home string) map[string]string {
+// recipeIDs scopes collection like the Python's parameter (S1): nil is
+// aggregate, a list keeps those enabled recipes, the empty list collects
+// nothing.
+func CollectEnvVars(projectRoot, home string, recipeIDs []string) map[string]string {
 	collected := map[string]string{}
-	for _, entry := range collectEnvVarsInOrder(projectRoot, home) {
+	for _, entry := range collectEnvVarsInOrder(projectRoot, home, recipeIDs) {
 		collected[entry.name] = entry.purpose
 	}
 	return collected
@@ -337,9 +357,11 @@ func CollectEnvVars(projectRoot, home string) map[string]string {
 // collectEnvAllowed mirrors env_scaffold.collect_env_allowed (:198):
 // {VAR_NAME: [allowed values]} for vars whose recipe preset declares
 // env_allowed beside the env reference, first declaration wins (S30's select).
-func collectEnvAllowed(projectRoot, home string) map[string][]string {
+// It takes the same scope as the collection it accompanies (S3), so a scoped
+// offer never preselects an out-of-scope recipe's values.
+func collectEnvAllowed(projectRoot, home string, recipeIDs []string) map[string][]string {
 	collected := map[string][]string{}
-	for _, decl := range mcpEnvDeclarations(projectRoot, home) {
+	for _, decl := range mcpEnvDeclarations(projectRoot, home, recipeIDs) {
 		for _, variable := range decl.allowedKeys {
 			if _, ok := collected[variable]; !ok {
 				collected[variable] = decl.allowed[variable]
@@ -352,7 +374,7 @@ func collectEnvAllowed(projectRoot, home string) map[string][]string {
 // missingRequiredValues mirrors env_scaffold.missing_required_values (:266):
 // the required MCP env vars with no non-empty value in ai-specs.env, sorted.
 func missingRequiredValues(projectRoot, home string) []string {
-	required := CollectEnvVars(projectRoot, home)
+	required := CollectEnvVars(projectRoot, home, nil)
 	configured := LoadHarnessEnv(projectRoot)
 	var missing []string
 	for variable := range required {
@@ -406,7 +428,7 @@ func formatDotenv(values map[string]string, headerLines []string) string {
 func generateEnvExample(projectRoot, home string) (string, error) {
 	target := harnessEnvExamplePath(projectRoot)
 
-	varsMap := CollectEnvVars(projectRoot, home)
+	varsMap := CollectEnvVars(projectRoot, home, nil)
 	var b strings.Builder
 	b.WriteString(strings.TrimRight(envExampleHeader, "\n"))
 	b.WriteString("\n\n")
@@ -593,8 +615,8 @@ type EnvOfferPrompts interface {
 // prompt otherwise — with the help sentence printed before each prompt it
 // belongs to. Answers come back verbatim; the never-wipe rule lives in
 // write_env's blank check, not in the prompt.
-func promptEnvVars(projectRoot, home string, prompts EnvOfferPrompts, stdout io.Writer) (map[string]string, error) {
-	varsMap := collectEnvVarsInOrder(projectRoot, home)
+func promptEnvVars(projectRoot, home string, recipeIDs []string, prompts EnvOfferPrompts, stdout io.Writer) (map[string]string, error) {
+	varsMap := collectEnvVarsInOrder(projectRoot, home, recipeIDs)
 	if len(varsMap) == 0 {
 		return map[string]string{}, nil
 	}
@@ -621,7 +643,7 @@ func promptEnvVars(projectRoot, home string, prompts EnvOfferPrompts, stdout io.
 	}
 
 	existing := LoadHarnessEnv(projectRoot)
-	allowedMap := collectEnvAllowed(projectRoot, home)
+	allowedMap := collectEnvAllowed(projectRoot, home, recipeIDs)
 
 	variables := make([]string, 0, len(varsMap))
 	for _, entry := range varsMap {
@@ -904,7 +926,12 @@ func harnessEnvWritePhase(root, home string, values map[string]string, stdout io
 // INSTALL it through the deps layer (dep_install.offer_and_install). That
 // consent offer belongs to the deps surface, not to init, so this port skips
 // it and lets the failure below print the Python's three-line message.
-func OfferHarnessEnv(projectRoot, home string, prompts EnvOfferPrompts, stdout, stderr io.Writer) {
+//
+// recipeIDs is the Python's optional scope (S1/S5): `recipe add` passes the
+// added id so only that recipe's values are prompted and merged, while the
+// init wizard passes nil for the aggregate set. Example generation, the root
+// .envrc managed block and direnv stay aggregate either way (S4).
+func OfferHarnessEnv(projectRoot, home string, recipeIDs []string, prompts EnvOfferPrompts, stdout, stderr io.Writer) {
 	// Python: init_tui's main() resolves the target before run_wizard, so the
 	// offer's paths and ✓ lines carry Path.resolve()'s root — the same resolve
 	// the sync spine's env step applies.
@@ -914,11 +941,11 @@ func OfferHarnessEnv(projectRoot, home string, prompts EnvOfferPrompts, stdout, 
 		fmt.Fprintf(stdout, "Legacy harness env migration skipped: %v\n", err)
 	}
 
-	if len(CollectEnvVars(root, home)) == 0 {
+	if len(CollectEnvVars(root, home, recipeIDs)) == 0 {
 		return
 	}
 
-	values, err := promptEnvVars(root, home, prompts, stdout)
+	values, err := promptEnvVars(root, home, recipeIDs, prompts, stdout)
 	if err != nil {
 		if errors.Is(err, ErrEnvOfferCancelled) {
 			return

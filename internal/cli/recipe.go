@@ -525,11 +525,11 @@ func runRecipeAddVerb(target, recipeID, home, exePath string, stdin io.Reader, s
 		}
 
 		// recipe-add.py:269-274's env leg: collect+offer inside
-		// sync.OfferHarnessEnv (U4d-2, aggregate — the script scoped
-		// collection to this recipe id; recorded in L10), its failure
+		// sync.OfferHarnessEnv (U4d-2), scoped to THIS recipe id since U7-3
+		// (S5 — recipe-add.py:273's `recipe_ids=[recipe_id]`), its failure
 		// wording this one frozen line and leaving the append standing.
 		if hasMcpEnv {
-			if err := seams.envOffer(target); err != nil {
+			if err := seams.envOffer(target, []string{recipeID}); err != nil {
 				fmt.Fprintln(stdout, "  ! could not configure environment variables")
 			}
 		}
@@ -2767,7 +2767,10 @@ type recipeTailSeams struct {
 	// sync.OfferHarnessEnv — which soft-fails internally, so the error only
 	// surfaces when the terminal cannot be taken over or an exception
 	// escapes: Python's `_offer_envrc` outer `except Exception`).
-	envOffer func(root string) error
+	// recipeIDs is the offer's scope (U7-3, S5): `recipe add` passes the added
+	// id, the configure-recipes loop passes nil for the aggregate set — the
+	// same split as recipe-add.py:273 vs config_wizard.py:264.
+	envOffer func(root string, recipeIDs []string) error
 }
 
 // productionRecipeTailSeams wires the tail for the running CLI over the
@@ -2782,7 +2785,7 @@ func productionRecipeTailSeams(home string, stdin io.Reader, stdout, stderr io.W
 			// it before returning — questionary's per-prompt takeover.
 			return recipeDepGate(home, stdin, stdout, stderr, loaded)
 		},
-		envOffer: func(root string) (err error) {
+		envOffer: func(root string, recipeIDs []string) (err error) {
 			defer func() {
 				if r := recover(); r != nil {
 					// Python's `except Exception` around offer_harness_env.
@@ -2794,7 +2797,7 @@ func productionRecipeTailSeams(home string, stdin io.Reader, stdout, stderr io.W
 				return errors.New("the interactive terminal is unavailable")
 			}
 			defer closeKeys()
-			sync.OfferHarnessEnv(root, home, &wizardEnvPrompts{out: stdout, keys: keys}, stdout, stderr)
+			sync.OfferHarnessEnv(root, home, recipeIDs, &wizardEnvPrompts{out: stdout, keys: keys}, stdout, stderr)
 			return nil
 		},
 	}
@@ -2975,7 +2978,8 @@ func runConfigureRecipesFlow(args []string, home string, stdin io.Reader, stdout
 
 	// _offer_envrc, soft-failing like Python's `except Exception`: the loop's
 	// writes stand, the yellow line (rich Console() → stdout) prints, exit 0.
-	if serr := seams.envOffer(root); serr != nil {
+	// config_wizard.py:264 passes no recipe_ids, so this offer stays aggregate.
+	if serr := seams.envOffer(root, nil); serr != nil {
 		fmt.Fprintf(stdout, "Harness env offer skipped: %v\n", serr)
 	}
 	return 0
