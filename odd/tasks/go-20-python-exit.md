@@ -240,7 +240,8 @@ cannot each be one PR.
 | U6d-1 — recipe config write + `recipe configure`, native | **delivered, judgment approved** | `fc803bf` (PR #392); `internal/config` owns the writer; 30-case differential; Judgment Day found one MAJOR (`mcp.present` order) and six more, all closed, 10/10 verified |
 | U6d-2 — the wizard core + `recipe add`'s "Configure now?" flip | **delivered** | `dd57960` (PR #394); `tui.TextValidated` + `runConfigWizard`; the seam narrowed to the env offer and the dep gate |
 | U6e — `configure-recipes` + the dispatcher close | **delivered, review approved** | `f467fde` (PR #397); review `review-ea5e3ea49a8c6e1a` approved 4/4 lenses, 11 advisories triaged; **the shim map is EMPTY**; `recipe-init.py` and the native dep gate are U7's |
-| U7 — the native dep gate, `recipe-init`, the substrate tail and the physical retirement | **next** | scope and order in the `## Next` section below |
+| U7-3 — the env offer's scope | **delivered** | `sync.OfferHarnessEnv` and its whole collection chain take the Python's optional `recipe_ids` (nil = aggregate, an empty list = nothing); `recipe add` offers only the added id while the init wizard and `configure-recipes` stay aggregate; 7-scenario differential against `env_scaffold.py` value-for-value, and the aggregate Python differential (`TestEnvScaffoldMatchesPythonAuthority`) still passes |
+| U7 items 1, 2, 4-7 — the native dep gate, `recipe-init`, the PTY pins, rc-3, the substrate tail and the physical retirement | **next** | items 1 and 2 are #402 and #403; scope and order in the `## Next` section below |
 | U8 — program closure | pending | |
 
 ## Next — the resume plan for the next session
