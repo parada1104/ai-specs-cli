@@ -294,6 +294,15 @@ func TestGateDifferential(t *testing.T) {
 		{Name: "apt-on-linux", TTY: true, Deps: []gateDriverDep{jqDep},
 			Probe: [][]gateDriverResult{{missingJQ}, {presentJQ}}, Answers: []bool{true},
 			Which: []string{"apt-get", "jq"}, System: "linux"},
+		// T2 (S5): the apt failure arms — the exited line WITH its guidance
+		// line, and the subprocess.run error line WITHOUT one.
+		{Name: "apt-exit-1", TTY: true, Deps: []gateDriverDep{jqDep},
+			Probe: [][]gateDriverResult{{missingJQ}, {missingJQ}}, Answers: []bool{true, false},
+			Which: []string{"apt-get"}, System: "linux", Install: gateDriverInstall{Exit: 1}},
+		{Name: "apt-run-error", TTY: true, Deps: []gateDriverDep{jqDep},
+			Probe: [][]gateDriverResult{{missingJQ}}, Answers: []bool{true, false},
+			Which: []string{"apt-get"}, System: "linux",
+			Install: gateDriverInstall{Error: "Command '['sudo', 'apt-get', 'install', '-y', 'jq']' timed out after 300 seconds"}},
 		{Name: "provider-verified", TTY: true, Deps: []gateDriverDep{jinnaDep},
 			Probe: [][]gateDriverResult{{missingJinna}, {presentJinna}}, Answers: []bool{true},
 			Install: gateDriverInstall{Verified: true, Version: "1.4.2"}},
