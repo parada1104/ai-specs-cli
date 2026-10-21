@@ -80,3 +80,13 @@ Quoted verbatim from `lib/_internal/env_scaffold.py`, `lib/_internal/recipe-add.
   which is S6's proof that the unscoped path did not move.
 - L5 — Slice boundary: **T1** `internal/sync/envscaffold.go` + `envscaffold_test.go`, **T2** the three
   `internal/cli` files, **T4** this document and the program doc. No slice mixes another unit.
+- L6 — **`./tests/validate.sh` green on the final tree** (exit 0, 31m24s): 31 Go packages ok, 0 FAIL, one
+  "no test files" (`cmd/ai-specs`); the differential parity harness PASS on both legs; 2405 Python tests
+  OK with 165 skipped. `PATH` prefixed with the python3.14 bridge.
+- L7 — **Why both workers died, recorded so the next dispatch does not repeat it.** `gentle-ai-worker`
+  runs `nan/deepseek-v4-flash` at `thinking: low`, and the two task texts told it to run
+  `./tests/validate.sh` — a suite that takes ~31-32 minutes on this tree, while the harness kills a task
+  whose single tool call stalls for 30. Both workers therefore wrote the code and died inside the suite,
+  which is exactly the "stalled for 30 min with tool bash still running" record. The worker model is not
+  the defect: it delivered 1164 lines in U7-2 and 494 in U7-3 with passing tests. The full suite is the
+  PARENT's gate; a worker gets focused tests only.
