@@ -394,13 +394,15 @@ func runInitWizard(req initWizardRequest) (res initWizardResult, rc int) {
 
 	// S28 (init_tui.py:390-391): prompt for MCP env vars → ai-specs.env +
 	// root .envrc + direnv allow, when the manifest's enabled recipes collect
-	// anything. The Python wraps both calls in try/except: pass — and every
+	// anything. init_tui.py:391 passes no recipe_ids, so the wizard's offer is
+	// the AGGREGATE one (S5) — only `recipe add` scopes it. The Python wraps
+	// both calls in try/except: pass — and every
 	// branch inside OfferHarnessEnv soft-fails with the Python's own line — so
 	// a declined or cancelled offer (S30) ends the OFFER only: the staged
 	// manifest stays, the wizard returns 0 and the verb's classic continuation
 	// runs exactly as it does today.
-	if len(sync.CollectEnvVars(req.Target, req.Home)) > 0 {
-		sync.OfferHarnessEnv(req.Target, req.Home,
+	if len(sync.CollectEnvVars(req.Target, req.Home, nil)) > 0 {
+		sync.OfferHarnessEnv(req.Target, req.Home, nil,
 			&wizardEnvPrompts{out: req.Stdout, keys: keys}, req.Stdout, req.Stderr)
 	}
 	return initWizardResult{Name: projectName, Staged: staged, Sidecar: sidecar}, 0
