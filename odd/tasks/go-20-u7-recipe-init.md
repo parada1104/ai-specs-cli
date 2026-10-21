@@ -146,3 +146,10 @@ Quoted verbatim from `lib/_internal/recipe-init.py` and `tests/test_recipe_init.
 - L12 — **`./tests/validate.sh` green on the final tree** (exit 0, 32m21s): 31 Go packages ok, 0 FAIL; the
   differential parity harness PASS (gate-absent and gate-present, 0 failing); 2405 Python tests OK with
   165 skipped. `PATH` prefixed with the python3.14 bridge as the program requires.
+- L13 — **The user asked for a native review of the T1 candidate and the consent gate declined it.** The
+  candidate was frozen as the real slice (`ff5e81b..d5c4dd4`, 2 files, 1164 lines, workspace projection,
+  base `ff5e81b` detached checkout) with lenses `risk`, `readability`, `reliability`; START returned
+  `consent-declined-this-candidate` with `lineage_created: false` and `mutation_performed: false`, so
+  nothing was created, nothing was burned, and no verdict exists. A decline is candidate-scoped, not the
+  clone's switch. The tier path is unchanged and holds on its own: the differential (16/16), the Go
+  tests, and `validate.sh` are the evidence, and `assess` asked for no independent verifier.
