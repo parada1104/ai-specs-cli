@@ -2513,9 +2513,9 @@ func TestConfigureRecipesMissingPathDeviation(t *testing.T) {
 // TestRecipeDispatcherDifferentialAgainstShell byte-compares lib/recipe.sh's
 // OWN dispatcher arms against the native route: --help/-h/help on stdout
 // (exit 0), the bare `recipe` on stderr (exit 2), unknown subcommands (the
-// two lines, exit 1), and `recipe init` with its missing id — recipe-init.sh
-// is still the brief's wrapper (U6e routes straight to it), so its wrapper
-// contract is the shell contract here too.
+// two lines, exit 1), and `recipe init` with its missing id — since GO-20
+// U7-2 the Go verb owns both the brief and the wrapper grammar, so this table
+// pins the native grammar against the legacy shell wrapper byte for byte.
 func TestRecipeDispatcherDifferentialAgainstShell(t *testing.T) {
 	skillsOracle(t, "lib/recipe.sh")
 	bin, root := smokeSetup(t)
@@ -2564,9 +2564,9 @@ func TestRecipeDispatcherDifferentialAgainstShell(t *testing.T) {
 // TestRecipeDispatcherNativeNeedsNoBashOrPython is the routing proof that the
 // recipe DISPATCHER's own arms (usage, bare, unknown) are native: with PATH
 // emptied they must print their frozen bytes instead of failing to exec the
-// shim. `recipe init` is deliberately NOT in this table — that arm still
-// execs lib/recipe-init.sh (recipe-init.py is unported, owned by no U6 row),
-// pinned separately by the route test and the differential above.
+// shim. Since GO-20 U7-2 `recipe init` is native too (the wrapper grammar and
+// the brief live in internal/recipe), so its help and missing-id arms run with
+// no bash and no Python either.
 func TestRecipeDispatcherNativeNeedsNoBashOrPython(t *testing.T) {
 	bin, root := smokeSetup(t)
 	home := skillsListHome(t, root)
@@ -2613,6 +2613,31 @@ func TestRecipeDispatcherNativeNeedsNoBashOrPython(t *testing.T) {
 		want := "ai-specs recipe: unknown subcommand 'bogus'\nRun 'ai-specs recipe --help' for usage.\n"
 		if string(errOut) != want {
 			t.Errorf("stderr = %q, want %q", errOut, want)
+		}
+	})
+	t.Run("recipe init help is native", func(t *testing.T) {
+		out, errOut, code := runOne(bin, []string{"recipe", "init", "--help"}, env, t.TempDir())
+		if code != 0 {
+			t.Errorf("exit = %d, want 0 (no bash/python on PATH), stderr = %q", code, errOut)
+		}
+		if !strings.HasPrefix(string(out), "Usage: ai-specs recipe init <id> [path] [--help]") {
+			t.Errorf("stdout = %q, want the init usage heredoc", out)
+		}
+		if len(errOut) != 0 {
+			t.Errorf("stderr = %q, want empty", errOut)
+		}
+	})
+	t.Run("recipe init missing id is native", func(t *testing.T) {
+		out, errOut, code := runOne(bin, []string{"recipe", "init"}, env, t.TempDir())
+		if code != 2 {
+			t.Errorf("exit = %d, want 2 (no bash/python on PATH), stderr = %q", code, errOut)
+		}
+		if len(out) != 0 {
+			t.Errorf("stdout = %q, want empty", out)
+		}
+		if !strings.Contains(string(errOut), "ERROR: missing recipe id") ||
+			!strings.Contains(string(errOut), "Usage: ai-specs recipe init <id> [path] [--help]") {
+			t.Errorf("stderr = %q, want the missing-id error and usage", errOut)
 		}
 	})
 }

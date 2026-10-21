@@ -2652,10 +2652,10 @@ func runRecipeConfigure(args []string, home string, stdout, stderr io.Writer) in
 // lines, the wrapper's argument contract) plus lib/_internal/config_wizard.py's
 // main (the verb: the manifest guard, the TTY gate, the enabled-recipe
 // enumeration, the whole-project loop and the env offer). And the recipe
-// DISPATCHER: lib/recipe.sh's usage/bare/unknown arms natively (S4), with
-// `init` routed straight to recipe-init.sh — recipe-init.py is unported (no
-// U6 slicing row owns it), so that wrapper stays the brief's legacy route
-// while recipe.sh itself retires from the binary (S9).
+// DISPATCHER: lib/recipe.sh's usage/bare/unknown arms natively (S4), and
+// since U7-2 `init` is native too — internal/recipe owns the brief and the
+// wrapper grammar, so recipe.sh and recipe-init.sh both retire from the
+// binary (S9).
 //
 // THE CLI-DEP GATE (U4b-2's S37 seam, goal 4): NATIVE since U7-1 T3.
 // internal/deps.Gate owns `_dep_gate` plus dep_install's OFFER half (the
@@ -2709,6 +2709,18 @@ Subcommands:
   remove <id> [path]  Remove a recipe from the manifest
 Path defaults to current directory.
 `
+
+// runRecipeInitVerb is the native `recipe init` (GO-20 U7-2): the wrapper
+// grammar and the brief both live in internal/recipe, so this seam only
+// supplies the two catalogue anchors — AI_SPECS_HOME and the CLI install root
+// that backs S9's fallback.
+func runRecipeInitVerb(args []string, home, exePath string, stdout, stderr io.Writer) int {
+	installRoot := home
+	if exePath != "" {
+		installRoot = homepkg.ResolveHome(exePath, "")
+	}
+	return recipe.RunInit(args, recipe.InitOptions{Home: home, InstallRoot: installRoot}, stdout, stderr)
+}
 
 // runRecipeDispatch is lib/recipe.sh's case statement REMAINDER (S4's three
 // dispatcher failure arms): `--help|-h|help` prints usage on stdout exit 0

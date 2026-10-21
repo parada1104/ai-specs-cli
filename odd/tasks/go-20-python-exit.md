@@ -243,8 +243,9 @@ cannot each be one PR.
 | U7-1 T1 — the dep probe, the plans and the panel, native | **delivered** | `b40525c` (PR #400); `internal/deps` becomes the probe's single authority (doctor delegates) + `ResolvePlan`/`Describe`/`PanelLines`; 14-case plan differential |
 | U7-1 T2 — the provider install half, native | **delivered** | `ff5e81b` (PR #401); `internal/provider/install.go` (download, SHA256SUMS, extraction, atomic publish, receipt); 25 tests, RED reconstructed by mutation |
 | U7-1 T3 — the gate itself, native | **delivered** | `internal/deps/gate.go` + `internal/cli/depgate.go`; panel/offer/recheck/`Configure anyway?` wired into init's wizard, `configure-recipes` and `recipe add`; **S37's `runLegacyInitDepGate` + its `python3 -c` driver are GONE**, and with them the rc-3 (Python vendor) and rc-11 (driver re-read) arms; 13-case differential drives the REAL `_dep_gate` |
-| U7-1 T4 — the dead-code check | **delivered, with a correction** | the verb→script map went (dead by construction); `runShim`/`routeShim` are ALIVE on two named, owned callers (`recipe init` → item 2, the `AI_SPECS_INIT_TUI_PY` hatch → U2) — recorded in `go-20-u7-dep-gate.md` L17 |
-| U7 items 2-7 — `recipe-init`, the env-offer scope, the PTY pins, rc-3, the substrate tail, the physical retirement | **next** | scope and order in the `## Next` section below |
+| U7-1 T4 — the dead-code check | **delivered, with a correction** | the verb→script map went (dead by construction); `runShim`/`routeShim` are ALIVE on two named, owned callers (`recipe init` → item 2, the `AI_SPECS_INIT_TUI_PY` hatch → U2); U7-2 took the first, so one is left — recorded in `go-20-u7-dep-gate.md` L17 |
+| U7-2 — `recipe init`, native (the brief and its wrapper grammar) | **delivered** | `internal/recipe/init.go` + `init_test.go`; `recipe init` stops executing `lib/recipe-init.sh`, so the wrapper leaves the binary's route and `runShim` keeps one named caller (the `AI_SPECS_INIT_TUI_PY` hatch, U2); 16-case differential against the Python, byte-identical; review `review-cdee0a5277f62d1a` approved 3/3 lenses (risk, readability, reliability), 3 advisories triaged — R1-redact-args inherited from the Python and parity-bound, R3-002 = the recorded path deviation, R3-001 refuted |
+| U7 items 3-7 — the env-offer scope, the PTY pins, rc-3, the substrate tail and the physical retirement | **next** | scope and order in the `## Next` section below |
 | U8 — program closure | pending | |
 
 ## Next — the resume plan for the next session
@@ -254,7 +255,9 @@ left open, and one worktree (`.worktrees/epic-go-single-binary`). Every delivery
 `epic/go-single-binary` through a PR; `development` never received a migration commit.
 
 **U7, in the order it should be built.** Each item names the seam or the file it retires, because a
-retirement without a name is how a program lies to itself:
+retirement without a name is how a program lies to itself. **Items 1 and 2 are delivered** (the native
+dep gate in #402, `recipe init` in `go-20-u7-recipe-init.md`); the list below keeps their original text
+so the remaining order still reads from the same plan.
 
 1. **The native CLI-dep gate** — `_dep_gate` + `dep_install` are the last interactive surface with no Go
    side. Porting it retires **S37** (the `runLegacyInitDepGate` seam in `init`'s wizard) and the matching
