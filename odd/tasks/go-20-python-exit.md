@@ -251,14 +251,15 @@ cannot each be one PR.
 
 ## Next — the resume plan for the next session
 
-Coordinates at hand-off: epic tip **`8dd87e6`**, `development` untouched at `afe04fb`, no program branches
+Coordinates at hand-off: epic tip **`774061c`**, `development` untouched at `afe04fb`, no program branches
 left open, and one worktree (`.worktrees/epic-go-single-binary`). Every delivery went to
 `epic/go-single-binary` through a PR; `development` never received a migration commit.
 
 **U7, in the order it should be built.** Each item names the seam or the file it retires, because a
-retirement without a name is how a program lies to itself. **Items 1 and 2 are delivered** (the native
-dep gate in #402, `recipe init` in `go-20-u7-recipe-init.md`); the list below keeps their original text
-so the remaining order still reads from the same plan.
+retirement without a name is how a program lies to itself. **Items 1-4 are delivered** (the native dep
+gate in #402, `recipe init` in `go-20-u7-recipe-init.md`, the env offer's scope in #404, the three pins in
+`go-20-u7-dep-gate-pins.md`); the list below keeps their original text so the remaining order still reads
+from the same plan.
 
 1. **The native CLI-dep gate** — `_dep_gate` + `dep_install` are the last interactive surface with no Go
    side. Porting it retires **S37** (the `runLegacyInitDepGate` seam in `init`'s wizard) and the matching
@@ -268,9 +269,11 @@ so the remaining order still reads from the same plan.
    its wrapper), the cheapest remaining verb.
 3. **The env offer's scoping** — `sync.OfferHarnessEnv` collects the project-wide variable set where
    `recipe-add.py` scoped it to the added id (the review's `R3-EnvOfferScope`).
-4. **The three in-process-only pins** — the loop order (`R3-LoopOrderUnproved`), the dep-guidance bytes
-   (`R3-AptGuidanceUnproved`) and the tail-seam close (`R3-TailSeamClose`) are pinned without a PTY; the
-   differential is where they belong.
+4. **The three in-process-only pins — DELIVERED** (`go-20-u7-dep-gate-pins.md`): the loop order
+   (`R3-LoopOrderUnproved`), the dep-guidance bytes (`R3-AptGuidanceUnproved`) and the tail-seam close
+   (`R3-TailSeamClose`) now carry differential and PTY cases, each proved non-vacuous by perturbing the
+   port. The differential the advisory asked for already existed (U7-1 T3); the gap was its corpus, and
+   no production file changed to close it.
 5. **The rc-3 partial write** (`R3-Rc3PartialWrite`) — recorded, not fixed: a dep gate answering 3
    mid-loop leaves the recipes configured before it written. Decide whether parity or all-or-nothing
    wins before touching it.

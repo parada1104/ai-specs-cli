@@ -88,3 +88,40 @@ real legacy code, and anything they expose is fixed here or recorded with its re
   `package-timeout` and `installed-not-on-path` all run `brew` on `darwin`; `two-missing-declined` is two
   package plans of the same kind, so the order across kinds is unproven; and the PTY case asserts the
   confirm rendered (`.assertIn("Configure anyway", plain)`) but not that the terminal is handed back.
+
+## Delivery
+
+| Task | Commit | What it holds |
+| --- | --- | --- |
+| T1 | `a093cfd` | `TestGateDifferential/12-mixed-kind-loop-order` + this document |
+| T2 | `4d89650` | `07-apt-exit-1`, `08-apt-run-error` |
+| T3 | `03c59bc` | `test_dep_gate_hands_the_terminal_back` + the two stale pre-U7-1 comments |
+| T4 | this commit | evidence, `## Next` item 4 of the program doc, its coordinates line |
+
+The worker wrote the three cases; the parent re-derived every claim (S4's "one grader" cuts both ways).
+Non-vacuity, each perturbation reverted with `git diff` empty on the production file:
+
+1. `resolveGatePlans` reversed the `missing` order → `12-mixed-kind-loop-order` FAILs
+   (`gate differential mismatch`), because the emitted order diverges.
+2. The `    see` line moved from the `exited` arm into the `failed:` arm → `07-apt-exit-1` and
+   `08-apt-run-error` both FAIL.
+3. `initDepGate` leaving the wizard's window suspended after `Gate` returns → the PTY case FAILs with
+   `AssertionError: 'qqq' unexpectedly found in "… ? Write ai-specs.toml with these choices? (Y/n) qqq …"`.
+
+Checks, all observed here and not reported second-hand:
+
+- `go build ./...`, `gofmt -l internal/ cmd/`, `go vet ./internal/deps/ ./internal/cli/` — clean.
+- `PATH=/tmp/pybin:$PATH go test ./internal/deps/ ./internal/cli/ -count=1` — ok (2.2s, 19.5s).
+- `TestGateDifferential -v` — 16/16 subtests pass (13 pre-existing, unchanged in behaviour, plus 3 added).
+- `tests/test_init_tui.TestConfigureRecipesStep` — 3/3 ok, including the pre-existing
+  `test_configure_recipes_uses_dep_gate_for_cli_deps` (PRESERVE).
+- `PATH=/tmp/pybin:$PATH ./tests/validate.sh` — **exit 0**, `Ran 2406 tests in 1558.123s`, `OK
+  (skipped=165)`, zero FAIL. The skips are the suite's own environment gauges inside a worktree (no git
+  trust-root context, no `dist/` gate binary, no vendored PromptSession) and predate this unit; this diff
+  touches no file those cases read.
+
+`Risk: none` — test-only. No product code, contract, or stored data is touched, so no independent
+verifier was required and none ran.
+
+Left open, deliberately, and outside this unit: U7-5's rc-3 partial write waits on a product decision
+(parity vs all-or-nothing), U7-6 is the substrate tail, and U7-7 stays gated on U2's launcher flip (S9).
