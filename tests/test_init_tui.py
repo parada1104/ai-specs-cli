@@ -379,11 +379,10 @@ class TestConfigureRecipesStep(unittest.TestCase):
         # The config wizard never ran: its field help text was never rendered.
         self.assertNotIn("Base branch for PRs", plain)
 
-    # U4b-2: drives the BUILT binary; the gate's own leg is still scripted —
-    # config_wizard._dep_gate runs the legacy script through the wizard's
-    # documented seam (the binary spawns it over the same TTY, panel, install
-    # offer and "Configure anyway?" included). U6e lands the native dep gate
-    # and retires the seam; until then this case is what proves it works.
+    # U4b-2: drives the BUILT binary; as of U7-1 the gate itself is native
+    # (internal/deps.Gate behind initDepGate), so this case proves the panel,
+    # the TTY offer and the frozen "Configure anyway?" confirm through the
+    # binary's own terminal.
     def test_configure_recipes_uses_dep_gate_for_cli_deps(self):
         """JD-3: init must offer TTY install via _dep_gate, not panel-only."""
         base, home, target = _fresh_env(self)
@@ -414,12 +413,47 @@ class TestConfigureRecipesStep(unittest.TestCase):
         self.assertEqual(data["recipes"]["dep-gate"], {"enabled": True})
         self.assertNotIn(".config]", text)
 
+    # S7 (U7-4 T3): the gate must hand the terminal BACK to the wizard. The
+    # wizard owns the raw-mode window, so "handed back" is observable only on a
+    # real terminal: after the gate returns, a single unbuffered keystroke must
+    # be read with no echo. A terminal left cooked (the adapter closing the
+    # wizard's window) echoes the typed bytes and waits for a newline instead.
+    def test_dep_gate_hands_the_terminal_back(self):
+        base, home, target = _fresh_env(self)
+        _seed_recipe(home, "dep-tail", _recipe_toml("dep-tail", "Dep Tail", extra=(
+            "[[deps.cli]]\nbinary = \"zzz-definitely-missing-binary\"\n"
+            "purpose = \"test dep tail\"\nrequired = true\n"
+        )))
+        stages = [
+            (N_NAME, b"\n"),
+            (N_TOPO, b"\n"),
+            (N_AGENTS, b"\n"),
+            (N_RECIPES, b" \n"),             # select dep-tail
+            (b"Configure anyway", b"\n"),    # gate confirm: default No → skip
+            # Typed without a newline at the prompt AFTER the gate returned: raw
+            # mode reads it silently, a cooked terminal echoes it.
+            (b"Skipped dep-tail", b"qqq"),
+            (N_CONFIRM, b"\n"),
+        ]
+        rc, out = _spawn_pty(target, home, base, stages=stages,
+                             argv=[str(NATIVE_CLI), "init", "--tui", "--name", "demo", str(target)])
+        plain = _strip_ansi(out)
+        self.assertEqual(rc, 0, f"output: {plain!r}")
+        self.assertIn("Skipped dep-tail", plain)
+        # No echo: the wizard's window is raw again, not the cooked terminal a
+        # closed window would have left behind.
+        self.assertNotIn("qqq", plain)
+        # The wizard then completed: the gate did not swallow the terminal.
+        data = tomllib.loads((target / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8"))
+        self.assertEqual(data["project"]["name"], "demo")
+        self.assertEqual(data["recipes"]["dep-tail"], {"enabled": True})
+
 
 # S20/S40: every wizard flow below drives the built binary as of U4b-2 — the
 # harness-env offer with U4d-2, the per-recipe-configuration cases with this
 # slice. No case keeps the LEGACY launcher for a missing native feature any
-# more; the dep-gate case's scripted leg runs INSIDE the binary through the
-# seam named at its own test, and the runpy drivers below are TRIAGE
+# more; the dep-gate case runs the NATIVE gate inside the binary (U7-1), and
+# the runpy drivers below are TRIAGE
 # process-boundary contracts of the legacy module, not launcher cases.
 class TestRunWizardHarnessEnv(unittest.TestCase):
     """JD-1: fresh init must spoon-feed harness env after staging write."""
