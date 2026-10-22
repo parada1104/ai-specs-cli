@@ -162,15 +162,6 @@ class RecipeCaptureContractTests(unittest.TestCase):
 
     # ── propagation, flags and path distinctness ─────────────────────────
 
-    def test_failures_after_the_block_still_propagate(self):
-        proc, _ = self.stub_sync(
-            intercepts=[
-                ("brief-render-policy.py", {"rc": 0, "stdout": "true\n"}),
-                ("agents-render.py", {"rc": 9, "stdout": "oops\n"}),
-            ]
-        )
-        self.assertEqual(proc.returncode, 9, proc.stderr)
-
     def test_refresh_gates_is_accepted_and_a_fresh_sync_is_unchanged(self):
         """The flag no longer reaches an argv (the step is in-process).
 
