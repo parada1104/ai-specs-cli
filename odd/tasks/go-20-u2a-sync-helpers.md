@@ -153,3 +153,47 @@ Decided by the human on 2026-10-22, taking the recommendation in each case:
   seam). Both files are outside this unit's allowed edit surfaces, so they were left untouched; the fix is
   to re-point their stub target to a still-Python step (`refresh-bundled.py` / `vendor-skills.py`) the way
   S15/S17 re-pointed tests whose seam was removed.
+
+- L8 — T3 (`brief-render-policy` + `agents-render`) done on `change/go-20-u2a-code`, 2026-10-22.
+  `sync.go:380-386` now calls `renderAgentsStep(tomlPath, <root>/AGENTS.md, resolvedConfigTemp,
+  opts.adoptBrief, out, errW)` — one native call inside the same `runStep` wrapper, in the same position
+  (after recipe materialization, before the fan-out) — and the `stepMode("agents-render") == "go"` branch
+  plus both `r.exec` invocations (`brief-render-policy.py`, `agents-render.py`) are gone. The resolved-config
+  temp is still created, passed and removed exactly as before; the argv it fed is now the native
+  `RenderAgentsOptions`. `GO_SYNC_STEP_AGENTS_RENDER` no longer selects a leg (validated, inert) exactly as
+  T2 left the two gitignore flags. The Python modules stay under `lib/_internal/` as the oracle until U2e.
+
+  D3 preserved, as decided above: `renderAgentsStep` ignores the policy's failure status and gates on its
+  verdict alone, so a manifest the policy cannot read still skips the brief with exit 0 (skip notice on
+  stdout, one `error: ` line on stderr). Only the error wording changed, because the two parsers describe
+  the same defect differently — the same class as L6's recorded divergence. The silent skip itself is a
+  separate unit and was deliberately not fixed here.
+
+  Test evidence. `briefpolicy_test.go` gains `TestBriefRenderPolicyDifferential`: native policy vs the real
+  `brief-render-policy.py` over a missing `[brief]` table, `render = true`, `render = false`, an invalid
+  type, bad TOML and a missing manifest, each in default and `--validate` mode (12 subtests). Exit code and
+  stdout are compared byte for byte; stderr only as a class (`error: ` on both sides), since the interpreters
+  word the error differently; the manifest is re-read to prove the policy writes nothing.
+  `agentsrender_test.go` gains `TestAgentsRenderStepDifferential` (the composed step vs the real two-module
+  sequence, over the 11 governance fixtures including the preserve-if-runtime-brief marker case, comparing
+  exit code, both streams, AGENTS.md bytes and lock bytes),
+  `TestRenderAgentsStepPolicyFailurePreservesTheSilentSkip` (the D3 invariant above), and
+  `TestSyncAgentsStepIsNative`, which drives the whole spine in process through `sync.Run` with a
+  PATH-shadowed `python3` that logs every invocation, requires the log to still contain
+  `refresh-bundled.py` (so the shadow cannot pass vacuously), and requires it to contain neither
+  `brief-render-policy.py` nor `agents-render.py`.
+
+  RED, before the `sync.go` change: `--- FAIL: TestSyncAgentsStepIsNative / sync still execs
+  brief-render-policy.py; log: ...` and the same line for `agents-render.py`, with the log showing both
+  modules' full argv. GREEN after: `ok ai-specs.dev/ai-specs/internal/sync` with `-run
+  'BriefRender|AgentsRender|BriefPolicy|TestSyncAgentsStepIsNative'` and for the whole package. Non-vacuity:
+  flipping the native `[brief].render` verdict (`return b` → `return !b`, `briefpolicy.go`) made
+  `TestBriefRenderPolicyDifferential` report `stdout: go: "false" / python: "true"` and
+  `TestAgentsRenderStepDifferential/brief_render_false_disables_the_policy_gate` report a written AGENTS.md
+  where Python skipped; reverted, and `git diff internal/sync/briefpolicy.go` is empty.
+
+  No re-point was needed and none is recorded: L7's open item is stale. Both `tests/test_sync_run_step_errexit.py`
+  and `tests/test_sync_output_verbosity.py` already stub `refresh-bundled.py` (a still-Python step) through
+  PATH — that re-point landed in 4570be4, the T2 commit, not in T3. Both files were left untouched:
+  `python3 -m unittest tests.test_sync_run_step_errexit tests.test_sync_output_verbosity
+  tests.test_brief_render_policy tests.test_agents_render_brief_fragments` → `Ran 109 tests ... OK`.
