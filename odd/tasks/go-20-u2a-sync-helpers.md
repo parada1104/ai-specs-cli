@@ -276,3 +276,65 @@ Decided by the human on 2026-10-22, taking the recommendation in each case:
   Observed after T4: `go build ./...` clean, `gofmt -l internal/sync/` empty, `go vet ./internal/sync/`
   clean; `PATH=/tmp/pybin:$PATH python3 -m unittest tests.test_sync_run_step_errexit
   tests.test_sync_output_verbosity` → `Ran 31 tests ... FAILED (failures=14)`, all 14 the seam loss above.
+
+- L10 — T5 (`vendor-skills`) done on `change/go-20-u2a-code`, 2026-10-22. `internal/sync/vendorskills.go`
+  is the port (`SyncVendoredSkills` for the root `[[deps]]` route, `materializeDepSkill` for the
+  recipe-dep delegation); `internal/sync/sync.go:276-278` now calls `SyncVendoredSkills(root, r.home, out,
+  errW)` in the same `runStep("vendored skills")` position and `internal/sync/materialize_loop.go:88-92`
+  calls `materializeDepSkill(req.ProjectRoot, req.AISpecsHome, skill, req.Stdout, req.Stderr)` instead of
+  the inline `python3 -c`. The `depSkillDelegationScript` and `delegateDepSkillToPython` are gone;
+  `materializeRunPython` itself was NOT touched (T6 owns it). `lib/_internal/vendor-skills.py` and its
+  sibling modules stay in place as the differential oracle until U2e. `internal/skills/vendored.go` gained
+  `VendoredSkillMarkdownFromMap` (the recipe-dep route has no TOML table), sharing the existing renderer.
+
+  Python contract, quoted from `lib/_internal/vendor-skills.py` and used as the differential target:
+  - argv `vendor-skills.py <project_root>`; root `[[deps]]` materialize at
+    `{project}/ai-specs/.deps/<id>/skills/<id>`, recipe deps (only `sync_dep_target`, `in_project=False`)
+    at `{cache}/.deps/<id>/skills/<id>`, where `{cache}` is `{cli_home}/cache/projects/<cache_key>` and
+    `ensure_cache` writes its `meta.toml` sidecar.
+  - source resolution: `AI_SPECS_VENDOR_FIXTURE_ROOT` replaces a source containing
+    `kepano/obsidian-skills`; a plain local tree (no `.git`) is `copytree`d, otherwise `git clone --depth
+    1 --quiet [--branch <ref>]` (a 7-40 hex `ref`/`rev` uses `git init` + `remote add` + `fetch
+    --depth 1 origin <sha>` + `checkout FETCH_HEAD`). `path` is `.strip("/")` and selects the `SKILL.md`
+    directory; ancillary `assets/`, `references/`, `scripts/` dirs are copied.
+  - writes: the target is deleted only AFTER `SKILL.md` is found, then `SKILL.md` is written from
+    `render_skill_markdown(from_dep(dep, upstream))` (mode `0666 &^ umask`) and the ancillary dirs copied
+    (S6 partial state kept). The root route then hashes every target file (CRLF-normalized) into
+    `[deps."<id>".skills."<id>"]` in `ai-specs/.ai-specs.lock` and writes the lock once.
+  - stdout: `  ▸ <id>  ←  <source>[  (path: <path>)][  (ref: <ref>)]`, then
+    `  ✓ vendored <n> dep(s)`; no deps prints `  (no [[deps]] declared — nothing to vendor)` and writes no
+    lock. Recipe delegations print only the `  ▸` line (the caller adds `    ✓ dep skill <id>`).
+  - exit: `0` on success; `1` + `  ✗ <msg>` on a missing/invalid dep or a clone/`SKILL.md` failure. Python's
+    uncaught filesystem/git errors are a traceback; the port keeps the same exit code with one
+    `  ✗ <msg>` line (L6 class). Git's own stderr is forwarded on both legs.
+
+  Tests. `internal/sync/vendorskills_test.go` adds `TestSyncVendoredSkillsDifferential` (twin projects, real
+  module vs native: no deps, a local git dep with `ref = 'v1'`, a fixture dep with `path` +
+  `references/`, a missing source) comparing exit code, stdout, stderr, lock bytes and the whole project
+  tree (bytes/modes); `TestRecipeDepSkillDifferential` compares the native recipe route against the real
+  `sync_dep_target(in_project=False)` (stdout + cache `.deps` tree); `TestSyncVendoredSkillsStepIsNative`
+  runs the spine with a PATH-shadowed `python3` that logs every invocation. RED before the `sync.go`
+  change: `vendorskills_test.go:268: sync still execs vendor-skills.py; log: .../lib/_internal/vendor-skills.py
+  .../project`. GREEN after: all three suites pass and `ok ai-specs.dev/ai-specs/internal/sync` for
+  `-run 'Vendor|RecipeDep'`; `internal/skills` `-run 'Vendor'` stays green. Non-vacuity: appending `"x"` to
+  every lock hash made `dep_with_path_and_ancillary_dirs` fail with `project: ai-specs/.ai-specs.lock
+  bytes:` (`"SKILL.md" = "...9ce5x"` vs `"...9ce5"`); reverted, and the line is back to
+  `hashes[filepath.ToSlash(rel)] = sum`.
+
+  L10 — PATH-stub seam losses after T5 (all outside this unit's allowed edit surfaces; NOT deleted or
+  weakened). No Go→Python sync child remains on the `sync` spine now, so no still-Python step exists to
+  re-point them to:
+  1. `internal/sync/refreshbundled_test.go:74` `TestSyncBundledStepIsNative`: now fails at
+     `read python3 invocation log: ... no such file or directory`; its non-vacuity guard is
+     `if !strings.Contains(logged, "vendor-skills.py") { t.Fatalf("python3 shadow intercepted nothing; log:\n%s", logged) }`.
+  2. `internal/sync/agentsrender_test.go:961` `TestSyncAgentsStepIsNative`: same read-log failure; guard
+     `if !strings.Contains(logged, "refresh-bundled.py") { ... }` (L9 item 1, still open).
+  3. `tests/test_sync_run_step_errexit.py`: `STEP_ONE = "refresh-bundled.py"` (line 39) and
+     `STEP_TWO = "vendor-skills.py"` (line 40) both name now-native steps; the 7 tests listed in L9
+     (e.g. `test_a_failing_step_keeps_the_wrapped_status` asserting `proc.returncode == 7`) can no longer
+     intercept a sync step.
+  4. `tests/test_sync_output_verbosity.py`: `StepOutputContractCliTests.FIRST_STEP = "refresh-bundled.py"`
+     (line 279) and the `("refresh-bundled.py", ...)` tuple (line 865) are both now-native; the 7 tests
+     listed in L9 cannot intercept a sync step.
+  Parent action: these suites need a deliberate test-only seam (or retirement) in a unit that owns those
+  files; T5 did not invent one.

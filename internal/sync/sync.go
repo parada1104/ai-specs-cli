@@ -240,10 +240,6 @@ func (r *runner) run(opts options) int {
 	fmt.Fprintln(r.stdout, "  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs")
 	fmt.Fprintln(r.stdout, "")
 
-	internal := func(name string) string {
-		return filepath.Join(r.home, "lib", "_internal", name)
-	}
-
 	// Strangler flags a-c: GO_SYNC_STEP_GITIGNORE and GO_SYNC_STEP_GITIGNORE_ROOT
 	// selected the native Go gitignore renderers, GO_SYNC_STEP_AGENTS_RENDER the
 	// native brief-render-policy + agents-render pair. All of them are native
@@ -274,7 +270,7 @@ func (r *runner) run(opts options) int {
 		return rc
 	}
 	if rc := r.runStep("vendored skills", func(out, errW io.Writer) int {
-		return r.exec([]string{"python3", internal("vendor-skills.py"), root}, out, errW)
+		return SyncVendoredSkills(root, r.home, out, errW)
 	}); rc != 0 {
 		return rc
 	}
