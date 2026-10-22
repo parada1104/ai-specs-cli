@@ -407,3 +407,26 @@ Decided by the human on 2026-10-22, taking the recommendation in each case:
   stub target had become native). Non-vacuity of the seam cases is structural and stated: the compact test
   asserts both what must be dropped and what must be kept, and the mktemp cases assert the shim's own
   announcement (the degraded-path lines are unreachable unless the shim ran).
+
+- L12 — job-3 seam loss, fixed on `change/go-20-u2a-code`, 2026-10-22. The full validation's one Python
+  failure was `tests/test_sync_recipe_capture.py::RecipeCaptureContractTests::test_failures_after_the_block_still_propagate`
+  (lines 167-173): it stubbed `agents-render.py` with `rc: 9` through PATH and asserted the sync exits 9.
+  Since T3 (a50eed4) the AGENTS.md step is native, so the stub never ran and the sync exited 0 — the same
+  seam loss as L9/L10/L11, in a suite that was not inventoried there. No product code changed.
+  Mapping: `test_failures_after_the_block_still_propagate` → `TestSyncFailureAfterRecipeBlockPropagates`
+  (`internal/sync/spine_test.go`). The effect asserted is PROPAGATION, not the stub's literal 9: a project
+  with an invalid `[brief].summary_mode` fails the real native AGENTS.md step after the recipe block; the
+  expected status is measured by calling `renderAgentsStep` on the same fixture (it returns before any
+  write, so the probe is inert), then `Run` must exit with exactly that non-zero status, print `  syncing
+  recipes` and `  syncing AGENTS.md`, surface `[brief].summary_mode: invalid mode` on stderr, claim no
+  success footer and leave AGENTS.md untouched. The stub value 9 is replaced by propagation of the native
+  step's own code (1 for this failure) — the Python test asserted the stub's number, which stopped
+  meaning anything once no Python step remained. The Python method was deleted that way only: the rest of
+  `tests/test_sync_recipe_capture.py` is byte-identical. Evidence: `PATH=/tmp/pybin:$PATH go test
+  ./internal/sync/ -run 'SyncFailureAfterRecipeBlock|SyncAbortsAfterAFailingStep' -count=1 -v` → both PASS
+  (GREEN against unchanged product, no RED is available for a behaviour that already exists); non-vacuity:
+  temporarily returning 0 instead of the AGENTS step's rc in `sync.go` made it FAIL with
+  `sync rc = 0, want the failing step's own 1`, then reverted — `git diff internal/sync/sync.go` is empty.
+  `PATH=/tmp/pybin:$PATH python3 -m unittest tests.test_sync_recipe_capture` → `Ran 9 tests ... OK`;
+  `PATH=/tmp/pybin:$PATH go test ./internal/sync/ -count=1` → `ok ai-specs.dev/ai-specs/internal/sync`;
+  `go build ./...`, `gofmt -l internal/sync/` and `go vet ./internal/sync/` clean.
