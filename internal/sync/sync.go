@@ -206,13 +206,13 @@ func (r *runner) run(opts options) int {
 		return 1
 	}
 
-	// cli_version.py check-sync runs directly (streams inherited); any failure
-	// collapses to exit 1.
-	checkArgs := []string{"python3", filepath.Join(r.home, "lib", "_internal", "cli_version.py"), "check-sync", root, r.home}
-	if opts.ignoreCliVersion {
-		checkArgs = append(checkArgs, "--ignore-cli-version")
+	// CheckSync is native (T1 of U2a). Its stderr goes out as the Python shim's
+	// did; any failure collapses to exit 1.
+	rc, checkStderr := CheckSync(root, r.home, opts.ignoreCliVersion)
+	if checkStderr != "" {
+		fmt.Fprint(r.stderr, checkStderr)
 	}
-	if rc := r.exec(checkArgs, r.stdout, r.stderr); rc != 0 {
+	if rc != 0 {
 		return 1
 	}
 

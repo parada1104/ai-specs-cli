@@ -98,3 +98,21 @@ Decided by the human on 2026-10-22, taking the recommendation in each case:
 
 - L5 — The four decisions D1–D4 were taken by the human on 2026-10-22, each with the recommended
   option. They are recorded in the Decisions section above, before any task starts.
+
+- L6 — T1 (`check-sync`) done on `change/go-20-u2a-code`, 2026-10-22. `internal/sync/checksync.go` adds
+  `CheckSync(root, home string, ignoreCliVersion bool) (int, string)`, mirroring
+  `lib/_internal/cli_version.py:238-277` and delegating the policy core to `internal/cliversion`
+  unchanged. `internal/sync/sync.go:209-217` now calls it instead of exec'ing the module; the caller's
+  collapse of any nonzero to 1 is untouched, and the returned stderr is written verbatim (the ignore
+  warning included). Exit contract, quoted from the Python: `2` for missing argv (not reachable from sync),
+  `1` + `ERROR: <manifest> not found.` for a missing manifest, `1` + `ERROR: <message>` for an invalid
+  `[tool]`, `0` for no policy or a passing policy, `0` + one `⚠ ai-specs: ignoring CLI version policy
+  (<reason>)` line when a failing policy is ignored, and `1` + three lines (`ERROR: <reason>.`, the upgrade
+  hint, the `--ignore-cli-version` hint) for a failing policy. `checksync_test.go`
+  (`TestCheckSyncDifferential`) runs the real Python module and the native function over nine fixtures
+  (no pin, matching pin, matching min, mismatching pin, below minimum, mismatching pin + `--ignore-cli-version`,
+  unknown installed version, missing manifest, invalid `[tool]`) comparing exit code and stderr; RED was the
+  compile failure `undefined: CheckSync`, GREEN is all nine subtests passing. Non-vacuity: forcing the
+  policy-failure branch to exit 0 made three subtests fail (`native = 0, python = 1`) before reverting.
+  Known divergence, recorded not fixed: malformed TOML raises an uncaught traceback in Python, while the port
+  exits 1 with a single `ERROR: cannot parse ...` line; both fail, only the text differs (same class as D2).
