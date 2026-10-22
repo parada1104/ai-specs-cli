@@ -69,3 +69,7 @@ base `epic/go-single-binary` @ `9d54962`.
   run Python).
 - L3 — U2 was re-scoped from one flip to five units after the blockers in S5 were measured. The first
   plan named one flip; that premise was checked against the code before any deletion was scheduled.
+- L4 — Correction to S5 above: `target-resolve` is NOT executed by Python from sync. Measured on
+  `7daf7eb`: `internal/sync/sync.go:443-460` calls `target.Run` natively. S5's list is left as written; the
+  corrected inventory and two newly found Python executions (`materialize_loop.go:670-673`,
+  `hooksrender.go:771`) are in `go-20-u2a-sync-helpers.md` S2-S3.
