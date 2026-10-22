@@ -74,6 +74,17 @@ Written here so they are not discovered mid-task. Each one is taken before its t
 - D4 — the generated hook's `python3` dependency: keep it (installed hooks may assume python3), or
   replace the JSON encoding with a shell-only form.
 
+Decided by the human on 2026-10-22, taking the recommendation in each case:
+
+- D1 → **match the umask.** The native gitignore writes with the umask-dependent mode, like Python.
+  The fixed `0644` is an accident, not a hardening. T2 changes `internal/sync/gitignore.go:71-75,135-152`.
+- D2 → **accept the native wording** as contract. Both paths fail with a nonzero exit; only the text
+  differs. Recorded as an accepted divergence in U2e.
+- D3 → **preserve** in U2a. A port is not a behaviour change. The silent skip is a separate unit
+  to be scheduled after U2.
+- D4 → **keep the hook's python3** for now. Installed hooks may depend on it, and changing a shipped
+  artifact is a separate decision. T6 leaves the generated hook untouched.
+
 ## Log
 
 - L1 — Parent request, verbatim: "ok" (2026-10-22), approving the merge of #407 and the drafting of this
@@ -84,3 +95,6 @@ Written here so they are not discovered mid-task. Each one is taken before its t
 - L4 — Correction to `go-20-u2-launcher-flip.md` S5 (the U2 plan): `target-resolve` is not executed by
   Python from sync. Measured: `sync.go:443-460` calls `target.Run`. The U2 plan's list is corrected here, and
   the U2 plan's own text is left as written for its history.
+
+- L5 — The four decisions D1–D4 were taken by the human on 2026-10-22, each with the recommended
+  option. They are recorded in the Decisions section above, before any task starts.
