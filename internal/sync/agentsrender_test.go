@@ -783,6 +783,244 @@ func TestAgentsRenderGovernanceDifferential(t *testing.T) {
 	}
 }
 
+// runPythonAgentsStep reproduces the argv sequence sync used before T3: the
+// policy module runs first and its exit status is ignored (D3) — the gate is
+// the `true` on its stdout — then the renderer runs with the same flags. Some
+// of those steps are native now, so this is the oracle, not the implementation.
+func runPythonAgentsStep(t *testing.T, root, tomlPath, outPath, resolvedPath string, adoptBrief bool) (string, string, int) {
+	t.Helper()
+	internal := func(name string) string {
+		return filepath.Join(root, "lib", "_internal", name)
+	}
+	var policyOut, stdout, stderr bytes.Buffer
+	policy := exec.Command("python3", internal("brief-render-policy.py"), tomlPath)
+	// The verdict is captured privately: sync never forwards the policy's
+	// stdout, only the skip notice below.
+	policy.Stdout = &policyOut
+	policy.Stderr = &stderr
+	if err := policy.Run(); err != nil {
+		if _, ok := err.(*exec.ExitError); !ok {
+			t.Fatalf("run brief-render-policy.py: %v", err)
+		}
+		// Deliberately ignored: sync gates on stdout only.
+	}
+	if strings.TrimRight(policyOut.String(), "\n") != "true" {
+		stdout.WriteString("  \u2139 skipped AGENTS.md (brief.render = false)\n")
+		return stdout.String(), stderr.String(), 0
+	}
+	argv := []string{
+		internal("agents-render.py"), tomlPath, outPath,
+		"--preserve-if-runtime-brief",
+	}
+	if adoptBrief {
+		argv = append(argv, "--adopt-brief")
+	}
+	argv = append(argv, "--resolved-config", resolvedPath)
+	render := exec.Command("python3", argv...)
+	render.Stdout = &stdout
+	render.Stderr = &stderr
+	rc := 0
+	if err := render.Run(); err != nil {
+		exitErr, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("run agents-render.py: %v", err)
+		}
+		rc = exitErr.ExitCode()
+	}
+	return stdout.String(), stderr.String(), rc
+}
+
+// TestAgentsRenderStepDifferential drives the composed native step
+// (policy gate + renderer) against the REAL two-Python-module sequence sync ran
+// before T3, over every governance fixture plus a preserve-if-runtime-brief
+// case. It compares the exit code, both streams, the AGENTS.md bytes and the
+// lock bytes.
+func TestAgentsRenderStepDifferential(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skipf("python3 not available: %v", err)
+	}
+	root := gitignoreRepoRoot(t)
+
+	for _, tc := range briefGovCases() {
+		if tc.policyValidate {
+			// --validate is not on the sync path; the strict gate belongs to
+			// doctor and is covered by TestBriefRenderPolicy.
+			continue
+		}
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			refDir := t.TempDir()
+			refTOML, refOut, refLock, refResolved := setupBriefGovDir(t, refDir, tc)
+			if refResolved == "" {
+				refResolved = writeEmptyResolved(t, refDir)
+			}
+			wantOut, wantErr, wantRC := runPythonAgentsStep(t, root, refTOML, refOut, refResolved, tc.adoptBrief)
+
+			goDir := t.TempDir()
+			goTOML, goOut, goLock, goResolved := setupBriefGovDir(t, goDir, tc)
+			if goResolved == "" {
+				goResolved = writeEmptyResolved(t, goDir)
+			}
+			var out, errW bytes.Buffer
+			gotRC := renderAgentsStep(goTOML, goOut, goResolved, tc.adoptBrief, &out, &errW)
+
+			if gotRC != wantRC {
+				t.Errorf("rc: go=%d python=%d (go stderr=%q)", gotRC, wantRC, errW.String())
+			}
+			if out.String() != wantOut {
+				t.Errorf("stdout:\n  go: %q\npython: %q", out.String(), wantOut)
+			}
+			if errW.String() != wantErr {
+				t.Errorf("stderr:\n  go: %q\npython: %q", errW.String(), wantErr)
+			}
+			if got, want := fileSHA256OrNull(goOut), fileSHA256OrNull(refOut); !govPtrEqual(got, want) {
+				t.Errorf("AGENTS.md sha: go=%v python=%v", derefString(got), derefString(want))
+			}
+			if got, want := fileSHA256OrNull(goLock), fileSHA256OrNull(refLock); !govPtrEqual(got, want) {
+				t.Errorf("lock sha: go=%v python=%v", derefString(got), derefString(want))
+			}
+		})
+	}
+}
+
+// writeEmptyResolved writes the resolved-config JSON of a project with no
+// bindings or recipes into dir and returns its path.
+func writeEmptyResolved(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "resolved.json")
+	data, err := json.Marshal(map[string]any{
+		"bindings": map[string]any{},
+		"recipes":  map[string]any{},
+		"enabled":  []any{},
+	})
+	if err != nil {
+		t.Fatalf("marshal resolved: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write resolved: %v", err)
+	}
+	return path
+}
+
+// TestSyncAgentsStepIsNative drives the whole sync spine in process with a
+// PATH-shadowed `python3` that logs every invocation and execs the real
+// interpreter, then requires that the AGENTS.md step no longer shells out to
+// brief-render-policy.py or agents-render.py. The log must still record the
+// Python steps sync does run, so a broken shadow cannot pass vacuously.
+func TestSyncAgentsStepIsNative(t *testing.T) {
+	realPython, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skipf("python3 not available: %v", err)
+	}
+	root := gitignoreRepoRoot(t)
+
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	logPath := filepath.Join(dir, "python.log")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	wrapper := "#!/bin/bash\nprintf '%s\\n' \"$*\" >> " + shellSingleQuote(logPath) +
+		"\nexec " + shellSingleQuote(realPython) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(binDir, "python3"), []byte(wrapper), 0o755); err != nil {
+		t.Fatalf("write python3 shadow: %v", err)
+	}
+
+	project := filepath.Join(dir, "project")
+	for _, sub := range []string{"skills", "commands"} {
+		if err := os.MkdirAll(filepath.Join(project, "ai-specs", sub), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", sub, err)
+		}
+	}
+	manifest := "[project]\nname = 'native-step'\n\n[agents]\nenabled = ['claude']\n"
+	if err := os.WriteFile(filepath.Join(project, "ai-specs", "ai-specs.toml"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("AI_SPECS_GATE_OFFLINE", "1")
+	t.Setenv("AI_SPECS_NO_NETWORK", "1")
+	t.Setenv("AI_SPECS_VENDOR_FIXTURE_ROOT", filepath.Join(root, "tests", "fixtures", "kepano-obsidian-skills"))
+	t.Setenv("TMPDIR", filepath.Join(dir, "tmp"))
+	t.Setenv("HOME", filepath.Join(dir, "home"))
+	t.Setenv("LC_ALL", "C")
+	t.Setenv("PYTHONDONTWRITEBYTECODE", "1")
+	for _, p := range []string{os.Getenv("TMPDIR"), os.Getenv("HOME")} {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", p, err)
+		}
+	}
+
+	var out, errW bytes.Buffer
+	if rc := Run([]string{"sync", project}, root, strings.NewReader(""), &out, &errW); rc != 0 {
+		t.Fatalf("sync rc = %d\nstdout:\n%s\nstderr:\n%s", rc, out.String(), errW.String())
+	}
+
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read python3 invocation log: %v", err)
+	}
+	logged := string(log)
+	// The shadow must have intercepted the Python steps sync still runs.
+	if !strings.Contains(logged, "refresh-bundled.py") {
+		t.Fatalf("python3 shadow intercepted nothing; log:\n%s", logged)
+	}
+	for _, banned := range []string{"brief-render-policy.py", "agents-render.py"} {
+		if strings.Contains(logged, banned) {
+			t.Errorf("sync still execs %s; log:\n%s", banned, logged)
+		}
+	}
+	// Non-vacuous: the step still produced the brief.
+	agentsMD, err := os.ReadFile(filepath.Join(project, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("AGENTS.md not written: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errW.String())
+	}
+	if !strings.Contains(string(agentsMD), "# native-step Runtime Brief") {
+		t.Errorf("AGENTS.md missing the rendered heading:\n%s", agentsMD)
+	}
+}
+
+// shellSingleQuote wraps s so a POSIX shell reads it literally.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// TestRenderAgentsStepPolicyFailurePreservesTheSilentSkip pins D3 on the
+// composed step: when the policy cannot reach a verdict (here, a manifest the
+// parser rejects) its failure is ignored, the gate is not satisfied, and sync
+// skips the brief with exit 0 — the same silent skip sync.go produced when the
+// policy was a child process. Only the error wording differs, since the two
+// parsers describe the same defect differently (L6's recorded divergence).
+func TestRenderAgentsStepPolicyFailurePreservesTheSilentSkip(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skipf("python3 not available: %v", err)
+	}
+	const broken = "[project\nname = 'x'\n"
+
+	tomlPath := filepath.Join(t.TempDir(), "ai-specs", "ai-specs.toml")
+	if err := os.MkdirAll(filepath.Dir(tomlPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(tomlPath, []byte(broken), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	outPath := filepath.Join(filepath.Dir(filepath.Dir(tomlPath)), "AGENTS.md")
+
+	var out, errW bytes.Buffer
+	if rc := renderAgentsStep(tomlPath, outPath, "", false, &out, &errW); rc != 0 {
+		t.Errorf("renderAgentsStep rc = %d, want 0 (the policy's failure is ignored)", rc)
+	}
+	if want := "  \u2139 skipped AGENTS.md (brief.render = false)\n"; out.String() != want {
+		t.Errorf("stdout = %q, want %q", out.String(), want)
+	}
+	if !strings.HasPrefix(errW.String(), "error: ") {
+		t.Errorf("stderr = %q, want one `error: ` line", errW.String())
+	}
+	if _, err := os.Stat(outPath); !os.IsNotExist(err) {
+		t.Errorf("AGENTS.md written despite no policy verdict (err=%v)", err)
+	}
+}
+
 // TestRenderAgentsStepPolicyGate pins the sync wiring's two-step contract:
 // the policy gate runs first, and a false gate skips the renderer entirely.
 func TestRenderAgentsStepPolicyGate(t *testing.T) {
