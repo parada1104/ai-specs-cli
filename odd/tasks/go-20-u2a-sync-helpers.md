@@ -197,3 +197,82 @@ Decided by the human on 2026-10-22, taking the recommendation in each case:
   PATH — that re-point landed in 4570be4, the T2 commit, not in T3. Both files were left untouched:
   `python3 -m unittest tests.test_sync_run_step_errexit tests.test_sync_output_verbosity
   tests.test_brief_render_policy tests.test_agents_render_brief_fragments` → `Ran 109 tests ... OK`.
+
+- L9 — T4 (`refresh-bundled`) done on `change/go-20-u2a-code`, 2026-10-22. `internal/sync/sync.go`
+  replaced the `r.exec` of `refresh-bundled.py` with one native call, `RefreshBundled(root, r.home, out, errW)`,
+  inside the same `runStep("bundled skills + commands")` wrapper and in the same position (after the root
+  .gitignore refresh, before `vendor-skills.py`). The `internal(...)` helper stays for the remaining Python
+  steps. `internal/sync/refreshbundled.go` is the port; `internal/sync/refreshbundled_test.go` is its
+  differential. `lib/_internal/refresh-bundled.py` and `project-cache.py` stay in place as the oracle until
+  U2e, and `internal/cli/refresh_bundled.go` was not touched.
+
+  The Python contract, quoted from `lib/_internal/refresh-bundled.py` and used as the differential target:
+  - writes `{cache}/.bundled/skills/<id>` (one `shutil.copytree` per directory directly under
+    `{home}/bundled-skills/`, sorted by name) and `{cache}/.bundled/commands/<name>.md` (flat `copy2` of
+    every `*.md` directly under `{home}/bundled-commands/`, sorted); the cache root is
+    `{home}/cache/projects/<cache_key>`.
+  - deletes each destination tree (`rmtree`) BEFORE the copy, so a failed copy leaves a partial cache — S6
+    is kept, not fixed. The project surface is never written.
+  - loads the lock BEFORE the cleanup (`load_lock`) so the legacy `[skills]` hashes are still in memory,
+    then calls `remove_bundled_skill_leftovers(project/ai-specs, cli_source, lock.get("skills") or {})`,
+    `remove_bundled_command_leftovers(project/ai-specs, cli_source)` and
+    `remove_recipe_command_leftovers(project, cli_source)` (the latter two self-read the on-disk legacy
+    `[commands]` table). Only copies matching the current bundled source, the legacy lock hash, or the
+    recipe provenance are removed; customized copies are kept with a warning.
+  - `write_lock` normalizes: `[skills]`, `[commands]` and `[recipes]` are dropped; the emitted lock is the
+    header plus `[meta]` (`cli_version`, `synced_at`), `[managed.*]`, `[deps.*.skills.*]` and `[agents.*]`,
+    sorted, with a missing `[meta]` simply not emitted.
+  - stdout: `  ⇢ flattened <n> bundled skill(s) → cache/.bundled/skills` and
+    `  ⇢ flattened <n> bundled command(s) → cache/.bundled/commands` when non-zero, otherwise
+    `  = all bundled up-to-date`; plus the leftover-removal and tracked-remediation lines from projectcache.
+    stderr: the `  ! keeping customized ...` and `  ! failed to remove ...` warnings.
+  - exit: `0` on success; `1` + `ERROR: <project>/ai-specs not found. Run `ai-specs init` first.` on stderr
+    when the project surface is missing; `2` for a usage error (not reachable from sync, which always
+    supplies both paths). Uncaught filesystem/lock errors exit non-zero in Python with a traceback; the
+    port exits 1 with one `ERROR: <message>` line (same class as L6's recorded divergence, not covered by a
+    fixture).
+
+  `TestRefreshBundledDifferential` builds twin project/home fixtures, runs the real module on one pair and
+  `RefreshBundled` on the other, and compares exit code, stdout, stderr (with the Python lock-bridge's
+  `GO_LOCK_WRITE_BRIDGE_FALLBACK` infrastructure warning filtered and the differing temp project root
+  normalized), the whole project tree (paths, bytes, permission bits) and the per-project cache tree.
+  Fixtures: fresh project, no bundled assets (`all bundled up-to-date`), a stale cache that must be
+  rebuilt, a legacy skill copy matching the source plus a legacy command copy matching only the `[commands]`
+  hash (with `[skills]`/`[commands]` in the lock, proving the normalization), a lock without `[meta]`, and
+  a missing `ai-specs/` directory (nonzero on both). `TestSyncBundledStepIsNative` drives the whole spine
+  with a PATH-shadowed `python3` that logs invocations.
+
+  Test evidence. RED, before the `sync.go` change: `TestSyncBundledStepIsNative` failed with
+  `refreshbundled_test.go:76: sync still execs refresh-bundled.py; log:` followed by the module's full argv.
+  GREEN after: `--- PASS: TestSyncBundledStepIsNative`, `--- PASS: TestRefreshBundledDifferential (0.39s)`
+  with all six subtests, and `ok ai-specs.dev/ai-specs/internal/sync` for `-run 'RefreshBundled'`.
+  Non-vacuity: replacing `lock.LoadLock(lockPath)` with `lock.NewLock()` (dropping the lock normalization)
+  made `legacy_copies_removed_and_lock_normalized` and `lock_without_meta` fail with
+  `project: ai-specs/.ai-specs.lock bytes:`; reverted, and `git diff internal/sync/refreshbundled.go` shows
+  no break.
+
+  OPEN — three PATH-stub suites lost their injection point because this step is now native. They were not
+  deleted or weakened (all three files are outside this unit's allowed edit surfaces), and each needs one
+  re-point to a still-Python sync step (`vendor-skills.py`, until T5 ports it):
+  1. `internal/sync/agentsrender_test.go:910` `TestSyncAgentsStepIsNative`: its non-vacuity guard
+     `if !strings.Contains(logged, "refresh-bundled.py") { t.Fatalf("python3 shadow intercepted nothing...") }`
+     (lines 964-967) now fails; the log correctly contains only `vendor-skills.py`. Needs the guard to
+     require `vendor-skills.py` instead. This is the only `go test ./internal/sync/` failure after T4.
+  2. `tests/test_sync_run_step_errexit.py`: `STEP_ONE = "refresh-bundled.py"` (line 39) plus
+     `STEP_ONE_LABEL` (line 41) feed `stubs.intercept(STEP_ONE, ...)`; 7 tests fail, e.g.
+     `test_a_failing_step_keeps_the_wrapped_status` `self.assertEqual(proc.returncode, 7, proc.stderr)`
+     (line 87) now observes 0 and `test_a_bare_failing_step_keeps_the_wrapped_status` asserts
+     `self.assertNotIn(STEP_TWO_LABEL, proc.stdout)` on output the stub no longer injects. Needs
+     `STEP_ONE = "vendor-skills.py"` + `STEP_ONE_LABEL = "  syncing vendored skills"` (the contract is
+     step-independent by design).
+  3. `tests/test_sync_output_verbosity.py`: `StepOutputContractCliTests.FIRST_STEP = "refresh-bundled.py"`
+     (line 279) with `FIRST_LABEL` (line 280), and `TemplateSkippedClassificationTests` hard-codes the
+     `("refresh-bundled.py", {"rc": 0, "stdout": ...})` intercept tuple (line 865); 7 tests fail, e.g.
+     `test_m1_template_skipped_cli_compact_drops_and_verbose_keeps` `self.assertIn("keep-me\n", proc.stdout)`
+     (line 869) and `test_t2_4_failing_step_prints_full_output_and_status_both_modes`
+     `self.assertEqual(proc.returncode, 7, proc.stderr)` (line 376). Needs the same re-point to
+     `vendor-skills.py` / `  syncing vendored skills`.
+
+  Observed after T4: `go build ./...` clean, `gofmt -l internal/sync/` empty, `go vet ./internal/sync/`
+  clean; `PATH=/tmp/pybin:$PATH python3 -m unittest tests.test_sync_run_step_errexit
+  tests.test_sync_output_verbosity` → `Ran 31 tests ... FAILED (failures=14)`, all 14 the seam loss above.
