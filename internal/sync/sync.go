@@ -245,11 +245,11 @@ func (r *runner) run(opts options) int {
 	}
 
 	// Strangler flags a-c: GO_SYNC_STEP_GITIGNORE and GO_SYNC_STEP_GITIGNORE_ROOT
-	// selected the native Go gitignore renderers, GO_SYNC_STEP_AGENTS_RENDER
-	// selects the native brief-render-policy + agents-render pair. Both gitignore
-	// steps are native since T2 of U2a, so their flags no longer pick a leg; they
-	// stay validated here so a bogus value is still refused loudly instead of
-	// being silently ignored. "python" (the default) still execs the remaining
+	// selected the native Go gitignore renderers, GO_SYNC_STEP_AGENTS_RENDER the
+	// native brief-render-policy + agents-render pair. All of them are native
+	// since T2/T3 of U2a, so their flags no longer pick a leg; they stay
+	// validated here so a bogus value is still refused loudly instead of being
+	// silently ignored. "python" (the default) still execs the remaining
 	// modules.
 	for _, name := range [...]string{"gitignore", "gitignore-root", "agents-render"} {
 		if mode := stepMode(name); mode != "python" && mode != "go" {
@@ -377,24 +377,13 @@ func (r *runner) run(opts options) int {
 	removeIfSet(recipeOutFile)
 	removeIfSet(recipeErrFile)
 
-	// AGENTS.md: policy gate then render. The policy child's exit code is
-	// ignored, matching `$(...)` inside `[[ ]]`.
+	// AGENTS.md: policy gate then render, both native since T3 of U2a. D3 is
+	// preserved, not fixed: the policy's failure status is ignored and the gate
+	// is its verdict alone, so a manifest the policy cannot read skips the brief
+	// (skip notice on stdout, `error: ...` on stderr, exit 0) instead of failing
+	// the sync. The silent skip is a separate unit, scheduled after U2.
 	if rc := r.runStep("AGENTS.md", func(out, errW io.Writer) int {
-		if stepMode("agents-render") == "go" {
-			return renderAgentsStep(tomlPath, filepath.Join(root, "AGENTS.md"), resolvedConfigTemp, opts.adoptBrief, out, errW)
-		}
-		var policyOut bytes.Buffer
-		r.exec([]string{"python3", internal("brief-render-policy.py"), tomlPath}, &policyOut, errW)
-		if strings.TrimRight(policyOut.String(), "\n") == "true" {
-			argv := []string{"python3", internal("agents-render.py"), tomlPath, filepath.Join(root, "AGENTS.md"), "--preserve-if-runtime-brief"}
-			if opts.adoptBrief {
-				argv = append(argv, "--adopt-brief")
-			}
-			argv = append(argv, "--resolved-config", resolvedConfigTemp)
-			return r.exec(argv, out, errW)
-		}
-		fmt.Fprintln(out, "  ℹ skipped AGENTS.md (brief.render = false)")
-		return 0
+		return renderAgentsStep(tomlPath, filepath.Join(root, "AGENTS.md"), resolvedConfigTemp, opts.adoptBrief, out, errW)
 	}); rc != 0 {
 		return rc
 	}
