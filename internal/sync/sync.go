@@ -269,7 +269,7 @@ func (r *runner) run(opts options) int {
 		return rc
 	}
 	if rc := r.runStep("bundled skills + commands", func(out, errW io.Writer) int {
-		return r.exec([]string{"python3", internal("refresh-bundled.py"), root, r.home}, out, errW)
+		return RefreshBundled(root, r.home, out, errW)
 	}); rc != 0 {
 		return rc
 	}
