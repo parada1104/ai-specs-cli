@@ -38,6 +38,11 @@ func renderAiSpecsGitignoreBody() string {
 	}, "\n")
 }
 
+// gitignoreFileMode is what Python's Path.write_text() leaves behind: a new
+// file gets 0666 &^ umask, an existing file keeps its mode (open() truncates,
+// it never chmods). D1 of U2a: match the umask, not a fixed 0644.
+const gitignoreFileMode = 0o666
+
 // RenderAiSpecsGitignore is the Go port of lib/_internal/gitignore-render.py:
 // parse tomlPath for the [[deps]] array (its count feeds only the status
 // line), create the output's parent directories, write the fixed body, print
@@ -71,7 +76,7 @@ func WriteAiSpecsGitignore(tomlPath, outputPath string) (int, error) {
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return 0, err
 	}
-	if err := os.WriteFile(outputPath, []byte(renderAiSpecsGitignoreBody()), 0o644); err != nil {
+	if err := os.WriteFile(outputPath, []byte(renderAiSpecsGitignoreBody()), gitignoreFileMode); err != nil {
 		return 0, err
 	}
 	return len(deps), nil
@@ -132,7 +137,7 @@ func RefreshRootGitignore(root, templatePath string, stdout, stderr io.Writer) i
 		if before != "" && !strings.HasSuffix(before, "\n") {
 			before += "\n"
 		}
-		if err := os.WriteFile(gitignore, []byte(before+template+after), 0o644); err != nil {
+		if err := os.WriteFile(gitignore, []byte(before+template+after), gitignoreFileMode); err != nil {
 			return 1
 		}
 		fmt.Fprintln(stdout, "  ✓ refreshed root .gitignore (agent block)")
@@ -148,7 +153,7 @@ func RefreshRootGitignore(root, templatePath string, stdout, stderr io.Writer) i
 	if err := os.MkdirAll(filepath.Dir(gitignore), 0o755); err != nil {
 		return 1
 	}
-	if err := os.WriteFile(gitignore, []byte(text+template), 0o644); err != nil {
+	if err := os.WriteFile(gitignore, []byte(text+template), gitignoreFileMode); err != nil {
 		return 1
 	}
 	fmt.Fprintln(stdout, "  ✓ appended root .gitignore (agent block)")

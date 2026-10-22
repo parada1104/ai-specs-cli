@@ -36,11 +36,11 @@ CLI = _go_cli.cli()
 
 # The first two sync steps (and the label of the third), used to observe
 # whether errexit aborted the pipeline at the right point.
-STEP_ONE = "gitignore-render.py"
-STEP_TWO = "gitignore-root-refresh.py"
-STEP_ONE_LABEL = "  syncing ai-specs/.gitignore"
-STEP_TWO_LABEL = "  syncing root .gitignore (agent block)"
-STEP_THREE_LABEL = "  syncing bundled skills + commands"
+STEP_ONE = "refresh-bundled.py"
+STEP_TWO = "vendor-skills.py"
+STEP_ONE_LABEL = "  syncing bundled skills + commands"
+STEP_TWO_LABEL = "  syncing vendored skills"
+STEP_THREE_LABEL = "  syncing harness env (.envrc + ai-specs.env.example)"
 
 # The compact filter's exact classification: drop these leading glyphs, keep
 # the notices, on their original streams.

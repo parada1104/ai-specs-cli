@@ -245,10 +245,12 @@ func (r *runner) run(opts options) int {
 	}
 
 	// Strangler flags a-c: GO_SYNC_STEP_GITIGNORE and GO_SYNC_STEP_GITIGNORE_ROOT
-	// select the native Go gitignore renderers; GO_SYNC_STEP_AGENTS_RENDER
-	// selects the native brief-render-policy + agents-render pair. "python" (the
-	// default) still execs the modules; any other value is refused loudly rather
-	// than silently falling back.
+	// selected the native Go gitignore renderers, GO_SYNC_STEP_AGENTS_RENDER
+	// selects the native brief-render-policy + agents-render pair. Both gitignore
+	// steps are native since T2 of U2a, so their flags no longer pick a leg; they
+	// stay validated here so a bogus value is still refused loudly instead of
+	// being silently ignored. "python" (the default) still execs the remaining
+	// modules.
 	for _, name := range [...]string{"gitignore", "gitignore-root", "agents-render"} {
 		if mode := stepMode(name); mode != "python" && mode != "go" {
 			fmt.Fprintf(r.stderr, "ERROR: %s=%s is not implemented in this slice\n", stepKey(name), mode)
@@ -257,18 +259,12 @@ func (r *runner) run(opts options) int {
 	}
 	rootTemplate := filepath.Join(r.home, "templates", "gitignore-root.tmpl")
 	if rc := r.runStep("ai-specs/.gitignore", func(out, errW io.Writer) int {
-		if stepMode("gitignore") == "go" {
-			return RenderAiSpecsGitignore(tomlPath, aiGitignore, out)
-		}
-		return r.exec([]string{"python3", internal("gitignore-render.py"), tomlPath, aiGitignore}, out, errW)
+		return RenderAiSpecsGitignore(tomlPath, aiGitignore, out)
 	}); rc != 0 {
 		return rc
 	}
 	if rc := r.runStep("root .gitignore (agent block)", func(out, errW io.Writer) int {
-		if stepMode("gitignore-root") == "go" {
-			return RefreshRootGitignore(root, rootTemplate, out, errW)
-		}
-		return r.exec([]string{"python3", internal("gitignore-root-refresh.py"), root, rootTemplate}, out, errW)
+		return RefreshRootGitignore(root, rootTemplate, out, errW)
 	}); rc != 0 {
 		return rc
 	}
