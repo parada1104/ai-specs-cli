@@ -16,8 +16,8 @@ package sync
 // deliberate, documented, single non-native delegation (the gate-binary
 // acquisition runs natively through internal/gatebinary):
 //
-//   - delegateDepSkillToPython: dependency-skill vendoring stays in
-//     vendor-skills.py's sync_dep_target, closed with the deps-layer card.
+//   - materializeDepSkill: dependency-skill vendoring runs natively through
+//     internal/sync/vendorskills.go (the vendor-skills.py port).
 //
 // The Python authority is lib/_internal/recipe-materialize.py
 // materialize_recipes (:4013-4096 for the loop, :4139-4147 for the dump).
@@ -25,7 +25,6 @@ package sync
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -86,7 +85,7 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 				return nil, err
 			}
 		case "dep":
-			if err := delegateDepSkillToPython(req.AISpecsHome, req.ProjectRoot, skill, req.Stdout, req.Stderr); err != nil {
+			if err := materializeDepSkill(req.ProjectRoot, req.AISpecsHome, skill, req.Stdout, req.Stderr); err != nil {
 				return nil, err
 			}
 			fmt.Fprintf(req.Stdout, "    ✓ dep skill %s\n", skill.ID)
@@ -576,74 +575,6 @@ func materializeConfigTruthy(value any) bool {
 }
 
 // --- the deliberate delegation ----------------------------------------------
-
-// depSkillDelegationScript loads vendor-skills.py the same way
-// materialize_dep_skill does (sibling import with lib/_internal on sys.path)
-// and calls sync_dep_target(dep, project_root, cli_home=...). The dep dict is
-// JSON on argv, and in_project stays False (recipe-deps stage under the CLI
-// cache), exactly as the reference call. A raised exception is printed as its
-// plain message on stderr with exit 1 so the root emits ONE fatal line; the
-// vendor module's own fail() keeps its already-printed "  ✗ <msg>" line.
-const depSkillDelegationScript = `import importlib.util, json, sys
-from pathlib import Path
-try:
-    vendor_path = Path(sys.argv[1])
-    internal_dir = str(vendor_path.parent)
-    if internal_dir not in sys.path:
-        sys.path.insert(0, internal_dir)
-    spec = importlib.util.spec_from_file_location("vendor_skills_internal", vendor_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("unable to load vendor-skills.py at %s" % vendor_path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
-    mod.sync_dep_target(json.loads(sys.argv[4]), Path(sys.argv[2]), cli_home=Path(sys.argv[3]))
-except SystemExit:
-    raise
-except BaseException as exc:
-    sys.stderr.write(str(exc) + "\n")
-    sys.exit(1)
-`
-
-// delegateDepSkillToPython is the single deliberate non-native step of the
-// per-recipe loop: dependency-skill vendoring lives in vendor-skills.py's
-// sync_dep_target (clone + SKILL.md render + ancillary copy) and is not ported
-// yet. It runs that function through python3 with the same arguments
-// materialize_dep_skill passes, forwarding the vendoring progress line on
-// stdout and mapping a failure onto the exact fatal message. It is closed with
-// the deps-layer card, not with S14.
-func delegateDepSkillToPython(aiSpecsHome, projectRoot string, skill *schema.SkillRef, stdout, stderr io.Writer) error {
-	vendorPath := filepath.Join(aiSpecsHome, "lib", "_internal", "vendor-skills.py")
-	if _, err := os.Stat(vendorPath); err != nil {
-		return fmt.Errorf("unable to load vendor-skills.py at %s", vendorPath)
-	}
-	dep := map[string]any{"id": skill.ID, "source": skill.URL}
-	if skill.Path != "" {
-		dep["path"] = skill.Path
-	}
-	payload, err := json.Marshal(dep)
-	if err != nil {
-		return err
-	}
-	stdoutText, stderrText, runErr := materializeRunPython(depSkillDelegationScript, []string{
-		vendorPath, projectRoot, aiSpecsHome, string(payload),
-	})
-	if stdoutText != "" {
-		fmt.Fprint(stdout, stdoutText)
-	}
-	if runErr != nil {
-		message := strings.TrimRight(stderrText, "\n")
-		message = strings.TrimPrefix(message, "  ✗ ")
-		if message == "" {
-			message = runErr.Error()
-		}
-		return errors.New(message)
-	}
-	if stderrText != "" {
-		fmt.Fprint(stderr, stderrText)
-	}
-	return nil
-}
 
 // acquireGateBinary runs the native gatebinary.Acquire with the arguments the
 // Python loop passes (gate_impl, the CLI home, AI_SPECS_GATE_OFFLINE) and
