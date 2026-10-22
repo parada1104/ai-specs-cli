@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -791,5 +792,63 @@ func TestSyncAgentSymlinkFailurePropagates(t *testing.T) {
 	}
 	if strings.Contains(combined, "✓ sync-agent complete") {
 		t.Errorf("success claimed after a swallowed failure:\n%s", combined)
+	}
+}
+
+// TestSyncSpineSpawnsNoPython replaces TestSyncBundledStepIsNative and
+// TestSyncAgentsStepIsNative: since L10 no sync step is a Python child, so the
+// guard is the inverse of theirs. A python3 shim that logs its argv and exits 1
+// must be reached by nothing while the native spine still does its work.
+func TestSyncSpineSpawnsNoPython(t *testing.T) {
+	logPath := failingPythonStub(t)
+	home, _ := spineEnv(t)
+	project := spineProject(t, spineManifest)
+
+	// Non-vacuity: the shim is provably on PATH and provably logs. Invoke it
+	// once directly, require the invocation to fail (it exits 1) and the log to
+	// appear, then remove the log so the spine's own run must leave it empty.
+	// A python step reintroduced later would make the guarded read below fail.
+	if err := exec.Command("python3", "-c", "pass").Run(); err == nil {
+		t.Fatal("the failing python3 shim must exit non-zero")
+	}
+	if logged, err := os.ReadFile(logPath); err != nil || len(logged) == 0 {
+		t.Fatalf("the python3 shim did not log its own invocation (err=%v, log=%q)", err, logged)
+	}
+	if err := os.Remove(logPath); err != nil {
+		t.Fatalf("reset the shim log: %v", err)
+	}
+
+	var out, errW bytes.Buffer
+	if rc := Run([]string{"sync", project}, home, strings.NewReader(""), &out, &errW); rc != 0 {
+		t.Fatalf("sync rc = %d\nstdout:\n%s\nstderr:\n%s", rc, out.String(), errW.String())
+	}
+	if logged, err := os.ReadFile(logPath); err == nil {
+		t.Fatalf("sync still spawns python3; log:\n%s", logged)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("read python3 invocation log: %v", err)
+	}
+
+	// The native steps ran: their labels are printed and their file effects
+	// exist (the labels are compact-mode visible; the ⇢ detail lines are not).
+	for _, label := range []string{
+		"  syncing ai-specs/.gitignore\n",
+		"  syncing root .gitignore (agent block)\n",
+		"  syncing bundled skills + commands\n",
+		"  syncing vendored skills\n",
+		"  syncing harness env (.envrc + ai-specs.env.example)\n",
+		"  syncing AGENTS.md\n",
+	} {
+		if !strings.Contains(out.String(), label) {
+			t.Errorf("stdout missing native step label %q:\n%s", label, out.String())
+		}
+	}
+	for _, path := range []string{
+		filepath.Join(project, "ai-specs", ".gitignore"),
+		filepath.Join(project, "AGENTS.md"),
+		filepath.Join(project, "CLAUDE.md"),
+	} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Errorf("native step effect missing: %s (%v)", path, err)
+		}
 	}
 }
