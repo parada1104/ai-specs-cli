@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -116,6 +117,13 @@ type gitignoreCase struct {
 	prepare  func(t *testing.T, dir string) (arg1, arg2 string)
 	artifact func(dir string) string
 	goRun    func(arg1, arg2 string, stdout, stderr io.Writer) int
+	// umask, when set, is applied to the whole subtest so both legs inherit the
+	// same process umask; it is the only way to observe the Python
+	// write_text() mode rule (0666 &^ umask for a new file).
+	umask *int
+	// wantMode, when set, is the exact permission both legs must leave on the
+	// artifact.
+	wantMode *os.FileMode
 }
 
 // TestGitignoreDifferential runs each case through both the Go port and the
@@ -151,9 +159,52 @@ func TestGitignoreDifferential(t *testing.T) {
 		}
 	}
 
+	// Permission fixtures. umask 002 makes 0666 &^ umask (0664) differ from the
+	// old fixed 0644, so the two write sites are observable; umask 022 pins the
+	// ordinary case to 0644.
+	var mask022, mask002 = 0o022, 0o002
+	mode0644, mode0664, mode0600 := os.FileMode(0o644), os.FileMode(0o664), os.FileMode(0o600)
+
+	renderWithMode := func(name string, mask *int, want os.FileMode) gitignoreCase {
+		c := renderCase(name, manifestNoDeps)
+		c.umask, c.wantMode = mask, &want
+		return c
+	}
+
+	renderExistingMode := renderCase("render keeps the mode of an existing file", manifestNoDeps)
+	renderExistingMode.prepare = func(t *testing.T, dir string) (string, string) {
+		tomlPath := filepath.Join(dir, "ai-specs", "ai-specs.toml")
+		writeGitignoreInput(t, tomlPath, manifestNoDeps)
+		out := renderOut(dir)
+		writeGitignoreInput(t, out, "stale content\n")
+		if err := os.Chmod(out, mode0600); err != nil {
+			t.Fatalf("chmod %s: %v", out, err)
+		}
+		return tomlPath, out
+	}
+	renderExistingMode.wantMode = &mode0600
+
+	rootAppendUnderUmask := gitignoreCase{
+		name:     "root-refresh appended under umask 002",
+		mode:     "root-refresh",
+		umask:    &mask002,
+		wantMode: &mode0664,
+		prepare: func(t *testing.T, dir string) (string, string) {
+			return dir, repoTemplate
+		},
+		artifact: func(dir string) string { return filepath.Join(dir, ".gitignore") },
+		goRun: func(arg1, arg2 string, stdout, stderr io.Writer) int {
+			return RefreshRootGitignore(arg1, arg2, stdout, stderr)
+		},
+	}
+
 	cases := []gitignoreCase{
 		renderCase("render manifest without deps", manifestNoDeps),
 		renderCase("render manifest with two deps", manifestTwoDeps),
+		renderWithMode("render new file under umask 022", &mask022, mode0644),
+		renderWithMode("render new file under umask 002", &mask002, mode0664),
+		renderExistingMode,
+		rootAppendUnderUmask,
 		{
 			name: "root-refresh appended on missing .gitignore",
 			mode: "root-refresh",
@@ -230,6 +281,10 @@ func TestGitignoreDifferential(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.umask != nil {
+				previous := syscall.Umask(*tc.umask)
+				defer syscall.Umask(previous)
+			}
 			goDir, refDir := t.TempDir(), t.TempDir()
 
 			goArg1, goArg2 := tc.prepare(t, goDir)
@@ -266,6 +321,16 @@ func TestGitignoreDifferential(t *testing.T) {
 			if goPresent != refPresent {
 				t.Fatalf("artifact presence: go=%v ref=%v", goPresent, refPresent)
 			}
+			if goPresent && tc.wantMode != nil {
+				goMode := artifactMode(t, tc.artifact(goDir))
+				refMode := artifactMode(t, tc.artifact(refDir))
+				if goMode != refMode {
+					t.Errorf("artifact mode: go=%04o ref=%04o", goMode, refMode)
+				}
+				if goMode != *tc.wantMode {
+					t.Errorf("artifact mode: go=%04o want=%04o", goMode, *tc.wantMode)
+				}
+			}
 			if goPresent {
 				if got := sha256Hex(goBytes); got != refSHA {
 					t.Errorf("artifact sha256: go=%s ref=%s", got, refSHA)
@@ -280,6 +345,16 @@ func TestGitignoreDifferential(t *testing.T) {
 			}
 		})
 	}
+}
+
+// artifactMode returns the permission bits of an existing artifact.
+func artifactMode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	return fi.Mode().Perm()
 }
 
 // makeUnreadable makes path impossible to read for this process and returns the
@@ -356,6 +431,50 @@ func runGitignoreModule(t *testing.T, root, module string, args ...string) (int,
 		rc = exitErr.ExitCode()
 	}
 	return rc, out.String(), errBuf.String()
+}
+
+// TestGitignoreDifferentialUnmatchedBeginMarker covers D2: a begin marker with
+// no end marker makes both legs fail, and it freezes only the frozen
+// properties — a non-zero exit, empty stdout and an untouched file. The text
+// differs by contract (the Python authority raises a traceback, the port
+// prints one line), so stderr is not compared.
+func TestGitignoreDifferentialUnmatchedBeginMarker(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skipf("python3 not available: %v", err)
+	}
+	root := gitignoreRepoRoot(t)
+	repoTemplate := filepath.Join(root, "templates", "gitignore-root.tmpl")
+	existing := "keep\n\n" + testRootMarkerBegin + "\nold agent line\n"
+
+	goDir, refDir := t.TempDir(), t.TempDir()
+	goGitignore := filepath.Join(goDir, ".gitignore")
+	writeGitignoreInput(t, goGitignore, existing)
+
+	var goOut, goErr bytes.Buffer
+	goRC := RefreshRootGitignore(goDir, repoTemplate, &goOut, &goErr)
+
+	refGitignore := filepath.Join(refDir, ".gitignore")
+	writeGitignoreInput(t, refGitignore, existing)
+	refRC, refOut, _ := runGitignoreModule(t, root, "gitignore-root-refresh.py", refDir, repoTemplate)
+
+	if goRC == 0 || refRC == 0 {
+		t.Fatalf("exit codes: go=%d ref=%d, want both non-zero", goRC, refRC)
+	}
+	if goRC != refRC {
+		t.Errorf("exit codes: go=%d ref=%d", goRC, refRC)
+	}
+	if goOut.String() != refOut {
+		t.Errorf("stdout: go=%q ref=%q", goOut.String(), refOut)
+	}
+	if goErr.Len() == 0 {
+		t.Errorf("go printed no stderr diagnostic")
+	}
+	if got, err := os.ReadFile(goGitignore); err != nil || string(got) != existing {
+		t.Errorf("go changed the file: got %q err=%v want %q", got, err, existing)
+	}
+	if got, err := os.ReadFile(refGitignore); err != nil || string(got) != existing {
+		t.Errorf("ref changed the file: got %q err=%v want %q", got, err, existing)
+	}
 }
 
 // TestReadTextUniversalPropagatesReadError pins the core fix of

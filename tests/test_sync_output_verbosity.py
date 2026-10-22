@@ -276,8 +276,8 @@ class StepOutputContractCliTests(_CliSyncStubMixin, unittest.TestCase):
     than an extracted copy of `run_step`.
     """
 
-    FIRST_STEP = "gitignore-render.py"
-    FIRST_LABEL = "  syncing ai-specs/.gitignore"
+    FIRST_STEP = "refresh-bundled.py"
+    FIRST_LABEL = "  syncing bundled skills + commands"
 
     def _run(self, *, stdout: str = "", stderr: str = "", rc: int = 0, args=()):
         proc, _ = self.run_stubbed_sync(
@@ -862,7 +862,7 @@ class TemplateSkippedClassificationTests(_CliSyncStubMixin, unittest.TestCase):
     def test_m1_template_skipped_cli_compact_drops_and_verbose_keeps(self):
         """CLI half: the stub's `·` line is filtered in compact, kept in -v."""
         intercepts = [
-            ("gitignore-render.py", {"rc": 0, "stdout": self.SAMPLE + "\nkeep-me\n"})
+            ("refresh-bundled.py", {"rc": 0, "stdout": self.SAMPLE + "\nkeep-me\n"})
         ]
         proc, _ = self.run_stubbed_sync(intercepts=intercepts)
         self.assertEqual(proc.returncode, 0, proc.stderr)

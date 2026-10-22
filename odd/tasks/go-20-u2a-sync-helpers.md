@@ -116,3 +116,40 @@ Decided by the human on 2026-10-22, taking the recommendation in each case:
   policy-failure branch to exit 0 made three subtests fail (`native = 0, python = 1`) before reverting.
   Known divergence, recorded not fixed: malformed TOML raises an uncaught traceback in Python, while the port
   exits 1 with a single `ERROR: cannot parse ...` line; both fail, only the text differs (same class as D2).
+
+- L7 — T2 (`gitignore-render` + `gitignore-root-refresh`) done on `change/go-20-u2a-code`, 2026-10-22.
+  `sync.go:259-273` calls `RenderAiSpecsGitignore` and `RefreshRootGitignore` natively, in the same order,
+  inside the same `runStep` wrappers, with the same error propagation and the same two success lines
+  (`  ✓ wrote <path> (<n> dep(s))`, `  ✓ refreshed|appended root .gitignore (agent block)`). The two
+  `r.exec` invocations are gone; `GO_SYNC_STEP_GITIGNORE` / `GO_SYNC_STEP_GITIGNORE_ROOT` no longer select a
+  leg (validated, inert) and are validated so a bogus value is still refused. The Python modules stay under
+  `lib/_internal/` as the oracle until U2e.
+
+  D1 implemented: `internal/sync/gitignore.go` writes with `gitignoreFileMode = 0o666` at all three write
+  sites, which is exactly Python's `Path.write_text()` rule — a new file gets `0666 &^ umask`, an existing
+  file keeps its mode (truncate, never chmod). Measured, not assumed, by the differential: under umask `022`
+  a new file is **0644** in both legs; under umask `002` Python writes **0664** while the old fixed `0644`
+  wrote `0644`, which is the RED case.
+
+  D2 accepted divergence, recorded here as decided: an unmatched begin marker fails on both sides with a
+  non-zero exit (1), empty stdout and an unchanged file; the Python authority raises an uncaught
+  `ValueError` (traceback on stderr) while the port prints one `ERROR: <path>: found begin marker without
+  matching end marker` line. `TestGitignoreDifferentialUnmatchedBeginMarker` freezes the exit code, empty
+  stdout and the untouched file tree, never the traceback text. The old deviation note in `gitignore.go` is
+  unchanged and now backed by that test.
+
+  Test evidence: `internal/sync/gitignore_test.go` gains umask cases (new file under 022 → 0644; new file
+  under 002 → 0664, the RED case), an existing-file-keeps-its-mode case (0600), a root-refresh append case
+  under umask 002, and a shared mode comparison for both legs. RED before the fix:
+  `artifact mode: go=0644 ref=0664` on both umask-002 cases, `FAIL TestGitignoreDifferential`. GREEN after:
+  `ok ai-specs.dev/ai-specs/internal/sync` (`-run Gitignore` and the whole package). Non-vacuity: forcing
+  `gitignoreFileMode` back to `0o644` reproduced the same two failures, then reverted.
+  Known divergence, recorded not fixed, per D3: malformed TOML handling of the render is untouched (T1's
+  L6 note covers the check-sync case).
+
+  Open, needs the parent: two Python suites stubbed the now-native first two steps through PATH and are red
+  for that reason only — `tests/test_sync_run_step_errexit.py` (8/9 fail: `STEP_ONE`/`STEP_TWO` stubs are
+  never reached, e.g. `AssertionError: 0 != 7`) and `tests/test_sync_output_verbosity.py` (7/22 fail, same
+  seam). Both files are outside this unit's allowed edit surfaces, so they were left untouched; the fix is
+  to re-point their stub target to a still-Python step (`refresh-bundled.py` / `vendor-skills.py`) the way
+  S15/S17 re-pointed tests whose seam was removed.
