@@ -502,6 +502,58 @@ func TestSyncAbortsAfterAFailingStep(t *testing.T) {
 	}
 }
 
+// TestSyncFailureAfterRecipeBlockPropagates replaces the Python
+// RecipeCaptureContractTests.test_failures_after_the_block_still_propagate: its
+// PATH stub of agents-render.py (rc 9) lost its seam when T3 made that step
+// native (L8), so the stub never ran and the sync exited 0. The contract is
+// PROPAGATION, not the literal 9: a step that runs after the recipe block and
+// fails must make the whole sync exit with that step's own non-zero status and
+// surface its message. The failure here is real — an invalid [brief] mode fails
+// the native AGENTS.md step — and the expected status is measured from the
+// native step rather than hard-coded.
+func TestSyncFailureAfterRecipeBlockPropagates(t *testing.T) {
+	home, _ := spineEnv(t)
+	project := spineProject(t, spineManifest+"\n[brief]\nsummary_mode = 'bogus'\n")
+	tomlPath := filepath.Join(project, "ai-specs", "ai-specs.toml")
+	agentsPath := filepath.Join(project, "AGENTS.md")
+
+	// The native AGENTS.md step's own failure status for this fixture. The
+	// invalid-mode failure returns before any write, so probing the same
+	// project leaves it untouched.
+	var stepOut, stepErr bytes.Buffer
+	want := renderAgentsStep(tomlPath, agentsPath, "", false, &stepOut, &stepErr)
+	if want == 0 {
+		t.Fatalf("the fixture must fail the native AGENTS.md step; stdout=%q stderr=%q", stepOut.String(), stepErr.String())
+	}
+	if !strings.Contains(stepErr.String(), "invalid mode") {
+		t.Fatalf("native step stderr = %q, want the invalid-mode failure", stepErr.String())
+	}
+
+	var out, errW bytes.Buffer
+	if rc := Run([]string{"sync", project}, home, strings.NewReader(""), &out, &errW); rc != want {
+		t.Fatalf("sync rc = %d, want the failing step's own %d\nstdout:\n%s\nstderr:\n%s", rc, want, out.String(), errW.String())
+	}
+	// The recipe block ran before the failure, and the failing step is announced.
+	for _, label := range []string{
+		"  syncing recipes\n",
+		"  syncing AGENTS.md\n",
+	} {
+		if !strings.Contains(out.String(), label) {
+			t.Errorf("stdout missing %q:\n%s", label, out.String())
+		}
+	}
+	// The failure is surfaced, not swallowed, and no success is claimed.
+	if !strings.Contains(errW.String(), "[brief].summary_mode: invalid mode") {
+		t.Errorf("stderr = %q, want the step's own failure text", errW.String())
+	}
+	if strings.Contains(out.String(), "✓ ai-specs sync complete") {
+		t.Errorf("the sync claimed success after a failing step:\n%s", out.String())
+	}
+	if data, err := os.ReadFile(agentsPath); err != nil || string(data) != "# manual runtime brief\n" {
+		t.Errorf("the failing step wrote AGENTS.md: %q %v", data, err)
+	}
+}
+
 // TestSyncResolvesTargetsBeforeAnyWrite: a failing target resolution aborts
 // before any writes or the header (Python:
 // test_t4_1_target_resolution_failure_aborts_before_the_header).
