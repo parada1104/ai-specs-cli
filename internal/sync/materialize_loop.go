@@ -23,13 +23,11 @@ package sync
 // materialize_recipes (:4013-4096 for the loop, :4139-4147 for the dump).
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -596,16 +594,4 @@ func acquireGateBinary(aiSpecsHome, impl string) (warning string, err error) {
 		return *status.Warn, nil
 	}
 	return "", nil
-}
-
-// materializeRunPython runs one inline python3 helper with PYTHONDONTWRITEBYTECODE
-// set so the delegated import never drops __pycache__ into the installation.
-func materializeRunPython(script string, args []string) (stdout, stderr string, err error) {
-	cmd := exec.Command("python3", append([]string{"-c", script}, args...)...)
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	var outBuf, errBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
-	err = cmd.Run()
-	return outBuf.String(), errBuf.String(), err
 }
