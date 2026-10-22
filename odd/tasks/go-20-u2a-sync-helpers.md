@@ -276,3 +276,134 @@ Decided by the human on 2026-10-22, taking the recommendation in each case:
   Observed after T4: `go build ./...` clean, `gofmt -l internal/sync/` empty, `go vet ./internal/sync/`
   clean; `PATH=/tmp/pybin:$PATH python3 -m unittest tests.test_sync_run_step_errexit
   tests.test_sync_output_verbosity` → `Ran 31 tests ... FAILED (failures=14)`, all 14 the seam loss above.
+
+- L10 — T5 (`vendor-skills`) done on `change/go-20-u2a-code`, 2026-10-22. `internal/sync/vendorskills.go`
+  is the port (`SyncVendoredSkills` for the root `[[deps]]` route, `materializeDepSkill` for the
+  recipe-dep delegation); `internal/sync/sync.go:276-278` now calls `SyncVendoredSkills(root, r.home, out,
+  errW)` in the same `runStep("vendored skills")` position and `internal/sync/materialize_loop.go:88-92`
+  calls `materializeDepSkill(req.ProjectRoot, req.AISpecsHome, skill, req.Stdout, req.Stderr)` instead of
+  the inline `python3 -c`. The `depSkillDelegationScript` and `delegateDepSkillToPython` are gone;
+  `materializeRunPython` itself was NOT touched (T6 owns it). `lib/_internal/vendor-skills.py` and its
+  sibling modules stay in place as the differential oracle until U2e. `internal/skills/vendored.go` gained
+  `VendoredSkillMarkdownFromMap` (the recipe-dep route has no TOML table), sharing the existing renderer.
+
+  Python contract, quoted from `lib/_internal/vendor-skills.py` and used as the differential target:
+  - argv `vendor-skills.py <project_root>`; root `[[deps]]` materialize at
+    `{project}/ai-specs/.deps/<id>/skills/<id>`, recipe deps (only `sync_dep_target`, `in_project=False`)
+    at `{cache}/.deps/<id>/skills/<id>`, where `{cache}` is `{cli_home}/cache/projects/<cache_key>` and
+    `ensure_cache` writes its `meta.toml` sidecar.
+  - source resolution: `AI_SPECS_VENDOR_FIXTURE_ROOT` replaces a source containing
+    `kepano/obsidian-skills`; a plain local tree (no `.git`) is `copytree`d, otherwise `git clone --depth
+    1 --quiet [--branch <ref>]` (a 7-40 hex `ref`/`rev` uses `git init` + `remote add` + `fetch
+    --depth 1 origin <sha>` + `checkout FETCH_HEAD`). `path` is `.strip("/")` and selects the `SKILL.md`
+    directory; ancillary `assets/`, `references/`, `scripts/` dirs are copied.
+  - writes: the target is deleted only AFTER `SKILL.md` is found, then `SKILL.md` is written from
+    `render_skill_markdown(from_dep(dep, upstream))` (mode `0666 &^ umask`) and the ancillary dirs copied
+    (S6 partial state kept). The root route then hashes every target file (CRLF-normalized) into
+    `[deps."<id>".skills."<id>"]` in `ai-specs/.ai-specs.lock` and writes the lock once.
+  - stdout: `  ▸ <id>  ←  <source>[  (path: <path>)][  (ref: <ref>)]`, then
+    `  ✓ vendored <n> dep(s)`; no deps prints `  (no [[deps]] declared — nothing to vendor)` and writes no
+    lock. Recipe delegations print only the `  ▸` line (the caller adds `    ✓ dep skill <id>`).
+  - exit: `0` on success; `1` + `  ✗ <msg>` on a missing/invalid dep or a clone/`SKILL.md` failure. Python's
+    uncaught filesystem/git errors are a traceback; the port keeps the same exit code with one
+    `  ✗ <msg>` line (L6 class). Git's own stderr is forwarded on both legs.
+
+  Tests. `internal/sync/vendorskills_test.go` adds `TestSyncVendoredSkillsDifferential` (twin projects, real
+  module vs native: no deps, a local git dep with `ref = 'v1'`, a fixture dep with `path` +
+  `references/`, a missing source) comparing exit code, stdout, stderr, lock bytes and the whole project
+  tree (bytes/modes); `TestRecipeDepSkillDifferential` compares the native recipe route against the real
+  `sync_dep_target(in_project=False)` (stdout + cache `.deps` tree); `TestSyncVendoredSkillsStepIsNative`
+  runs the spine with a PATH-shadowed `python3` that logs every invocation. RED before the `sync.go`
+  change: `vendorskills_test.go:268: sync still execs vendor-skills.py; log: .../lib/_internal/vendor-skills.py
+  .../project`. GREEN after: all three suites pass and `ok ai-specs.dev/ai-specs/internal/sync` for
+  `-run 'Vendor|RecipeDep'`; `internal/skills` `-run 'Vendor'` stays green. Non-vacuity: appending `"x"` to
+  every lock hash made `dep_with_path_and_ancillary_dirs` fail with `project: ai-specs/.ai-specs.lock
+  bytes:` (`"SKILL.md" = "...9ce5x"` vs `"...9ce5"`); reverted, and the line is back to
+  `hashes[filepath.ToSlash(rel)] = sum`.
+
+  L10 — PATH-stub seam losses after T5 (all outside this unit's allowed edit surfaces; NOT deleted or
+  weakened). No Go→Python sync child remains on the `sync` spine now, so no still-Python step exists to
+  re-point them to:
+  1. `internal/sync/refreshbundled_test.go:74` `TestSyncBundledStepIsNative`: now fails at
+     `read python3 invocation log: ... no such file or directory`; its non-vacuity guard is
+     `if !strings.Contains(logged, "vendor-skills.py") { t.Fatalf("python3 shadow intercepted nothing; log:\n%s", logged) }`.
+  2. `internal/sync/agentsrender_test.go:961` `TestSyncAgentsStepIsNative`: same read-log failure; guard
+     `if !strings.Contains(logged, "refresh-bundled.py") { ... }` (L9 item 1, still open).
+  3. `tests/test_sync_run_step_errexit.py`: `STEP_ONE = "refresh-bundled.py"` (line 39) and
+     `STEP_TWO = "vendor-skills.py"` (line 40) both name now-native steps; the 7 tests listed in L9
+     (e.g. `test_a_failing_step_keeps_the_wrapped_status` asserting `proc.returncode == 7`) can no longer
+     intercept a sync step.
+  4. `tests/test_sync_output_verbosity.py`: `StepOutputContractCliTests.FIRST_STEP = "refresh-bundled.py"`
+     (line 279) and the `("refresh-bundled.py", ...)` tuple (line 865) are both now-native; the 7 tests
+     listed in L9 cannot intercept a sync step.
+  Parent action: these suites need a deliberate test-only seam (or retirement) in a unit that owns those
+  files; T5 did not invent one.
+
+- L11 — T7b (retire the lost PATH-stub seam) done on `change/go-20-u2a-code`, 2026-10-22. L10's four
+  seam-loss items are closed without touching product code:
+  1. `TestSyncBundledStepIsNative` (refreshbundled_test.go) and `TestSyncAgentsStepIsNative`
+     (agentsrender_test.go) are removed; their replacement is the inverse guard
+     `TestSyncSpineSpawnsNoPython` in the new `internal/sync/spine_test.go`. It puts a `python3` shim on
+     PATH that logs its argv and exits 1, proves the shim is reachable (invokes it once directly, requires
+     the non-zero exit and a non-empty log, then deletes the log), runs the whole spine through `Run`, and
+     requires the log to stay absent plus every native step label and file effect (ai-specs/.gitignore,
+     AGENTS.md, CLAUDE.md). GREEN; non-vacuity is the direct probe: a reintroduced Python step would either
+     make the log reappear (guard fails) or make `Run` return non-zero (guard fails).
+     `shellSingleQuote` moved to spine_test.go because `TestSyncVendoredSkillsStepIsNative` still uses it.
+  2. `tests/test_sync_run_step_errexit.py` and `tests/test_sync_output_verbosity.py` are DELETED. Every one
+     of their tests has a Go replacement at a seam that survives L10: `runner.runStep` with injected
+     `stepFunc` steps (the errexit/capture/compact/verbose contract), a PATH-shadowed `mktemp` for the
+     temp sequence (runStep still execs the real binary by design), and `Run`/`RunAgent` for framing,
+     fan-out and notices. No network; all new tests live in `internal/sync`.
+  3. Baseline before the change: `python3 -m unittest tests.test_sync_run_step_errexit
+     tests.test_sync_output_verbosity` → `Ran 31 tests ... FAILED (failures=15)`; exactly the PATH-stub
+     seam tests (9 + 6) failed, the other 16 already drove the native spine.
+
+  L11 mapping table — Python test → Go test → observable effect asserted:
+
+  | Python test | Go test | Asserted effect |
+  |---|---|---|
+  | test_errexit_is_active_after_a_successful_step | TestSyncAbortsAfterAFailingStep | a real later-step failure returns 1 after the earlier step ran; no later label and no footer |
+  | test_a_bare_failing_step_keeps_the_wrapped_status | TestRunStepPropagatesTheWrappedStatus | runStep returns 7 / 17, never collapses to 1 |
+  | test_a_failing_step_prints_its_full_output | TestRunStepFailureReplaysFullUnfilteredOutput | rc 5, full stdout (raw `    ✓ detail`) and stderr replay |
+  | test_no_temporary_files_survive_success_or_failure | TestRunStepCleansTempsOnSuccessAndFailure | zero surviving probe temps on both paths |
+  | test_partial_mktemp_failure_runs_the_step_and_removes_the_first_temp | TestRunStepPartialMktempFailure | label + step output present, `  ! cannot create temporary files`, no survivor |
+  | test_degraded_path_forwards_the_wrapped_status | TestRunStepDegradedPathPropagatesTheWrappedStatus | rc 17 through the degraded path |
+  | test_degraded_path_output_is_documented_as_unfiltered | TestRunStepDegradedPathAnnouncesUnfilteredOutput | glyph line printed raw and the word `unfiltered` present |
+  | test_mktemp_failure_names_itself | TestRunStepMktempFailureNamesItself | output names the temporary/TMPDIR problem |
+  | test_compact_filter_is_implementation_independent | TestRunStepCompactFilterClassification | ✓ · ⇢ ▸ dropped, notices and ordinary lines kept |
+  | test_t1_1_public_root_fanout_invokes_exactly_n_children_no_parent_body | TestSyncFanoutPassesOncePerTarget | exactly one pass per resolved target, one header, one footer, per-target .gitignore |
+  | test_t1_3_first_child_failure_stops_fanout_and_names_target | TestSyncAgentFanoutStopsOnFirstTargetFailure | non-zero, target named on stderr, refusal cause, later targets unwritten |
+  | test_t2_1_compact_suppresses_success_detail_and_blank_lines | TestRunStepCompactFilterClassification | keep-me and !/✗/ℹ kept, glyph and blank lines dropped |
+  | test_t2_2_compact_preserves_notice_markers_on_original_streams | TestRunStepCompactFilterClassification | notices byte-identical on their own stream, no cross-stream leak |
+  | test_t2_3_verbose_reproduces_full_step_output | TestRunStepVerboseReplaysFullOutput | exact label + payload on stdout, exact stderr |
+  | test_m3_verbose_preserves_trailing_blank_lines | TestRunStepVerboseReplaysFullOutput | trailing blank lines preserved |
+  | test_t2_4_failing_step_prints_full_output_and_status_both_modes | TestRunStepFailureIsUnfilteredInBothModes | rc 7 in both modes, full glyph output, exact stderr |
+  | test_t2_6_verbose_forwarded_through_fanout_only_when_set | TestSyncVerboseForwardedToEveryTarget | flatten/merge detail 0 in compact, >= n targets with -v |
+  | test_h2_sync_verbose_shows_parent_and_child_detail | TestSyncVerboseForwardedToEveryTarget | parent gitignore detail plus per-child flatten/merge detail |
+  | test_h2_short_v_forwards_through_sync_and_sync_agent_fanout | TestSyncVerboseForwardedToEveryTarget, TestSyncFanoutCompactHasNoChildDetailLeaks | short -v reaches sync and sync-agent children; compact control has none |
+  | test_t2_7_unknown_flag_rejected_on_sync_and_sync_agent | TestParseFlagsUnknownFlagIsExit2, TestParseAgentFlagsUnknownFlagIsExit2 | exit 2 and the unknown-flag line on both verbs |
+  | test_t3_1_header_once_and_footer_not_for_children | TestSyncAgentFanoutFramingOnce | header once, footer once, one pass line per target |
+  | test_t3_1_standalone_still_prints_footer | TestAgentRunStandaloneSingleTargetPrintsFraming | standalone footer and single header |
+  | test_f1_standalone_sync_agent_compact_has_no_leaked_detail_markers | TestSyncAgentCompactHasNoDetailLeaks | zero leaked markers, footer kept, `  syncing claude` ran |
+  | test_f1_public_root_fanout_compact_has_no_child_detail_leaks | TestSyncFanoutCompactHasNoChildDetailLeaks | zero leaked child markers, one footer, fan-out mode line, work ran |
+  | test_t3_2_mcp_skipped_notice_survives_compaction | TestSyncMcpSkippedNoticeSurvivesCompaction | ℹ notice survives, no `·` marker |
+  | test_m2_skipped_agents_md_notice_survives_compaction | TestSyncSkippedAgentsMdNoticeSurvivesCompaction | ℹ notice, no `·` marker, AGENTS.md untouched |
+  | test_m1_template_skipped_is_classified_as_noise | TestMaterializeStateParity | native producer emits `· template skipped (exists)`, never ℹ |
+  | test_m1_template_skipped_cli_compact_drops_and_verbose_keeps | TestRunStepCompactFilterClassification, TestRunStepVerboseReplaysFullOutput | the · line is filtered in compact and kept under -v |
+  | test_t4_1_target_resolution_failure_aborts_before_the_header | TestSyncResolvesTargetsBeforeAnyWrite | exit 1, resolver `error: ` line then the framing error, empty stdout, no writes |
+  | test_t4_1_project_cache_failure_in_the_fanout_propagates | TestSyncAgentCacheFailurePropagates | non-zero, `cache not writable`, no footer, failure before any step |
+  | test_t4_2_sync_one_agent_return_sites_propagate_symlink_failure | TestSyncAgentSymlinkFailurePropagates | non-zero, refusal cause, no success footer |
+
+  Test evidence. New tests in `internal/sync/spine_test.go`; removed the two broken guards. GREEN:
+  `PATH=/tmp/pybin:$PATH go test ./internal/sync/ -run 'Spine|RunStep|Errexit|Verbosity|Compact|Fanout|SyncAgent'
+  -count=1 -v` → all PASS including `TestSyncSpineSpawnsNoPython`, then
+  `PATH=/tmp/pybin:$PATH go test ./internal/sync/ -count=1` → `ok ai-specs.dev/ai-specs/internal/sync`.
+  Gates: `go build ./... && gofmt -l internal/sync/ && go vet ./internal/sync/` clean.
+
+  Applicability exception for RED: T7b changes no product wiring (scope forbids it), so there is no
+  product RED to observe; the tests replaced behaviour that product code already implements, and three of
+  them were confirmed against the removed Python cases' failure mode (they failed before only because the
+  stub target had become native). Non-vacuity of the seam cases is structural and stated: the compact test
+  asserts both what must be dropped and what must be kept, and the mktemp cases assert the shim's own
+  announcement (the degraded-path lines are unreachable unless the shim ran).
