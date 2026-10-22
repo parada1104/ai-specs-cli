@@ -18,8 +18,16 @@ var (
 // the only skill_contract surface on the sync path (vendor-skills.py). dep is
 // one [[deps]] table. Errors are *SkillContractError with the Python message.
 func VendoredSkillMarkdown(dep *toml.Table, upstreamText string) (string, error) {
-	get := func(k string) any { v, _ := dep.Get(k); return v }
+	return vendoredSkillMarkdown(func(k string) any { v, _ := dep.Get(k); return v }, upstreamText)
+}
 
+// VendoredSkillMarkdownFromMap is VendoredSkillMarkdown for a programmatically
+// built dep (the recipe-dep delegation has no TOML table).
+func VendoredSkillMarkdownFromMap(dep map[string]any, upstreamText string) (string, error) {
+	return vendoredSkillMarkdown(func(k string) any { return dep[k] }, upstreamText)
+}
+
+func vendoredSkillMarkdown(get func(string) any, upstreamText string) (string, error) {
 	depID, err := requireString(get("id"), "id")
 	if err != nil {
 		return "", err

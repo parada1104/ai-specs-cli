@@ -196,6 +196,27 @@ def _norm_hook_bridge_reconcile_notice(text: str, ctx: dict) -> str:
     return _HOOK_BRIDGE_RECONCILE_RE.sub("", text)
 
 
+# A failed `git clone` in a [[deps]] source. The legacy vendor-skills.py lets
+# the CalledProcessError escape as an uncaught Python traceback after git's own
+# `fatal:` line; the native port prints git's `fatal:` line followed by one
+# `  ✗ exit status N` line. Both carry the same cause and the same exit code
+# (compared separately). These two regexes remove only the wrapper text of
+# that exact shape, and only on the `sync` verb (see _norm_vendor_clone_failure).
+_VENDOR_CLONE_TRACEBACK_RE = re.compile(
+    r"Traceback \(most recent call last\):\n"
+    r"(?:(?!subprocess\.CalledProcessError:).*\n)*"
+    r"subprocess\.CalledProcessError: Command '\[['\"]git['\"], ['\"]clone['\"][^\n]*\n")
+_VENDOR_CLONE_STATUS_RE = re.compile(
+    r"^(fatal: [^\n]*\n)  ✗ exit status \d+\n", re.MULTILINE)
+
+
+def _norm_vendor_clone_failure(text: str, ctx: dict) -> str:
+    if not (ctx.get("argv") and ctx["argv"][0] == "sync"):
+        return text
+    text = _VENDOR_CLONE_TRACEBACK_RE.sub("", text)
+    return _VENDOR_CLONE_STATUS_RE.sub(r"\1", text)
+
+
 NORMALIZATIONS = (
     Normalization(
         rule_id="N1-temp-paths",
@@ -341,6 +362,27 @@ NORMALIZATIONS = (
                       "reconciliation prefixes — never a blanket pattern — "
                       "so every other warning stays compared verbatim.",
         fn=_norm_hook_bridge_reconcile_notice,
+    ),
+    Normalization(
+        rule_id="N9-vendor-clone-failure-wrapper",
+        surfaces=("stderr",),
+        description="For the `sync` verb only, remove the legacy uncaught "
+                    "CalledProcessError traceback of a failed `git clone` in a "
+                    "[[deps]] source, and the native `  ✗ exit status N` line "
+                    "that follows git's `fatal:` line. Both legs keep git's "
+                    "`fatal:` line; the exit code is compared verbatim.",
+        justification="Accepted divergence, same class as the L6/D2 entries: "
+                      "vendor-skills.py crashes with an uncaught traceback on a "
+                      "clone failure, while the native port reports git's own "
+                      "`fatal:` line plus one status line and exits with the "
+                      "same code (measured: missing-optional-deps and "
+                      "deps-gitignore, both gate modes). The traceback is a "
+                      "process artifact of an unhandled exception, not behaviour "
+                      "a user relies on, so it is removed on the legacy side "
+                      "only where it is exactly that shape, and the native status "
+                      "line only where it follows a `fatal:` line. Nothing else "
+                      "on stderr is touched, and the scope is argv[0]=='sync'.",
+        fn=_norm_vendor_clone_failure,
     ),
 )
 
