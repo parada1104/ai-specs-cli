@@ -251,7 +251,7 @@ cannot each be one PR.
 
 ## Next — the resume plan for the next session
 
-Coordinates at hand-off: epic tip **`774061c`**, `development` untouched at `afe04fb`, no program branches
+Coordinates at hand-off: epic tip **`0474347`**, `development` untouched at `afe04fb`, no program branches
 left open, and one worktree (`.worktrees/epic-go-single-binary`). Every delivery went to
 `epic/go-single-binary` through a PR; `development` never received a migration commit.
 
@@ -274,9 +274,14 @@ from the same plan.
    (`R3-TailSeamClose`) now carry differential and PTY cases, each proved non-vacuous by perturbing the
    port. The differential the advisory asked for already existed (U7-1 T3); the gap was its corpus, and
    no production file changed to close it.
-5. **The rc-3 partial write** (`R3-Rc3PartialWrite`) — recorded, not fixed: a dep gate answering 3
-   mid-loop leaves the recipes configured before it written. Decide whether parity or all-or-nothing
-   wins before touching it.
+5. **The rc-3 partial write** (`R3-Rc3PartialWrite`) — **OBSOLETE, no code** (decided 2026-10-22). Its
+   premise died with #402: the native gate's vocabulary is `Proceed`/`Skip`/`Err` (no `Rc`), so a declined
+   gate `continue`s to the next recipe instead of aborting mid-loop. The only mid-loop abort left is a hard
+   error (wizard failure or manifest-writer refusal, exit 1), and the Python raises the same way with the
+   same partial shape, so parity already holds. Each write is atomic through the shared writer, so a failed
+   run leaves a consistent, resumable manifest (`existing_by_id` keeps finished recipes). All-or-nothing
+   staging would diverge from the Python and break the differential for a case the user does not hit. It
+   stays a candidate for after U2, when parity stops being the contract, and only with real usage behind it.
 6. **The substrate tail** — `util.py` (864), `recipe_schema.py` (864, whose core `internal/schema`
    already owns), `gate_binary.py` (739, native twin in `internal/gatebinary`) and the
    `toml-read`/`toml-write` pair.
