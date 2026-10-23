@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Differential oracle for the doctor's brief probes (GO-07 S18).
 
-Replicates the chain internal/doctor/bridge.py used to run for its two brief
-ops, through the REAL legacy modules, so the native `sync` brief view can be
+Replicates the chain the retired internal/doctor/bridge.py used to run for its
+two brief ops, through the REAL legacy modules, so the native `sync` brief view can be
 compared against it state by state:
 
   state / would_write  -> op_brief_state     (_resolved_for_brief + _render_lines
