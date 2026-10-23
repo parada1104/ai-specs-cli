@@ -6,12 +6,14 @@ import re
 import subprocess
 import tempfile
 import unittest
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cli_path  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILLS_LIST_SCRIPT = ROOT / "lib" / "skills-list.sh"
-SKILLS_DISPATCH_SCRIPT = ROOT / "lib" / "skills.sh"
 
 
 SKILL_MD = (
@@ -64,7 +66,7 @@ class SkillsListTests(unittest.TestCase):
 
     def _run(self, *args, cwd=None) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["bash", str(SKILLS_LIST_SCRIPT), *args],
+            [str(cli_path()), "skills", "list", *args],
             capture_output=True, text=True, cwd=str(cwd or Path.cwd()),
             env=self._env(), check=False,
         )
@@ -123,7 +125,7 @@ class SkillsListTests(unittest.TestCase):
 
     def test_dispatcher_unknown_subcommand_exits_2(self):
         proc = subprocess.run(
-            ["bash", str(SKILLS_DISPATCH_SCRIPT), "bogus-subcommand"],
+            [str(cli_path()), "skills", "bogus-subcommand"],
             capture_output=True, text=True, check=False,
         )
         self.assertEqual(proc.returncode, 2)
@@ -269,7 +271,7 @@ class SkillsListTests(unittest.TestCase):
 
     def test_help_exits_zero(self):
         proc = subprocess.run(
-            ["bash", str(SKILLS_LIST_SCRIPT), "--help"],
+            [str(cli_path()), "skills", "list", "--help"],
             capture_output=True, text=True, check=False,
         )
         self.assertEqual(proc.returncode, 0)
@@ -284,11 +286,11 @@ class SkillsListTests(unittest.TestCase):
             'scope = ["root"]\n'
         )
         project = self._project(manifest=manifest)
-        # Dispatcher resolves LIB_DIR from AI_SPECS_HOME, so point it at the
+        # The binary resolves its assets from AI_SPECS_HOME, so point it at the
         # real repo root (which contains lib/ and a catalog).
         env = {**os.environ, "AI_SPECS_HOME": str(ROOT)}
         proc = subprocess.run(
-            ["bash", str(SKILLS_DISPATCH_SCRIPT), "list", str(project)],
+            [str(cli_path()), "skills", "list", str(project)],
             capture_output=True, text=True, env=env, check=False,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)

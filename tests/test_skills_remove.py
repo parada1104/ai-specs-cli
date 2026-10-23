@@ -5,12 +5,14 @@ import subprocess
 import tempfile
 import tomllib
 import unittest
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cli_path  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILLS_REMOVE_SCRIPT = ROOT / "lib" / "skills-remove.sh"
-SKILLS_ADD_SCRIPT = ROOT / "lib" / "skills-add.sh"
 
 
 def _manifest_with_dep(dep_id: str = "my-skill") -> str:
@@ -61,7 +63,7 @@ class SkillsRemoveCliTests(unittest.TestCase):
     def _add(self, project: Path, dep_id: str, url: str):
         proc = subprocess.run(
             [
-                "bash", str(SKILLS_ADD_SCRIPT), url, str(project),
+                str(cli_path()), "skills", "add", url, str(project),
                 "--id", dep_id, "--no-sync",
             ],
             capture_output=True, text=True, cwd=str(project),
@@ -71,7 +73,7 @@ class SkillsRemoveCliTests(unittest.TestCase):
 
     def _run(self, *args, cwd=None) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["bash", str(SKILLS_REMOVE_SCRIPT), *args],
+            [str(cli_path()), "skills", "remove", *args],
             capture_output=True, text=True, cwd=str(cwd or Path.cwd()),
             env=self._env(), check=False,
         )
@@ -202,7 +204,7 @@ class SkillsRemoveCliTests(unittest.TestCase):
     def test_remove_fails_without_id(self):
         project = self._project_with_manifest()
         proc = subprocess.run(
-            ["bash", str(SKILLS_REMOVE_SCRIPT)],
+            [str(cli_path()), "skills", "remove"],
             capture_output=True, text=True, cwd=str(project), check=False,
         )
         self.assertNotEqual(proc.returncode, 0)
@@ -280,7 +282,7 @@ class SkillsRemoveCliTests(unittest.TestCase):
     def test_remove_help_exits_zero(self):
         project = self._project_with_manifest()
         proc = subprocess.run(
-            ["bash", str(SKILLS_REMOVE_SCRIPT), "--help"],
+            [str(cli_path()), "skills", "remove", "--help"],
             capture_output=True, text=True, cwd=str(project), check=False,
         )
         self.assertEqual(proc.returncode, 0)
@@ -289,7 +291,7 @@ class SkillsRemoveCliTests(unittest.TestCase):
     def test_remove_preserves_unknown_flags_rejected(self):
         project = self._project_with_manifest()
         proc = subprocess.run(
-            ["bash", str(SKILLS_REMOVE_SCRIPT), "--unknown-flag"],
+            [str(cli_path()), "skills", "remove", "--unknown-flag"],
             capture_output=True, text=True, cwd=str(project), check=False,
         )
         self.assertNotEqual(proc.returncode, 0)
@@ -340,7 +342,7 @@ class SkillsRemoveCliTests(unittest.TestCase):
         """--help must describe the real .deps pruning behavior (D18)."""
         project = self._project_with_manifest()
         proc = subprocess.run(
-            ["bash", str(SKILLS_REMOVE_SCRIPT), "--help"],
+            [str(cli_path()), "skills", "remove", "--help"],
             capture_output=True, text=True, cwd=str(project), check=False,
         )
         self.assertEqual(proc.returncode, 0)
