@@ -16,11 +16,14 @@ import subprocess
 import tempfile
 import tomllib
 import unittest
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cli_path  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RECIPE_REMOVE_SCRIPT = ROOT / "lib" / "recipe-remove.sh"
 
 
 MANIFEST = (
@@ -88,7 +91,7 @@ LOCK_CONTENT = (
 
 
 class RecipeRemoveCliTests(unittest.TestCase):
-    """Drive lib/recipe-remove.sh (the `recipe remove` CLI entry) via subprocess."""
+    """Drive the native `recipe remove` verb of the Go binary via subprocess."""
 
     def _env(self):
         return {**os.environ, "AI_SPECS_HOME": str(ROOT)}
@@ -106,7 +109,7 @@ class RecipeRemoveCliTests(unittest.TestCase):
 
     def _run(self, *args) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["bash", str(RECIPE_REMOVE_SCRIPT), *args],
+            [str(cli_path()), "recipe", "remove", *args],
             capture_output=True, text=True, env=self._env(), check=False,
         )
 

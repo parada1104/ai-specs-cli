@@ -33,7 +33,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _blackbox import cache_project_dir, invoke, temp_project  # noqa: E402
+from _blackbox import cache_project_dir, cli_path, invoke, temp_project  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLED = ROOT / "bundled-skills"
@@ -93,19 +93,13 @@ def sync_metadata_payload(path: Path) -> dict:
 
 
 def public_cli_commands() -> set[str]:
-    """Parse top-level command names from `ai-specs help`."""
-    text = (ROOT / "bin" / "ai-specs").read_text()
-    # help heredoc lists: "  init [path] ..." etc.
+    """Parse top-level command names from the native `ai-specs help` output."""
+    text = subprocess.run(
+        [str(cli_path()), "help"], text=True, capture_output=True, check=True,
+    ).stdout
+    # help lists: "  init [path] ..." etc.; prose lines never start with two spaces + a word.
     cmds: set[str] = set()
-    in_help = False
     for line in text.splitlines():
-        if line.startswith("help|-h|--help)"):
-            in_help = True
-            continue
-        if in_help and line.strip() == "EOF":
-            break
-        if not in_help:
-            continue
         m = re.match(r"\s{2}([a-z][a-z0-9-]*)\b", line)
         if m:
             cmds.add(m.group(1))
