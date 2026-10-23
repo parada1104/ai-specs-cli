@@ -398,56 +398,24 @@ class InitNativeDifferentialTests(unittest.TestCase):
             self.assertEqual([], written, f"{label}: the aborted run wrote files")
         self.assertIn("--name requires a value", nat_proc.stderr)
 
-    def test_init_tui_py_env_seam_keeps_legacy_wizard_delegation(self):
-        # Reference/rollback hatch, not a step's seam: with AI_SPECS_INIT_TUI_PY
-        # set the native verb delegates the whole wizard to lib/init.sh. Since
-        # U4b-2 (per-recipe configuration native) no step of the wizard needs
-        # it, so it exists only to run the legacy script on demand. The wizard
-        # that does NOT run through it is pinned natively by
-        # test_native_wizard_never_executes_init_tui_py below.
+    def test_init_tui_py_env_seam_is_retired_for_the_native_verb(self):
+        # U2b (odd/tasks/go-20-u2b-init.md S5): the native verb no longer hands
+        # the whole wizard to lib/init.sh when AI_SPECS_INIT_TUI_PY is set. The
+        # variable is ignored, so the run with it must match the run without it.
+        # The Go test TestInitTUIEnvSeamNoLongerDelegates pins the marker side.
         native_cli = self._native_cli()
-
-        # A wizard that cancels (rc 1) without writing: both routes must exit 1
-        # with the legacy cancel message and leave no manifest behind.
-        cancel = _Fixture(self, "ai-specs-init-native-tui-cancel-")
-        stub_cancel = _write_stub(cancel.base, rc=1, write_out=False)
-        extra = {"AI_SPECS_INIT_TUI_PY": str(stub_cancel)}
-        leg = cancel.legacy
-        nat = cancel.native
-        leg_proc = leg.run(LEGACY_CLI, "--tui", str(leg.target), extra_env=extra)
-        nat_proc = nat.run(native_cli, "--tui", str(nat.target), extra_env=extra)
-        self.assertEqual(leg_proc.returncode, 1, leg_proc.stderr)
-        self.assertEqual(nat_proc.returncode, 1, nat_proc.stderr)
-        self.assertIn("cancelled", leg_proc.stderr.lower())
-        self.assertIn("cancelled", nat_proc.stderr.lower())
-        self.assertFalse((leg.target / "ai-specs" / "ai-specs.toml").exists())
-        self.assertFalse((nat.target / "ai-specs" / "ai-specs.toml").exists())
-        leg_out, nat_out = leg.stdout(leg_proc), nat.stdout(nat_proc)
-        self.assertEqual(leg_out, nat_out, _diff("tui-cancel stdout", leg_out, nat_out))
-        leg_err, nat_err = leg.stderr(leg_proc), nat.stderr(nat_proc)
-        self.assertEqual(leg_err, nat_err, _diff("tui-cancel stderr", leg_err, nat_err))
-
-        # A wizard that stages the manifest (rc 0): both routes install it with
-        # the legacy "(from TUI)" marker.
-        ok = _Fixture(self, "ai-specs-init-native-tui-ok-")
-        stub_ok = _write_stub(ok.base, rc=0, write_out=True)
-        extra = {"AI_SPECS_INIT_TUI_PY": str(stub_ok)}
-        leg = ok.legacy
-        nat = ok.native
-        leg_proc = leg.run(LEGACY_CLI, "--tui", str(leg.target), extra_env=extra)
-        nat_proc = nat.run(native_cli, "--tui", str(nat.target), extra_env=extra)
-        self.assertEqual(leg_proc.returncode, 0, leg_proc.stderr)
-        self.assertEqual(nat_proc.returncode, 0, nat_proc.stderr)
-        self.assertIn("(from TUI)", leg_proc.stdout)
-        self.assertIn("(from TUI)", nat_proc.stdout)
-        self.assertIn('name = "stub"',
-                      (leg.target / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8"))
-        self.assertIn('name = "stub"',
-                      (nat.target / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8"))
-        leg_out, nat_out = leg.stdout(leg_proc), nat.stdout(nat_proc)
-        self.assertEqual(leg_out, nat_out, _diff("tui-success stdout", leg_out, nat_out))
-        leg_err, nat_err = leg.stderr(leg_proc), nat.stderr(nat_proc)
-        self.assertEqual(leg_err, nat_err, _diff("tui-success stderr", leg_err, nat_err))
+        stub_dir = _Fixture(self, "ai-specs-init-native-hatch-stub-")
+        stub = _write_stub(stub_dir.base, rc=1, write_out=False)
+        extra = {"AI_SPECS_INIT_TUI_PY": str(stub)}
+        with_env = _Fixture(self, "ai-specs-init-native-hatch-env-").native
+        without_env = _Fixture(self, "ai-specs-init-native-hatch-bare-").native
+        env_proc = with_env.run(native_cli, "--tui", str(with_env.target), extra_env=extra)
+        bare_proc = without_env.run(native_cli, "--tui", str(without_env.target))
+        self.assertEqual(env_proc.returncode, bare_proc.returncode, env_proc.stderr)
+        env_out, bare_out = with_env.stdout(env_proc), without_env.stdout(bare_proc)
+        self.assertEqual(env_out, bare_out, _diff("hatch-retired stdout", env_out, bare_out))
+        env_err, bare_err = with_env.stderr(env_proc), without_env.stderr(bare_proc)
+        self.assertEqual(env_err, bare_err, _diff("hatch-retired stderr", env_err, bare_err))
 
     def test_native_wizard_never_executes_init_tui_py(self):
         # T4b-1, the nativity pin: the isolated home gets a REAL lib copy whose
