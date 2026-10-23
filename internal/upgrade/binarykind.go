@@ -49,7 +49,7 @@ func binaryUpgrade(inst Install, o Options, env Env, stdout, stderr io.Writer) i
 			}
 		}
 		if !o.DryRun {
-			if code := runStep(o, git, inst.Home, stdout, "fetching origin/main", "fetch", "origin", "main"); code != 0 {
+			if code := runStep(o, git, inst.Home, stdout, stderr, "fetching origin/main", "fetch", "origin", "main"); code != 0 {
 				return abort(stderr, "Failed to fetch from origin. Check your network connection.", ExitFetch)
 			}
 			if _, err := git(inst.Home, "merge-base", "--is-ancestor", "HEAD", "origin/main"); err != nil {
@@ -63,7 +63,7 @@ func binaryUpgrade(inst Install, o Options, env Env, stdout, stderr io.Writer) i
 				if current != "" && target != "" {
 					label = fmt.Sprintf("fast-forwarding %s -> %s", current, target)
 				}
-				if code := runStep(o, git, inst.Home, stdout, label, "merge", "--ff-only", "origin/main"); code != 0 {
+				if code := runStep(o, git, inst.Home, stdout, stderr, label, "merge", "--ff-only", "origin/main"); code != 0 {
 					return abort(stderr, "Fast-forward merge failed. The local branch may have diverged. Resolve manually or re-run install.sh.", ExitFetch)
 				}
 			}
