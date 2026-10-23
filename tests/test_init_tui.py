@@ -155,11 +155,14 @@ def _spawn_pty(target: Path, home: Path, base: Path, *, feed: bytes = b"",
 
             while stage_i < len(pending):
                 needle, payload = pending[stage_i]
-                if needle is None or output.find(needle, search_from) != -1:
+                pos = -1 if needle is None else output.find(needle, search_from)
+                if needle is None or pos != -1:
                     time.sleep(0.15)
                     os.write(master, payload)
                     stage_i += 1
-                    search_from = len(output)
+                    # Resume after the consumed needle: a later marker that arrived
+                    # in the same chunk is still answered, not skipped.
+                    search_from = len(output) if needle is None else pos + len(needle)
                 else:
                     break
 
