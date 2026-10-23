@@ -244,7 +244,7 @@ Three commands are documented as read-only and are not.
 | Command | Claim | Reality |
 |---|---|---|
 | `doctor` | "read-only" in `ai-specs help` | No project writes, but writes `__pycache__` into `$AI_SPECS_HOME/lib/_internal/`, and **executes** `git`, the gate binary's `--selftest`, and every recipe dep's `version_check` with `shell=True` |
-| `refresh-bundled` | "zero in-project writes", "pure cache repair" | Deletes files under `ai-specs/skills/` and `ai-specs/commands/`, rewrites `ai-specs/.ai-specs.lock` |
+| `refresh-bundled` | Standalone verb: none (compatibility no-op, D26). Refresh runs inside `sync`. | Standalone verb: no effect (Go). Inside `sync`: flattens bundled skills and commands into the cache, deletes leftover in-project copies under `ai-specs/skills/` and `ai-specs/commands/`, rewrites `ai-specs/.ai-specs.lock` |
 | `hub` | implied by "status" | Rewrites `ai-specs.toml`, may run `pip install`, delegates to `init`/`sync`/`upgrade` |
 
 `doctor`'s `version_check` execution matters most for the port: it is arbitrary
@@ -337,7 +337,7 @@ The card's scope requires these be filed, not normalized during the port.
 | # | Defect |
 |---|---|
 | D25 | `hub` and `recipe configure` are absent from `ai-specs help` |
-| D26 | `refresh-bundled`, `doctor`, and `hub` claim read-only and are not (§6) |
+| D26 | `refresh-bundled` claimed read-only and was not (§6). Decided by the human: the standalone verb stays a documented no-op of compatibility and the effective refresh runs inside `sync` (U2b). `doctor` and `hub` are still open. |
 | D27 | `init --force` is documented as regenerating `AGENTS.md`; it only affects `.gitignore` |
 | D28 | Literal `\n` in `upgrade`'s dirty-tree abort (builtin `echo` without `-e`) |
 | D29 | `--` silently discards the path argument in every recipe and skills wrapper |
@@ -485,7 +485,7 @@ FROZEN and unchanged:
 | `AI_SPECS_GATE_OFFLINE` | `1` disables gate download |
 | `AI_SPECS_ALLOW_INTERNAL_TEST_RECIPES` | `1` allows `test-*` recipes |
 | `AI_SPECS_VENDOR_FIXTURE_ROOT` | Redirects `kepano/obsidian-skills` clones (test seam) |
-| `AI_SPECS_INIT_TUI_PY` | Overrides the wizard entrypoint (test seam) |
+| `AI_SPECS_INIT_TUI_PY` | Retired for the native `init` (U2b): ignored, the wizard runs natively. `lib/init.sh` still reads it until U2e deletes the shell path. |
 | `TMPDIR` | Every `mktemp`; unwritable degrades a step to unfiltered output |
 | `PYTHONDONTWRITEBYTECODE` | Incidentally suppresses the `__pycache__` writes in §6 |
 
