@@ -794,6 +794,9 @@ func runPythonAgentsStep(t *testing.T, root, tomlPath, outPath, resolvedPath str
 	}
 	var policyOut, stdout, stderr bytes.Buffer
 	policy := exec.Command("python3", internal("brief-render-policy.py"), tomlPath)
+	// Pin the verified gate binary so the fail-open bridge warnings never reach
+	// stderr (odd/tasks/go-20-u2a-agents-gate.md S2-S3).
+	policy.Env = append(os.Environ(), "WORKTREE_GATE_BIN="+materializeGateBinary(t))
 	// The verdict is captured privately: sync never forwards the policy's
 	// stdout, only the skip notice below.
 	policy.Stdout = &policyOut
@@ -817,6 +820,7 @@ func runPythonAgentsStep(t *testing.T, root, tomlPath, outPath, resolvedPath str
 	}
 	argv = append(argv, "--resolved-config", resolvedPath)
 	render := exec.Command("python3", argv...)
+	render.Env = append(os.Environ(), "WORKTREE_GATE_BIN="+materializeGateBinary(t))
 	render.Stdout = &stdout
 	render.Stderr = &stderr
 	rc := 0
