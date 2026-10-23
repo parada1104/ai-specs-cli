@@ -29,10 +29,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _go_cli  # noqa: E402
-from _blackbox import CLIResult, invoke, isolated_home, normalize_output  # noqa: E402
+from _blackbox import cli_path, CLIResult, invoke, isolated_home, normalize_output  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
+CLI = cli_path()
 
 # S20/S40 (odd/tasks/go-20-u4-init.md): the wizard is native, so the
 # end-to-end PTY flows drive the built binary. As of U4b-2 that INCLUDES the
@@ -672,14 +672,6 @@ sys.exit({rc})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("tui:     no", result.stdout)
 
-    def test_tui_cancel_leaves_no_toml(self):
-        target = self._workspace()
-        stub = self._write_stub(self.base, rc=1)
-        result = self._run_init(target, "--tui", extra_env={"AI_SPECS_INIT_TUI_PY": str(stub)})
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("cancelled", result.stderr.lower())
-        self.assertFalse((target / "ai-specs" / "ai-specs.toml").exists())
-
     def test_tui_unavailable_falls_back_to_classic(self):
         target = self._workspace()
         stub = self._write_stub(self.base, rc=3)
@@ -688,17 +680,6 @@ sys.exit({rc})
         self.assertIn("falling back to classic init", result.stderr)
         self.assertIn("tui:     no", result.stdout)
         self.assertTrue((target / "ai-specs" / "ai-specs.toml").is_file())
-
-    def test_tui_success_writes_stub_manifest(self):
-        target = self._workspace()
-        stub = self._write_stub(self.base, rc=0, write_out=True)
-        result = self._run_init(target, "--tui", extra_env={"AI_SPECS_INIT_TUI_PY": str(stub)})
-        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        self.assertIn("tui:     yes", result.stdout)
-        self.assertIn("(from TUI)", result.stdout)
-        text = (target / "ai-specs" / "ai-specs.toml").read_text()
-        self.assertIn('name = "stub"', text)
-
 
 class TestInitTuiPTYE2E(unittest.TestCase):
     """End-to-end PTY tests: real wizard via `ai-specs init --tui` under a
@@ -716,6 +697,8 @@ class TestInitTuiPTYE2E(unittest.TestCase):
         # name + topology + agents checkbox + recipes checkbox + confirm (default Yes)
         rc, output = _spawn_pty(target, home, base, cli=NATIVE_CLI, feed=b"\n\n\n\n\n", timeout=120)
         self.assertEqual(rc, 0, f"output: {_strip_ansi(output)!r}")
+        self.assertIn("tui:     yes", _strip_ansi(output))
+        self.assertIn("(from TUI)", _strip_ansi(output))
         toml_path = target / "ai-specs" / "ai-specs.toml"
         self.assertTrue(toml_path.is_file(), f"no manifest; output: {_strip_ansi(output)!r}")
         data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
@@ -749,6 +732,7 @@ class TestInitTuiPTYE2E(unittest.TestCase):
         target, home, base = self._workspace()
         rc, output = _spawn_pty(target, home, base, cli=NATIVE_CLI, stages=[(N_NAME, b"\x03")], timeout=60)
         self.assertEqual(rc, 1, f"output: {_strip_ansi(output)!r}")
+        self.assertIn("ai-specs init: cancelled", _strip_ansi(output))
         self.assertFalse((target / "ai-specs" / "ai-specs.toml").exists(),
                          f"TOML should not exist after Ctrl-C; output: {_strip_ansi(output)!r}")
 

@@ -33,10 +33,10 @@ from pathlib import Path
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _blackbox import cache_project_dir  # noqa: E402
+from _blackbox import cli_path, cache_project_dir  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
+CLI = cli_path()
 RECIPE_ID = "jinna-mcp-recipe"
 JINNA_SKILL_ID = "jinna-mcp-recipe"
 DOGFOOD_MANIFEST = ROOT / "ai-specs" / "ai-specs.toml"

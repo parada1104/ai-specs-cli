@@ -25,7 +25,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _blackbox import (  # noqa: E402
+from _blackbox import (
+    cli_path,  # noqa: E402
     cache_project_dir,
     invoke,
     isolated_home,
@@ -37,9 +38,7 @@ import _go_cli  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 # The NON-interactive flows below still run the legacy launcher: they are GO-20
 # U3a's parity leg, and U2 is the unit that flips bin/ai-specs.
-CLI = ROOT / "bin" / "ai-specs"
-
-
+CLI = cli_path()
 def _pty_cli() -> Path:
     """The CLI the interactive PTY flows drive: the native binary, built once.
 

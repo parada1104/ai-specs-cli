@@ -1,6 +1,8 @@
 """Black-box: ai-specs sync regenerates harness env example + .envrc warnings."""
 from __future__ import annotations
 
+import sys
+
 import os
 import subprocess
 import tempfile
@@ -8,8 +10,11 @@ import tomllib
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cli_path  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
+CLI = cli_path()
 KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
 VAULT_RECIPE = ROOT / "catalog" / "recipes" / "vault-canonical-store" / "recipe.toml"
 

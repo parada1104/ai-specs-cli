@@ -34,10 +34,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _blackbox import invoke, isolated_home  # noqa: E402
+from _blackbox import cli_path, invoke, isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
+CLI = cli_path()
 TEMPLATE_PATH = ROOT / "templates" / "ai-specs.toml.tmpl"
 
 
@@ -243,37 +243,20 @@ class InitBriefE2ETests(unittest.TestCase):
         )
 
     def test_init_render_failure_falls_back_to_placeholder(self):
-        """When the render scripts fail, init must still create AGENTS.md and exit 0.
+        """When the baseline render cannot start, init must still create AGENTS.md and exit 0.
 
-        Uses a fake python3 that delegates to the real python3 for all scripts
-        EXCEPT recipe-materialize.py and agents-render.py, which it makes exit 1.
-        This simulates a render-pipeline failure without breaking the rest of init
-        (gitignore-render.py, refresh-bundled.py, etc. still run via real python3).
+        The native render chain (internal/cli/init.go renderInitBrief) stages its
+        resolved config with os.CreateTemp, which honours TMPDIR. Pointing TMPDIR
+        at a directory that does not exist makes that staging fail, so the native
+        binary takes its real fallback (briefFallback: placeholder + "render skipped").
         """
         target = self._make_target()
         home = _home_for(target)
         base = target.parent
 
-        # Create a selective fake python3 that fails only for render scripts
-        fake_bin = base / "fake-bin"
-        fake_bin.mkdir()
-        fake_python = fake_bin / "python3"
-        fake_python.write_text(
-            "#!/bin/sh\n"
-            "# Fail only for the render pipeline scripts; pass through for others.\n"
-            "case \"$*\" in\n"
-            "  *recipe-materialize*|*agents-render*) exit 1 ;;\n"
-            f"  *) exec \"{sys.executable}\" \"$@\" ;;\n"
-            "esac\n"
-        )
-        fake_python.chmod(0o755)
-
-        # PATH with fake-bin FIRST
-        patched_path = f"{fake_bin}:{os.environ.get('PATH', '')}"
-
         result = _run_cli_env(
             target, "init", home=home, tmpdir=base,
-            extra_env={"PATH": patched_path},
+            extra_env={"TMPDIR": str(base / "missing-tmpdir")},
         )
 
         # init MUST exit 0 even if the render pipeline fails

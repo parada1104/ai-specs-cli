@@ -19,7 +19,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _blackbox import (  # noqa: E402
+from _blackbox import (
+    cli_path,  # noqa: E402
     cache_project_dir,
     invoke,
     isolated_home,
@@ -28,8 +29,7 @@ from _blackbox import (  # noqa: E402
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
-
+CLI = cli_path()
 BUNDLED_SKILLS = (
     "harness-lifecycle",
     "harness-recipes",

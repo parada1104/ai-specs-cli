@@ -8,14 +8,17 @@ exit codes, stdout/stderr, and emitted file trees.
 import hashlib
 import os
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cli_path  # noqa: E402
 
+ROOT = Path(__file__).resolve().parents[1]
+CLI = cli_path()
 UPSTREAM_V1 = (
     "---\n"
     "name: upstream-demo\n"
@@ -66,6 +69,7 @@ class DepsReproducibilityTests(unittest.TestCase):
         subprocess.run(
             [str(CLI), "init", str(self.project)],
             check=True, capture_output=True, text=True,
+            env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
         )
         self._write_manifest("")
 
@@ -85,7 +89,7 @@ class DepsReproducibilityTests(unittest.TestCase):
         return subprocess.run(
             [str(CLI), "sync", str(self.project)],
             capture_output=True, text=True, check=False,
-            env={**os.environ, "AI_SPECS_GATE_OFFLINE": "1"},
+            env={ "AI_SPECS_HOME": str(ROOT),**os.environ, "AI_SPECS_GATE_OFFLINE": "1"},
         )
 
     def _vendored(self) -> Path:
