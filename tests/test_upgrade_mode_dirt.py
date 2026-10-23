@@ -1,4 +1,8 @@
-"""Functional tests for mode-only dirty-tree remediation in upgrade.sh and install.sh.
+"""Functional tests for mode-only dirty-tree remediation in `ai-specs upgrade` and install.sh.
+
+GO-20 U2d: the three upgrade classes drive the native Go binary (`_blackbox.cli_path()`)
+installed into the fake install; `install.sh` (InstallModeOnlyDirtTests) is a separate
+installer surface and is unchanged here.
 
 A previous installer ran chmod +x on lib/*.sh and lib/_internal/*.py, which
 are tracked as mode 100644 in git.  On systems with core.fileMode=true this
@@ -9,11 +13,17 @@ users are not stuck in an update loop.
 import hashlib
 import os
 import platform
+import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cli_path  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +42,19 @@ def _asset_arch() -> str:
 LIB_UPGRADE = ROOT / "lib" / "upgrade.sh"
 
 
+def native_binary() -> Path:
+    binary = cli_path()
+    if binary == ROOT / "bin" / "ai-specs":
+        raise unittest.SkipTest("native Go binary unavailable: upgrade cannot be exercised")
+    return binary
+
+
+def _run_native_upgrade(env, args=None):
+    """Run `<AI_SPECS_HOME>/bin/ai-specs upgrade`, the installed native entry point."""
+    binary = Path(env["AI_SPECS_HOME"]) / "bin" / "ai-specs"
+    return run([str(binary), "upgrade", *(args or [])], env=env, check=False)
+
+
 def run(args, cwd=None, env=None, check=True, capture_output=True):
     """Run a command and return CompletedProcess."""
     result = subprocess.run(
@@ -44,10 +67,13 @@ def run(args, cwd=None, env=None, check=True, capture_output=True):
     return result
 
 
-def _make_fake_install(home: Path, version: str = "1.0.0"):
+def _make_fake_install(home: Path, version: str = "1.0.0", native: bool = False):
     """
     Set up a minimal fake global install at home/.ai-specs (git repo).
     Returns (ai_specs_path, bare_remote_path).
+
+    native=True installs the Go binary as bin/ai-specs (kept untracked) for the
+    upgrade classes; the default keeps the install.sh fixture unchanged.
     """
     ai_specs = home / ".ai-specs"
     ai_specs.mkdir()
@@ -58,13 +84,17 @@ def _make_fake_install(home: Path, version: str = "1.0.0"):
 
     # Minimal bin/ai-specs (executable)
     bin_script = bin_dir / "ai-specs"
-    bin_script.write_text("#!/usr/bin/env bash\necho ai-specs\n")
+    if native:
+        shutil.copy2(native_binary(), bin_script)
+    else:
+        bin_script.write_text("#!/usr/bin/env bash\necho ai-specs\n")
     bin_script.chmod(0o755)
 
-    # Copy the real install.sh and upgrade.sh so changes are tested
-    (ai_specs / "install.sh").write_text(INSTALL_SH.read_text())
-    (lib_dir / "upgrade.sh").write_text(LIB_UPGRADE.read_text())
-    (lib_dir / "upgrade.sh").chmod(0o755)
+    if not native:
+        # Copy the real install.sh and upgrade.sh so changes are tested
+        (ai_specs / "install.sh").write_text(INSTALL_SH.read_text())
+        (lib_dir / "upgrade.sh").write_text(LIB_UPGRADE.read_text())
+        (lib_dir / "upgrade.sh").chmod(0o755)
 
     # A tracked 100644 file that the old installer would chmod
     tracked_file = lib_dir / "dummy.sh"
@@ -74,21 +104,23 @@ def _make_fake_install(home: Path, version: str = "1.0.0"):
     # VERSION
     (ai_specs / "VERSION").write_text(version + "\n")
 
-    # Mirror production .gitignore so pip --target lib/_vendor stays untracked.
-    (ai_specs / ".gitignore").write_text("lib/_vendor\n")
+    # Mirror production .gitignore so pip --target lib/_vendor stays untracked;
+    # the 12 MB native binary stays out of git as in tests/test_upgrade.py.
+    (ai_specs / ".gitignore").write_text("lib/_vendor\n" + ("bin/\n" if native else ""))
 
     # GO-20 U1b-2b: install.sh installs the COMPILED BINARY as the entry now, so
     # the fixture has to look like a real installation — a committed trust root
     # and a release asset for this platform to verify against. The asset lives
     # OUTSIDE the checkout (only its digest is committed), as in production.
-    asset_name = "ai-specs-%s-%s" % (_asset_os(), _asset_arch())
-    asset_dir = home / "release-assets"
-    asset_dir.mkdir()
-    asset_payload = b"#!/bin/sh\necho ai-specs-stand-in\n"
-    (asset_dir / asset_name).write_bytes(asset_payload)
-    (bin_dir / "SHA256SUMS").write_text(
-        f"{hashlib.sha256(asset_payload).hexdigest()}  {asset_name}\n"
-    )
+    if not native:
+        asset_name = "ai-specs-%s-%s" % (_asset_os(), _asset_arch())
+        asset_dir = home / "release-assets"
+        asset_dir.mkdir()
+        asset_payload = b"#!/bin/sh\necho ai-specs-stand-in\n"
+        (asset_dir / asset_name).write_bytes(asset_payload)
+        (bin_dir / "SHA256SUMS").write_text(
+            f"{hashlib.sha256(asset_payload).hexdigest()}  {asset_name}\n"
+        )
 
     # Symlink
     local_bin = home / ".local" / "bin"
@@ -155,9 +187,16 @@ class UpgradeModeOnlyDirtTests(unittest.TestCase):
         return Path(tmp.name)
 
     def _run_upgrade(self, env, args=None):
-        script = Path(env["AI_SPECS_HOME"]) / "lib" / "upgrade.sh"
-        cmd = ["bash", str(script)] + (args or [])
-        return run(cmd, env=env, check=False)
+        return _run_native_upgrade(env, args)
+
+    def test_fixture_runs_the_native_binary(self):
+        home = self.fake_home()
+        ai_specs, _ = _make_fake_install(home, native=True)
+        head = (ai_specs / "bin" / "ai-specs").read_bytes()[:2]
+        self.assertNotEqual(head, b"#!", "fixture must install the compiled binary")
+        result = _run_native_upgrade(_make_env(home), ["--help"])
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Usage: ai-specs upgrade", result.stdout)
 
     def test_mode_only_dirt_is_remediated_not_aborted(self):
         """
@@ -165,7 +204,7 @@ class UpgradeModeOnlyDirtTests(unittest.TestCase):
         files, no content changes) instead of aborting with exit 3.
         """
         home = self.fake_home()
-        ai_specs, _ = _make_fake_install(home)
+        ai_specs, _ = _make_fake_install(home, native=True)
         env = _make_env(home)
 
         # Simulate what the old installer did: chmod +x a tracked 100644 file
@@ -194,7 +233,7 @@ class UpgradeModeOnlyDirtTests(unittest.TestCase):
         After upgrade.sh runs on mode-only dirt, the working tree must be clean.
         """
         home = self.fake_home()
-        ai_specs, _ = _make_fake_install(home)
+        ai_specs, _ = _make_fake_install(home, native=True)
         env = _make_env(home)
 
         _apply_chmod_to_tracked_file(ai_specs, "lib/dummy.sh")
@@ -216,7 +255,7 @@ class UpgradeModeOnlyDirtTests(unittest.TestCase):
         mode-only dirt, so users understand what happened.
         """
         home = self.fake_home()
-        ai_specs, _ = _make_fake_install(home)
+        ai_specs, _ = _make_fake_install(home, native=True)
         env = _make_env(home)
 
         _apply_chmod_to_tracked_file(ai_specs, "lib/dummy.sh")
@@ -240,9 +279,7 @@ class UpgradeContentDirtBlocksTests(unittest.TestCase):
         return Path(tmp.name)
 
     def _run_upgrade(self, env, args=None):
-        script = Path(env["AI_SPECS_HOME"]) / "lib" / "upgrade.sh"
-        cmd = ["bash", str(script)] + (args or [])
-        return run(cmd, env=env, check=False)
+        return _run_native_upgrade(env, args)
 
     def test_content_change_still_blocks_upgrade(self):
         """
@@ -250,7 +287,7 @@ class UpgradeContentDirtBlocksTests(unittest.TestCase):
         with a dirty-tree message.
         """
         home = self.fake_home()
-        ai_specs, _ = _make_fake_install(home)
+        ai_specs, _ = _make_fake_install(home, native=True)
         env = _make_env(home)
 
         # Real content change (not just mode bits)
@@ -275,7 +312,7 @@ class UpgradeContentDirtBlocksTests(unittest.TestCase):
         mode-only dirt — upgrade.sh must still abort.
         """
         home = self.fake_home()
-        ai_specs, _ = _make_fake_install(home)
+        ai_specs, _ = _make_fake_install(home, native=True)
         env = _make_env(home)
 
         target = ai_specs / "lib" / "dummy.sh"
@@ -425,9 +462,7 @@ class UpgradeModeOnlyDirtPlusUntrackedTests(unittest.TestCase):
         return Path(tmp.name)
 
     def _run_upgrade(self, env, args=None):
-        script = Path(env["AI_SPECS_HOME"]) / "lib" / "upgrade.sh"
-        cmd = ["bash", str(script)] + (args or [])
-        return run(cmd, env=env, check=False)
+        return _run_native_upgrade(env, args)
 
     def test_mode_dirt_plus_untracked_file_aborts_upgrade(self):
         """
@@ -435,7 +470,7 @@ class UpgradeModeOnlyDirtPlusUntrackedTests(unittest.TestCase):
         file.  The untracked file must still be present after the abort.
         """
         home = self.fake_home()
-        ai_specs, _ = _make_fake_install(home)
+        ai_specs, _ = _make_fake_install(home, native=True)
         env = _make_env(home)
 
         # Mode-only dirt (tracked 100644 file chmod'd)
