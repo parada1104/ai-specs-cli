@@ -19,12 +19,11 @@ func (d *Doctor) checkManifest() {
 	if d.manifest.data != nil {
 		return
 	}
-	// The guidance renders tomllib's own diagnostic, so it is asked from that
-	// same authority instead of being approximated.
+	// The guidance is the native parser's diagnostic (accepted divergence from
+	// the legacy tomllib text, U2c S4).
 	guidance := "manifest is not valid TOML"
-	var res tomlErrorResult
-	if err := d.op("toml_error", &res); err == nil && res.Error != nil {
-		guidance = *res.Error
+	if d.manifest.parseErr != nil {
+		guidance = d.manifest.parseErr.Error()
 	}
 	d.add(ERROR, "manifest", rel+" is not parseable", guidance)
 }

@@ -77,6 +77,17 @@ Additionally: `2` for unknown flag / extra positional; `1` for a nonexistent
 path (raw bash `cd:` error — `doctor.sh` lacks the `-d` guard that
 `rules-audit.sh` has, so the Python guard is dead code).
 
+#### Malformed-manifest guidance — accepted divergence (U2c)
+
+For an unparseable `ai-specs/ai-specs.toml`, the `manifest` ERROR check keeps
+its name, severity and message (`<rel> is not parseable`). Its guidance is the
+native parser's diagnostic (`toml: line N: …`), not tomllib's text. Python
+versions word tomllib differently, so the text is not pinned. The divergence is
+accepted by the human (plan S4, 2026-10-22: the native message is accepted, not
+tomllib's text). Doctor spawns no `python3` for it: the Python bridge is retired,
+and the `doctor-bridge` check it fed is gone. Every other check, severity and
+exit code stays FROZEN.
+
 ### `upgrade` — the richest map in the CLI
 
 | Code | Meaning |

@@ -7,11 +7,8 @@
 // formatting and the exit-code rule are FROZEN and reproduced byte-identically.
 // `doctor` writes nothing.
 //
-// Strangler seam: the command, the roster and every decision live here. The
-// dependency stacks that are not ported yet (recipe-materialize/agents-render
-// for the brief provenance chain) are reached through one explicit Go->Python
-// bridge in bridge.go. Every check that only needs already-ported layers is
-// evaluated natively.
+// Every check is evaluated natively: the command, the roster and every
+// decision live here, and doctor never spawns python3.
 package doctor
 
 import (
@@ -77,8 +74,7 @@ type Doctor struct {
 	Root string
 	// Home is the CLI install root ($AI_SPECS_HOME, resolved).
 	Home string
-	// Stderr receives the diagnostics the legacy implementation writes out of
-	// band (the Python bridge fallback announcements).
+	// Stderr receives out-of-band diagnostics from the command's caller.
 	Stderr io.Writer
 
 	// Checks holds the emitted checks in run order.
@@ -86,9 +82,6 @@ type Doctor struct {
 
 	manifest     manifestCache
 	projectCache projectCache
-
-	bridge    *bridgeResponse
-	bridgeErr error
 }
 
 // New returns a Doctor for the given project root and CLI install root. Both
@@ -100,8 +93,6 @@ func New(root, home string) *Doctor {
 // Run executes every check in doctor.py's roster order and returns the process
 // exit code. WARN and INFO never affect the exit code.
 func (d *Doctor) Run() int {
-	d.bridge, d.bridgeErr = d.runBridge()
-
 	d.checkManifest()
 	d.checkCLIVersion()
 	d.checkLegacyRecipeVersions()
@@ -118,16 +109,6 @@ func (d *Doctor) Run() int {
 	d.checkRepoTopology()
 	d.checkStaleTemplateOverrides()
 	d.checkGateProvenance()
-
-	// Fail closed: when the bridge cannot run at all, the checks that depend on
-	// it would silently degrade to "not performed" -- the invisible fail-open
-	// posture the worktree-gate check exists to expose elsewhere. One ERROR
-	// makes the degraded run visible instead.
-	if d.bridgeErr != nil {
-		d.add(ERROR, "doctor-bridge",
-			fmt.Sprintf("the legacy analysis bridge could not run: %v", d.bridgeErr),
-			"run ai-specs doctor with python3 on PATH, or fix the ai-specs installation")
-	}
 
 	return d.exitCode()
 }

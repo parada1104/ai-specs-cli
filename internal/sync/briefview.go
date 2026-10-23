@@ -2,8 +2,8 @@ package sync
 
 // Read-only brief view for consumers outside the sync pipeline (GO-07 S18).
 //
-// The doctor's brief checks used to run through the Python bridge
-// (internal/doctor/bridge.py): its `brief_state` and `brief_dead_fragments` ops
+// The doctor's brief checks used to run through a Python bridge
+// (the retired internal/doctor/bridge.py): its `brief_state` and `brief_dead_fragments` ops
 // rebuilt the resolved-config graph with recipe-materialize.py and rendered the
 // would-write brief with agents-render.py / brief-render-policy.py. This file
 // is that chain in process, on top of the pieces the pipeline already owns (the

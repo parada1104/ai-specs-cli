@@ -7,7 +7,6 @@ package doctor
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/sync"
@@ -29,31 +28,30 @@ func briefProbeHome(t *testing.T) string {
 	return home
 }
 
-// TestBridgeOpsRequestOnlyTomlError pins the trimmed op set: a parseable
-// manifest needs no Python at all (the brief probes are native), while an
-// unparseable one still asks tomllib for its own diagnostic.
-func TestBridgeOpsRequestOnlyTomlError(t *testing.T) {
-	t.Run("parseable manifest", func(t *testing.T) {
-		root := t.TempDir()
-		writeManifest(t, root, "[project]\nname = \"t\"\n\n[recipes.alpha]\nenabled = true\n")
-		d := New(root, briefProbeHome(t))
-		if got := d.bridgeOps(); len(got) != 0 {
-			t.Errorf("bridgeOps() = %v, want none (the brief probes are native)", got)
+// TestDoctorSpawnsNoPython pins the public outcome of the retired bridge: a
+// parseable manifest with brief fragments runs every check without a python3
+// child, and the brief checks still report the real state.
+func TestDoctorSpawnsNoPython(t *testing.T) {
+	root := t.TempDir()
+	writeManifest(t, root, "[project]\nname = \"t\"\n\n[recipes.alpha]\nenabled = true\n")
+	log := shadowPython(t)
+
+	d := New(root, briefProbeHome(t))
+	d.Run()
+
+	if _, err := os.Stat(log); err == nil {
+		data, _ := os.ReadFile(log)
+		t.Fatalf("doctor spawned python3: %q", data)
+	}
+	for _, c := range d.Checks {
+		if c.Name == "doctor-bridge" {
+			t.Errorf("doctor-bridge check still emitted: %+v", c)
 		}
-	})
-	t.Run("unparseable manifest", func(t *testing.T) {
-		root := t.TempDir()
-		writeManifest(t, root, "not = = toml\n")
-		d := New(root, briefProbeHome(t))
-		if got := d.bridgeOps(); !slices.Equal(got, []string{"toml_error"}) {
-			t.Errorf("bridgeOps() = %v, want [toml_error]", got)
-		}
-	})
+	}
 }
 
-// TestBriefProbesRunWithoutTheBridge pins both check outcomes with no bridge
-// object at all: an unrequested or unavailable bridge was what made the legacy
-// ops degrade to "undetermined" / no check.
+// TestBriefProbesRunWithoutTheBridge pins both brief check outcomes in process,
+// with no Python seam to degrade them.
 func TestBriefProbesRunWithoutTheBridge(t *testing.T) {
 	t.Run("provenance reports the real state", func(t *testing.T) {
 		root := t.TempDir()
