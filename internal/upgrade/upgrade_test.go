@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -441,5 +442,58 @@ func TestResolveBinarySymlinkChainParity(t *testing.T) {
 	}
 	if got := ResolveBinary(real); got != real {
 		t.Fatalf("ResolveBinary(real) = %q, want unchanged", got)
+	}
+}
+
+// A failing step replays git's own stderr on stderr, never stdout, and carries
+// no Go-side wrapper text: lib/upgrade.sh printed the captured stderr verbatim
+// (GO-20 U2d; tests/test_upgrade_output.py pins the user-visible result).
+func TestRunStepReplaysGitStderrOnStderr(t *testing.T) {
+	const gitErr = "fatal: '/gone' does not appear to be a git repository\nfatal: Could not read from remote repository."
+	git := func(dir string, args ...string) (string, error) {
+		return "", errors.New(gitErr)
+	}
+	var stdout, stderr bytes.Buffer
+	code := runStep(Options{}, git, t.TempDir(), &stdout, &stderr, "fetching origin/main", "fetch", "origin", "main")
+	if code == 0 {
+		t.Fatalf("runStep returned 0 for a failing git command")
+	}
+	if stderr.String() != gitErr+"\n" {
+		t.Fatalf("stderr = %q, want git's stderr verbatim %q", stderr.String(), gitErr+"\n")
+	}
+	if strings.Contains(stdout.String(), "fatal:") {
+		t.Fatalf("git stderr leaked to stdout:\n%s", stdout.String())
+	}
+}
+
+// The default runner keeps git's stderr as the error text (no exec wrapper),
+// so the replay above is byte-identical to the legacy output.
+func TestGitCommandErrorIsGitStderr(t *testing.T) {
+	_, err := GitCommand(t.TempDir(), "rev-parse", "--verify", "no-such-ref-xyz")
+	if err == nil {
+		t.Fatalf("expected failure outside a repository")
+	}
+	if strings.Contains(err.Error(), "exit status") || !strings.HasPrefix(err.Error(), "fatal:") {
+		t.Fatalf("error must be git's stderr verbatim, got %q", err.Error())
+	}
+}
+
+// Existing behavior that shares runStep: a successful step prints only its
+// progress line, never the raw git output, unless --verbose is set.
+func TestRunStepQuietOnSuccess(t *testing.T) {
+	git := func(dir string, args ...string) (string, error) {
+		return "remote: Counting objects\n", nil
+	}
+	var stdout, stderr bytes.Buffer
+	if code := runStep(Options{}, git, t.TempDir(), &stdout, &stderr, "fetching origin/main", "fetch"); code != 0 {
+		t.Fatalf("runStep returned %d for a successful command", code)
+	}
+	if strings.Contains(stdout.String(), "Counting objects") {
+		t.Fatalf("raw git output leaked without --verbose:\n%s", stdout.String())
+	}
+	var verbose bytes.Buffer
+	runStep(Options{Verbose: true}, git, t.TempDir(), &verbose, &stderr, "fetching origin/main", "fetch")
+	if !strings.Contains(verbose.String(), "Counting objects") {
+		t.Fatalf("--verbose must show raw git output:\n%s", verbose.String())
 	}
 }

@@ -12,6 +12,7 @@
 package upgrade
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -69,7 +70,12 @@ func GitCommand(dir string, args ...string) (string, error) {
 	var out, errb strings.Builder
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
-		return out.String(), fmt.Errorf("%v: %s", err, strings.TrimSpace(errb.String()))
+		// The error text is git's own stderr, byte for byte (minus the final
+		// newline), so runStep can replay it exactly as lib/upgrade.sh did.
+		if msg := strings.TrimRight(errb.String(), "\n"); msg != "" {
+			return out.String(), errors.New(msg)
+		}
+		return out.String(), err
 	}
 	return out.String(), nil
 }
@@ -319,7 +325,7 @@ func dryRunReport(inst Install, o Options, git Git, stdout, stderr io.Writer) in
 
 // runStep prints one progress line and runs the git command, surfacing its
 // output when it fails or when --verbose is set.
-func runStep(o Options, git Git, dir string, stdout io.Writer, label string, args ...string) int {
+func runStep(o Options, git Git, dir string, stdout, stderr io.Writer, label string, args ...string) int {
 	fmt.Fprintf(stdout, "  %s\n", label)
 	out, err := git(dir, args...)
 	if err != nil || o.Verbose {
@@ -328,6 +334,8 @@ func runStep(o Options, git Git, dir string, stdout io.Writer, label string, arg
 		}
 	}
 	if err != nil {
+		// Git's own stderr goes to stderr, as the legacy run_step did.
+		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	return 0
@@ -381,7 +389,7 @@ func printReleaseReport(home, current, new string, stdout io.Writer) {
 // Pinned both directions by TestUpgradeRunsNativelyAndSkipsTheShellPostSteps,
 // so an accidental reintroduction fails a test instead of passing silently.
 func realUpgrade(inst Install, o Options, git Git, stdout, stderr io.Writer) int {
-	if code := runStep(o, git, inst.Home, stdout, "fetching origin/main", "fetch", "origin", "main"); code != 0 {
+	if code := runStep(o, git, inst.Home, stdout, stderr, "fetching origin/main", "fetch", "origin", "main"); code != 0 {
 		return abort(stderr, "Failed to fetch from origin. Check your network connection.", ExitFetch)
 	}
 	if _, err := git(inst.Home, "merge-base", "--is-ancestor", "HEAD", "origin/main"); err != nil {
@@ -396,7 +404,7 @@ func realUpgrade(inst Install, o Options, git Git, stdout, stderr io.Writer) int
 		if current != "" && target != "" {
 			label = fmt.Sprintf("fast-forwarding %s -> %s", current, target)
 		}
-		if code := runStep(o, git, inst.Home, stdout, label, "merge", "--ff-only", "origin/main"); code != 0 {
+		if code := runStep(o, git, inst.Home, stdout, stderr, label, "merge", "--ff-only", "origin/main"); code != 0 {
 			return abort(stderr, "Fast-forward merge failed. The local branch may have diverged. Resolve manually or re-run install.sh.", ExitFetch)
 		}
 	}
