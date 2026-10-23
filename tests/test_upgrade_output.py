@@ -7,6 +7,13 @@ dumped when a step fails.
 
 The safety assertions here are deliberately narrow — they exist to prove the
 output rework did not change exit codes, not to re-test the guards.
+
+GO-20 U2d: the command under test is the native Go binary (`_go_cli.cli()`),
+installed into a fake HOME exactly as `tests/test_upgrade.py` does. The native
+route renders the release report itself (`internal/changelog`) and never runs the
+Python oracle `lib/_internal/changelog.py`; that file is still seeded into the
+fixture repository because `tests/test_upgrade_notices.py` inherits this fixture
+and deletes it as its own mutation target.
 """
 
 from __future__ import annotations
@@ -14,14 +21,17 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cli_path  # noqa: E402
+
+
 ROOT = Path(__file__).resolve().parents[1]
-BIN_AI_SPECS = ROOT / "bin" / "ai-specs"
-LIB_UPGRADE = ROOT / "lib" / "upgrade.sh"
 CHANGELOG_PY = ROOT / "lib" / "_internal" / "changelog.py"
 
 # Markers that only appear when raw git output reaches the terminal.
@@ -45,6 +55,13 @@ def run(args, cwd=None, env=None, check=True):
     return result
 
 
+def native_binary() -> Path:
+    binary = cli_path()
+    if binary == ROOT / "bin" / "ai-specs":
+        raise unittest.SkipTest("native Go binary unavailable: upgrade cannot be exercised")
+    return binary
+
+
 class UpgradeOutputTests(unittest.TestCase):
     # --- harness ------------------------------------------------------------
 
@@ -57,12 +74,13 @@ class UpgradeOutputTests(unittest.TestCase):
         """Fake global install plus a bare origin. Returns (ai_specs, bare)."""
         ai_specs = home / ".ai-specs"
         (ai_specs / "bin").mkdir(parents=True)
-        (ai_specs / "lib" / "_internal").mkdir(parents=True)
 
-        (ai_specs / "bin" / "ai-specs").write_text(BIN_AI_SPECS.read_text())
+        # The native binary is the installed entry point; it stays untracked
+        # (12 MB artifact), as in tests/test_upgrade.py.
+        shutil.copy2(native_binary(), ai_specs / "bin" / "ai-specs")
         (ai_specs / "bin" / "ai-specs").chmod(0o755)
-        (ai_specs / "lib" / "upgrade.sh").write_text(LIB_UPGRADE.read_text())
-        (ai_specs / "lib" / "upgrade.sh").chmod(0o755)
+        (ai_specs / ".gitignore").write_text("bin/\n")
+        (ai_specs / "lib" / "_internal").mkdir(parents=True)
         shutil.copy(CHANGELOG_PY, ai_specs / "lib" / "_internal" / "changelog.py")
         (ai_specs / "VERSION").write_text(version + "\n")
         (ai_specs / "CHANGELOG.md").write_text(self.changelog(version))
@@ -120,9 +138,9 @@ class UpgradeOutputTests(unittest.TestCase):
         return env
 
     def upgrade(self, home: Path, *args: str, check=False):
-        script = home / ".ai-specs" / "lib" / "upgrade.sh"
+        binary = home / ".ai-specs" / "bin" / "ai-specs"
         return run(
-            ["bash", str(script), *args], env=self.make_env(home), check=check
+            [str(binary), "upgrade", *args], env=self.make_env(home), check=check
         )
 
     # --- compact by default -------------------------------------------------
