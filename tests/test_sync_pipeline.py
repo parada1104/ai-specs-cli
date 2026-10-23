@@ -21,10 +21,10 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _blackbox import cache_project_dir, invoke, isolated_home  # noqa: E402
+from _blackbox import cli_path, cache_project_dir, invoke, isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
+CLI = cli_path()
 KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
 
 FIXTURE_ROOT = ROOT / "tests" / "fixtures" / "sync-workspace" / "root"
@@ -3377,6 +3377,7 @@ class FanOutDriftTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 check=False,
+                env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertTrue(

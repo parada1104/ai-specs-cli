@@ -21,14 +21,14 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _blackbox import isolated_home  # noqa: E402
+from _blackbox import cli_path, isolated_home  # noqa: E402
 from _fixture_catalog import (  # noqa: E402
     allow_internal_test_recipes_env,
     populate_catalog,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
+CLI = cli_path()
 SYNC_SH = ROOT / "lib" / "sync.sh"
 KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
 

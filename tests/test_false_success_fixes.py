@@ -14,6 +14,8 @@ stdout/stderr, and emitted file trees. No lib/_internal imports.
 
 from __future__ import annotations
 
+import sys
+
 import os
 import shutil
 import subprocess
@@ -21,14 +23,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cli_path  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
+CLI = cli_path()
 FIXTURE_ROOT = ROOT / "tests" / "fixtures" / "sync-workspace" / "root"
 
 
 def _cli_env() -> dict:
     return {
         **os.environ,
+        "AI_SPECS_HOME": str(ROOT),
         "AI_SPECS_GATE_OFFLINE": "1",
         "AI_SPECS_VENDOR_FIXTURE_ROOT": str(ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"),
     }

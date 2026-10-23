@@ -38,10 +38,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _blackbox import isolated_home  # noqa: E402
+from _blackbox import cli_path, isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
+CLI = cli_path()
 GATE_DIR = ROOT / "catalog" / "recipes" / "worktree-flow" / "gate"
 KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
 RECIPE_VERSION = "1.6.0"  # catalog/recipes/worktree-flow/recipe.toml

@@ -1,13 +1,18 @@
 """E2E tests for [brief].render = false AGENTS.md opt-out."""
+import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cli_path  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
+CLI = cli_path()
 MULTI_TARGET_FIXTURE = ROOT / "tests" / "fixtures" / "target-resolve" / "multi-target"
 PLACEHOLDER = "# AGENTS.md - Runtime context"
 
@@ -33,6 +38,7 @@ class AgentsMdRenderOptOutTests(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
+            env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -49,6 +55,7 @@ class AgentsMdRenderOptOutTests(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
+            env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(agents_md.read_text(), manual)
@@ -71,6 +78,7 @@ class AgentsMdRenderOptOutTests(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
+            env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(agents_md.read_text(), stale)
@@ -91,6 +99,7 @@ class AgentsMdRenderOptOutTests(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
+            env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(agents_md.is_file())
@@ -110,6 +119,7 @@ class AgentsMdRenderOptOutTests(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
+            env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(agents_md.read_text(), manual)
@@ -127,6 +137,7 @@ class AgentsMdRenderOptOutTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 check=False,
+                env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
             )
             self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((target / "AGENTS.md").read_text(), manual)
@@ -143,6 +154,7 @@ class AgentsMdRenderOptOutTests(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
+            env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((target / "AGENTS.md").read_text(), manual)
@@ -162,6 +174,7 @@ class AgentsMdRenderOptOutTests(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
+            env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((target / "AGENTS.md").read_text(), hand_managed)
@@ -179,7 +192,7 @@ class SubrepoRenderOptOutTests(unittest.TestCase):
 
     def test_subrepo_skips_render_when_root_render_false(self):
         workspace = self._make_multi_workspace()
-        subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+        subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True, env={**os.environ, "AI_SPECS_HOME": str(ROOT)})
         toml = workspace / "ai-specs" / "ai-specs.toml"
         text = toml.read_text()
         text = re.sub(
@@ -200,6 +213,7 @@ class SubrepoRenderOptOutTests(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
+            env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(sub_agents.read_text(), manual)
@@ -207,7 +221,7 @@ class SubrepoRenderOptOutTests(unittest.TestCase):
 
     def test_subrepo_missing_agents_md_errors_when_render_false(self):
         workspace = self._make_multi_workspace()
-        subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+        subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True, env={**os.environ, "AI_SPECS_HOME": str(ROOT)})
         toml = workspace / "ai-specs" / "ai-specs.toml"
         append_brief_render_false(toml)
         # Root AGENTS.md exists from init; subrepo packages/a has no AGENTS.md
@@ -220,6 +234,7 @@ class SubrepoRenderOptOutTests(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
+            env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
         )
         self.assertNotEqual(result.returncode, 0)
         combined = result.stdout + result.stderr

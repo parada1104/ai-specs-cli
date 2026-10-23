@@ -19,10 +19,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _blackbox import cache_project_dir, invoke, isolated_home  # noqa: E402
+from _blackbox import cli_path, cache_project_dir, invoke, isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
+CLI = cli_path()
 KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
 
 

@@ -19,10 +19,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _blackbox import isolated_home  # noqa: E402
+from _blackbox import cli_path, isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
+CLI = cli_path()
 SHA256SUMS = ROOT / "catalog" / "recipes" / "worktree-flow" / "bin" / "SHA256SUMS"
 DOGFOOD_LOCK = ROOT / "ai-specs" / ".ai-specs.lock"
 
