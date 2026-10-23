@@ -96,8 +96,11 @@ def _stage_gate_stub(
 ) -> None:
     """Install a receipt-backed stub binary at the version-keyed cache path.
 
-    The CLI environment is fixed, so the canned verdict is embedded in the
-    stub script itself instead of being handed over via an env pin.
+    The canned verdict is embedded in the stub script itself. The stub is a test
+    double, not a release binary: it cannot satisfy the native digest, version and
+    self-test trust root. `_render` pins it through the documented
+    WORKTREE_GATE_BIN seam, so only rendering is under test; trust evaluation stays
+    covered by the gatebinary tests.
     """
     version = (home / "VERSION").read_text(encoding="utf-8").strip()
     goos, goarch = _platform()
@@ -184,7 +187,12 @@ class DoctorTrackerLedgerTests(unittest.TestCase):
         (ledger_dir / "witness.json").write_text(json.dumps(payload))
 
     def _render(self, root: Path) -> tuple[list[tuple[str, str]], int]:
-        result = invoke(root, "doctor", cli_home=self.home)
+        # The staged stub is a canned verdict, not a release binary: it cannot satisfy
+        # the native digest/selftest trust root (accepted divergence, gate receipt).
+        # Pin it through the documented WORKTREE_GATE_BIN seam; rendering is under test.
+        stubs = sorted(self.home.glob("cache/bin/worktree-gate/*/*/worktree-gate"))
+        extra = {"WORKTREE_GATE_BIN": str(stubs[0])} if stubs else None
+        result = invoke(root, "doctor", cli_home=self.home, env_extra=extra)
         return _named_checks(result.stdout, "tracker-ledger"), result.returncode
 
     # --- severity rendering (one grader: doctor renders the Go finding) ---

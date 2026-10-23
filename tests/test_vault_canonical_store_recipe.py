@@ -28,7 +28,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _blackbox import CLI, cache_project_dir, invoke, isolated_home, normalize_output  # noqa: E402
+from _blackbox import cache_project_dir, cli_path, invoke, isolated_home, normalize_output  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 RECIPE_DIR = ROOT / "catalog" / "recipes" / "vault-canonical-store"
@@ -90,7 +90,7 @@ def invoke_env(project_root: Path, *args: str, cli_home: Path,
         }
         (temp / "home").mkdir(parents=True, exist_ok=True)
         proc = subprocess.run(
-            [str(CLI), *args, str(project_root)],
+            [str(cli_path()), *args, str(project_root)],
             cwd=ROOT, env=env, text=True, capture_output=True, check=False,
             input="",
         )

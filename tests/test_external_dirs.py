@@ -1,7 +1,7 @@
 """Black-box external-dirs / cache-layout / skill-resolution tests.
 
-Every test drives ``bin/ai-specs`` verbs (init / sync / sync-agent /
-refresh-bundled / doctor) through the process boundary via ``_blackbox``.
+Every test drives ``bin/ai-specs`` verbs (init / sync / sync-agent / doctor)
+through the process boundary via ``_blackbox``.
 No test may import ``lib/_internal`` modules. Assertions preserve the
 original contract intents (cache dir layout, external dir placement, skill
 resolution precedence, warnings, leftovers migration) through the CLI.
@@ -669,7 +669,9 @@ class BundledCommandLeftoverCleanupTests(unittest.TestCase):
 
 class RecipeCommandLeftoverCleanupTests(unittest.TestCase):
     """Recipe-managed command copies migrate out of ai-specs/commands safely
-    (observed through `ai-specs sync` / `ai-specs refresh-bundled`)."""
+    (observed through `ai-specs sync`, whose effective refresh embeds the
+    bundled/recipe cleanup; the standalone `refresh-bundled` verb is a
+    compatibility no-op in the Go binary, decision D26)."""
 
     def _project_with_recipe_command(
         self, home: Path, recipe_id: str, cmd_id: str, cmd_content: str,
@@ -735,7 +737,7 @@ class RecipeCommandLeftoverCleanupTests(unittest.TestCase):
             local = root / "ai-specs" / "commands" / "pr-create.md"
             local.write_text(content)
 
-            result = invoke(root, "refresh-bundled", cli_home=home)
+            result = invoke(root, "sync", cli_home=home)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertFalse(local.exists())
             self.assertNotIn("local hand-authored wins", result.stdout + result.stderr)
@@ -781,7 +783,7 @@ class RecipeCommandLeftoverCleanupTests(unittest.TestCase):
             # No managed cache copy exists (fresh cache) — same shape as the
             # original test, which removed the managed dir before migrating.
 
-            result = invoke(root, "refresh-bundled", cli_home=home)
+            result = invoke(root, "sync", cli_home=home)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertFalse(local.exists())
 

@@ -4,7 +4,7 @@ No test imports ``lib/_internal`` modules. The single scan contract is the
 CLI's JSON stdout inventory (``rules-inventory.py main()`` prints exactly
 ``RulesInventory(root).scan()``), so module-level scan assertions are preserved
 verbatim through the process boundary. The bundled-commands distribution test
-drives ``refresh-bundled`` + ``init`` + ``sync`` through the CLI against a
+drives ``init`` + ``sync`` (the effective refresh) through the CLI against a
 shared isolated install root with a real lib copy.
 """
 from __future__ import annotations
@@ -280,7 +280,9 @@ class RulesAuditTests(unittest.TestCase):
         project = Path(td.name) / "project"
         (project / "ai-specs").mkdir(parents=True)
 
-        result = invoke(project, "refresh-bundled", "--init", cli_home=self.home)
+        result = invoke(project, "init", "--no-tui", cli_home=self.home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = invoke(project, "sync", cli_home=self.home)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
         # Bundled commands flatten into the cache — never the project surface.

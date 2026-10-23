@@ -1,7 +1,8 @@
 """Black-box CLI fixtures and filesystem observability helpers.
 
-Every converted test drives the CLI through its process boundary:
-``bin/ai-specs <verb>``. No test may import ``lib/_internal`` modules.
+Every converted test drives the CLI through its process boundary: the native
+Go binary built by ``_go_cli`` (``cli_path()``), invoked as ``<binary> <verb>``.
+No test may import ``lib/_internal`` modules.
 """
 from __future__ import annotations
 
@@ -14,8 +15,14 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import _go_cli
+
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
+
+
+def cli_path() -> Path:
+    """The native Go binary every black-box invocation drives (built once per process)."""
+    return _go_cli.cli()
 
 
 @dataclass
@@ -57,14 +64,14 @@ def isolated_home(base: Path, *, catalog: bool = True) -> Path:
 
     Pass `catalog=False` for a home with an EMPTY catalog (no symlink to the
     repo catalog) — needed by tests that assert exact recipe sets.
-    AI_SPECS_HOME is the CLI *install root* — bin/ai-specs resolves lib/*.sh
-    under it — and it is ALSO the cache root
+    AI_SPECS_HOME is the CLI *install root* (catalog, templates, bundled assets
+    resolve under it) and it is ALSO the cache root
     ($AI_SPECS_HOME/cache/projects/<key>, see lib/_internal/project-cache.py).
-    Pointing it at an empty directory therefore breaks the CLI outright
-    (exit 127: "lib/doctor.sh: No such file or directory").
+    The native binary reads its assets from this root, so the root must hold
+    them; an empty directory is not a usable install.
 
     Symlinking the install tree into a temp dir satisfies both needs at once:
-    the CLI finds its own code, and `cache/` is local to the temp dir.
+    the assets resolve, and `cache/` is local to the temp dir.
     """
     home = base / "cli-home"
     home.mkdir(parents=True, exist_ok=True)
@@ -116,8 +123,8 @@ def populate_catalog(cli_home: Path, recipe_id: str, toml: str | None = None) ->
 
 def invoke(project_root: Path, *args: str, cli_home: Path | None = None,
            tmpdir: Path | None = None, append_root: bool = True,
-           stdin: str | None = "") -> CLIResult:
-    """Run bin/ai-specs hermetically against a project.
+           stdin: str | None = "", env_extra: dict[str, str] | None = None) -> CLIResult:
+    """Run the native CLI (``cli_path()``) hermetically against a project.
 
     stdin defaults to "" (closed pipe) so the CLI can never block on a
     prompt; pass explicit text only for tests that feed stdin deliberately.
@@ -145,9 +152,10 @@ def invoke(project_root: Path, *args: str, cli_home: Path | None = None,
         "AI_SPECS_NO_NETWORK": "1",
         "LC_ALL": "C",
         "LANG": "C",
+        **(env_extra or {}),
     }
     (temp / "home").mkdir(parents=True, exist_ok=True)
-    argv = [str(CLI), *args]
+    argv = [str(cli_path()), *args]
     if append_root:
         argv.append(str(project_root))
     try:
