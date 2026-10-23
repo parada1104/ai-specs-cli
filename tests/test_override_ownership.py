@@ -385,8 +385,13 @@ class OverrideOwnershipTests(unittest.TestCase):
         backup = pc.gate_backup_path(project_root, rel, self.lock.sha256_bytes(custom), cli_home=home)
         self.assertTrue(backup.is_file(), f"backup missing at {backup}")
         self.assertEqual(backup.read_bytes(), custom)
-        self.assertNotIn("cache", str(project_root),
-                         "backup must live in the CLI cache, not the project")
+        # Canonical paths on both sides (macOS /var -> /private/var), and a cache
+        # root derived from the CLI home, not from the helper under test.
+        cache_root = (home / "cache").resolve()
+        self.assertTrue(backup.resolve().is_relative_to(cache_root),
+                        f"backup must live under the CLI cache {cache_root}: {backup}")
+        self.assertFalse(backup.resolve().is_relative_to(project_root.resolve()),
+                         "backup must not live in the project")
 
     def test_repeated_refresh_is_collision_safe(self):
         """3.2 — RED: repeated refreshes keep the original snapshot intact."""
