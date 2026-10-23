@@ -606,18 +606,18 @@ func TestInitWizardCancelThroughTheVerb(t *testing.T) {
 	}
 }
 
-// TestInitTUIEnvSeamKeepsLegacyDelegation pins the escape hatch this slice
-// records (AI_SPECS_INIT_TUI_PY → lib/init.sh owns the whole verb, exactly as
-// before the native one landed): since U4b-2 no wizard STEP needs it — the
-// recipe configuration is native behind its own dep-gate seam — it stays as
-// the route back to the legacy wizard until U7.
-func TestInitTUIEnvSeamKeepsLegacyDelegation(t *testing.T) {
+// TestInitTUIEnvSeamNoLongerDelegates pins S5 of odd/tasks/go-20-u2b-init.md:
+// AI_SPECS_INIT_TUI_PY is retired, so with the variable set init behaves exactly
+// as without it — it never hands the whole verb to lib/init.sh. The stub
+// writes a marker, which must stay absent.
+func TestInitTUIEnvSeamNoLongerDelegates(t *testing.T) {
 	home := t.TempDir()
 	libDir := filepath.Join(home, "lib")
 	if err := os.MkdirAll(libDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	stub := "#!/usr/bin/env bash\necho \"legacy wizard seam: $*\"\nexit 0\n"
+	marker := filepath.Join(t.TempDir(), "init.sh-ran")
+	stub := "#!/usr/bin/env bash\nprintf ran > " + marker + "\nexit 0\n"
 	if err := os.WriteFile(filepath.Join(libDir, "init.sh"), []byte(stub), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -630,8 +630,67 @@ func TestInitTUIEnvSeamKeepsLegacyDelegation(t *testing.T) {
 	if rc := runInit([]string{"init", "--tui", dir}, home, strings.NewReader(""), &out, &errW, ""); rc != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", rc, errW.String())
 	}
-	if !strings.Contains(out.String(), "legacy wizard seam: --tui "+dir) {
-		t.Errorf("the verb did not delegate to lib/init.sh:\n%s", out.String())
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("init executed the legacy lib/init.sh (marker stat err=%v); stdout=%q", err, out.String())
+	}
+	if !strings.Contains(out.String(), "✓ ai-specs initialized at ") {
+		t.Errorf("the native verb did not reach its closing line:\n%s", out.String())
+	}
+}
+
+// TestInitRefreshBundledRunsNative pins S3/S4 of odd/tasks/go-20-u2b-init.md:
+// the init refresh step runs the native sync.RefreshBundled — its header line
+// stays, the flatten lines come from the native flatten — and spawns no
+// python3. python3 is shadowed on PATH and logs every invocation.
+func TestInitRefreshBundledRunsNative(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "bundled-skills", "alpha"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "bundled-skills", "alpha", "SKILL.md"), []byte("# alpha\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, "bundled-commands"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "bundled-commands", "demo.md"), []byte("# demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "refresh-app")
+	if err := os.MkdirAll(filepath.Join(dir, "ai-specs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := filepath.Join(t.TempDir(), "python3.log")
+	binDir := t.TempDir()
+	shadow := "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> " + logPath + "\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(binDir, "python3"), []byte(shadow), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var out, errW bytes.Buffer
+	if rc := refreshBundledAtInit(home, dir, &out, &errW); rc != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", rc, errW.String())
+	}
+	stdout := out.String()
+	header := "▸ refresh-bundled --init"
+	skills := "⇢ flattened 1 bundled skill(s) → cache/.bundled/skills"
+	commands := "⇢ flattened 1 bundled command(s) → cache/.bundled/commands"
+	for _, want := range []string{header, skills, commands} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, stdout)
+		}
+	}
+	if h, s := strings.Index(stdout, header), strings.Index(stdout, skills); h >= 0 && s >= 0 && h > s {
+		t.Errorf("the header line came after the flatten line:\n%s", stdout)
+	}
+	if data, err := os.ReadFile(logPath); err == nil {
+		if logged := strings.TrimSpace(string(data)); logged != "" {
+			t.Errorf("the step spawned python3:\n%s", logged)
+		}
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
 	}
 }
 

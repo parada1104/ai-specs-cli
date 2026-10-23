@@ -63,9 +63,8 @@ type route struct {
 // through it, so no verb is left for the map to route: keeping an always-empty
 // map and a lookup that can never succeed was dead code, not a mechanism.
 //
-// The EXEC path stays, because one consumer is still alive: runShim + routeShim
-// serve init.go's AI_SPECS_INIT_TUI_PY whole-verb hatch, which leaves with U2's
-// launcher flip. Add-dep and skills have had native routes since GO-20 U5c, the
+// The EXEC path is now dead code: init.go's AI_SPECS_INIT_TUI_PY hatch was
+// retired in U2b and no route produces routeShim. Deletion is U2e. Add-dep and skills have had native routes since GO-20 U5c, the
 // CLI-dep gate stopped exec'ing anything in U7-1 T3, and `recipe init` became
 // native in U7-2.
 

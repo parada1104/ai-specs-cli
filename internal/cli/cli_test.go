@@ -10,8 +10,8 @@ import (
 
 // TestRouteTableCoversEveryVerb checks the full dispatcher table — the native
 // verbs and their aliases, mirroring the case statement of bin/ai-specs — plus
-// the one shim route that survives: init.go's AI_SPECS_INIT_TUI_PY hatch (U2's
-// flip). The verb→script MAP is gone (U7-1 T4) and so is `recipe init`'s shim
+// the shim route that survived U7; its last consumer, init.go's
+// AI_SPECS_INIT_TUI_PY hatch, was retired in U2b. The verb→script MAP is gone (U7-1 T4) and so is `recipe init`'s shim
 // route (U7-2); the exec path itself is not.
 func TestRouteTableCoversEveryVerb(t *testing.T) {
 	natives := map[string]routeKind{

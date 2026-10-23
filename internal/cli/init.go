@@ -4,12 +4,11 @@ package cli
 // a port of lib/init.sh — argument contract, banner, directories, manifest,
 // baseline AGENTS.md, both .gitignore files, the bundled-assets seam and the
 // next-steps text — plus, since T4b-1, the interactive wizard itself: when
-// the TUI gate fires, runInitWizard drives the prompts in process, and only
-// the AI_SPECS_INIT_TUI_PY escape hatch still hands the whole verb to the
-// legacy script (U4b-2 moved the last wizard step — the per-recipe
-// configuration — native behind its documented CLI-dep gate seam, so the
-// hatch now keeps the legacy wizard observable as the reference route until
-// U7).
+// the TUI gate fires, runInitWizard drives the prompts in process (U4b-2
+// moved the last wizard step — the per-recipe configuration — native behind
+// its documented CLI-dep gate seam). The legacy AI_SPECS_INIT_TUI_PY escape
+// hatch is retired (odd/tasks/go-20-u2b-init.md S5): init never hands the
+// verb to lib/init.sh.
 //
 // The messages, their order and the exit codes are the legacy script's
 // contract (S3): 0 success, 1 unusable target, cancel or failed step, 2 usage
@@ -17,15 +16,12 @@ package cli
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"ai-specs.dev/ai-specs"
 	"ai-specs.dev/ai-specs/internal/sync"
@@ -108,17 +104,13 @@ func runInitFlow(args []string, home string, stdin io.Reader, stdout, stderr io.
 	rootGitignore := filepath.Join(target, ".gitignore")
 	aiGitignore := filepath.Join(aiSpecsDir, ".gitignore")
 
-	// The gate is init.sh's (S6). With the gate fired: the escape hatch still
-	// hands the WHOLE verb to the legacy script (the recorded seam to the
-	// reference wizard, which U4b-2's recipe-configuration step no longer
-	// needs — its dep gate has its own seam inside the native wizard); an
-	// existing manifest is the shell's skip branch; otherwise the wizard runs
-	// natively (T4b-1, U4b-2).
+	// The gate is init.sh's (S6). With the gate fired an existing manifest is
+	// the shell's skip branch; otherwise the wizard runs natively (T4b-1,
+	// U4b-2). The AI_SPECS_INIT_TUI_PY hatch that used to hand the whole verb
+	// to the legacy script is retired (go-20-u2b-init S5): the variable is
+	// ignored, exactly like an unset one.
 	var wizard *initWizardResult
 	if shouldInitTUI(opts, isTTY(stdin, stdout), tomlPath) {
-		if os.Getenv("AI_SPECS_INIT_TUI_PY") != "" {
-			return runShim(route{kind: routeShim, script: "init.sh"}, args, home, stdin, stdout, stderr, selfPath)
-		}
 		if regularInitFile(tomlPath) {
 			// init.sh's `[[ -f "$TOML_PATH" ]]` skip branch, on stdout before
 			// the banner: the wizard never opens over a user-owned manifest.
@@ -660,40 +652,15 @@ func hasExactLine(text, marker string) bool {
 	return false
 }
 
-// refreshBundledAtInit is init.sh's step 7, unchanged.
-//
-// T4c LOOKED like it could retire this step: the assets are embedded, so the
-// flatten has nothing a native reader needs, and refresh-bundled.py's own
-// docstring claims it stamps the lock's [meta]. Measured, that claim is false:
-// refresh() only normalizes the lock (lib/_internal/refresh-bundled.py:100-131)
-// and a legacy init leaves the lock with NO [meta] at all. The step's whole
-// observable effect is the flatten into {cache}/.bundled/ plus three status
-// lines, and the Python readers that still consume that cache (recipe
-// materialization, the skills renderers) outlive this unit. So the step stays on
-// its seam until those readers go (U7); the stamp this unit ported lives in
-// sync, which is the route that actually stamps.
+// refreshBundledAtInit is init.sh's step 7 on the native route: the header
+// line and the exit-code mapping are the step's observable contract (S4 of
+// odd/tasks/go-20-u2b-init.md); the work itself is sync.RefreshBundled, which
+// is differential-tested against lib/_internal/refresh-bundled.py
+// (internal/sync/refreshbundled_test.go). The script's `--init` flag was
+// accepted and ignored, so nothing else about it is reproduced.
 func refreshBundledAtInit(home, target string, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, "▸ refresh-bundled --init")
-	cmd := exec.Command("python3", filepath.Join(home, "lib", "_internal", "refresh-bundled.py"), target, home, "--init")
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			// The shell's `set -e` reports 128+signal for a killed child, and so
-			// does runShim; ExitCode() alone would answer -1 and os.Exit would
-			// turn a SIGTERM into 255 (JD-B-006).
-			if code := ee.ExitCode(); code >= 0 {
-				return code
-			}
-			if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-				return 128 + int(ws.Signal())
-			}
-		}
-		fmt.Fprintf(stderr, "ERROR: %v\n", err)
-		return 1
-	}
-	return 0
+	return sync.RefreshBundled(target, home, stdout, stderr)
 }
 
 // writeInitNextSteps is init.sh's closing heredoc, byte for byte.
