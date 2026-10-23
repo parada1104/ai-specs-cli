@@ -4,13 +4,20 @@ File-content assertions (bundled skill/AGENTS.md/CLI-help surfaces) read the
 repository's observable artifacts directly. Behavioral surfaces drive the CLI
 process boundary:
 
-- ``bin/ai-specs refresh-bundled`` flattens CLI-bundled skills/commands into
-  the isolated home's per-project cache (``cache/projects/<key>/.bundled``)
-  with zero in-project writes.
-- ``bin/ai-specs sync`` renders the AGENTS.md harness CLI-literacy pointer.
+- ``ai-specs sync`` (native Go binary) is the effective refresh. It flattens
+  CLI-bundled skills/commands into the isolated home's per-project cache
+  (``cache/projects/<key>/.bundled``), never materializes bundled commands or
+  skill copies under the project's ``ai-specs/commands/`` or ``ai-specs/skills/``,
+  and removes the in-project leftovers older CLIs materialized. It is NOT
+  read-only: it writes other project surface (lock, AGENTS.md pointer, managed
+  files), and the assertions here cover only the flatten and cleanup effects they
+  name. The standalone
+  ``refresh-bundled`` verb is a documented compatibility no-op in the Go
+  binary (decision D26), so the tests below that name it drive ``sync``.
+- ``ai-specs sync`` renders the AGENTS.md harness CLI-literacy pointer.
 
 No test may import ``lib/_internal`` modules. The one internal surface with
-no bin/ai-specs verb (per-skill sync-metadata validation) is kept as a
+no CLI verb (per-skill sync-metadata validation) is kept as a
 process-boundary invocation of the validator script, marked with a distinct
 ``# TRIAGE:`` comment.
 """
@@ -119,8 +126,14 @@ class HarnessCliLiteracyTests(unittest.TestCase):
     def _bundled_cache(self, subpath: str) -> Path:
         return cache_project_dir(self.project, self.home) / ".bundled" / subpath
 
-    def _refresh_bundled(self, *flags: str):
-        return invoke(self.project, "refresh-bundled", *flags, cli_home=self.home)
+    def _sync(self):
+        """Run the effective refresh: `sync` embeds the bundled flatten/cleanup.
+
+        `refresh-bundled --init` is a compatibility no-op in the Go binary
+        (D26); the assets it used to flatten come from the same step inside
+        `sync`, so the sequence goal is unchanged.
+        """
+        return invoke(self.project, "sync", cli_home=self.home)
 
     def test_bundled_harness_skills_exist(self):
         for name in HARNESS_SKILLS:
@@ -136,7 +149,7 @@ class HarnessCliLiteracyTests(unittest.TestCase):
             self.assertTrue(meta["auto_invoke"], name)
 
     def test_refresh_bundled_flattens_harness_skills_to_cache(self):
-        proc = self._refresh_bundled()
+        proc = self._sync()
         self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
         bundled_root = self._bundled_cache("skills")
         for name in HARNESS_SKILLS:
@@ -152,8 +165,8 @@ class HarnessCliLiteracyTests(unittest.TestCase):
 
     def test_refresh_bundled_migrates_inproject_copy_via_lock_hash(self):
         """An untouched in-project bundled copy from an older CLI (differs from
-        source, but recorded in the legacy lock) is removed on refresh-bundled —
-        while the legacy [skills.*] hashes are still in memory."""
+        source, but recorded in the legacy lock) is removed by the refresh inside
+        `sync` — while the legacy [skills.*] hashes are still in memory."""
         import hashlib
         old_dir = self.project / "ai-specs" / "skills" / "harness-lifecycle"
         old_dir.mkdir(parents=True)
@@ -164,7 +177,7 @@ class HarnessCliLiteracyTests(unittest.TestCase):
         (self.project / "ai-specs" / ".ai-specs.lock").write_text(
             f'[skills."harness-lifecycle"]\n"SKILL.md" = "{h}"\n'
         )
-        proc = self._refresh_bundled()
+        proc = self._sync()
         self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
         self.assertFalse(
             old_dir.exists(),
@@ -173,7 +186,7 @@ class HarnessCliLiteracyTests(unittest.TestCase):
 
     def test_refresh_bundled_init_flattens_commands_without_writing_project(self):
         (self.project / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
-        proc = self._refresh_bundled("--init")
+        proc = self._sync()
         self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
         bundled_root = self._bundled_cache("commands")
         self.assertTrue((bundled_root / "rules-audit.md").is_file())
@@ -185,14 +198,14 @@ class HarnessCliLiteracyTests(unittest.TestCase):
         )
         self.assertFalse(
             list((self.project / "ai-specs" / "commands").glob("*.new")),
-            "refresh-bundled must never write .new sidecars",
+            "refresh must never write .new sidecars",
         )
 
     def test_refresh_bundled_removes_byte_identical_command_leftover(self):
         (self.project / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
         leftover = self.project / "ai-specs" / "commands" / "rules-audit.md"
         leftover.write_text((ROOT / "bundled-commands" / "rules-audit.md").read_text())
-        proc = self._refresh_bundled()
+        proc = self._sync()
         self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
         self.assertFalse(leftover.exists(), "byte-identical bundled command must be removed")
         self.assertFalse((self.project / "ai-specs" / "commands" / "rules-audit.md.new").exists())
@@ -201,7 +214,7 @@ class HarnessCliLiteracyTests(unittest.TestCase):
         (self.project / "ai-specs" / "commands").mkdir(parents=True, exist_ok=True)
         customized = self.project / "ai-specs" / "commands" / "rules-audit.md"
         customized.write_text("# rules-audit (locally edited)\n")
-        proc = self._refresh_bundled()
+        proc = self._sync()
         self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
         self.assertTrue(customized.exists(), "customized copy must be preserved")
         out = proc.stdout + proc.stderr
@@ -255,7 +268,7 @@ class HarnessCliLiteracyTests(unittest.TestCase):
             ["git", "-C", str(project), "commit", "-qm", "track leftover"],
             check=True, input="",
         )
-        proc = self._refresh_bundled()
+        proc = self._sync()
         self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
         self.assertFalse(leftover.exists())
         out = proc.stdout + proc.stderr
