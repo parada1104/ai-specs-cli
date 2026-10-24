@@ -311,7 +311,9 @@ class LedgerModeConfigTests(unittest.TestCase):
         env = dict(os.environ)
         env.pop("TRACKER_CARD_GATE_MODE", None)
         env.pop("TRACKER_LEDGER_MODE", None)
-        env.pop("AI_SPECS_HOME", None)
+        # The native CLI home: plan-build normalizes and reads verdicts through
+        # dist/ai-specs (GO-20 U2e U-F2a). Without it the hook fails open.
+        env["AI_SPECS_HOME"] = str(_cli_home())
         env["WORKTREE_GATE_BIN"] = str(self.stub)
         env["STUB_LOG"] = str(self.stub_log)
         env.update(extra)

@@ -159,60 +159,7 @@ func runTrackerEvidence(args []string, stdout, stderr io.Writer) int {
 // stdin. It replaces the python3 helpers of tracker-card-gate.sh; the output
 // format is the one documented in trackerFieldUsage.
 func runTrackerFieldVerb(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	usageError := func(message string) int {
-		fmt.Fprintln(stderr, message)
-		fmt.Fprintln(stderr, "Run 'ai-specs tracker field --help' for usage.")
-		return 2
-	}
-	var positional []string
-	for _, arg := range args {
-		switch {
-		case arg == "--help" || arg == "-h":
-			fmt.Fprint(stdout, trackerFieldUsage)
-			return 0
-		case strings.HasPrefix(arg, "-"):
-			return usageError("ERROR: unknown flag: " + arg)
-		default:
-			positional = append(positional, arg)
-		}
-	}
-	if len(positional) == 0 {
-		return usageError("ERROR: missing required argument: <path>")
-	}
-	if len(positional) > 1 {
-		return usageError("ERROR: unexpected positional argument: " + positional[1])
-	}
-	decoder := json.NewDecoder(stdin)
-	decoder.UseNumber()
-	var doc any
-	if err := decoder.Decode(&doc); err != nil {
-		fmt.Fprintln(stderr, "ERROR: stdin is not valid JSON")
-		return 1
-	}
-	if _, err := decoder.Token(); err != io.EOF {
-		fmt.Fprintln(stderr, "ERROR: stdin is not valid JSON")
-		return 1
-	}
-	if _, ok := doc.(map[string]any); !ok {
-		fmt.Fprintln(stderr, "ERROR: stdin JSON is not an object")
-		return 1
-	}
-	var current any = doc
-	for _, key := range strings.Split(positional[0], ".") {
-		object, ok := current.(map[string]any)
-		if !ok {
-			current = nil
-			break
-		}
-		value, found := object[key]
-		if !found {
-			current = nil
-			break
-		}
-		current = value
-	}
-	fmt.Fprintln(stdout, fieldText(current))
-	return 0
+	return runJSONField(args, stdin, stdout, stderr, "ai-specs tracker field", trackerFieldUsage, false)
 }
 
 // fieldText renders one decoded JSON value as the field verb prints it.
