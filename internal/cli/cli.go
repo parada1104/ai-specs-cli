@@ -56,6 +56,7 @@ const (
 	routeTrackerSlug                        // native: `tracker slug`, port of ledger_bridge.change_slug (GO-20 U2e U-C)
 	routeTrackerEvidence                    // native: `tracker evidence`, port of ledger_bridge.evidence_payload (GO-20 U2e U-C)
 	routeTrackerField                       // native: `tracker field`, JSON value reader for the hook helpers (GO-20 U2e U-F)
+	routeTrackerClassify                    // native: `tracker classify`, the hook event classifier (GO-20 U2e U-F2b)
 	routeHook                               // native: the `hook` family remainder — usage/help/unknown (GO-20 U2e U-F2a)
 	routeHookField                          // native: `hook field`, JSON value reader for plan-build-gate.sh (GO-20 U2e U-F2a)
 	routeHookNormalizePath                  // native: `hook normalize-path`, canonical hook target (GO-20 U2e U-F2a)
@@ -216,6 +217,8 @@ func Route(args []string) route {
 				return route{kind: routeTrackerEvidence}
 			case "field":
 				return route{kind: routeTrackerField}
+			case "classify":
+				return route{kind: routeTrackerClassify}
 			}
 		}
 		return route{kind: routeTracker}
@@ -340,6 +343,9 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 	case routeTrackerField:
 		// args[0]=tracker, args[1]=field: the verb's own grammar sees args[2:].
 		return runTrackerFieldVerb(args[2:], stdin, stdout, stderr)
+	case routeTrackerClassify:
+		// args[0]=tracker, args[1]=classify: the verb's own grammar sees args[2:].
+		return runTrackerClassify(args[2:], stdin, stdout, stderr)
 	case routeHook:
 		// args[0]=hook: the family remainder sees the subcommand slot.
 		return runHookDispatch(args[1:], stdout, stderr)

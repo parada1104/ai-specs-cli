@@ -23,6 +23,7 @@ Subcommands:
   slug <root>                        Print the single active change slug
   evidence <root> <slug> <outfile>   Write the ledger evidence JSON to outfile
   field <path>                       Print the value at a JSON path read from stdin
+  classify                           Print the hook event classification read from stdin
 Run 'ai-specs tracker <subcommand> --help' for full options.
 `
 
@@ -65,6 +66,18 @@ object, exits 1 with nothing printed.
 
 Arguments:
   <path>              Key or dotted path to print
+
+Options:
+  --help, -h          Show this help
+`
+
+const trackerClassifyUsage = `Usage: ai-specs tracker classify
+
+Read one hook event JSON object from stdin and print the two-line kind/tool/hint
+protocol tracker-card-gate.sh reads: "path" plus the file path, or "shell" plus
+one pr_create line per detected gh pr create. Prints nothing when the event has
+no path and no gh pr create. Exits 1 with nothing printed when the event cannot
+be classified the way the python reference does.
 
 Options:
   --help, -h          Show this help
@@ -152,6 +165,40 @@ func runTrackerEvidence(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "ERROR: %v\n", err)
 		return 1
 	}
+	return 0
+}
+
+// runTrackerClassify reads one hook event JSON object on stdin and prints the
+// path/shell protocol tracker-card-gate.sh consumes. It replaces the embedded
+// python classifier; the bytes are the python stdout exactly.
+func runTrackerClassify(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	usageError := func(message string) int {
+		fmt.Fprintln(stderr, message)
+		fmt.Fprintln(stderr, "Run 'ai-specs tracker classify --help' for usage.")
+		return 2
+	}
+	for _, arg := range args {
+		switch {
+		case arg == "--help" || arg == "-h":
+			fmt.Fprint(stdout, trackerClassifyUsage)
+			return 0
+		case strings.HasPrefix(arg, "-"):
+			return usageError("ERROR: unknown flag: " + arg)
+		default:
+			return usageError("ERROR: unexpected positional argument: " + arg)
+		}
+	}
+	event, err := io.ReadAll(stdin)
+	if err != nil {
+		fmt.Fprintf(stderr, "ERROR: %v\n", err)
+		return 1
+	}
+	out, ok := tracker.ClassifyEvent(event)
+	if !ok {
+		fmt.Fprintln(stderr, "ERROR: event cannot be classified")
+		return 1
+	}
+	stdout.Write(out)
 	return 0
 }
 
