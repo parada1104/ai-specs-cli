@@ -323,13 +323,15 @@ class TrackerCardGateHookTests(unittest.TestCase):
         self.assertNotIn("apply-start", self.stub_log.read_text()
                          if self.stub_log.exists() else "")
 
-    def test_only_the_command_classifier_still_uses_python(self):
-        # U-F replaces the JSON/text helpers with `ai-specs tracker field` and bash.
-        # The stdin command classifier (U-F2) is the one python3 left in this host.
+    def test_the_command_classifier_is_native(self):
+        # U-F2b replaces the embedded python command classifier with
+        # `ai-specs tracker classify`, so the host carries no python3 at all.
         text = GATE.read_text(encoding="utf-8")
         self.assertNotIn("python3 -c", text,
                          "JSON/text helpers must use `ai-specs tracker field` or bash")
-        self.assertEqual(text.count("python3 - "), 1)
+        self.assertIn("tracker classify", text,
+                      "the classifier must be the native `ai-specs tracker classify` verb")
+        self.assertNotIn("python3", text, "the hook must contain no python3 at all")
 
     def test_bash_relpath_keeps_glob_characters_literal(self):
         # A `*` in the target must not pathname-expand against the hook's cwd.
@@ -692,15 +694,16 @@ class TrackerCardGateHookTests(unittest.TestCase):
         self.assertIn('stamped_lib_internal=""', text2)
 
     def test_unstamped_bridge_skips_evidence_and_exempt_write(self):
+        # The same bridge now also supplies `tracker classify`, so an unstamped
+        # CLI home fails open before grading (accepted degradation, U-F2b): no
+        # grade, no --evidence flag, and no exemption write.
         self._change("demo-change", tracker_none="no tracker card for this spike\n")
         r = self._run(self._event("Edit", str(self.repo / "lib" / "foo.py")),
                       gate=self._stamped_gate("warn", cli_home=""))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._write_lines(), [])
-        grades = self._grade_lines()
-        self.assertEqual(len(grades), 1, self.stub_log.read_text())
-        self.assertNotIn("--evidence", grades[0])
-        self.assertEqual(self._logged_checkpoints(), ["apply-start"])
+        self.assertEqual(self._grade_lines(), [])
+        self.assertEqual(self._logged_checkpoints(), [])
 
     # --- bash 3.2 compatibility ---
 
