@@ -10,6 +10,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tests"))
+from _blackbox import cli_path  # noqa: E402
 WIZARD_PATH = ROOT / "lib" / "_internal" / "config_wizard.py"
 SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
 VENDOR = ROOT / "lib" / "_vendor"
@@ -516,8 +518,10 @@ class ConfigureRecipesDispatchTests(unittest.TestCase):
     def test_configure_recipes_dispatch(self):
         import subprocess
 
+        argv = [str(cli_path()), "configure-recipes", "/nonexistent-ai-specs-path"]
+        self.assertEqual(argv[0], str(cli_path()), "dispatch must drive the native binary")
         proc = subprocess.run(
-            [str(ROOT / "bin" / "ai-specs"), "configure-recipes", "/nonexistent-ai-specs-path"],
+            argv,
             capture_output=True,
             text=True,
             check=False,
