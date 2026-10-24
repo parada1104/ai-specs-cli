@@ -227,6 +227,27 @@ fi
 chmod 0755 "$ENTRY_TMP"
 mv -f "$ENTRY_TMP" "$INSTALL_BIN/ai-specs"
 
+# GO-20 U2e: the repo launcher bin/ai-specs execs $AI_SPECS_HOME/dist/ai-specs;
+# this is an addition to the U1b-2b install plan. The source is the SAME verified
+# file that just became the entry (never a rebuild), and the copy is loud: a
+# failed write names the path and aborts the install.
+# Canonicalize the HOME DIRECTORY (D-U2e-1), never the binary, so a symlinked
+# home still receives dist/ under its real directory.
+DIST_HOME="$(cd -P "$AI_SPECS_HOME" 2>/dev/null && pwd -P)" || DIST_HOME="$AI_SPECS_HOME"
+DIST_BIN="$DIST_HOME/dist/ai-specs"
+if ! mkdir -p "$DIST_HOME/dist"; then
+    echo -e "${RED}error: could not create $DIST_HOME/dist${NC}" >&2
+    exit 1
+fi
+if ! cp "$INSTALL_BIN/ai-specs" "$DIST_BIN"; then
+    echo -e "${RED}error: could not copy the installed binary to $DIST_BIN${NC}" >&2
+    exit 1
+fi
+if ! chmod 0755 "$DIST_BIN"; then
+    echo -e "${RED}error: could not make $DIST_BIN executable${NC}" >&2
+    exit 1
+fi
+
 echo ""
 echo -e "${GREEN}✓ Installed ai-specs $VERSION${NC}"
 echo ""

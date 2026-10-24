@@ -437,6 +437,34 @@ func realUpgrade(inst Install, o Options, git Git, stdout, stderr io.Writer) int
 	return ExitOK
 }
 
+// refreshDistCopy writes the just-installed LocalBin bytes to
+// $AI_SPECS_HOME/dist/ai-specs, the path the repo launcher bin/ai-specs execs
+// after the flip (GO-20 U2e). It reuses the installed file — never a rebuild —
+// and reports a failed write instead of swallowing it.
+func refreshDistCopy(inst Install) error {
+	data, err := os.ReadFile(inst.LocalBin)
+	if err != nil {
+		return fmt.Errorf("could not read the installed binary at %s: %w", inst.LocalBin, err)
+	}
+	// Canonicalize the HOME DIRECTORY (D-U2e-1), never the binary: a symlinked
+	// home still receives dist/ under its real directory.
+	home := inst.ExpectedHome
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolved
+	}
+	target := filepath.Join(home, "dist", "ai-specs")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("could not create %s: %w", filepath.Dir(target), err)
+	}
+	if err := os.WriteFile(target, data, 0o755); err != nil {
+		return fmt.Errorf("could not write %s: %w", target, err)
+	}
+	if err := os.Chmod(target, 0o755); err != nil {
+		return fmt.Errorf("could not make %s executable: %w", target, err)
+	}
+	return nil
+}
+
 // Run executes the upgrade and returns the process exit code.
 func Run(args []string, env Env, stdout, stderr io.Writer) int {
 	o, code, done := ParseArgs(args, stdout, stderr)
@@ -448,7 +476,18 @@ func Run(args []string, env Env, stdout, stderr io.Writer) int {
 		return code
 	}
 	if inst.Kind == KindBinary {
-		return binaryUpgrade(inst, o, env, stdout, stderr)
+		code := binaryUpgrade(inst, o, env, stdout, stderr)
+		// GO-20 U2e: a real (non-dry-run) upgrade that reached this point has
+		// replaced LocalBin, so the launcher copy must be refreshed too. Every
+		// non-installing outcome (dry-run, refusal) returned earlier, and a
+		// symlink install never takes this branch.
+		if code != ExitOK || o.DryRun {
+			return code
+		}
+		if err := refreshDistCopy(inst); err != nil {
+			return abort(stderr, fmt.Sprintf("could not refresh the launcher copy: %v", err), ExitPostVerify)
+		}
+		return code
 	}
 	git := env.git()
 	if _, err := git(inst.Home, "rev-parse", "--verify", "origin/main"); err == nil {
