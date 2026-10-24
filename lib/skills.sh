@@ -20,6 +20,7 @@ Subcommands:
   list [path]                List registered and installed skills
   remove <id> [path]         Remove a vendored skill and prune ai-specs/.deps/<id>/
   validate <skill_md_path>   Validate one SKILL.md's sync metadata (JSON)
+  field <path>               Print one JSON value of stdin at a dotted path
 Path defaults to current directory. Run 'ai-specs skills add --help' for
 full add flags.
 EOF

@@ -75,9 +75,9 @@ while IFS= read -r skill_file; do
         continue
     fi
 
-    skill_name=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("name",""))' "$metadata_json")
-    scope_raw=$(python3 -c 'import json,sys; print("|".join(json.loads(sys.argv[1]).get("scope",[])))' "$metadata_json")
-    auto_invoke_raw=$(python3 -c 'import json,sys; print("|".join(json.loads(sys.argv[1]).get("auto_invoke",[])))' "$metadata_json")
+    skill_name=$(printf '%s' "$metadata_json" | "$AI_SPECS_BIN" skills field name)
+    scope_raw=$(printf '%s' "$metadata_json" | "$AI_SPECS_BIN" skills field scope)
+    auto_invoke_raw=$(printf '%s' "$metadata_json" | "$AI_SPECS_BIN" skills field auto_invoke)
 
     if [ -z "$scope_raw" ] && [ -z "$auto_invoke_raw" ]; then
         echo -e "  ${YELLOW}$skill_name${NC} - missing scope and auto_invoke"
