@@ -130,6 +130,19 @@ func TestSetEnabledAgentsKeepsAgentsAsLastTable(t *testing.T) {
 	}
 }
 
+// TestSetEnabledAgentsCompletesEmptyTableAtEOF pins the empty-table branch: a bare
+// [agents] as the last table is completed in place, never duplicated.
+func TestSetEnabledAgentsCompletesEmptyTableAtEOF(t *testing.T) {
+	path := manifestAt(t, "[meta]\nname = \"p\"\n\n[agents]\n")
+	if err := SetEnabledAgents(path, []string{"claude", "pi"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "[meta]\nname = \"p\"\n\n[agents]\nenabled = [\"claude\", \"pi\"]\n"
+	if got := readBack(t, path); got != want {
+		t.Errorf("manifest = %q\nwant     = %q", got, want)
+	}
+}
+
 // TestSetEnabledAgentsEmptyListWritesEmptyLiteral pins toml_value([]) = "[]".
 func TestSetEnabledAgentsEmptyListWritesEmptyLiteral(t *testing.T) {
 	path := manifestAt(t, "[agents]\nenabled = [\"claude\"]\n")

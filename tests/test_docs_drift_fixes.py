@@ -1,12 +1,8 @@
 """Black-box contract tests for the docs-drift defect card (D12, D25-D34).
 
-Every CLI test drives the native Go binary (`cli_path()`) and asserts on exit
-codes, stdout/stderr, or emitted file trees. The agents-submenu seam below is
-the only in-process `lib/_internal` loader. No new coupled
-imports of `lib/_internal` modules — the single exception is the interactive
-agents-submenu seam (D12), which has no CLI surface; it is driven in a
-subprocess via the same loader `tests/test_hub.py` already uses, and the
-assertions are on the observable file effect (the rewritten manifest).
+Every test drives the native Go binary (`cli_path()`) and asserts on exit
+codes, stdout/stderr, or emitted file trees. The interactive agents submenu
+(D12) is covered natively in `internal/hub` and `internal/config`.
 """
 
 from __future__ import annotations
@@ -24,7 +20,6 @@ from _blackbox import cli_path, isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI_UNDER_TEST = cli_path()
-HUB_PY = ROOT / "lib" / "_internal" / "hub.py"
 
 
 def run(args, cwd=None, env=None, check=True):
@@ -315,71 +310,6 @@ class SkillsListTomlParseTests(unittest.TestCase):
         local_section = out.split("Local skills")[1].split("Available catalog")[0]
         self.assertIn("phantom", local_section)
         self.assertIn("other-local", local_section)
-
-
-class AgentsSubmenuManifestTests(unittest.TestCase):
-    """D12 — the interactive agents submenu must not corrupt the manifest.
-
-    Justified seam: `_run_agents_submenu` has no CLI surface (interactive-only,
-    TTY required). The test drives it in a subprocess — the same loader
-    `tests/test_hub.py` already uses — and asserts the observable file effect.
-    """
-
-    DRIVER = """
-import importlib.util, sys
-from pathlib import Path
-spec = importlib.util.spec_from_file_location("hub_under_test", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-sys.modules["hub_under_test"] = mod
-spec.loader.exec_module(mod)
-mod.pick_many = lambda message, options: sys.argv[3].split(",")
-mod.pause = lambda message="Press Enter to return\\u2026": True
-rc = mod._run_agents_submenu(None, Path(sys.argv[2]))
-sys.exit(rc if rc is not None else 0)
-"""
-
-    def _run_submenu(self, manifest: str, selection: str) -> tuple[int, str]:
-        proj_tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(proj_tmp.cleanup)
-        proj = Path(proj_tmp.name)
-        (proj / "ai-specs").mkdir(parents=True)
-        toml = proj / "ai-specs" / "ai-specs.toml"
-        toml.write_text(manifest)
-        result = subprocess.run(
-            ["python3", "-c", self.DRIVER, str(HUB_PY), str(proj), selection],
-            capture_output=True,
-            text=True,
-        )
-        return result.returncode, toml.read_text()
-
-    def test_agents_table_without_enabled_is_completed_not_duplicated(self):
-        manifest = '[meta]\nname = "p"\n\n[agents]\n'
-        rc, text = self._run_submenu(manifest, "claude,pi")
-        self.assertEqual(rc, 0)
-        self.assertEqual(text.count("[agents]"), 1, msg=text)
-        self.assertIn('enabled = ["claude", "pi"]', text)
-
-    def test_agents_table_last_with_other_keys_gets_enabled(self):
-        manifest = '[agents]\nlayout = "compact"\n'
-        rc, text = self._run_submenu(manifest, "claude")
-        self.assertEqual(rc, 0)
-        self.assertEqual(text.count("[agents]"), 1, msg=text)
-        self.assertIn('enabled = ["claude"]', text)
-        self.assertIn('layout = "compact"', text)
-
-    def test_existing_enabled_line_is_replaced(self):
-        manifest = '[agents]\nenabled = ["old"]\n'
-        rc, text = self._run_submenu(manifest, "claude")
-        self.assertEqual(rc, 0)
-        self.assertEqual(text.count("enabled ="), 1, msg=text)
-        self.assertIn('enabled = ["claude"]', text)
-
-    def test_missing_agents_table_is_appended_once(self):
-        manifest = '[meta]\nname = "p"\n'
-        rc, text = self._run_submenu(manifest, "claude")
-        self.assertEqual(rc, 0)
-        self.assertEqual(text.count("[agents]"), 1, msg=text)
-        self.assertIn('enabled = ["claude"]', text)
 
 
 if __name__ == "__main__":

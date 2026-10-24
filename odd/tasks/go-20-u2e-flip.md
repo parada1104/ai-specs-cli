@@ -34,9 +34,9 @@ Slice 1 = documentation and measured inventory only. No source or test change in
 - **T2** — Flip: `bin/ai-specs` execs the native binary for every verb (13 `bash "$LIB_DIR/…"` dispatch lines,
   `bin/ai-specs:38-50`). Blocked until T3 and the named test rows are native. Commit: pending.
 - **T3** — Retarget the U2e test rows to the native binary, no assertion removed. Split into named units (L6):
-  - **T3a** `test_upgrade_output` (oracle seed `lib/_internal/changelog.py`). Slice 2 (this PR). Commit: pending.
-  - **T3b** `AgentsSubmenuManifestTests` (`lib/_internal` loader, no CLI surface). Go coverage already exists in
-    `internal/hub/interactive_test.go` (D12 cases). Route: map each Python case to a Go test, then retire the Python class with the equivalence recorded. Commit: pending.
+  - **T3a** `test_upgrade_output` (oracle seed `lib/_internal/changelog.py`). Slice 2. Commit: e4bccc7 (PR #433).
+  - **T3b** `AgentsSubmenuManifestTests` (`lib/_internal` loader, no CLI surface). Go coverage in
+    `internal/hub/interactive_test.go` (D12 cases) and `internal/config/agents_test.go`. Route: map each Python case to a Go test, then retire the Python class with the equivalence recorded (L12). Slice 3 (this PR). Commit: slice 3 PR; hash recorded at close.
   - **T3c** `_materialize_process` (`lib/_internal/recipe-materialize.py`). No native `materialize` verb; the native
     chain is `baseline-brief` (`internal/cli/brief.go`). Route: rewrite against the real surface. Commit: pending.
   - **T3d** `test_init_brief_route` (LEGACY_CLI; bash `lib/init.sh` seam via `AI_SPECS_GO_BIN`). Route: golden fixtures
@@ -49,7 +49,7 @@ Slice 1 = documentation and measured inventory only. No source or test change in
 - **T7** — Decide the generated-hook `python3` (see L4). Human decision: the generated Cursor wrapper must not invoke
   python3 (L10). Slice T7 (branch `change/go-20-t7-hook-no-python`, base e4bccc7): deny escaping by POSIX awk in
   `internal/sync/hooksrender.go`, 3 behavior tests, and the differential reference updated with an intentional
-  divergence marker (L10). Commit: pending.
+  divergence marker (L10). Commit: a958124 (PR #434).
 - **T8** — `validate.sh` once on the result, native assess per candidate, PR with auto-merge. Commit: pending.
 
 ## Log
@@ -120,3 +120,25 @@ Slice 1 = documentation and measured inventory only. No source or test change in
   parity.py changed (diff: +32 lines, 0 deletions). BOUNDARY: intentional divergence, Robert's T7 decision, valid
   only while lib/_internal exists. EXPIRY: T5, when lib/_internal is deleted; then delete N10, `_T7_*` constants and
   the reference rewrite together. No parity rows retired; T7 not delayed.
+- L12 — Slice 3 (T3b), equivalence map for `AgentsSubmenuManifestTests` (4 cases, `tests/test_docs_drift_fixes.py`,
+  retired; the Python loader `lib/_internal/hub.py` is deleted at T5):
+  - "agents table without enabled is completed, not duplicated" (`[agents]` bare, last) →
+    `internal/config` `TestSetEnabledAgentsCompletesEmptyTableAtEOF` (new in this slice; mutation of the EOF branch
+    fails it and `TestSetEnabledAgentsKeepsAgentsAsLastTable`, then restored).
+  - "agents table last with other keys gets enabled" → `TestSetEnabledAgentsKeepsAgentsAsLastTable`.
+  - "existing enabled line is replaced" → `TestSetEnabledAgentsReplacesExistingEnabledLine`; hub end-to-end
+    `TestAgentsReplacesExistingEnabledLine`.
+  - "missing agents table is appended once" → `TestSetEnabledAgentsAppendsOneAgentsTable`; hub
+    `TestAgentsAppendsOneTableWhenAbsent`.
+  The hub-level picker, messages and pause are covered by `internal/hub/interactive_test.go` (D12 rows).
+  Evidence: `go test ./internal/config ./internal/hub` PASS; `python3 -m unittest tests.test_docs_drift_fixes`
+  27 → 23 tests (the 4 retired), 1 failure `test_dirty_tree_abort_renders_real_newline` ALSO on the epic base
+  without this slice (same run, `failures=1`): `resolves outside ~/.ai-specs`, the D-U2e-1 defect (L7), not
+  caused here and not fixed here. Scope vs plan: unchanged (retire + map, as T3b states); one Go case added
+  because the Go side lacked the EOF-empty-table row.
+- L13 — D-U2e-1 resolved before this slice lands: fix PR #435 merged to the epic as 112d91f (container-only
+  canonicalization of `~/.ai-specs` in `internal/upgrade`; regression test for a symlinked home, and a guard test
+  that keeps a `~/.ai-specs` pointing outside refused). This slice rebased onto 112d91f with no product change.
+  L12's "not fixed here" note is superseded. Follow-up not in scope here: `binaryEntry` (post-flip binary install)
+  has the same unresolved comparison under a symlinked home; needs its own decision.
+  Gate: T3b does not merge with a red suite. validate.sh is re-run once on the integrated tip (see PR body).
