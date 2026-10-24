@@ -768,7 +768,10 @@ func hooksRenderCursor(h *mcpObj, nativeEvent, projectRoot string, stderr io.Wri
 	}
 	b.WriteString("\"$script\")\"; code=$?\n")
 	b.WriteString("if [ \"$code\" = 2 ]; then\n")
-	b.WriteString("  printf '{\"permission\":\"deny\",\"agent_message\":%s}' \"$(printf %s \"$out\" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')\"\n")
+	// Deny message -> JSON scalar with POSIX awk under LC_ALL=C: matches
+	// json.dumps for ASCII (0x01-0x1f as \u00XX, DEL raw) but emits non-ASCII
+	// UTF-8 bytes raw (accepted divergence, GO-20 U2e T7).
+	b.WriteString(`  printf '{"permission":"deny","agent_message":"%s"}' "$(printf %s "$out" | LC_ALL=C awk 'BEGIN{esc["\\"]="\\\\";esc["\""]="\\\"";esc["\r"]="\\r";esc["\t"]="\\t";esc["\b"]="\\b";esc["\f"]="\\f";for(i=1;i<32;i++){c=sprintf("%c",i);if(!(c in esc))esc[c]=sprintf("\\u%04x",i)}} {line=$0;if(NR>1)printf "%s","\\n";for(i=1;i<=length(line);i++){c=substr(line,i,1);printf "%s",((c in esc)?esc[c]:c)}}')` + "\"\n")
 	b.WriteString("else\n")
 	b.WriteString("  printf '{\"permission\":\"allow\"}'\n")
 	b.WriteString("fi\n")

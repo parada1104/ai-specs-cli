@@ -830,3 +830,124 @@ func TestHooksJSONDumpsSortedDifferential(t *testing.T) {
 		t.Fatalf("tree differs:\n%s", hooksTreeDiff(goTree, ref.Tree))
 	}
 }
+
+// hooksCursorSandbox renders one cursor hook into a fresh sandbox and returns
+// the project root, which is also the wrapper's $CURSOR_PROJECT_DIR. It also
+// installs a hook script that prints hookPayloadPath (when set) and exits 2, so
+// the deny branch of the generated wrapper is exercised.
+func hooksCursorSandbox(t *testing.T, event, payload string) (dir, wrapperPath string) {
+	t.Helper()
+	const recipe, id = "hookdemo", "shell-gate"
+	dir = t.TempDir()
+	resolvedPath := filepath.Join(dir, "resolved-hooks.json")
+	blob := hooksBlob(hook(recipe, id, event, "", hooksScriptPath, false, nil))
+	if err := os.WriteFile(resolvedPath, []byte(blob), 0o644); err != nil {
+		t.Fatalf("write resolved: %v", err)
+	}
+	var out, errBuf bytes.Buffer
+	if rc := RenderHooks(resolvedPath, "cursor", dir, &out, &errBuf); rc != 0 {
+		t.Fatalf("RenderHooks rc=%d stderr=%s", rc, errBuf.String())
+	}
+	scriptPath := filepath.Join(dir, filepath.FromSlash(hooksScriptPath))
+	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
+		t.Fatalf("mkdir script: %v", err)
+	}
+	if err := os.WriteFile(scriptPath, []byte(
+		"#!/usr/bin/env bash\ncat \"$(dirname \"$0\")/payload.bin\"\nexit 2\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(scriptPath), "payload.bin"), []byte(payload), 0o644); err != nil {
+		t.Fatalf("write payload: %v", err)
+	}
+	return dir, filepath.Join(dir, ".cursor", "hooks", recipe+"-"+id+".sh")
+}
+
+// hooksRunCursorWrapper runs a generated wrapper with bash and returns stdout.
+// PATH is a temp bin dir of the tools the wrapper legitimately needs, without
+// python3, so the run proves the generated runtime does not depend on it.
+func hooksRunCursorWrapper(t *testing.T, dir, wrapperPath string) string {
+	t.Helper()
+	binDir := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	for _, name := range []string{"bash", "env", "awk", "cat", "dirname"} {
+		resolved, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatalf("look up %s: %v", name, err)
+		}
+		if err := os.Symlink(resolved, filepath.Join(binDir, name)); err != nil {
+			t.Fatalf("symlink %s: %v", name, err)
+		}
+	}
+	cmd := exec.Command("bash", wrapperPath)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "CURSOR_PROJECT_DIR="+dir, "PATH="+binDir)
+	cmd.Stdin = strings.NewReader(`{"query":"echo hi"}`)
+	var out, errBuf bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("run wrapper: %v\nstderr: %s", err, errBuf.String())
+	}
+	return out.String()
+}
+
+// TestHooksCursorDenyEscapingNoPython pins the deny message escaping: the
+// generated wrapper must JSON-encode its own message (quotes, backslash, CR,
+// LF, TAB, backspace) without invoking python3.
+func TestHooksCursorDenyEscapingNoPython(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	if _, err := exec.LookPath("awk"); err != nil {
+		t.Skipf("awk not available: %v", err)
+	}
+	msg := "denied: quote\" backslash\\ line\nbreak\ttab\rreturn\bback\fform"
+	dir, wrapperPath := hooksCursorSandbox(t, "post-tool-use", msg)
+
+	got := hooksRunCursorWrapper(t, dir, wrapperPath)
+
+	var decoded struct {
+		Permission   string `json:"permission"`
+		AgentMessage string `json:"agent_message"`
+	}
+	if err := json.Unmarshal([]byte(got), &decoded); err != nil {
+		t.Fatalf("stdout is not JSON: %v\nraw: %q", err, got)
+	}
+	if decoded.Permission != "deny" {
+		t.Errorf("permission: got %q, want %q", decoded.Permission, "deny")
+	}
+	if decoded.AgentMessage != msg {
+		t.Errorf("agent_message round-trip failed:\n got %q\nwant %q", decoded.AgentMessage, msg)
+	}
+}
+
+// TestHooksCursorDenySimpleMessageBytes pins the byte-identical output for a
+// plain ASCII message: no trailing newline, message wrapped in quotes.
+func TestHooksCursorDenySimpleMessageBytes(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	const msg = "denied: not allowed"
+	dir, wrapperPath := hooksCursorSandbox(t, "post-tool-use", msg)
+
+	got := hooksRunCursorWrapper(t, dir, wrapperPath)
+	want := `{"permission":"deny","agent_message":"` + msg + `"}`
+	if got != want {
+		t.Fatalf("stdout bytes differ:\n got %q\nwant %q", got, want)
+	}
+}
+
+// TestHooksCursorWrapperHasNoPython3 pins that the generated wrapper text does
+// not depend on the user's python3 (GO-20 U2e T7).
+func TestHooksCursorWrapperHasNoPython3(t *testing.T) {
+	_, wrapperPath := hooksCursorSandbox(t, "post-tool-use", "x")
+	data, err := os.ReadFile(wrapperPath)
+	if err != nil {
+		t.Fatalf("read wrapper: %v", err)
+	}
+	if strings.Contains(string(data), "python3") {
+		t.Fatalf("wrapper still invokes python3:\n%s", data)
+	}
+}

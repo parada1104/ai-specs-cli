@@ -79,6 +79,28 @@ def snapshot(root: Path) -> tuple[dict[str, str], dict[str, int]]:
     return tree, modes
 
 
+# GO-20 U2e T7 — INTENTIONAL divergence from lib/_internal/hooks-render.py.
+# Robert's T7 decision: the generated Cursor wrapper must not invoke python3. The lib
+# renderer still emits the python3 deny line; this reference rewrites exactly that one
+# line in the generated .cursor/hooks/*.sh files to the POSIX awk escaper the Go port
+# emits. Valid until lib/_internal is deleted (T5); this rewrite goes with it.
+LIB_DENY_LINE = r"""  printf '{"permission":"deny","agent_message":%s}' "$(printf %s "$out" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
+"""
+T7_DENY_LINE = r"""  printf '{"permission":"deny","agent_message":"%s"}' "$(printf %s "$out" | LC_ALL=C awk 'BEGIN{esc["\\"]="\\\\";esc["\""]="\\\"";esc["\r"]="\\r";esc["\t"]="\\t";esc["\b"]="\\b";esc["\f"]="\\f";for(i=1;i<32;i++){c=sprintf("%c",i);if(!(c in esc))esc[c]=sprintf("\\u%04x",i)}} {line=$0;if(NR>1)printf "%s","\\n";for(i=1;i<=length(line);i++){c=substr(line,i,1);printf "%s",((c in esc)?esc[c]:c)}}')"
+"""
+
+
+def _apply_t7_cursor_escape(root: Path) -> None:
+    """Rewrite the python3 deny line in generated Cursor wrappers (intentional, see above)."""
+    hooks = root / ".cursor" / "hooks"
+    if not hooks.is_dir():
+        return
+    for wrapper in sorted(hooks.glob("*.sh")):
+        text = wrapper.read_bytes().decode("utf-8")
+        if LIB_DENY_LINE in text:
+            wrapper.write_bytes(text.replace(LIB_DENY_LINE, T7_DENY_LINE).encode("utf-8"))
+
+
 def main() -> int:
     case = json.loads(sys.stdin.read())
     root = Path(tempfile.mkdtemp(prefix="hookdiff-"))
@@ -110,6 +132,8 @@ def main() -> int:
         # an unreproducible stack trace byte for byte.
         traceback.print_exc(file=err)
         rc = 1
+
+    _apply_t7_cursor_escape(root)
 
     if case.get("unreadable_rel"):
         try:
