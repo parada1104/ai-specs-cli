@@ -17,7 +17,6 @@ import (
 	"strings"
 )
 
-
 // depthRe keeps the exact standalone-line contract: plan annotations must not
 // suffix it.
 var depthRe = regexp.MustCompile(`(?im)^\s*Depth:\s*(light|standard|full)\s*$`)
