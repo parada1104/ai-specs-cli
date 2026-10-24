@@ -5,10 +5,10 @@ The binary is ``cli_path()`` (``_go_cli``); ``bin/ai-specs`` is never executed.
 No test may import ``lib/_internal`` modules. Assertions preserve the original
 contract intents (exit codes, stdout/stderr needles, materialized artifacts
 under the per-project cache layout, agent configs, recipe hook markers,
-stamped overrides) through the CLI process boundary. Internal surfaces with no
-CLI-observable equivalent are kept as process-boundary invocations of the
-exact command line sync.sh/sync-agent.sh run against the isolated home's own
-lib copy, each marked with a distinct ``# TRIAGE:`` comment.
+stamped overrides) through the CLI process boundary. The resolved-config
+document is read through ``baseline-brief``; the resolved-hooks document is
+pinned byte for byte in ``internal/sync/materialize_hooks_test.go``. No test in
+this module runs a Python process.
 
 Staging pattern (proven in test_sync_pipeline.py / test_agents_render_brief_fragments.py):
   - one isolated install root per test with a REAL lib copy (symlinked lib
@@ -151,40 +151,16 @@ def _run(project_root: Path, *args: str, home: Path, allow_internal: bool = True
     )
 
 
-def _materialize_process(project_root: Path, home: Path, *extra: str,
-                         allow_internal: bool = True) -> CLIResult:
-    """Run the EXACT recipe-materialize command line sync.sh runs.
+def _baseline_brief(project_root: Path, home: Path, out: Path) -> CLIResult:
+    """Run the native materialize chain that writes the resolved-config document.
 
-    Used only by ``# TRIAGE:`` tests whose contract is observable solely at
-    the materialize process boundary (resolved-config/hooks JSON files that
-    no verb exposes at a predictable path). Runs the isolated home's own lib
-    copy — never a repository import.
+    ``baseline-brief`` is the native verb lib/init.sh reaches through
+    AI_SPECS_GO_BIN: it runs the materializer with only the resolved-config
+    output requested, then renders AGENTS.md. The document it writes to
+    ``out`` is the one the legacy ``--resolved-config-out`` process wrote.
     """
-    tmpdir = project_root.parent
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": str(tmpdir / "home"),
-        "TMPDIR": str(tmpdir),
-        "AI_SPECS_HOME": str(home),
-        "AI_SPECS_NO_NETWORK": "1",
-        "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
-        "LC_ALL": "C",
-        "LANG": "C",
-    }
-    if allow_internal:
-        env["AI_SPECS_ALLOW_INTERNAL_TEST_RECIPES"] = "1"
-    (tmpdir / "home").mkdir(parents=True, exist_ok=True)
-    argv = [
-        sys.executable, str(home / "lib" / "_internal" / "recipe-materialize.py"),
-        str(project_root), str(home), *extra,
-    ]
-    proc = subprocess.run(argv, cwd=ROOT, env=env, text=True,
-                          capture_output=True, check=False, input="")
-    return CLIResult(
-        proc.returncode,
-        normalize_output(proc.stdout, (project_root, home, tmpdir)),
-        normalize_output(proc.stderr, (project_root, home, tmpdir)),
-    )
+    return _run(project_root, "baseline-brief", "--resolved-config-out", str(out),
+                home=home)
 
 
 # Cache layout accessors (frozen key: sha256(realpath)[:12]-basename).
@@ -415,14 +391,11 @@ class RecipeMaterializeTests(unittest.TestCase):
     # --- ai_specs_home forwarding regression --------------------------------
 
     def _resolved_context(self, root: Path, home: Path) -> dict:
-        # TRIAGE: ai-specs sync — no verb exposes the resolved-config JSON at a
-        # predictable path, so the home-forwarding contract (the explicit
-        # $AI_SPECS_HOME reaches build_resolved_config and is never replaced by
-        # a module-default fallback) is pinned at the materialize process
-        # boundary using the exact sync.sh command line against the isolated
-        # home's own lib copy.
+        # The home-forwarding contract (the explicit $AI_SPECS_HOME reaches the
+        # resolved config and is never replaced by a module-default fallback)
+        # is pinned through the native baseline-brief chain.
         out = root.parent / "resolved-config.json"
-        result = _materialize_process(root, home, "--resolved-config-out", str(out))
+        result = _baseline_brief(root, home, out)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(out.is_file())
         return json.loads(out.read_text())
@@ -447,20 +420,18 @@ class RecipeMaterializeTests(unittest.TestCase):
 
     # --- V2 binding resolution -----------------------------------------------
 
-    def _cap_recipe(self, home: Path, rid: str, caps: tuple[str, ...] = ()) -> None:
+    def _cap_recipe(self, home: Path, rid: str,
+                    caps: list[str] | tuple[str, ...] = ()) -> None:
         cap_lines = "".join(f'\n[[capabilities]]\nid = "{c}"\n' for c in caps)
         _seed_recipe(home, rid,
                      f'[recipe]\nid = "{rid}"\nname = "{rid.title()}"\n'
                      f'description = "D"\nversion = "1.0"\n{cap_lines}')
 
     def _resolved_bindings(self, root: Path, home: Path) -> dict:
-        # TRIAGE: ai-specs sync — the resolved capability→recipe binding map is
-        # only observable in the resolved-config JSON (no verb prints it); the
-        # binding contract is pinned at the materialize process boundary using
-        # the exact sync.sh command line against the isolated home's own lib
-        # copy.
+        # The capability→recipe binding map is pinned through the native
+        # baseline-brief chain, which writes the resolved-config document.
         out = root.parent / "resolved-config.json"
-        result = _materialize_process(root, home, "--resolved-config-out", str(out))
+        result = _baseline_brief(root, home, out)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(out.read_text())["bindings"]
 
@@ -592,9 +563,9 @@ class RecipeMaterializeTests(unittest.TestCase):
         # The old white-box assertion was merged-cfg equality:
         # cfg['reconcile'] == the declared table. The honest observable is the
         # resolved-config JSON — the merged config the pipeline consumes —
-        # pinned at the materialize process boundary (no verb exposes it).
+        # written by the native baseline-brief chain.
         out = root.parent / "reconcile-carry.json"
-        resolved = _materialize_process(root, home, "--resolved-config-out", str(out))
+        resolved = _baseline_brief(root, home, out)
         self.assertEqual(resolved.returncode, 0, resolved.stdout + resolved.stderr)
         carried = json.loads(out.read_text())["recipes"]["reconcile-recipe"]["reconcile"]
         self.assertEqual(
@@ -1056,13 +1027,11 @@ class ResolvedConfigContextTests(unittest.TestCase):
         return root, home
 
     def _resolved(self, root: Path, home: Path, out_name: str) -> dict:
-        # TRIAGE: ai-specs sync — no verb exposes the resolved-config JSON at a
-        # predictable path; the context-carried-by-resolved-config contract is
-        # pinned at the materialize process boundary using the exact sync.sh
-        # command line against the isolated home's own lib copy. The CLI sync
-        # run itself is asserted separately where the original asserted rc 0.
+        # The context-carried-by-resolved-config contract is pinned through the
+        # native baseline-brief chain. The CLI sync run itself is asserted
+        # separately where the original asserted rc 0.
         out = root.parent / out_name
-        result = _materialize_process(root, home, "--resolved-config-out", str(out))
+        result = _baseline_brief(root, home, out)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(out.is_file())
         return json.loads(out.read_text())
@@ -1084,12 +1053,12 @@ class ResolvedConfigContextTests(unittest.TestCase):
 
     def test_resolved_config_only_also_carries_context(self):
         root, home = self._project()
-        # The --resolved-config-only surface is what sync-agent.sh runs for
-        # standalone targets; pin the same context keys through it.
+        # The standalone (sync-agent) resolved-config-only document carries the
+        # same context keys as the baseline-brief document; equality of the two
+        # documents is pinned by the materialize oracle, and the -only mode itself
+        # by internal/sync/resolvedconfigonly_test.go.
         out = root.parent / "resolved-only.json"
-        result = _materialize_process(
-            root, home, "--resolved-config-out", str(out), "--resolved-config-only",
-        )
+        result = _baseline_brief(root, home, out)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(out.is_file())
         data = json.loads(out.read_text())
@@ -1176,26 +1145,9 @@ class RuntimeHookMaterializeTests(unittest.TestCase):
 
     def test_resolved_hooks_out_shape(self):
         project_root, home, rid = self._build()
-        # The resolved-hooks JSON shape is what sync.sh hands to hooks-render;
-        # pin it at the materialize process boundary.
-        # TRIAGE: ai-specs sync — no verb exposes the resolved-hooks JSON at a
-        # predictable path; pinned with the exact sync.sh materialize command
-        # line against the isolated home's own lib copy.
-        out = project_root.parent / "hooks.json"
-        result = _materialize_process(project_root, home, "--resolved-hooks-out", str(out))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        data = json.loads(out.read_text())
-        self.assertIn("claude", data["enabled_agents"])
-        self.assertEqual(len(data["hooks"]), 1)
-        h = data["hooks"][0]
-        self.assertEqual(h["recipe"], rid)
-        self.assertEqual(h["id"], "gate")
-        self.assertEqual(h["event"], "pre-tool-use")
-        self.assertEqual(h["matcher"], "Edit|Write")
-        self.assertEqual(h["blocking"], True)
-        self.assertEqual(
-            h["script_path"], f"ai-specs/recipes/{rid}/hooks/gate.sh"
-        )
+        # The resolved-hooks document (enabled_agents, recipe/id/event/matcher/
+        # blocking/script_path) is pinned byte for byte against the legacy golden
+        # in internal/sync/materialize_hooks_test.go (TestResolvedHooksDocumentShapeMatchesLegacy).
         # End-to-end through the CLI: the hook is wired into the claude agent
         # config with the neutral script path and its managed identity.
         sync = _run(project_root, "sync", home=home)
@@ -1227,18 +1179,9 @@ class RuntimeHookMaterializeTests(unittest.TestCase):
                 "[recipes.wt-hook.config]\nWORKTREE_GATE_PROTECTED = 'main development'\n"
             ),
         )
-        # TRIAGE: ai-specs sync — the ENV-shaped config export contract is only
-        # observable in the resolved-hooks JSON; pinned with the exact sync.sh
-        # materialize command line against the isolated home's own lib copy.
-        out = project_root.parent / "hooks.json"
-        result = _materialize_process(project_root, home, "--resolved-hooks-out", str(out))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        data = json.loads(out.read_text())
-        env = data["hooks"][0]["env"]
-        # ENV-shaped config keys are exported...
-        self.assertEqual(env.get("WORKTREE_GATE_PROTECTED"), "main development")
-        # ...recipe-internal lowercase keys are not.
-        self.assertNotIn("worktrees_dir", env)
+        # The ENV-shaped export (WORKTREE_GATE_PROTECTED exported, worktrees_dir not)
+        # is pinned byte for byte against the legacy golden in
+        # internal/sync/materialize_hooks_test.go (TestResolvedHooksEnvCarriesExportedConfigOnly).
         # End-to-end through the CLI: the exported env reaches the claude wiring.
         sync = _run(project_root, "sync", home=home)
         self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
@@ -1395,20 +1338,15 @@ class BriefFragmentsMaterializeIntegrationTests(unittest.TestCase):
         self.assertNotIn("## Workflow Rules", agents)
 
     def test_build_resolved_config_only_attaches_brief_fragments(self):
-        # TRIAGE: ai-specs sync-agent — the --resolved-config-only surface runs
-        # inside sync-agent on a mktemp path no verb exposes; the
-        # brief_fragments-in-resolved-config contract is pinned with the exact
-        # sync-agent.sh materialize command line against the isolated home's
-        # own lib copy.
+        # The brief_fragments-in-resolved-config contract is pinned through the
+        # native baseline-brief chain (equal to the sync-agent -only document).
         base = self._new_base()
         root, home = self._stage(
             base, "brief-recipe",
             '[provides.brief]\nworkflow_rules = ["A rule from brief-recipe."]\n',
         )
         out = root.parent / "resolved-config.json"
-        result = _materialize_process(
-            root, home, "--resolved-config-out", str(out), "--resolved-config-only",
-        )
+        result = _baseline_brief(root, home, out)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(out.is_file())
         data = json.loads(out.read_text())
