@@ -36,7 +36,7 @@ Slice 1 = documentation and measured inventory only. No source or test change in
 - **T3** — Retarget the U2e test rows to the native binary, no assertion removed. Split into named units (L6):
   - **T3a** `test_upgrade_output` (oracle seed `lib/_internal/changelog.py`). Slice 2. Commit: e4bccc7 (PR #433).
   - **T3b** `AgentsSubmenuManifestTests` (`lib/_internal` loader, no CLI surface). Go coverage in
-    `internal/hub/interactive_test.go` (D12 cases) and `internal/config/agents_test.go`. Route: map each Python case to a Go test, then retire the Python class with the equivalence recorded (L12). Slice 3 (this PR). Commit: slice 3 PR; hash recorded at close.
+    `internal/hub/interactive_test.go` (D12 cases) and `internal/config/agents_test.go`. Route: map each Python case to a Go test, then retire the Python class with the equivalence recorded (L12). Slice 3. Commit: 4b82b37 → e5f40a4 (PR #436).
   - **T3c** `_materialize_process` (`lib/_internal/recipe-materialize.py`). No native `materialize` verb; the native
     chain is `baseline-brief` (`internal/cli/brief.go`). Route: rewrite against the real surface. Commit: pending.
   - **T3d** `test_init_brief_route` (LEGACY_CLI; bash `lib/init.sh` seam via `AI_SPECS_GO_BIN`). Route: golden fixtures
@@ -50,6 +50,10 @@ Slice 1 = documentation and measured inventory only. No source or test change in
   python3 (L10). Slice T7 (branch `change/go-20-t7-hook-no-python`, base e4bccc7): deny escaping by POSIX awk in
   `internal/sync/hooksrender.go`, 3 behavior tests, and the differential reference updated with an intentional
   divergence marker (L10). Commit: a958124 (PR #434).
+- **T9** — `binaryEntry` under a symlinked home (`internal/upgrade`, same class as D-U2e-1, L14). The post-flip binary
+  install is compared as `EvalSymlinks(LocalBin)` against an unresolved `BinaryPath`, so it reports "not the standard
+  global installation". Named unit, approved by the human; NOT implemented yet. Runs after T3c–T3e close, in plan order.
+  Commit: pending.
 - **T8** — `validate.sh` once on the result, native assess per candidate, PR with auto-merge. Commit: pending.
 
 ## Log
@@ -142,3 +146,9 @@ Slice 1 = documentation and measured inventory only. No source or test change in
   L12's "not fixed here" note is superseded. Follow-up not in scope here: `binaryEntry` (post-flip binary install)
   has the same unresolved comparison under a symlinked home; needs its own decision.
   Gate: T3b does not merge with a red suite. validate.sh is re-run once on the integrated tip (see PR body).
+- L14 — Human decisions after slice 3 (verbatim intent): (1) PR #436 merged manually by squash with delete-branch,
+  only after the head SHA matched the validated commit (4b82b37, validated on 112d91f), base = epic, diff = tests
+  and doc only, assess reviewDue false. Repo auto-merge setting is administrative and not part of this feature.
+  (2) T3b commit hash recorded here in the next doc PR (as T1). (3) `binaryEntry` under a symlinked home approved as
+  named unit T9, same class as D-U2e-1 (L7/L13), not in any merged PR, not implemented; to run after T3c–T3e close,
+  in plan order. Engram records the same class.
