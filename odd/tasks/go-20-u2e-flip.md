@@ -42,7 +42,7 @@ Slice 1 = documentation and measured inventory only. No source or test change in
     `change/go-20-u2e-flip-4` (base c2edbbf). Scope: L15; hooks part closed in Go: L16. Commit: efa7b63 (PR #438).
   - **T3d** `test_init_brief_route` (LEGACY_CLI; bash `lib/init.sh` seam via `AI_SPECS_GO_BIN`). Route: golden fixtures
     for the legacy comparison (L6). Slice 5, branch `change/go-20-u2e-flip-5` (base fc03809). Equivalence and capture: L17. Commit: e8a40f9 (PR #440).
-  - **T3e** `test_init_native` (legacy vs native oracle). Route: golden fixtures frozen from current legacy output (L6). Commit: pending.
+  - **T3e** `test_init_native` (legacy vs native oracle). Route: golden fixtures frozen from current legacy output (L6). Slice 6, branch `change/go-20-u2e-flip-6` (base af48115). Evidence and equivalence: L18. Commit: pending.
 - **T4** — Extend the parity corpus to the S3 gaps or record each gap (`tests/parity/parity.py`). Commit: pending.
 - **T5** — Replace the five Python differentials (`config`, `deps`, `gatebinary`, `schema`, `target`) with native
   checks that keep their assertions; then delete `lib/_internal`. Commit: pending.
@@ -213,3 +213,22 @@ Slice 1 = documentation and measured inventory only. No source or test change in
   separator changed in `internal/sync/agentsrender.go` -> golden test fails (failures=1, not build errors).
   Capture procedure: a scratch script imports `tests/test_init_brief_route.py` helpers (`_Fixture`, `_normalize`, `_drop_fallback_lines`)
   and writes the three files from `bin/ai-specs init`; not committed. Regenerate only with a human decision.
+- L18 — Slice 6 (T3e), golden fixtures for `test_init_native`. Oracle: the legacy `bin/ai-specs init` outputs, frozen in
+  `tests/fixtures/init-native/golden.json` (12 cases: classic, help, unknown_flag, extra_positional, missing_target,
+  second_run, force, tomldir, noname, tui_poison, tui_nontty, tui_skip). Classic stores the produced tree as
+  `{path: [kind, sha256]}` and the lock with its sha256 rows stripped, as before. Capture: a scratch script (not committed)
+  imports the module helpers (`_Route`, `_strip_sha256`, `snapshot`, `LOCK_REL`, `GITIGNORE_MARKER`), so the normalization is
+  identical to the test. Two independent captures are byte-identical.
+  Equivalence: every legacy-only assertion removed from the test is asserted by the capture script before freezing (exit
+  codes of each legacy run, the legacy lock and its AGENTS.md key, help usage, usage and missing-target messages with empty
+  stdout, the --force refresh line and restored block, the legacy directory and the empty-noname tree, the poison and
+  non-TTY fallback lines, the skip line before the banner, and the user's manifest bytes). Capture aborts on any failure. Each
+  legacy-vs-native pair became one native-vs-golden comparison. The committed assertion count goes 92 -> 90 for that reason.
+  Kept as is: S8 (`&` case, native only, no golden), S10 (filtered `GO_*_BRIDGE_FALLBACK` lines), the random
+  `RECIPE_MCP_TEMP` lines, and the hatch test (native vs native). Poison test keeps its live legacy leg as RED logic (the
+  poison must fire on the shell); only its outputs are compared to the golden.
+  Evidence: RED before the goldens: 11 errors (FileNotFoundError on golden.json), 2 native-only tests stay green by design.
+  GREEN: `unittest tests.test_init_native` 13 OK. Mutations (real, compiling, reverted): `internal/cli/init.go` skip line
+  "already exists" -> "already exist": 1 failure (tui-skip); `internal/sync/agentsrender.go` Enabled runtimes separator
+  ", " -> "; ": 1 failure (classic); `internal/cli/init.go` fallback line "classic init" -> "classic setup": 2 failures
+  (tui-nontty, poison).
