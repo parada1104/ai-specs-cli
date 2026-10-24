@@ -314,8 +314,7 @@ Sequence on the review branch:
 4. Promote canonical specs. Compose every delta under
    `openspec/changes/<slug>/specs/<domain>/spec.md` into
    `openspec/specs/<domain>/spec.md` with the promotion helper (the
-   `ai-specs specs promote` verb, the Go port of
-   `lib/_internal/spec_promotion.py`) and commit the result on the review branch:
+   `ai-specs specs promote` verb) and commit the result on the review branch:
 
 ```bash
 ai-specs specs promote <slug> --root <planning-root>

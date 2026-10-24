@@ -233,7 +233,7 @@ expectations against neutral observations; a provider recipe extends that domain
 by declaring a `[config.reconcile]` **adapter** mapping in the project manifest,
 while `ledger_mode` / `gate_mode` stay Tracker-domain policy. The tracker
 lifecycle host is `tracker-card-gate.sh` invoked directly
-(`--root <root> --checkpoint pre-merge|archive-close`); `premerge_guardian.py`
+(`--root <root> --checkpoint pre-merge|archive-close`); `ai-specs gates premerge`
 is Plan Build's artifact-only guardian and never invokes the ledger.
 
 | Checkpoint | Host |

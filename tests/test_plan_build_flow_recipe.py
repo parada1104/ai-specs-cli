@@ -570,9 +570,8 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
             t["target"] for t in _recipe_toml().get("provides", {}).get("templates", [])
         ]
         self.assertNotIn("ai-specs/bin/premerge_guardian.py", targets)
-        self.assertTrue(
-            (ROOT / "lib" / "_internal" / "premerge_guardian.py").is_file()
-        )
+        skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text()
+        self.assertIn("ai-specs gates premerge", skill)
 
     def test_brief_mentions_depth_and_pr_gate(self):
         rules = list(_recipe_toml()["provides"]["brief"]["workflow_rules"])
@@ -660,7 +659,7 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text()
         text = skill.lower()
         for marker in (
-            "spec_promotion.py",
+            "ai-specs specs promote",
             "promotion helper",
             "pre-archive",
             "archive-tail",
@@ -714,7 +713,7 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         for name, text in (("readme", readme), ("catalog", catalog)):
             normalized = " ".join(text.split())
             with self.subTest(document=name):
-                self.assertIn("spec_promotion.py", normalized)
+                self.assertIn("ai-specs specs promote", normalized)
                 self.assertIn("only the promoter writes", normalized)
                 self.assertIn("guardian only validates", normalized)
                 self.assertLess(

@@ -249,7 +249,7 @@ It is the sole ceremony/depth classification source (`Light` / `Standard` /
 
 Delta specifications are promoted before archive: each
 `openspec/changes/<slug>/specs/<domain>/spec.md` delta is composed into
-`openspec/specs/<domain>/spec.md` by `lib/_internal/spec_promotion.py`. ADDED
+`openspec/specs/<domain>/spec.md` by `ai-specs specs promote <slug> --root <root>`. ADDED
 requirements are appended, MODIFIED requirements replace the full canonical block
 with the exact same requirement name, unrelated canonical requirements and
 sections survive, and a rerun after an interruption is a no-op. A colliding ADDED

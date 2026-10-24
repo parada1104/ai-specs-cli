@@ -72,8 +72,7 @@ requires its complete planning chain.
 - **Promote canonical specs before archiving:** Standard and Full deltas under
   `openspec/changes/<slug>/specs/<domain>/spec.md` are composed into
   `openspec/specs/<domain>/spec.md` by the promotion helper
-  `ai-specs specs promote <slug> --root <planning-root>` (the Go port of
-  `lib/_internal/spec_promotion.py`). ADDED
+  `ai-specs specs promote <slug> --root <planning-root>`. ADDED
   requirements are appended, MODIFIED requirements replace the full canonical
   block with the exact same requirement name, unrelated canonical requirements
   and sections survive, a missing canonical domain is created from the delta, and
