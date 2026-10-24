@@ -249,10 +249,21 @@ func Detect(env Env, stderr io.Writer) (Install, int, bool) {
 	if err != nil || target == "" {
 		return inst, abort(stderr, "~/.local/bin/ai-specs symlink appears broken. Re-run install.sh to repair.", ExitBroken), false
 	}
-	if !strings.HasPrefix(filepath.Dir(target), inst.ExpectedHome+string(os.PathSeparator)) {
+	if !strings.HasPrefix(filepath.Dir(target), canonicalHome(inst.ExpectedHome)+string(os.PathSeparator)) {
 		return inst, abort(stderr, "~/.local/bin/ai-specs resolves outside ~/.ai-specs. Re-run install.sh to repair.", ExitBroken), false
 	}
 	return inst, 0, true
+}
+
+// canonicalHome resolves only the container of ~/.ai-specs (macOS /var ->
+// /private/var, D-U2e-1), so it matches the fully resolved link target. The
+// final component is kept as-is: resolving it would accept a ~/.ai-specs that
+// itself points outside the home.
+func canonicalHome(home string) string {
+	if parent, err := filepath.EvalSymlinks(filepath.Dir(home)); err == nil {
+		return filepath.Join(parent, filepath.Base(home))
+	}
+	return home
 }
 
 // checkTree ports the working-tree cleanliness check. It returns (code, ok);
@@ -419,7 +430,7 @@ func realUpgrade(inst Install, o Options, git Git, stdout, stderr io.Writer) int
 		return abort(stderr, "Post-upgrade: ~/.local/bin/ai-specs is no longer a symlink. Re-run install.sh to repair.", ExitPostVerify)
 	}
 	target, err := filepath.EvalSymlinks(inst.LocalBin)
-	if err != nil || !strings.HasPrefix(filepath.Dir(target), inst.ExpectedHome+string(os.PathSeparator)) {
+	if err != nil || !strings.HasPrefix(filepath.Dir(target), canonicalHome(inst.ExpectedHome)+string(os.PathSeparator)) {
 		return abort(stderr, "Post-upgrade: ~/.local/bin/ai-specs symlink is broken or points outside ~/.ai-specs. Re-run install.sh to repair.", ExitPostVerify)
 	}
 	fmt.Fprintf(stdout, "Symlink integrity verified: %s -> %s\n", inst.LocalBin, target)
