@@ -1,0 +1,73 @@
+{
+ "fixture": "deps-gitignore",
+ "gate_mode": "gate-absent",
+ "legacy_launcher": "6340c27b71d1c573592b2e426c3c45e76b6e3522",
+ "steps": [
+  {
+   "argv": [
+    "sync"
+   ],
+   "rc": 1,
+   "stderr": "fatal: repository '<TEMP>/nowhere/ghost-one' does not exist\n",
+   "stdout": "\nai-specs sync\n  root:    <TEMP>\n  planning: <TEMP>\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  \u25b8 ghost-one  \u2190  <TEMP>/nowhere/ghost-one  (path: skills/ghost-one)\n",
+   "tree": [
+    [
+     ".gitignore",
+     [
+      "file",
+      "0o644",
+      "346c2e6aaa8c4e5bf7bbbeb9565e2ea9ce037c716867e692701a7edd764499af"
+     ]
+    ],
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/.ai-specs.lock",
+     [
+      "file",
+      "0o600",
+      "e569e75263b459b1fe32a51367572d6b12fc087e5ba698d1d26d1436b6545ee4"
+     ]
+    ],
+    [
+     "ai-specs/.gitignore",
+     [
+      "file",
+      "0o644",
+      "435a5764426295aa8bfa9540dc0c92d9a65e994e8e86bebdb2d21136f0772cbd"
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "a4be95f632659cb10be2d7084cb644e8d5116d7bbaa84bafbde3a145a29ce0e6"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  }
+ ]
+}
