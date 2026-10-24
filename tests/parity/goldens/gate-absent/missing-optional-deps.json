@@ -1,0 +1,115 @@
+{
+ "fixture": "missing-optional-deps",
+ "gate_mode": "gate-absent",
+ "legacy_launcher": "6340c27b71d1c573592b2e426c3c45e76b6e3522",
+ "steps": [
+  {
+   "argv": [
+    "doctor"
+   ],
+   "rc": 1,
+   "stderr": "",
+   "stdout": "\nai-specs doctor\n  target: <TEMP>\n\n  OK     manifest         ai-specs/ai-specs.toml found\n  INFO   cli-version      installed 0.24.0, no [tool] pin, last sync unknown \u2014 run ai-specs sync\n  ERROR  agents-md        AGENTS.md missing; run ai-specs sync  (ai-specs init or ai-specs sync)\n  INFO   brief-provenance  runtime brief ownership: missing  (ai-specs sync will create AGENTS.md)\n  ERROR  bundled-skill    cache .bundled/skills/harness-lifecycle missing  (ai-specs sync (flattens CLI-bundled skills into the cache))\n  ERROR  bundled-skill    cache .bundled/skills/harness-recipes missing  (ai-specs sync (flattens CLI-bundled skills into the cache))\n  ERROR  bundled-skill    cache .bundled/skills/harness-skills-deps missing  (ai-specs sync (flattens CLI-bundled skills into the cache))\n  ERROR  bundled-skill    cache .bundled/skills/skill-creator missing  (ai-specs sync (flattens CLI-bundled skills into the cache))\n  ERROR  bundled-skill    cache .bundled/skills/skill-sync missing  (ai-specs sync (flattens CLI-bundled skills into the cache))\n  ERROR  bundled-commands  cache .bundled/commands/rules-audit.md missing  (ai-specs sync (flattens CLI-bundled commands into the cache))\n  ERROR  bundled-commands  cache .bundled/commands/skills-as-rules.md missing  (ai-specs sync (flattens CLI-bundled commands into the cache))\n  WARN   mcp              no [mcp.*] entries declared  (add MCP servers to ai-specs.toml if needed)\n  OK     agents           enabled: claude\n  ERROR  CLAUDE.md        missing; run ai-specs sync  (ai-specs sync)\n  ERROR  .claude/skills   missing; run ai-specs sync  (ai-specs sync)\n  WARN   .claude/commands  directory missing  (ai-specs sync)\n\nSummary: 2 OK, 2 INFO, 2 WARN, 10 ERROR\n",
+   "tree": [
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "789ec583aef1ba137dc0e7571b0ecbc1e8fe48592ba3161c572e5c6366be5f68"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  },
+  {
+   "argv": [
+    "sync"
+   ],
+   "rc": 1,
+   "stderr": "fatal: repository '<TEMP>/nowhere/ghost-repo' does not exist\n",
+   "stdout": "\nai-specs sync\n  root:    <TEMP>\n  planning: <TEMP>\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  \u25b8 ghost-skill  \u2190  <TEMP>/nowhere/ghost-repo  (path: skills/ghost)\n",
+   "tree": [
+    [
+     ".gitignore",
+     [
+      "file",
+      "0o644",
+      "346c2e6aaa8c4e5bf7bbbeb9565e2ea9ce037c716867e692701a7edd764499af"
+     ]
+    ],
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/.ai-specs.lock",
+     [
+      "file",
+      "0o600",
+      "e569e75263b459b1fe32a51367572d6b12fc087e5ba698d1d26d1436b6545ee4"
+     ]
+    ],
+    [
+     "ai-specs/.gitignore",
+     [
+      "file",
+      "0o644",
+      "435a5764426295aa8bfa9540dc0c92d9a65e994e8e86bebdb2d21136f0772cbd"
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "789ec583aef1ba137dc0e7571b0ecbc1e8fe48592ba3161c572e5c6366be5f68"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  }
+ ]
+}

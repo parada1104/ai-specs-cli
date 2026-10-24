@@ -1,0 +1,176 @@
+{
+ "fixture": "surface-verbs",
+ "gate_mode": "gate-present",
+ "legacy_launcher": "6340c27b71d1c573592b2e426c3c45e76b6e3522",
+ "steps": [
+  {
+   "argv": [
+    "help"
+   ],
+   "rc": 0,
+   "stderr": "<HELP_CMD_SUBST_STDERR>\n",
+   "stdout": "ai-specs \u2014 declarative per-project AI agent config\nUsage: ai-specs <command> [args]\nCommands:\n  init [path] Bootstrap ai-specs/ in a project (TTY opens onboarding)\n  sync [path] Refresh bundled + vendor deps + regen AGENTS.md + sync agents\n               use --adopt-brief for an explicit existing-brief handoff\n  sync-agent [path] [--all | --<agent>] Fan out per-agent configs only\n  refresh-bundled [path] Compatibility no-op: bundled assets are embedded in\n               the CLI and sync refreshes them; this verb changes nothing\n  add-dep <url> [path] Register a vendored skill (alias for 'skills add')\n  doctor [path] Diagnose project health (no project writes)\n  rules-audit [path] Inventory legacy rules for migration planning (read-only)\n  skills add <url> [path] [flags] Register a vendored skill ([[deps]]) and sync\n  skills list [path]          List registered and installed skills\n  skills remove <id> [path]   Remove a vendored skill from the manifest\n  recipe list [path]          List available and installed recipes\n  recipe add <id> [path]      Add a recipe to the manifest\n  recipe init <id> [path]     Print a read-only recipe init brief\n  recipe configure <id> [path]  Inspect or apply recipe config non-interactively\n  configure-recipes [path]    Configure recipe config, CLI deps, harness env\n  upgrade [--dry-run] [--force] Upgrade the global installation safely\n  version Print CLI version\n  hub [path] Interactive status + command menu (also bare <HELP_CMD_SUBST>\n  help Show this help\nPath defaults to current directory. Run any subcommand with --help for details.\nRepo: https://github.com/parada1104/ai-specs-cli\n",
+   "tree": [
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "203f297e52bcfac89da70b0f3e4549e958265448b4308e7d5acec55ba58d8434"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  },
+  {
+   "argv": [
+    "version"
+   ],
+   "rc": 0,
+   "stderr": "",
+   "stdout": "0.24.0\n",
+   "tree": [
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "203f297e52bcfac89da70b0f3e4549e958265448b4308e7d5acec55ba58d8434"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  },
+  {
+   "argv": [
+    "bogus-verb"
+   ],
+   "rc": 2,
+   "stderr": "ai-specs: unknown command 'bogus-verb'\nRun 'ai-specs help' for usage.\n",
+   "stdout": "",
+   "tree": [
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "203f297e52bcfac89da70b0f3e4549e958265448b4308e7d5acec55ba58d8434"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  },
+  {
+   "argv": [
+    "doctor",
+    "--bogus-flag"
+   ],
+   "rc": 2,
+   "stderr": "ERROR: unknown flag: --bogus-flag\nRun 'ai-specs doctor --help' for usage.\n",
+   "stdout": "",
+   "tree": [
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "203f297e52bcfac89da70b0f3e4549e958265448b4308e7d5acec55ba58d8434"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  }
+ ]
+}

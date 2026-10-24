@@ -1,0 +1,92 @@
+{
+ "fixture": "hub-surface",
+ "gate_mode": "gate-absent",
+ "legacy_launcher": "6340c27b71d1c573592b2e426c3c45e76b6e3522",
+ "steps": [
+  {
+   "argv": [
+    "hub"
+   ],
+   "rc": 1,
+   "stderr": "",
+   "stdout": "ai-specs status \u2014 10 error(s)\n  version: 0.24.0\n  target: <TEMP>\n  Summary: 2 OK, 2 INFO, 2 WARN, 10 ERROR\n\nCommands:\n  Sync          Reconcile manifest \u2192 bundled + vendor + AGENTS.md + agents\n  Doctor        Full project health report (read-only)\n  Agents        Select which AI agents to enable\n  Skills        List / inspect project skills by origin\n  Recipes       List / add / remove catalog recipes\n  Configure recipes  Set up recipe config, CLI deps, env vars\n  Rules audit   Inventory legacy rules for migration\n  Upgrade       Upgrade the global ai-specs installation\n  Version       Print the CLI version\n  Help          Show ai-specs command help\n  Init wizard   Re-run interactive onboarding\n  Quit          Exit the hub\n",
+   "tree": [
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "203f297e52bcfac89da70b0f3e4549e958265448b4308e7d5acec55ba58d8434"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  },
+  {
+   "argv": [
+    "hub",
+    "--help"
+   ],
+   "rc": 0,
+   "stderr": "",
+   "stdout": "Usage: ai-specs hub [path] [--help]\nOpen the interactive ai-specs hub: project status + command menu.\nWith no TTY, prints a non-interactive status summary (initialized) or errors (uninitialized).\nArguments:\n  path    Target project root (default: current directory)\nFlags:\n  --help  Show this help\n",
+   "tree": [
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "203f297e52bcfac89da70b0f3e4549e958265448b4308e7d5acec55ba58d8434"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  }
+ ]
+}

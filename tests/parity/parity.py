@@ -45,6 +45,7 @@ regex-silenced.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -1668,13 +1669,71 @@ def build_gate_binary(dest_dir: Path) -> Path | None:
     return dest
 
 
+# ── Legacy goldens (GO-20 U2e T2a) ────────────────────────────────────────
+# The legacy leg is FROZEN as versioned goldens before the launcher flip: the
+# harness compares the live Go leg against the captured legacy output instead
+# of executing bin/ai-specs at comparison time. Capture with
+# tests/parity/capture_goldens.py; the only live-legacy path left is the
+# explicit --self-test mode (go_cli is None), whose identical-by-shim meaning
+# requires both legs to run the legacy launcher.
+GOLDENS_DIR = Path(__file__).resolve().parent / "goldens"
+
+# Fixtures whose legacy output cannot be captured deterministically (an
+# environment-dependent artifact no narrow normalization covers). Excluded
+# fixtures stay live-legacy in run_comparison so the corpus still measures
+# them; they are never silently compared against a stale golden.
+GOLDEN_EXCLUDED: dict[str, str] = {}
+
+
+def golden_path(fixture_name: str, gate_mode: str) -> Path:
+    return GOLDENS_DIR / gate_mode / f"{fixture_name}.json"
+
+
+def tree_to_json(tree: dict) -> list:
+    """Snapshot dict -> sorted [[relpath, [kind, mode, payload]], ...]."""
+    return [[rel, [kind, mode, payload]]
+            for rel, (kind, mode, payload) in sorted(tree.items())]
+
+
+def tree_from_json(items) -> dict:
+    """Inverse of tree_to_json: relpath-keyed dict with tuple values."""
+    return {rel: (kind, mode, payload)
+            for rel, (kind, mode, payload) in items}
+
+
+def load_golden_leg(fixture: Fixture, gate_mode: str) -> LegResult:
+    """Load the frozen legacy leg for one fixture and gate mode.
+
+    A missing golden for a fixture that is not GOLDEN_EXCLUDED is a hard
+    error: the harness must never silently fall back to live-running the
+    legacy launcher in normal comparison mode.
+    """
+    path = golden_path(fixture.name, gate_mode)
+    if not path.is_file():
+        raise RuntimeError(
+            f"parity: no legacy golden for fixture {fixture.name!r} in gate "
+            f"mode {gate_mode!r} ({path}); capture it with "
+            f"tests/parity/capture_goldens.py or add it to GOLDEN_EXCLUDED "
+            f"with a reason")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    steps = [
+        StepResult(argv=tuple(item["argv"]), rc=item["rc"],
+                   stdout=item["stdout"], stderr=item["stderr"],
+                   tree=tree_from_json(item["tree"]))
+        for item in data["steps"]
+    ]
+    return LegResult(label="legacy", cli_path=data["legacy_launcher"],
+                     steps=steps)
+
+
 # ── Comparison runner ─────────────────────────────────────────────────────
 
 
 def run_comparison(fixture: Fixture, go_cli: Path | None,
                    workdir: Path,
                    mutate=None, gate_mode: str = GATE_ABSENT,
-                   gate_bin: Path | None = None) -> tuple[list[str], str]:
+                   gate_bin: Path | None = None,
+                   live_legacy: bool | None = None) -> tuple[list[str], str]:
     """Run both legs for one fixture; return (deltas, mode-note).
 
     `mutate` is a TEST-ONLY hook applied to the second leg's results after
@@ -1686,11 +1745,21 @@ def run_comparison(fixture: Fixture, go_cli: Path | None,
     for BOTH legs when provided. The mode-note records the leg pairing AND the
     gate mode, so a zero-delta result can never be read without knowing which
     gate authority produced it.
+
+    The legacy leg (leg_a) is loaded from the versioned golden unless
+    `live_legacy` is true. `live_legacy=None` (the default) preserves the
+    explicit --self-test contract: when `go_cli` is None both legs run the
+    legacy launcher live. Fixtures in GOLDEN_EXCLUDED always run live.
     """
+    if live_legacy is None:
+        live_legacy = go_cli is None
     scratch_a = workdir / "leg-legacy"
     scratch_b = workdir / "leg-other"
-    leg_a = run_leg("legacy", ROOT / "bin" / "ai-specs", fixture, scratch_a,
-                    gate_bin=gate_bin)
+    if live_legacy or fixture.name in GOLDEN_EXCLUDED:
+        leg_a = run_leg("legacy", ROOT / "bin" / "ai-specs", fixture,
+                        scratch_a, gate_bin=gate_bin)
+    else:
+        leg_a = load_golden_leg(fixture, gate_mode)
     leg_mode = "legacy-vs-go"
     cli_b = go_cli if go_cli is not None else ROOT / "bin" / "ai-specs"
     if go_cli is None:
@@ -1703,12 +1772,14 @@ def run_comparison(fixture: Fixture, go_cli: Path | None,
 
 def run_corpus(go_cli: Path | None, workdir: Path, fixtures=CORPUS,
                gate_mode: str = GATE_ABSENT,
-               gate_bin: Path | None = None) -> tuple[int, str]:
+               gate_bin: Path | None = None,
+               live_legacy: bool | None = None) -> tuple[int, str]:
     """Run the corpus in one gate mode; return (exit_code, report).
 
     Exit 1 on ANY delta. `gate_mode`/`gate_bin` are recorded in the header and
     forwarded to every comparison, so the mode that produced each result is
-    part of the report rather than ambient state.
+    part of the report rather than ambient state. `live_legacy` is forwarded
+    so the self-test path keeps running the legacy launcher for both legs.
     """
     lines: list[str] = ["differential parity harness", f"gate mode: {gate_mode}",
                         ""]
@@ -1718,7 +1789,9 @@ def run_corpus(go_cli: Path | None, workdir: Path, fixtures=CORPUS,
         fdir.mkdir(parents=True, exist_ok=True)
         try:
             deltas, mode = run_comparison(fixture, go_cli, fdir,
-                                          gate_mode=gate_mode, gate_bin=gate_bin)
+                                          gate_mode=gate_mode,
+                                          gate_bin=gate_bin,
+                                          live_legacy=live_legacy)
         except Exception as exc:  # a crashed leg is a delta too
             failures += 1
             lines.append(f"✗ {fixture.name}: harness error: {exc!r}")

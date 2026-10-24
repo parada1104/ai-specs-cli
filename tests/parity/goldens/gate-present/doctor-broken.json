@@ -1,0 +1,49 @@
+{
+ "fixture": "doctor-broken",
+ "gate_mode": "gate-present",
+ "legacy_launcher": "6340c27b71d1c573592b2e426c3c45e76b6e3522",
+ "steps": [
+  {
+   "argv": [
+    "doctor"
+   ],
+   "rc": 1,
+   "stderr": "",
+   "stdout": "\nai-specs doctor\n  target: <TEMP>\n\n  OK     manifest         ai-specs/ai-specs.toml found\n  INFO   cli-version      installed 0.24.0, no [tool] pin, last sync unknown \u2014 run ai-specs sync\n  ERROR  agents-md        AGENTS.md missing; run ai-specs sync  (ai-specs init or ai-specs sync)\n  INFO   brief-provenance  runtime brief ownership: missing  (ai-specs sync will create AGENTS.md)\n  ERROR  bundled-skill    cache .bundled/skills/harness-lifecycle missing  (ai-specs sync (flattens CLI-bundled skills into the cache))\n  ERROR  bundled-skill    cache .bundled/skills/harness-recipes missing  (ai-specs sync (flattens CLI-bundled skills into the cache))\n  ERROR  bundled-skill    cache .bundled/skills/harness-skills-deps missing  (ai-specs sync (flattens CLI-bundled skills into the cache))\n  ERROR  bundled-skill    cache .bundled/skills/skill-creator missing  (ai-specs sync (flattens CLI-bundled skills into the cache))\n  ERROR  bundled-skill    cache .bundled/skills/skill-sync missing  (ai-specs sync (flattens CLI-bundled skills into the cache))\n  ERROR  bundled-commands  cache .bundled/commands/rules-audit.md missing  (ai-specs sync (flattens CLI-bundled commands into the cache))\n  ERROR  bundled-commands  cache .bundled/commands/skills-as-rules.md missing  (ai-specs sync (flattens CLI-bundled commands into the cache))\n  WARN   mcp              no [mcp.*] entries declared  (add MCP servers to ai-specs.toml if needed)\n  OK     agents           enabled: claude\n  ERROR  CLAUDE.md        missing; run ai-specs sync  (ai-specs sync)\n  ERROR  .claude/skills   missing; run ai-specs sync  (ai-specs sync)\n  WARN   .claude/commands  directory missing  (ai-specs sync)\n\nSummary: 2 OK, 2 INFO, 2 WARN, 10 ERROR\n",
+   "tree": [
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "203f297e52bcfac89da70b0f3e4549e958265448b4308e7d5acec55ba58d8434"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  }
+ ]
+}

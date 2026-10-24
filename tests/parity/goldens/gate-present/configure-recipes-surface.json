@@ -1,0 +1,44 @@
+{
+ "fixture": "configure-recipes-surface",
+ "gate_mode": "gate-present",
+ "legacy_launcher": "6340c27b71d1c573592b2e426c3c45e76b6e3522",
+ "steps": [
+  {
+   "argv": [
+    "configure-recipes",
+    "--help"
+   ],
+   "rc": 0,
+   "stderr": "",
+   "stdout": "Usage: ai-specs configure-recipes [path] [--help]\nConfigure enabled recipes (config fields, CLI deps, ai-specs.env + root .envrc).\nArguments:\n  path    Target project root (default: current directory)\nFlags:\n  --help  Show this help\n",
+   "tree": [
+    [
+     "README.md",
+     [
+      "file",
+      "0o644",
+      "24f2e939bce2ef4855a7b31a50d5b3273d76404567234a30d90c2cc1059a2ee7"
+     ]
+    ]
+   ]
+  },
+  {
+   "argv": [
+    "configure-recipes"
+   ],
+   "rc": 1,
+   "stderr": "Project not initialized: missing <TEMP>/ai-specs/ai-specs.toml\n",
+   "stdout": "",
+   "tree": [
+    [
+     "README.md",
+     [
+      "file",
+      "0o644",
+      "24f2e939bce2ef4855a7b31a50d5b3273d76404567234a30d90c2cc1059a2ee7"
+     ]
+    ]
+   ]
+  }
+ ]
+}

@@ -1,0 +1,181 @@
+{
+ "fixture": "recipe-surface",
+ "gate_mode": "gate-present",
+ "legacy_launcher": "6340c27b71d1c573592b2e426c3c45e76b6e3522",
+ "steps": [
+  {
+   "argv": [
+    "recipe",
+    "list"
+   ],
+   "rc": 0,
+   "stderr": "",
+   "stdout": "[available   ]  bitbucket-pr-flow         1.3.0     Bitbucket PR Flow\n[available   ]  git-pr-flow               1.5.0     Git PR Flow\n[available   ]  gitlab-mr-flow            1.4.0     GitLab MR Flow\n[available   ]  jinna-mcp-recipe          1.0.0     OpenProject Provider MCP\n[available   ]  plan-build-flow           1.8.0     Plan / Build Flow\n[available   ]  playwright-mcp            1.0.0     Playwright MCP\n[available   ]  playwright-ui-flow        1.0.0     Playwright UI Flow\n[available   ]  session-context           2.0.0     Session Context\n[available   ]  tdd-flow                  1.0.0     TDD Flow\n[available   ]  trello-mcp-workflow       1.4.0     Trello MCP Workflow\n[available   ]  vault-canonical-store     1.2.0     Vault Canonical Store\n[available   ]  worktree-flow             1.6.0     Worktree Flow\n",
+   "tree": [
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "203f297e52bcfac89da70b0f3e4549e958265448b4308e7d5acec55ba58d8434"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  },
+  {
+   "argv": [
+    "recipe",
+    "init",
+    "worktree-flow"
+   ],
+   "rc": 1,
+   "stderr": "Recipe 'worktree-flow' has no init workflow\n",
+   "stdout": "",
+   "tree": [
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "203f297e52bcfac89da70b0f3e4549e958265448b4308e7d5acec55ba58d8434"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  },
+  {
+   "argv": [
+    "recipe",
+    "add",
+    "tdd-flow"
+   ],
+   "rc": 0,
+   "stderr": "",
+   "stdout": "Recipe 'tdd-flow' added to the manifest.\nThe next sync will materialize:\n  - skills: tdd-flow\n  - commands: tdd\n  - doc: README.md \u2192 ai-specs/recipes/tdd-flow/README.md\n\nNext steps:\n  - Configure required values: ai-specs configure-recipes\n",
+   "tree": [
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "8308b1b97a964ecd2d2b77aac5c904c3a45d9605c5d55a8d75e4ac52586f7011"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  },
+  {
+   "argv": [
+    "recipe",
+    "list"
+   ],
+   "rc": 0,
+   "stderr": "",
+   "stdout": "[available   ]  bitbucket-pr-flow         1.3.0     Bitbucket PR Flow\n[available   ]  git-pr-flow               1.5.0     Git PR Flow\n[available   ]  gitlab-mr-flow            1.4.0     GitLab MR Flow\n[available   ]  jinna-mcp-recipe          1.0.0     OpenProject Provider MCP\n[available   ]  plan-build-flow           1.8.0     Plan / Build Flow\n[available   ]  playwright-mcp            1.0.0     Playwright MCP\n[available   ]  playwright-ui-flow        1.0.0     Playwright UI Flow\n[available   ]  session-context           2.0.0     Session Context\n[installed   ]  tdd-flow                  1.0.0     TDD Flow\n[available   ]  trello-mcp-workflow       1.4.0     Trello MCP Workflow\n[available   ]  vault-canonical-store     1.2.0     Vault Canonical Store\n[available   ]  worktree-flow             1.6.0     Worktree Flow\n",
+   "tree": [
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "8308b1b97a964ecd2d2b77aac5c904c3a45d9605c5d55a8d75e4ac52586f7011"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  }
+ ]
+}
