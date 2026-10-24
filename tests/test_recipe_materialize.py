@@ -1,4 +1,6 @@
-"""Black-box recipe materialization tests: every test drives ``bin/ai-specs``.
+"""Black-box recipe materialization tests: every test drives the native Go binary.
+
+The binary is ``cli_path()`` (``_go_cli``); ``bin/ai-specs`` is never executed.
 
 No test may import ``lib/_internal`` modules. Assertions preserve the original
 contract intents (exit codes, stdout/stderr needles, materialized artifacts
@@ -34,13 +36,14 @@ sys.path.insert(0, str(ROOT / "tests"))
 from _blackbox import (  # noqa: E402
     CLIResult,
     cache_project_dir,
-    invoke,
+    cli_path,
     isolated_home,
     normalize_output,
 )
 from _fixture_catalog import FIXTURE_RECIPES  # noqa: E402
 
 KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
+CLI = cli_path()
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +118,7 @@ def _seed_recipe(home: Path, rid: str, toml: str,
 
 def _run(project_root: Path, *args: str, home: Path, allow_internal: bool = True,
          append_root: bool = True) -> CLIResult:
-    """Run bin/ai-specs hermetically (stdin closed so the CLI can never block).
+    """Run the native CLI (``CLI``) hermetically (stdin closed so it can never block).
 
     Mirrors invoke()'s environment plus AI_SPECS_ALLOW_INTERNAL_TEST_RECIPES
     (opt-out via allow_internal=False) and the offline vendor fixture root.
@@ -134,7 +137,7 @@ def _run(project_root: Path, *args: str, home: Path, allow_internal: bool = True
     if allow_internal:
         env["AI_SPECS_ALLOW_INTERNAL_TEST_RECIPES"] = "1"
     (tmpdir / "home").mkdir(parents=True, exist_ok=True)
-    argv = [str(ROOT / "bin" / "ai-specs"), *args]
+    argv = [str(CLI), *args]
     if append_root:
         argv.append(str(project_root))
     proc = subprocess.run(argv, cwd=ROOT, env=env, text=True,
@@ -1497,3 +1500,14 @@ class StaleCleanupOverrideTests(unittest.TestCase):
         self.assertEqual(dest.read_text(), expected)
         self.assertNotIn("__WORKTREE_REPO_TOPOLOGY__", dest.read_text())
         self.assertNotIn("not refreshed", result.stderr)
+
+
+class NativeBinaryGuardTests(unittest.TestCase):
+    def test_fixture_runs_the_native_binary(self):
+        self.assertNotEqual(CLI, ROOT / "bin" / "ai-specs", "fixture must not drive the bash launcher")
+        self.assertNotEqual(CLI.read_bytes()[:2], b"#!", "fixture must run the compiled binary")
+        root = Path(tempfile.mkdtemp(prefix="ai-specs-guard-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        result = _run(root / "project", "version", home=_make_home(root), append_root=False)
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout.strip(), (ROOT / "VERSION").read_text().strip())

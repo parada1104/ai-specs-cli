@@ -24,6 +24,7 @@ IN_SCOPE_MODULES = (
     "test_hub",
     "test_init_tui",
     "test_jinna_consumer_recipe",
+    "test_recipe_materialize",
     "test_release_materialization",
     "test_rules_audit",
     "test_runtime_brief_baseline",
