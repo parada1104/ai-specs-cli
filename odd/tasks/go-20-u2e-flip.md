@@ -42,7 +42,7 @@ Slice 1 = documentation and measured inventory only. No source or test change in
     `change/go-20-u2e-flip-4` (base c2edbbf). Scope: L15; hooks part closed in Go: L16. Commit: efa7b63 (PR #438).
   - **T3d** `test_init_brief_route` (LEGACY_CLI; bash `lib/init.sh` seam via `AI_SPECS_GO_BIN`). Route: golden fixtures
     for the legacy comparison (L6). Slice 5, branch `change/go-20-u2e-flip-5` (base fc03809). Equivalence and capture: L17. Commit: e8a40f9 (PR #440).
-  - **T3e** `test_init_native` (legacy vs native oracle). Route: golden fixtures frozen from current legacy output (L6). Slice 6, branch `change/go-20-u2e-flip-6` (base af48115). Evidence and equivalence: L18. Commit: pending.
+  - **T3e** `test_init_native` (legacy vs native oracle). Route: golden fixtures frozen from current legacy output (L6). Slice 6, branch `change/go-20-u2e-flip-6` (base af48115). Evidence and equivalence: L18. Commit: 210a242 (PR #442, squash-merged as b44e0ac).
 - **T4** — Extend the parity corpus to the S3 gaps or record each gap (`tests/parity/parity.py`). Commit: pending.
 - **T5** — Replace the five Python differentials (`config`, `deps`, `gatebinary`, `schema`, `target`) with native
   checks that keep their assertions; then delete `lib/_internal`. Commit: pending.
@@ -232,3 +232,9 @@ Slice 1 = documentation and measured inventory only. No source or test change in
   "already exists" -> "already exist": 1 failure (tui-skip); `internal/sync/agentsrender.go` Enabled runtimes separator
   ", " -> "; ": 1 failure (classic); `internal/cli/init.go` fallback line "classic init" -> "classic setup": 2 failures
   (tui-nontty, poison).
+  Validation: `tests/validate.sh` once on 210a242, exit 0 (2382 OK, 165 skipped; parity summary failing=0 on both gates).
+  Review disposition: left unreviewed by an explicit human choice for this candidate. Condition checked: native assess with
+  workspaceRoot on 210a242 gives `reviewDue: false`. inspect had offered review.start for a different target
+  (sha256:908d05..., base 7b1fd75); the human confirmed no active order for sha256:75b7..., and no START was run.
+  Merge: PR #442, squash, manual, match-head 210a242, base epic, branch deleted. Epic fast-forwarded to b44e0ac.
+  Next: T4 (parity corpus gaps S3); T5, T6 and T9 follow in their own PRs.
