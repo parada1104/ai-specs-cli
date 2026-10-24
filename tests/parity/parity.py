@@ -234,6 +234,15 @@ def _norm_t7_cursor_deny_line(text: str, ctx: dict) -> str:
     return text.replace(_T7_GO_DENY_LINE, _T7_DENY_MARKER + "\n")
 
 
+# GO-20 U2e T4: scoped to add-dep and skills add; expires with lib/_internal (T5).
+def _norm_vendor_add_clone_failure(text: str, ctx: dict) -> str:
+    argv = ctx.get("argv") or ()
+    if not (argv[:1] == ("add-dep",) or argv[:2] == ("skills", "add")):
+        return text
+    text = _VENDOR_CLONE_TRACEBACK_RE.sub("", text)
+    return _VENDOR_CLONE_STATUS_RE.sub(r"\1", text)
+
+
 NORMALIZATIONS = (
     Normalization(
         rule_id="N1-temp-paths",
@@ -415,6 +424,25 @@ NORMALIZATIONS = (
                       "the rest of each wrapper is compared byte for byte. Expires "
                       "with lib/_internal (T5).",
         fn=_norm_t7_cursor_deny_line,
+    ),
+    Normalization(
+        rule_id="N11-vendor-add-clone-failure",
+        surfaces=("stderr",),
+        description="For the `add-dep` and `skills add` verbs only, remove the "
+                    "legacy uncaught CalledProcessError traceback of a failed "
+                    "`git clone` in a vendored skill source, and the native "
+                    "`  ✗ exit status N` line after git's `fatal:` line. Both "
+                    "legs keep git's `fatal:` line; the exit code is compared "
+                    "verbatim. Expires with lib/_internal (T5).",
+        justification="Same accepted divergence class as N9: vendor-skills.py "
+                      "crashes with an uncaught traceback on a clone failure, "
+                      "while the native port reports git's `fatal:` line plus "
+                      "one status line and the same exit code. N9 is scoped to "
+                      "argv[0]=='sync' and is NOT widened; this rule covers "
+                      "only the two verbs named above. EXPIRES with "
+                      "lib/_internal (T5): delete this rule with its helper "
+                      "when lib/_internal is deleted.",
+        fn=_norm_vendor_add_clone_failure,
     ),
 )
 
@@ -1403,6 +1431,74 @@ CORPUS: tuple[Fixture, ...] = (
         steps=(Step(("sync-agent", "--source-root", ".", "--target", "sub-a", "--all"),
                     append_root=False),),
     ),
+    Fixture(
+        name="hub-surface",
+        description="S3 gap `hub`: bare hub status and the hub help text, so "
+                    "the interactive surface is measured rather than assumed.",
+        setup=_setup_manifest_only,
+        steps=(
+            Step(("hub",), stdin=""),
+            Step(("hub", "--help"), stdin=""),
+        ),
+    ),
+    Fixture(
+        name="upgrade-surface",
+        description="S3 gap `upgrade`: the help text and an unknown-option "
+                    "refusal, so the argument contract is compared.",
+        setup=_setup_manifest_only,
+        steps=(
+            Step(("upgrade", "--help"), append_root=False),
+            Step(("upgrade", "--bogus"), append_root=False),
+        ),
+    ),
+    Fixture(
+        name="skills-surface",
+        description="S3 gap `skills`: bare skills, help, list, remove of an "
+                    "absent skill and an unknown subcommand, so the whole "
+                    "subcommand surface is compared.",
+        setup=_setup_manifest_only,
+        steps=(
+            Step(("skills",), append_root=False),
+            Step(("skills", "--help"), append_root=False),
+            Step(("skills", "list")),
+            Step(("skills", "remove", "nope")),
+            Step(("skills", "bogus"), append_root=False),
+        ),
+    ),
+    Fixture(
+        name="vendor-add-clone-failure",
+        description="S3 gap `add-dep`: add-dep and `skills add` against a "
+                    "nonexistent clone source, so the clone-failure report and "
+                    "exit code are compared (see N11).",
+        setup=_setup_manifest_only,
+        steps=(
+            Step(("add-dep",), append_root=False),
+            Step(("add-dep", "/nonexistent/skill-repo")),
+            Step(("skills", "add", "/nonexistent/skill-repo")),
+        ),
+    ),
+    Fixture(
+        name="configure-recipes-surface",
+        description="S3 gap `configure-recipes`: help plus the uninitialized "
+                    "project refusal, so both legs' exit 1 is compared.",
+        setup=_setup_fresh,
+        steps=(
+            Step(("configure-recipes", "--help"), append_root=False),
+            Step(("configure-recipes",), stdin=""),
+        ),
+    ),
+    Fixture(
+        name="recipe-remove-configure",
+        description="S3 gaps `recipe configure` and `recipe remove`: "
+                    "configure on an already-enabled recipe, remove an enabled "
+                    "recipe, then list, so the mutation is compared.",
+        setup=_setup_all_recipes,
+        steps=(
+            Step(("recipe", "configure", "bitbucket-pr-flow"), stdin=""),
+            Step(("recipe", "remove", "tdd-flow")),
+            Step(("recipe", "list")),
+        ),
+    ),
 )
 
 
@@ -1640,3 +1736,67 @@ def run_corpus(go_cli: Path | None, workdir: Path, fixtures=CORPUS,
     lines.append(f"fixtures: {len(fixtures)}, failing: {failures}")
     report = "\n".join(lines)
     return (1 if failures else 0), report
+
+
+# ── S3 gap registry (GO-20 U2e T4) ────────────────────────────────────────
+# Every verb the U2 S7 gap rule names must either be covered by a corpus step
+# (`covers`: fixture name + argv prefix that the fixture must contain) or carry
+# an explicit recorded reason (`recorded`) naming why it is not compared. The
+# suite fails on a gap that is neither: silent gaps are not acceptable.
+# A recorded reason is a divergence reported to a human decision, never a
+# normalization: the corpus compares only what matches byte for byte.
+S3_GAP_COVERAGE: dict[str, dict[str, object]] = {
+    "hub": {
+        "covers": [("hub-surface", ("hub",)), ("hub-surface", ("hub", "--help"))],
+    },
+    "upgrade": {
+        "covers": [("upgrade-surface", ("upgrade", "--help")),
+                   ("upgrade-surface", ("upgrade", "--bogus"))],
+        "equivalent": [
+            "upgrade --dry-run refusal (dev-channel guard, exit 2 on both legs). "
+            "Driver: legacy runs lib/upgrade.sh and names that script in the "
+            "message; Go runs its own binary and names it. Equivalent by decision: "
+            "same exit code, the path names the running program. Not compared by "
+            "the corpus (no normalization of product output in the harness).",
+        ],
+    },
+    "skills": {
+        "covers": [("skills-surface", ("skills",)),
+                   ("skills-surface", ("skills", "list")),
+                   ("skills-surface", ("skills", "remove"))],
+    },
+    "add-dep": {
+        "covers": [("vendor-add-clone-failure", ("add-dep",)),
+                   ("vendor-add-clone-failure", ("skills", "add"))],
+    },
+    "configure-recipes": {
+        "covers": [("configure-recipes-surface", ("configure-recipes", "--help")),
+                   ("configure-recipes-surface", ("configure-recipes",))],
+        "recorded": [
+            "configure-recipes on an initialized project without a TTY, with "
+            "rich/questionary not vendored (exit 3 on both legs). Contract: section 7 "
+            "requires a TTY and exit 3, with no FROZEN marker on the message; no "
+            "section 2 row. Evidence: legacy lib/_internal/util.py ensure_deps returns "
+            "3 silently before config_wizard.py prints the TTY line, so legacy stderr "
+            "is empty; Go checks the TTY first and prints 'configure-recipes requires "
+            "an interactive TTY' on stderr. Registered, no product change.",
+        ],
+    },
+    "refresh-bundled": {
+        "recorded": [
+            "standalone refresh-bundled is the no-op of compatibility decided by "
+            "Robert (D26, U2b; contract line 258): 'sync is enough'. Go prints the "
+            "embedded provenance and changes nothing; legacy flattens the cache, "
+            "restamps the lock, and exits 1 in an uninitialized project where Go "
+            "exits 0. Not comparable by design; the refresh that matters runs inside "
+            "sync, covered by the sync fixtures. The help text that still describes "
+            "the flatten is corrected in its own product PR, not here.",
+        ],
+    },
+    "recipe remove": {
+        "covers": [("recipe-remove-configure", ("recipe", "remove"))],
+    },
+    "recipe configure": {
+        "covers": [("recipe-remove-configure", ("recipe", "configure"))],
+    },
+}
