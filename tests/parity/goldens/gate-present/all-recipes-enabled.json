@@ -1,7 +1,7 @@
 {
  "fixture": "all-recipes-enabled",
  "gate_mode": "gate-present",
- "legacy_launcher": "6b4d3a5964ca8f3f7157d44dc4343414230fea63",
+ "legacy_launcher": "bb4a87f5379d14eff9f4e99669cd603029699ede",
  "steps": [
   {
    "argv": [
@@ -48,7 +48,7 @@
      [
       "file",
       "0o600",
-      "d4f1a59a7cb328255fd85fbaac70a4de62a5373fd410b8d3f9b961cc6548aa46"
+      "c9a2d8646ff0b4b0d2952671a3f8e7db5008660b80b9f0e6789893f766dc3d28"
      ]
     ],
     [
@@ -176,7 +176,7 @@
      [
       "file",
       "0o755",
-      "ecb34debd7d357b66343dd83385dcbaa4fb2c9c1d0d0d571784d0f91cf280112"
+      "4a726442b0168f80611f76038ea77d3825c315355af2736a6651ba2c05fbaa98"
      ]
     ],
     [
