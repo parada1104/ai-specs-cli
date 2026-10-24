@@ -1,7 +1,7 @@
 {
  "fixture": "nested-fanout-suppression",
  "gate_mode": "gate-absent",
- "legacy_launcher": "6340c27b71d1c573592b2e426c3c45e76b6e3522",
+ "legacy_launcher": "c3e85d33412de78a9bc3c3dc038c75218b0df516",
  "steps": [
   {
    "argv": [
@@ -400,7 +400,7 @@
      [
       "file",
       "0o755",
-      "412a883f2509f5df8ce9f2e567a7f0d72b8489b363c50bdcd891ae1c1f2cbfe4"
+      "3c522b338f10563bfbabfa4190e2978848dffee26388dd94e5c88d0ab18ebe26"
      ]
     ],
     [
@@ -648,7 +648,7 @@
      [
       "file",
       "0o755",
-      "412a883f2509f5df8ce9f2e567a7f0d72b8489b363c50bdcd891ae1c1f2cbfe4"
+      "3c522b338f10563bfbabfa4190e2978848dffee26388dd94e5c88d0ab18ebe26"
      ]
     ]
    ]
@@ -1051,7 +1051,7 @@
      [
       "file",
       "0o755",
-      "412a883f2509f5df8ce9f2e567a7f0d72b8489b363c50bdcd891ae1c1f2cbfe4"
+      "3c522b338f10563bfbabfa4190e2978848dffee26388dd94e5c88d0ab18ebe26"
      ]
     ],
     [
@@ -1299,7 +1299,7 @@
      [
       "file",
       "0o755",
-      "412a883f2509f5df8ce9f2e567a7f0d72b8489b363c50bdcd891ae1c1f2cbfe4"
+      "3c522b338f10563bfbabfa4190e2978848dffee26388dd94e5c88d0ab18ebe26"
      ]
     ]
    ]
