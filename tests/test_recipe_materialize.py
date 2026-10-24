@@ -5,10 +5,10 @@ The binary is ``cli_path()`` (``_go_cli``); ``bin/ai-specs`` is never executed.
 No test may import ``lib/_internal`` modules. Assertions preserve the original
 contract intents (exit codes, stdout/stderr needles, materialized artifacts
 under the per-project cache layout, agent configs, recipe hook markers,
-stamped overrides) through the CLI process boundary. Internal surfaces with no
-CLI-observable equivalent are kept as process-boundary invocations of the
-exact command line sync.sh/sync-agent.sh run against the isolated home's own
-lib copy, each marked with a distinct ``# TRIAGE:`` comment.
+stamped overrides) through the CLI process boundary. The resolved-config
+document is read through ``baseline-brief``; the resolved-hooks document is
+pinned byte for byte in ``internal/sync/materialize_hooks_test.go``. No test in
+this module runs a Python process.
 
 Staging pattern (proven in test_sync_pipeline.py / test_agents_render_brief_fragments.py):
   - one isolated install root per test with a REAL lib copy (symlinked lib
@@ -142,42 +142,6 @@ def _run(project_root: Path, *args: str, home: Path, allow_internal: bool = True
     argv = [str(binary or CLI), *args]
     if append_root:
         argv.append(str(project_root))
-    proc = subprocess.run(argv, cwd=ROOT, env=env, text=True,
-                          capture_output=True, check=False, input="")
-    return CLIResult(
-        proc.returncode,
-        normalize_output(proc.stdout, (project_root, home, tmpdir)),
-        normalize_output(proc.stderr, (project_root, home, tmpdir)),
-    )
-
-
-def _materialize_process(project_root: Path, home: Path, *extra: str,
-                         allow_internal: bool = True) -> CLIResult:
-    """Run the EXACT recipe-materialize command line sync.sh runs.
-
-    Used only by ``# TRIAGE:`` tests whose contract is observable solely at
-    the materialize process boundary (resolved-config/hooks JSON files that
-    no verb exposes at a predictable path). Runs the isolated home's own lib
-    copy — never a repository import.
-    """
-    tmpdir = project_root.parent
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": str(tmpdir / "home"),
-        "TMPDIR": str(tmpdir),
-        "AI_SPECS_HOME": str(home),
-        "AI_SPECS_NO_NETWORK": "1",
-        "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
-        "LC_ALL": "C",
-        "LANG": "C",
-    }
-    if allow_internal:
-        env["AI_SPECS_ALLOW_INTERNAL_TEST_RECIPES"] = "1"
-    (tmpdir / "home").mkdir(parents=True, exist_ok=True)
-    argv = [
-        sys.executable, str(home / "lib" / "_internal" / "recipe-materialize.py"),
-        str(project_root), str(home), *extra,
-    ]
     proc = subprocess.run(argv, cwd=ROOT, env=env, text=True,
                           capture_output=True, check=False, input="")
     return CLIResult(
@@ -456,7 +420,8 @@ class RecipeMaterializeTests(unittest.TestCase):
 
     # --- V2 binding resolution -----------------------------------------------
 
-    def _cap_recipe(self, home: Path, rid: str, caps: tuple[str, ...] = ()) -> None:
+    def _cap_recipe(self, home: Path, rid: str,
+                    caps: list[str] | tuple[str, ...] = ()) -> None:
         cap_lines = "".join(f'\n[[capabilities]]\nid = "{c}"\n' for c in caps)
         _seed_recipe(home, rid,
                      f'[recipe]\nid = "{rid}"\nname = "{rid.title()}"\n'
@@ -1180,26 +1145,9 @@ class RuntimeHookMaterializeTests(unittest.TestCase):
 
     def test_resolved_hooks_out_shape(self):
         project_root, home, rid = self._build()
-        # The resolved-hooks JSON shape is what sync.sh hands to hooks-render;
-        # pin it at the materialize process boundary.
-        # TRIAGE: ai-specs sync — no verb exposes the resolved-hooks JSON at a
-        # predictable path; pinned with the exact sync.sh materialize command
-        # line against the isolated home's own lib copy.
-        out = project_root.parent / "hooks.json"
-        result = _materialize_process(project_root, home, "--resolved-hooks-out", str(out))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        data = json.loads(out.read_text())
-        self.assertIn("claude", data["enabled_agents"])
-        self.assertEqual(len(data["hooks"]), 1)
-        h = data["hooks"][0]
-        self.assertEqual(h["recipe"], rid)
-        self.assertEqual(h["id"], "gate")
-        self.assertEqual(h["event"], "pre-tool-use")
-        self.assertEqual(h["matcher"], "Edit|Write")
-        self.assertEqual(h["blocking"], True)
-        self.assertEqual(
-            h["script_path"], f"ai-specs/recipes/{rid}/hooks/gate.sh"
-        )
+        # The resolved-hooks document (enabled_agents, recipe/id/event/matcher/
+        # blocking/script_path) is pinned byte for byte against the legacy golden
+        # in internal/sync/materialize_hooks_test.go (TestResolvedHooksDocumentShapeMatchesLegacy).
         # End-to-end through the CLI: the hook is wired into the claude agent
         # config with the neutral script path and its managed identity.
         sync = _run(project_root, "sync", home=home)
@@ -1231,18 +1179,9 @@ class RuntimeHookMaterializeTests(unittest.TestCase):
                 "[recipes.wt-hook.config]\nWORKTREE_GATE_PROTECTED = 'main development'\n"
             ),
         )
-        # TRIAGE: ai-specs sync — the ENV-shaped config export contract is only
-        # observable in the resolved-hooks JSON; pinned with the exact sync.sh
-        # materialize command line against the isolated home's own lib copy.
-        out = project_root.parent / "hooks.json"
-        result = _materialize_process(project_root, home, "--resolved-hooks-out", str(out))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        data = json.loads(out.read_text())
-        env = data["hooks"][0]["env"]
-        # ENV-shaped config keys are exported...
-        self.assertEqual(env.get("WORKTREE_GATE_PROTECTED"), "main development")
-        # ...recipe-internal lowercase keys are not.
-        self.assertNotIn("worktrees_dir", env)
+        # The ENV-shaped export (WORKTREE_GATE_PROTECTED exported, worktrees_dir not)
+        # is pinned byte for byte against the legacy golden in
+        # internal/sync/materialize_hooks_test.go (TestResolvedHooksEnvCarriesExportedConfigOnly).
         # End-to-end through the CLI: the exported env reaches the claude wiring.
         sync = _run(project_root, "sync", home=home)
         self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)

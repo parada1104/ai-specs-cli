@@ -171,4 +171,30 @@ Slice 1 = documentation and measured inventory only. No source or test change in
   replacement. Decision needed before T5: a Go test on `MaterializeRecipes` for the hooks document, or a native flag
   (a product change, not requested here).
   Pre-existing, not touched: 14 type-checker notices on `_cap_recipe(caps=[...])` (list passed to a `tuple` hint,
-  test lines 478-512); the unittest suite passes.
+  test lines 478-512); the unittest suite passes. SUPERSEDED by L16 for the hooks part (see below).
+- L16 — Decision on L15's open hooks item (option a, Robert's answer). Hooks document, `--resolved-hooks-out`:
+  a Go test on `MaterializeRecipes` replaces the two retired Python process legs. Files: `internal/sync/materialize_hooks_test.go`
+  (`TestResolvedHooksDocumentShapeMatchesLegacy`, `TestResolvedHooksEnvCarriesExportedConfigOnly`) and golden files
+  `internal/sync/testdata/materialize-hooks/{shape,env}.golden.json`, captured from the legacy `recipe-materialize.py`
+  process on the same fixtures (deterministic, two runs byte-identical). The test compares the spine document and the written
+  file byte for byte with the golden, then keeps the retired assertions as explicit field checks: `enabled_agents` = [claude],
+  one hook, `recipe`, `id`, `event`, `matcher`, `blocking` = true, `script_path`; and for the env case `env` exports
+  `WORKTREE_GATE_PROTECTED` = "main development" and not `worktrees_dir`. Nothing was loosened to fit the native output: it
+  matched the legacy bytes on the first run. Sensitivity (real mutations, reverted): `blocking` forced to false and env emptied
+  each fail both tests.
+  Python side: `tests/test_recipe_materialize.py` no longer runs any Python process. The two `--resolved-hooks-out` legs are retired
+  with this mapping; their end-to-end `sync` assertions on `.claude/settings.json` (managed identity, matcher, command, env) stay.
+  `_materialize_process` is deleted (no callers left). The module docstring now states that no test runs Python.
+  Also: `_cap_recipe` signature accepts `list[str] | tuple[str, ...]`; the 14 type-checker notices from L15 are resolved (type hint only,
+  no behavior change; 73 tests still pass).
+  Assertion count (measured with `grep -c self.assert`): the Python module went 229 at c2edbbf → 217 now. The two retired tests held
+  19 `self.assert` lines at a4063a1; 7 remain (their end-to-end `sync` checks). The 12 removed are the document checks above: shape
+  returncode, `enabled_agents`, hook count, `recipe`, `id`, `event`, `matcher`, `blocking`, `script_path` (9, moved to
+  `TestResolvedHooksDocumentShapeMatchesLegacy`, where the returncode becomes the `MaterializeRecipes` error check); env returncode,
+  `WORKTREE_GATE_PROTECTED`, `worktrees_dir` (3, moved to `TestResolvedHooksEnvCarriesExportedConfigOnly`).
+  Effect on T5: `tests/test_recipe_materialize.py` no longer depends on `lib/_internal`. The remaining `lib/_internal` users are
+  other suites, unaffected by this slice.
+  Evidence: `PYTHONPATH=tests python3 -m unittest tests.test_recipe_materialize` 73 OK; `go test ./internal/sync -count=1` OK; the
+  golden-hooks tests PASS; LSP diagnostics clean on the test file.
+  Process note: a background `validate.sh` started on a4063a1 was stopped before it finished. It ran on a worktree I was editing, so
+  its result is not evidence. One `validate.sh` run is made on the final head.
