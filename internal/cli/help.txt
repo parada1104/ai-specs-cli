@@ -20,6 +20,7 @@ Commands:
   configure-recipes [path]    Configure recipe config, CLI deps, harness env
   upgrade [--dry-run] [--force] Upgrade the global installation safely
   specs promote <slug> --root <planning-root>  Compose change delta specs into canonical specs
+  gates premerge <slug> --root <planning-root>  Check the pre-merge archive/artifact gates
   version Print CLI version
   hub [path] Interactive status + command menu (also bare `ai-specs`;
                can rewrite ai-specs.toml and run commands)
