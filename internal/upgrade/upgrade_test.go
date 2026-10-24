@@ -497,3 +497,72 @@ func TestRunStepQuietOnSuccess(t *testing.T) {
 		t.Fatalf("--verbose must show raw git output:\n%s", verbose.String())
 	}
 }
+
+// TestDetectLegacyLinkWhenHomeIsReachedThroughSymlink pins D-U2e-1: on macOS
+// TMPDIR (and so HOME in tests) lives under /var -> /private/var. The legacy
+// check (lib/upgrade.sh) compares the link target against the logical
+// $HOME/.ai-specs, so the install is valid. The Go check must not compare a
+// fully resolved target against an unresolved home.
+func TestDetectLegacyLinkWhenHomeIsReachedThroughSymlink(t *testing.T) {
+	physical, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "home-alias")
+	if err := os.Symlink(physical, alias); err != nil {
+		t.Fatal(err)
+	}
+	home := alias // logical HOME, reached through the symlink
+	aiSpecs := filepath.Join(home, ".ai-specs")
+	if err := os.MkdirAll(filepath.Join(aiSpecs, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(aiSpecs, "bin", "ai-specs")
+	if err := os.MkdirAll(filepath.Dir(exe), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, exe, "#!/bin/sh\nexit 0\n", 0o755)
+	localBin := filepath.Join(home, ".local", "bin", "ai-specs")
+	if err := os.MkdirAll(filepath.Dir(localBin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(exe, localBin); err != nil {
+		t.Fatal(err)
+	}
+	var errb bytes.Buffer
+	inst, code, ok := Detect(Env{Home: aiSpecs, UserHome: home, Executable: exe}, &errb)
+	if !ok || code != 0 {
+		t.Fatalf("ok=%v code=%d stderr=%q", ok, code, errb.String())
+	}
+	if inst.Kind != KindLegacy {
+		t.Fatalf("kind = %v, want legacy", inst.Kind)
+	}
+}
+
+// TestDetectHomeSymlinkedOutsideStillRefused keeps the guard strict: a
+// ~/.ai-specs that itself points outside the home is still refused.
+func TestDetectHomeSymlinkedOutsideStillRefused(t *testing.T) {
+	f := newFakeInstall(t, "1.0.0")
+	outside := filepath.Join(t.TempDir(), "elsewhere")
+	if err := os.MkdirAll(filepath.Join(outside, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(outside, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(outside, "bin", "ai-specs"), "x", 0o755)
+	if err := os.RemoveAll(filepath.Join(f.home, ".ai-specs")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(f.home, ".ai-specs")); err != nil {
+		t.Fatal(err)
+	}
+	var errb bytes.Buffer
+	_, code, ok := Detect(f.env(), &errb)
+	if ok || code != ExitBroken {
+		t.Fatalf("ok=%v code=%d stderr=%q", ok, code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "resolves outside ~/.ai-specs") {
+		t.Fatalf("stderr = %q", errb.String())
+	}
+}
