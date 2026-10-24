@@ -34,8 +34,7 @@ Slice 1 = documentation and measured inventory only. No source or test change in
 - **T2a** — Freeze the legacy parity leg as goldens before the flip (`tests/parity/goldens/`, `tests/parity/capture_goldens.py`). Slice 8, branch `change/go-20-u2e-goldens` (base 6340c27). Commits: 5c9e45d (harness, capture script, tests; native review approved, lineage review-24d25e68c96a2460, acknowledged), 219628b (70 goldens). Merged: PR #447, squash 276fa85. Evidence and decisions: L20.
 - **T2 PR-A (delivery)** — `install.sh` copies the verified entry to `$AI_SPECS_HOME/dist/ai-specs`; `internal/upgrade` refreshes that copy on binary upgrade. Slice 9, branch `change/go-20-u2e-delivery` (base 43029a1). Commits: 26a29fa (code), ce0a4fa (fixture mirror of production `.gitignore`). Merged: PR #449, squash 8a6031f. Evidence and decisions: L21.
 - **T2** — Flip: `bin/ai-specs` execs the native binary for every verb (13 `bash "$LIB_DIR/…"` dispatch lines,
-  `bin/ai-specs:38-50`). Blocked until T3 and the named test rows are native. Commit: 270986b (PR-B, branch
-  `change/go-20-u2e-flip-t2`, rebased on b852a36). Evidence, findings and per-case inventory: L22.
+  `bin/ai-specs:38-50`). Blocked until T3 and the named test rows are native. Merged: PR #451, squash ac6a460 (feature commits 270986b, 9e53224, 09e22e1; reviewed and acknowledged on 9e53224; branch `change/go-20-u2e-flip-t2`). Evidence, findings and per-case inventory: L22.
 - **T3** — Retarget the U2e test rows to the native binary, no assertion removed. Split into named units (L6):
   - **T3a** `test_upgrade_output` (oracle seed `lib/_internal/changelog.py`). Slice 2. Commit: e4bccc7 (PR #433).
   - **T3b** `AgentsSubmenuManifestTests` (`lib/_internal` loader, no CLI surface). Go coverage in
@@ -329,3 +328,4 @@ Slice 1 = documentation and measured inventory only. No source or test change in
     - R3-002 (reliability, WARNING) `tests/test_init_native.py:418-423`.
     - R3-003 (reliability, WARNING) `internal/cli/smoke_test.go:237-240`.
   - Mutation check (c) closed: 25 PTY cases of `tests/test_hub.py` and `tests/test_hub_tui.py` fail under mutation of the Go hub; `test_confirm_action_returns_bool` and `test_offer_init_decline` fail under a second mutation of the init offer. `test_none_maps_to_quit` is vacuous and sits in the T5 vacuity inventory (L23).
+- L29 — T2 landed. PR #451 (squash ac6a460) onto `epic/go-single-binary`; the squashed head was 09e22e1 (`--match-head-commit`). Native review `review-d12905c86464743d`: approved, acknowledged on 9e53224 (burn gentle-ai.review-acknowledged/v1), three informational WARNINGs (R3-001, R3-002, R3-003) documented in the PR body. The post-review docs commit 09e22e1 was validated with `validate.sh` (exit 0). Next: T5 (exit criteria: reactivate every row of the L28 table).
