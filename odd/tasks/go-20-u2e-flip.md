@@ -46,7 +46,10 @@ Slice 1 = documentation and measured inventory only. No source or test change in
 - **T5** — Replace the five Python differentials (`config`, `deps`, `gatebinary`, `schema`, `target`) with native
   checks that keep their assertions; then delete `lib/_internal`. Commit: pending.
 - **T6** — Rewrite the contract (§7, D1, D9, D13, D14, D26) with S4. Commit: pending.
-- **T7** — Decide the generated-hook `python3` (see L4). Human decision. Commit: pending.
+- **T7** — Decide the generated-hook `python3` (see L4). Human decision: the generated Cursor wrapper must not invoke
+  python3 (L10). Slice T7 (branch `change/go-20-t7-hook-no-python`, base e4bccc7): deny escaping by POSIX awk in
+  `internal/sync/hooksrender.go`, 3 behavior tests, and the differential reference updated with an intentional
+  divergence marker (L10). Commit: pending.
 - **T8** — `validate.sh` once on the result, native assess per candidate, PR with auto-merge. Commit: pending.
 
 ## Log
@@ -100,3 +103,20 @@ Slice 1 = documentation and measured inventory only. No source or test change in
   base install and origin, and its mutation is strict `unlink()` again. Shared-helper consumers of `setup_install`
   (inventoried before any edit): `test_docs_drift_fixes.py`, `test_upgrade_notices.py`, `test_upgrade_output.py`;
   none changed. The `validate.sh` run started on the L8 state was stopped and is re-run once on the final state.
+- L10 — Human decisions, T7 (verbatim answers): (1) the generated Cursor hook wrapper must NOT invoke python3; the
+  deny message is escaped with POSIX awk (`LC_ALL=C`), with non-ASCII UTF-8 emitted raw (option "UTF-8 crudo";
+  json.dumps would emit \uXXXX for non-ASCII, a deliberate divergence only for non-ASCII messages). (2) When the
+  differential reference blocked the slice, the decision was "Actualizar la referencia": `internal/sync/testdata/
+  hooksrender_ref.py` gets `_apply_t7_cursor_escape`, which rewrites exactly the lib renderer's python3 deny line in
+  generated `.cursor/hooks/*.sh` files to the Go line. This is an INTENTIONAL divergence from
+  `lib/_internal/hooks-render.py`, valid until `lib/_internal` is deleted (T5). `lib/_internal` is not touched; no
+  differential rows are retired; the rest of the Cursor differential stays byte-for-byte. Evidence: differential
+  97 subtests PASS (29 cursor), 0 FAIL; the 3 new tests PASS. Scratch artifacts live under the session TMPDIR.
+- L11 — T7 validate failure and decision (verbatim answers: "Normalizar en paridad", with strict conditions). The
+  legacy-vs-go parity corpus (cache-layout and hooks-five-runtimes, both gate modes) compared the Cursor wrapper
+  `.cursor/hooks/worktree-flow-worktree-gate-shell.sh`, which now carries the Go awk line while the legacy leg still
+  emits python3. Authorized: a single exact-string tree normalization `N10-t7-cursor-deny-line` in
+  `tests/parity/parity.py`, canonicalizing the two exact deny lines on both legs to one marker. Nothing else in
+  parity.py changed (diff: +32 lines, 0 deletions). BOUNDARY: intentional divergence, Robert's T7 decision, valid
+  only while lib/_internal exists. EXPIRY: T5, when lib/_internal is deleted; then delete N10, `_T7_*` constants and
+  the reference rewrite together. No parity rows retired; T7 not delayed.
