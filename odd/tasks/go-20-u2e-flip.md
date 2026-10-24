@@ -39,7 +39,7 @@ Slice 1 = documentation and measured inventory only. No source or test change in
     `internal/hub/interactive_test.go` (D12 cases) and `internal/config/agents_test.go`. Route: map each Python case to a Go test, then retire the Python class with the equivalence recorded (L12). Slice 3. Commit: 4b82b37 → e5f40a4 (PR #436).
   - **T3c** `_materialize_process` (`lib/_internal/recipe-materialize.py`). No native `materialize` verb; the native
     chain is `baseline-brief` (`internal/cli/brief.go`). Route: rewrite against the real surface. Slice 4, branch
-    `change/go-20-u2e-flip-4` (base c2edbbf). Scope and the two hooks call sites that stay on the legacy process: L15. Commit: pending.
+    `change/go-20-u2e-flip-4` (base c2edbbf). Scope: L15; hooks part closed in Go: L16. Commit: efa7b63 (PR #438).
   - **T3d** `test_init_brief_route` (LEGACY_CLI; bash `lib/init.sh` seam via `AI_SPECS_GO_BIN`). Route: golden fixtures
     for the legacy comparison (L6). Commit: pending.
   - **T3e** `test_init_native` (legacy vs native oracle). Route: golden fixtures frozen from current legacy output (L6). Commit: pending.
