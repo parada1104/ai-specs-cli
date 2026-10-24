@@ -339,8 +339,7 @@ context — required, never the process cwd; a subrepo request passes the proven
 superproject root:
 
 ```bash
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/premerge_guardian.py" \
-  <slug> --root <planning-root> --stage pre-archive
+ai-specs gates premerge <slug> --root <planning-root> --stage pre-archive
 ```
 
 The command must pass for Standard and Full; do not archive or continue when it
@@ -368,8 +367,7 @@ superproject, pass `<super>/openspec`'s parent — the superproject root — so 
 guardian inspects the canonical tree and never a subrepo-local change folder.
 
 ```bash
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/premerge_guardian.py" \
-  <slug> --root <planning-root>
+ai-specs gates premerge <slug> --root <planning-root>
 # optional: --tier light|standard|full
 ```
 
