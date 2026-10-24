@@ -8,12 +8,14 @@ dumped when a step fails.
 The safety assertions here are deliberately narrow — they exist to prove the
 output rework did not change exit codes, not to re-test the guards.
 
-GO-20 U2d: the command under test is the native Go binary (`_go_cli.cli()`),
+GO-20 U2d: the command under test is the native Go binary (`cli_path()`),
 installed into a fake HOME exactly as `tests/test_upgrade.py` does. The native
-route renders the release report itself (`internal/changelog`) and never runs the
-Python oracle `lib/_internal/changelog.py`; that file is still seeded into the
-fixture repository because `tests/test_upgrade_notices.py` inherits this fixture
-and deletes it as its own mutation target.
+route renders the release report itself (`internal/changelog`).
+
+GO-20 U2e: the fixture no longer seeds the Python oracle `lib/_internal/changelog.py`
+(the native route never reads it). The fake HOME is canonicalized with realpath:
+on macOS `TMPDIR` lives under the `/var` -> `/private/var` symlink, and the native
+upgrade compares an EvalSymlinks target against the unresolved expected home.
 """
 
 from __future__ import annotations
@@ -32,7 +34,6 @@ from _blackbox import cli_path  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CHANGELOG_PY = ROOT / "lib" / "_internal" / "changelog.py"
 
 # Markers that only appear when raw git output reaches the terminal.
 GIT_NOISE = (
@@ -68,7 +69,7 @@ class UpgradeOutputTests(unittest.TestCase):
     def fake_home(self) -> Path:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        return Path(tmp.name)
+        return Path(os.path.realpath(tmp.name))
 
     def setup_install(self, home: Path, version="0.21.0") -> tuple[Path, Path]:
         """Fake global install plus a bare origin. Returns (ai_specs, bare)."""
@@ -80,8 +81,6 @@ class UpgradeOutputTests(unittest.TestCase):
         shutil.copy2(native_binary(), ai_specs / "bin" / "ai-specs")
         (ai_specs / "bin" / "ai-specs").chmod(0o755)
         (ai_specs / ".gitignore").write_text("bin/\n")
-        (ai_specs / "lib" / "_internal").mkdir(parents=True)
-        shutil.copy(CHANGELOG_PY, ai_specs / "lib" / "_internal" / "changelog.py")
         (ai_specs / "VERSION").write_text(version + "\n")
         (ai_specs / "CHANGELOG.md").write_text(self.changelog(version))
 
@@ -256,6 +255,12 @@ class UpgradeOutputTests(unittest.TestCase):
         self.assertIn("Dry-run: no changes will be made.", result.stdout)
         self.assertIn("Current version: 0.21.0", result.stdout)
         self.assertIn("Target version:  0.22.0", result.stdout)
+
+    def test_fixture_seeds_no_python_oracle(self):
+        # GO-20 U2e: the native route never reads lib/_internal, so the fixture must not seed it.
+        home = self.fake_home()
+        ai_specs, _ = self.setup_install(home)
+        self.assertFalse((ai_specs / "lib" / "_internal" / "changelog.py").exists())
 
     def test_help_documents_verbose(self):
         home = self.fake_home()
