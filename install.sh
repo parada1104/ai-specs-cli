@@ -113,11 +113,76 @@ else
     fi
 fi
 
-# Drop subtrees the CLI never reads at runtime. Best effort by contract: the
-# helper warns and exits 0 on any failure, leaving a usable full checkout.
-if [ -f "$AI_SPECS_HOME/lib/_internal/narrow-checkout.sh" ]; then
-    bash "$AI_SPECS_HOME/lib/_internal/narrow-checkout.sh" "$AI_SPECS_HOME" || true
-fi
+# Drop subtrees the CLI never reads at runtime (GO-20 U2e U-E: inlined here from
+# the former lib helper, deleted at T5). Best effort
+# by contract: every failure warns and leaves a usable full checkout; it never
+# fails the install. Cone-mode allowlist: name what stays, not what goes.
+narrow_checkout() {
+    local target="$1"
+    local keep_dirs=(lib bin catalog bundled-skills bundled-commands templates scripts docs)
+    local excluded_label="openspec/, tests/, .github/, tmp/"
+    local desired current probe dirty missing dir
+
+    _narrow_warn() { echo "  ! narrow-checkout: $1" >&2; }
+
+    if [ -z "$target" ]; then _narrow_warn "no target directory given; skipping"; return 0; fi
+    if [ ! -d "$target" ]; then _narrow_warn "target $target does not exist; skipping"; return 0; fi
+    if ! git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
+        _narrow_warn "target $target is not a git repository; skipping"; return 0
+    fi
+
+    # Reconcile against the CURRENT allowlist, not just "is it sparse at all".
+    desired="$(printf '%s\n' "${keep_dirs[@]}" | LC_ALL=C sort)"
+    current="$(git -C "$target" sparse-checkout list 2>/dev/null | LC_ALL=C sort || true)"
+    if [ -n "$current" ] && [ "$current" = "$desired" ]; then
+        echo "  checkout already narrowed ($excluded_label excluded)"
+        return 0
+    fi
+
+    # Probe for sparse-checkout support. `-h`, not `--help`: `git help` may launch
+    # a browser under help.format=web. Match the message for an unknown subcommand.
+    probe="$(git -C "$target" sparse-checkout -h 2>&1 || true)"
+    if [[ "$probe" == *"is not a git command"* || -z "$probe" ]]; then
+        _narrow_warn "this git has no sparse-checkout support; keeping the full checkout"
+        return 0
+    fi
+
+    # Uncommitted work inside an excluded subtree would be discarded: refuse.
+    dirty="$(git -C "$target" status --porcelain 2>/dev/null || true)"
+    if [ -n "$dirty" ]; then
+        _narrow_warn "working tree has uncommitted changes; keeping the full checkout"
+        return 0
+    fi
+
+    # One call: init and apply together, so a failure leaves the tree untouched.
+    if ! git -C "$target" sparse-checkout set --cone "${keep_dirs[@]}" >/dev/null 2>&1; then
+        _narrow_warn "could not apply the sparse checkout; keeping the full checkout"
+        return 0
+    fi
+
+    # Verify every kept directory that exists at HEAD before claiming success.
+    missing=""
+    for dir in "${keep_dirs[@]}"; do
+        if git -C "$target" cat-file -e "HEAD:$dir" 2>/dev/null; then
+            [ -d "$target/$dir" ] || missing="$missing $dir"
+        fi
+    done
+
+    if [ -n "$missing" ]; then
+        _narrow_warn "sparse checkout left these directories missing:$missing"
+        if git -C "$target" sparse-checkout disable >/dev/null 2>&1; then
+            _narrow_warn "restored the full checkout"
+        else
+            _narrow_warn "COULD NOT RESTORE the checkout — the installation is incomplete."
+            _narrow_warn "run: git -C $target sparse-checkout disable"
+        fi
+        return 0
+    fi
+
+    echo "  narrowed checkout ($excluded_label excluded)"
+    return 0
+}
+narrow_checkout "$AI_SPECS_HOME" || true
 
 # Nothing in lib/ is chmod-ed, and neither is bin/ai-specs any more: those files
 # are committed 100644 and touching their modes makes git report mode-only dirt,
