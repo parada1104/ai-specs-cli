@@ -49,6 +49,8 @@ const (
 	routeRecipeInitVerb                     // native: `recipe init`, port of lib/recipe-init.sh (GO-20 U7-2)
 	routeSpecs                              // native: the `specs` family remainder — usage/help/unknown (GO-20 U2e U-A)
 	routeSpecsPromote                       // native: `specs promote`, port of lib/_internal/spec_promotion.py (GO-20 U2e U-A)
+	routeGates                              // native: the `gates` family remainder — usage/help/unknown (GO-20 U2e U-B)
+	routeGatesPremerge                      // native: `gates premerge`, port of lib/_internal/premerge_guardian.py (GO-20 U2e U-B)
 	routeUnknown                            // unknown command: usage error, exit 2
 )
 
@@ -171,6 +173,16 @@ func Route(args []string) route {
 		}
 		return route{kind: routeSpecs}
 	}
+	// `gates premerge` (GO-20 U2e U-B) is the family's only verb; the root
+	// dispatcher has no `premerge` of its own, and every remaining arm of the
+	// family (bare `gates`, `--help|-h|help`, unknown subcommands) resolves to
+	// the native family remainder.
+	if args[0] == "gates" {
+		if len(args) > 1 && args[1] == "premerge" {
+			return route{kind: routeGatesPremerge}
+		}
+		return route{kind: routeGates}
+	}
 	return route{kind: routeUnknown}
 }
 
@@ -270,6 +282,12 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 	case routeSpecsPromote:
 		// args[0]=specs, args[1]=promote: the verb's own grammar sees args[2:].
 		return runSpecsPromote(args[2:], stdout, stderr)
+	case routeGates:
+		// args[0]=gates: the family remainder sees the subcommand slot.
+		return runGatesDispatch(args[1:], stdout, stderr)
+	case routeGatesPremerge:
+		// args[0]=gates, args[1]=premerge: the verb's own grammar sees args[2:].
+		return runGatesPremerge(args[2:], stdout, stderr)
 	case routeRecipeAdd:
 		// args[0]=recipe, args[1]=add: recipe.sh shifts the subcommand before
 		// it execs recipe-add.sh, so the verb's own loop sees args[2:]. No
