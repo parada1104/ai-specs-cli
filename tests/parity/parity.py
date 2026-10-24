@@ -217,6 +217,23 @@ def _norm_vendor_clone_failure(text: str, ctx: dict) -> str:
     return _VENDOR_CLONE_STATUS_RE.sub(r"\1", text)
 
 
+# GO-20 U2e T7 (Robert's decision): the generated Cursor deny wrapper no longer
+# invokes python3. The legacy leg (lib/_internal/hooks-render.py) still emits the
+# python3 deny line; the Go leg emits the POSIX awk line. This rule canonicalizes
+# EXACTLY those two lines, on BOTH legs, to one marker. Exact-string match only.
+# EXPIRES with lib/_internal (T5): delete this rule and both constants then.
+_T7_LEGACY_DENY_LINE = r"""  printf '{"permission":"deny","agent_message":%s}' "$(printf %s "$out" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
+"""
+_T7_GO_DENY_LINE = r"""  printf '{"permission":"deny","agent_message":"%s"}' "$(printf %s "$out" | LC_ALL=C awk 'BEGIN{esc["\\"]="\\\\";esc["\""]="\\\"";esc["\r"]="\\r";esc["\t"]="\\t";esc["\b"]="\\b";esc["\f"]="\\f";for(i=1;i<32;i++){c=sprintf("%c",i);if(!(c in esc))esc[c]=sprintf("\\u%04x",i)}} {line=$0;if(NR>1)printf "%s","\\n";for(i=1;i<=length(line);i++){c=substr(line,i,1);printf "%s",((c in esc)?esc[c]:c)}}')"
+"""
+_T7_DENY_MARKER = "<T7-CURSOR-DENY-LINE>"
+
+
+def _norm_t7_cursor_deny_line(text: str, ctx: dict) -> str:
+    text = text.replace(_T7_LEGACY_DENY_LINE, _T7_DENY_MARKER + "\n")
+    return text.replace(_T7_GO_DENY_LINE, _T7_DENY_MARKER + "\n")
+
+
 NORMALIZATIONS = (
     Normalization(
         rule_id="N1-temp-paths",
@@ -383,6 +400,21 @@ NORMALIZATIONS = (
                       "line only where it follows a `fatal:` line. Nothing else "
                       "on stderr is touched, and the scope is argv[0]=='sync'.",
         fn=_norm_vendor_clone_failure,
+    ),
+    Normalization(
+        rule_id="N10-t7-cursor-deny-line",
+        surfaces=("tree",),
+        description="Canonicalize the Cursor deny line of generated "
+                    ".cursor/hooks/*.sh wrappers (exact match of the legacy "
+                    "python3 line and of the Go awk line) to one marker, on "
+                    "both legs.",
+        justification="Intentional divergence, GO-20 U2e T7, Robert's decision: "
+                      "the generated Cursor wrapper must not invoke python3. The "
+                      "legacy renderer still emits it and the native port emits "
+                      "the POSIX awk escaper. Only those two exact lines change; "
+                      "the rest of each wrapper is compared byte for byte. Expires "
+                      "with lib/_internal (T5).",
+        fn=_norm_t7_cursor_deny_line,
     ),
 )
 

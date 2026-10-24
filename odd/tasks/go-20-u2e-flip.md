@@ -112,3 +112,11 @@ Slice 1 = documentation and measured inventory only. No source or test change in
   `lib/_internal/hooks-render.py`, valid until `lib/_internal` is deleted (T5). `lib/_internal` is not touched; no
   differential rows are retired; the rest of the Cursor differential stays byte-for-byte. Evidence: differential
   97 subtests PASS (29 cursor), 0 FAIL; the 3 new tests PASS. Scratch artifacts live under the session TMPDIR.
+- L11 — T7 validate failure and decision (verbatim answers: "Normalizar en paridad", with strict conditions). The
+  legacy-vs-go parity corpus (cache-layout and hooks-five-runtimes, both gate modes) compared the Cursor wrapper
+  `.cursor/hooks/worktree-flow-worktree-gate-shell.sh`, which now carries the Go awk line while the legacy leg still
+  emits python3. Authorized: a single exact-string tree normalization `N10-t7-cursor-deny-line` in
+  `tests/parity/parity.py`, canonicalizing the two exact deny lines on both legs to one marker. Nothing else in
+  parity.py changed (diff: +32 lines, 0 deletions). BOUNDARY: intentional divergence, Robert's T7 decision, valid
+  only while lib/_internal exists. EXPIRY: T5, when lib/_internal is deleted; then delete N10, `_T7_*` constants and
+  the reference rewrite together. No parity rows retired; T7 not delayed.
