@@ -7,6 +7,7 @@ package cli
 // are reachable only through the `tracker` family.
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -21,6 +22,7 @@ const trackerUsage = `Usage: ai-specs tracker <subcommand> [args]
 Subcommands:
   slug <root>                        Print the single active change slug
   evidence <root> <slug> <outfile>   Write the ledger evidence JSON to outfile
+  field <path>                       Print the value at a JSON path read from stdin
 Run 'ai-specs tracker <subcommand> --help' for full options.
 `
 
@@ -48,6 +50,21 @@ Arguments:
   <root>              Resolved planning root
   <slug>              Change slug under openspec/changes/ (may be empty)
   <outfile>           Destination file for the evidence JSON
+
+Options:
+  --help, -h          Show this help
+`
+
+const trackerFieldUsage = `Usage: ai-specs tracker field <path>
+
+Read one JSON object from stdin and print the value at <path>. Dotted paths
+descend objects (evidence.local). A string prints as is, true as 1, false as 0,
+null or a missing key as an empty line, a list as its items joined with ", ",
+and an object as compact JSON. Invalid JSON, or a top-level value that is not an
+object, exits 1 with nothing printed.
+
+Arguments:
+  <path>              Key or dotted path to print
 
 Options:
   --help, -h          Show this help
@@ -136,4 +153,90 @@ func runTrackerEvidence(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// runTrackerFieldVerb prints the value at a dotted path of the JSON object on
+// stdin. It replaces the python3 helpers of tracker-card-gate.sh; the output
+// format is the one documented in trackerFieldUsage.
+func runTrackerFieldVerb(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	usageError := func(message string) int {
+		fmt.Fprintln(stderr, message)
+		fmt.Fprintln(stderr, "Run 'ai-specs tracker field --help' for usage.")
+		return 2
+	}
+	var positional []string
+	for _, arg := range args {
+		switch {
+		case arg == "--help" || arg == "-h":
+			fmt.Fprint(stdout, trackerFieldUsage)
+			return 0
+		case strings.HasPrefix(arg, "-"):
+			return usageError("ERROR: unknown flag: " + arg)
+		default:
+			positional = append(positional, arg)
+		}
+	}
+	if len(positional) == 0 {
+		return usageError("ERROR: missing required argument: <path>")
+	}
+	if len(positional) > 1 {
+		return usageError("ERROR: unexpected positional argument: " + positional[1])
+	}
+	decoder := json.NewDecoder(stdin)
+	decoder.UseNumber()
+	var doc any
+	if err := decoder.Decode(&doc); err != nil {
+		fmt.Fprintln(stderr, "ERROR: stdin is not valid JSON")
+		return 1
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		fmt.Fprintln(stderr, "ERROR: stdin is not valid JSON")
+		return 1
+	}
+	if _, ok := doc.(map[string]any); !ok {
+		fmt.Fprintln(stderr, "ERROR: stdin JSON is not an object")
+		return 1
+	}
+	var current any = doc
+	for _, key := range strings.Split(positional[0], ".") {
+		object, ok := current.(map[string]any)
+		if !ok {
+			current = nil
+			break
+		}
+		value, found := object[key]
+		if !found {
+			current = nil
+			break
+		}
+		current = value
+	}
+	fmt.Fprintln(stdout, fieldText(current))
+	return 0
+}
+
+// fieldText renders one decoded JSON value as the field verb prints it.
+func fieldText(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case bool:
+		if typed {
+			return "1"
+		}
+		return "0"
+	case string:
+		return typed
+	case json.Number:
+		return typed.String()
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, item := range typed {
+			parts = append(parts, fieldText(item))
+		}
+		return strings.Join(parts, ", ")
+	default:
+		encoded, _ := json.Marshal(typed)
+		return string(encoded)
+	}
 }
