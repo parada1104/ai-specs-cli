@@ -34,7 +34,8 @@ Slice 1 = documentation and measured inventory only. No source or test change in
 - **T2a** — Freeze the legacy parity leg as goldens before the flip (`tests/parity/goldens/`, `tests/parity/capture_goldens.py`). Slice 8, branch `change/go-20-u2e-goldens` (base 6340c27). Commits: 5c9e45d (harness, capture script, tests; native review approved, lineage review-24d25e68c96a2460, acknowledged), 219628b (70 goldens). Merged: PR #447, squash 276fa85. Evidence and decisions: L20.
 - **T2 PR-A (delivery)** — `install.sh` copies the verified entry to `$AI_SPECS_HOME/dist/ai-specs`; `internal/upgrade` refreshes that copy on binary upgrade. Slice 9, branch `change/go-20-u2e-delivery` (base 43029a1). Commits: 26a29fa (code), ce0a4fa (fixture mirror of production `.gitignore`). Merged: PR #449, squash 8a6031f. Evidence and decisions: L21.
 - **T2** — Flip: `bin/ai-specs` execs the native binary for every verb (13 `bash "$LIB_DIR/…"` dispatch lines,
-  `bin/ai-specs:38-50`). Blocked until T3 and the named test rows are native. Commit: pending.
+  `bin/ai-specs:38-50`). Blocked until T3 and the named test rows are native. Commit: 270986b (PR-B, branch
+  `change/go-20-u2e-flip-t2`, rebased on b852a36). Evidence, findings and per-case inventory: L22.
 - **T3** — Retarget the U2e test rows to the native binary, no assertion removed. Split into named units (L6):
   - **T3a** `test_upgrade_output` (oracle seed `lib/_internal/changelog.py`). Slice 2. Commit: e4bccc7 (PR #433).
   - **T3b** `AgentsSubmenuManifestTests` (`lib/_internal` loader, no CLI surface). Go coverage in
@@ -260,3 +261,71 @@ Slice 1 = documentation and measured inventory only. No source or test change in
   Publication: push and PR were blocked once by the safety policy until Robert confirmed with the data in view; then PR #449 merged manually with --match-head-commit ce0a4fa.
   HANDOFF to PR-B (new session; NOT started here). Base: epic tip 8a6031f (includes PR-A). Work exists uncommitted in worktree `.worktrees/go-20-u2e-flip-t2` (branch change/go-20-u2e-flip-t2, base 43029a1): must be rebased onto 8a6031f before any commit. Scope: (a) `bin/ai-specs` execs `$AI_SPECS_GO_BIN` or `$AI_SPECS_HOME/dist/ai-specs`; missing binary = exit 1, no bash fallback. Tests: tests/test_launcher_flip.py (3 OK, RED 16 before; mutation = 1 failure). (b) Go re-entries pin `AI_SPECS_GO_BIN` to the running binary: `hub.childEnv` and `cli.reentryEnv` (tests TestChildEnvPinsNativeBinary and TestReentryEnvPinsRunningBinary pass). No recursion: sync, doctor, init, upgrade do not re-enter. (c) The 9 PTY hub tests in tests/test_hub.py are NOT rewritten. Required: per-case equivalence map to the Go hub; any case without equivalent is reported, never removed. (d) Document as findings, not normalized: D-U2d-9 exposed by the flip (test_unknown_recipe_fails: native names the TOML error, not the recipe); two InitBriefRouteTests seam tests (test_usable_seam, test_native_chain_failure) use the bash init seam; retire in T5. (e) Vacuous differentials, marked and inventoried in the doc, not deleted: test_both_routes_render_the_same_bytes and TestDifferentialSmoke compare Go against itself after the flip; TestDoctorMissingPathDeviation fails because the legacy deviation is no longer observable. The full inventory is still open and must be finished before T5. Parity after flip: `run.py` default exit 0, gate-absent failing=0, gate-present failing=0 (job-9).
   HANDOFF to T5 (after PR-B): delete `lib/_internal` (46 files) and the 16 `lib/*.sh` users; replace the five Python differentials (config, deps, gatebinary, schema, target) with native checks; retire the legacy-live differentials with their equivalence to goldens; retire the two seam tests; delete `shim.go` (routeShim is unused); expire N10 and N11; register D-U2d-9.
+- L22 — PR-B (T2 flip), findings and evidence. Base b852a36 (includes PR-A #449 and #450).
+  Scope delivered: (a) `bin/ai-specs` execs `$AI_SPECS_GO_BIN` or `$AI_SPECS_HOME/dist/ai-specs`; missing binary exits 1,
+  no bash fallback (`tests/test_launcher_flip.py`, 3 OK). (b) Go re-entries pin `AI_SPECS_GO_BIN` to the running binary
+  (`hub.childEnv`, `cli.reentryEnv`; `TestChildEnvPinsNativeBinary`, `TestReentryEnvPinsRunningBinary`).
+  Divergences from the handoff, reported and decided by Robert:
+  - (c) "rewrite the 9 PTY hub tests" is already resolved on the base: `tests/test_hub.py` and `tests/test_hub_tui.py`
+    drive the Go binary through `tests/_go_cli.py` since U3b-2 (43029a1 already `_pty_cli()`). The PTY set is 28
+    tests across the two files, not 9. Both files pass 32/32 and 47 tests after the flip with no change. Decision:
+    omit the rewrite (human, verbatim: "acepto omitir la reescritura SÓLO si demuestras que las 9 no están vacías").
+    Vacuity proof, by mutation of the Go hub (restored, `git diff` clean afterwards):
+    - M1 `runLoop` returns 0 before the menu: 25 of 28 PTY cases fail (23 failures, 2 errors). Not vacuous.
+    - M2 `offerInit` returns false before the init prompt: `test_confirm_action_returns_bool` and
+      `test_offer_init_decline` fail. Not vacuous.
+    - `test_none_maps_to_quit` (`tests/test_hub_tui.py`) PASSES under M1: it asserts only the absence of `Traceback`
+      and `exited`, and its needle `What do you want to do?` never appears. VACUOUS for the Ctrl-C-to-QUIT mapping.
+      Inventory for T5 (or an earlier rewrite); not removed in PR-B, no expectedFailure (not in the approved list).
+  - Four expected failures, approved by Robert ("expectedFailure con motivo", option 1), assertions untouched:
+    1. `InitBriefRouteTests.test_usable_seam_runs_the_native_verbs_and_no_brief_python` (`tests/test_init_brief_route.py`)
+    2. `InitBriefRouteTests.test_native_chain_failure_writes_the_placeholder` (same file). Cause: the bash init seam
+       (`AI_SPECS_GO_BIN` stub) no longer exists; the stub now receives `init` itself. Owner: T5. Expires with T5.
+    3. `RecipeMaterializeTests.test_unknown_recipe_fails` (`tests/test_recipe_materialize.py`). Owner: D-U2d-9. Expires
+       when that diagnostic lands. Invocation changed from `binary=LEGACY_LAUNCHER` to the native `CLI`: the launcher
+       had no `dist/` in the test home, so the failure was an environment error, not D-U2d-9. The assertion is kept.
+    Verified: on Python 3.14 an `unexpectedSuccess` makes `wasSuccessful()` False, so each case turns the suite red
+    when its cause is fixed.
+  - Go `internal/cli/TestDoctorMissingPathDeviation` (owner T5, expires with the legacy `lib/_internal` deletion):
+    Go has no `expectedFailure`. Marked with `t.Skip` and the motivo; assertions untouched. This is a DEVIATION from the
+    approved option 1, which covers Python only. Robert to confirm or reject it.
+- L23 — Vacuous differentials after the flip (inventory, NOT deleted in PR-B; retire at T5):
+  - `tests/test_init_brief_route.py::test_both_routes_render_the_same_bytes`: `legacy` and `native` both run the same
+    Go binary (the launcher execs it, `AI_SPECS_GO_BIN` pinned in both fixtures). It passes by construction.
+  - `internal/cli/smoke_test.go::TestDifferentialSmoke`: the "legacy" leg `bash bin/ai-specs` now execs the Go binary,
+    so it compares Go against Go. Passes by construction.
+  - `tests/test_hub_tui.py::TestCommandMenu::test_none_maps_to_quit`: see L22 (vacuous under mutation M1).
+  Note: `TestDoctorMissingPathDeviation` (L22) is the other half of this class: its deviation is not observable.
+- L24 — Open items (not in PR-B): D-U2d-9 still unregistered as a debt entry in Engram (its row is named in
+  `tests/test_recipe_materialize.py`); the `binaryEntry` symlink class (T9, L14) untouched; `shim.go` and the
+  `lib/*.sh` callers stay for T5.
+- L25 — Fifth expected failure and the approved-cases mapping (validate red on the final state).
+  - `tests/test_init_native.py::InitNativeDifferentialTests.test_native_wizard_never_executes_init_tui_py`:
+    `@unittest.expectedFailure`, owner T5, expires when `lib/_internal` is deleted. Robert approved it explicitly (verbatim: "OK para el quinto caso"). The legacy assertion `leg_marker.exists()` is KEPT: it is the control that proves the poison fires. Without it the native "marker absent" check passes vacuously. After T5 this test must rebuild the poison control against a Go surface before its native assertions claim anything.
+  - Mapping of the four approved cases (reported at Robert's request, because the run showed `expected failures=3`):
+    1. `test_usable_seam_runs_the_native_verbs_and_no_brief_python`: Python expectedFailure (marked).
+    2. `test_native_chain_failure_writes_the_placeholder`: Python expectedFailure (marked).
+    3. `test_unknown_recipe_fails`: Python expectedFailure (marked).
+    4. `TestDoctorMissingPathDeviation` (Go): NOT a Python expectedFailure. Go has no `expectedFailure` equivalent; it carries `t.Skip` with the motivo. That is the mismatch that left the count at 3, and it is a deviation from Robert's option 1, flagged in L22 for confirmation.
+  - Plus the fifth case above, approved separately. Python `expected failures=4` in total; Go `--- SKIP` one.
+- L26 — Paridad y TMPDIR (finding, not fixed in PR-B). Under `TMPDIR` in `/var/folders/...` (macOS `/var` → `/private/var`), `tests/parity/run.py` reported `gate-absent failing=28, gate-present failing=28`. Diff: the Go doctor prints `target: /private<TEMP>` while the leg it is compared with prints `target: <TEMP>`. Canonicalized scratch (`TMPDIR=/private/tmp/...`): `failing=0` on both gate modes, which is what the handoff expected. Two consequences for T5, both recorded, neither fixed here:
+  - The "legacy" leg of `parity.py` (`bin/ai-specs`) now executes the Go binary, so the corpus no longer compares against legacy. Its PASS shows Go determinism under canonical paths; the legacy oracle lives in the T2a goldens (`tests/parity/goldens/`).
+  - The Go binary resolves symlinked paths in its output while bash did not: same class as D-U2e-1 (L7/L13). A real divergence on symlinked homes, to decide, not normalize here.
+- L27 — Flake, not a regression: `internal/sync TestStandaloneMaterializeRunsNatively/single-target_body` failed once in a full `validate.sh` with "standard TOML parser timed out after 3s" (3.04 s), and passed 3/3 alone (0.8 s). `internal/sync` is untouched by this PR. The 3 s budget is tight under full-suite load; logged, not changed here.
+- L28 — Post-review documentation (commit after the acknowledged candidate 9e53224; reviewed candidate unchanged).
+  - Expected-failure inventory, owner T5 (exit criteria: every row must be reactivated and green when its owner lands):
+    | Test | Mechanism | Owner | Expiry |
+    | `InitBriefRouteTests.test_usable_seam_runs_the_native_verbs_and_no_brief_python` | `expectedFailure` | T5 | T5 |
+    | `InitBriefRouteTests.test_native_chain_failure_writes_the_placeholder` | `expectedFailure` | T5 | T5 |
+    | `RecipeMaterializeTests.test_unknown_recipe_fails` | `expectedFailure` | D-U2d-9 | when the diagnostic lands |
+    | `InitNativeDifferentialTests.test_native_wizard_never_executes_init_tui_py` | `expectedFailure` | T5 | T5 |
+    | `internal/cli TestDoctorMissingPathDeviation` | `t.Skip` (Go has no `expectedFailure`) | T5 | T5 |
+  - Compensations for the Go skip: it sits in this same inventory with owner and expiry; it LOSES unexpected-success detection (a fixed cause will not turn red as a Python `expectedFailure` would), so T5 must reactivate it by removing the skip. Reactivation is an exit criterion of T5.
+  - Root cause of the Go skip: ENVIRONMENT/ORACLE, not product. The Go doctor message `ERROR: <path> is not a directory.` is the product's own guard (`internal/cli/doctor.go:79`) and is unchanged. The test expected the bash `cd:` diagnostic from the legacy leg; that leg no longer exists as a separate route (the launcher execs the Go binary), so the oracle is gone. T5 fix: compare against the golden frozen in T2a or retire the legacy half, then remove `t.Skip`.
+  - Root cause of the 5th expected failure: the same class (legacy leg executes the Go binary, so the poison control cannot fire). Recorded in the table above; T5 rebuilds the control against a Go surface (L25).
+  - Environment note (not a regression), parity under a symlinked TMPDIR: when `TMPDIR` lives under `/var/folders/...` (macOS `/var` -> `/private/var`), `tests/parity/run.py` fails with `gate-absent failing=28, gate-present failing=28`. The Go binary prints the resolved path (`/private<TEMP>`) while the compared leg prints `<TEMP>`. Canonicalized scratch (`TMPDIR=/private/tmp/...`) gives `failing=0` on both gate modes. Cause: the path form, not the content. Run parity and validate with a canonical TMPDIR. The divergence in symlink resolution is recorded in L26 for a separate decision.
+  - Reviewer findings, native review `review-d12905c86464743d` (approved, acknowledged on 9e53224, burn evidence gentle-ai.review-acknowledged/v1). All informational, none blocking:
+    - R3-001 (reliability, WARNING) `bin/ai-specs:24-30`.
+    - R3-002 (reliability, WARNING) `tests/test_init_native.py:418-423`.
+    - R3-003 (reliability, WARNING) `internal/cli/smoke_test.go:237-240`.
+  - Mutation check (c) closed: 25 PTY cases of `tests/test_hub.py` and `tests/test_hub_tui.py` fail under mutation of the Go hub; `test_confirm_action_returns_bool` and `test_offer_init_decline` fail under a second mutation of the init offer. `test_none_maps_to_quit` is vacuous and sits in the T5 vacuity inventory (L23).

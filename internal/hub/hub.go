@@ -390,12 +390,18 @@ func resolveTarget(target string) (string, error) {
 // childEnv pins AI_SPECS_HOME for a delegated child, mirroring what the shell
 // launcher exported before exec'ing the child.
 func childEnv(home string) []string {
-	env := make([]string, 0, len(os.Environ())+1)
+	env := make([]string, 0, len(os.Environ())+2)
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "AI_SPECS_HOME=") {
+		if strings.HasPrefix(kv, "AI_SPECS_HOME=") || strings.HasPrefix(kv, "AI_SPECS_GO_BIN=") {
 			continue
 		}
 		env = append(env, kv)
 	}
-	return append(env, "AI_SPECS_HOME="+home)
+	env = append(env, "AI_SPECS_HOME="+home)
+	// The launcher execs AI_SPECS_GO_BIN: pin the running binary so the child
+	// never depends on a dist/ build inside the installed home (GO-20 U2e T2).
+	if self, err := os.Executable(); err == nil {
+		env = append(env, "AI_SPECS_GO_BIN="+self)
+	}
+	return env
 }

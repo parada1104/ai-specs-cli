@@ -234,6 +234,10 @@ func TestDifferentialSmoke(t *testing.T) {
 // the message the Python guard intended instead of fabricating a bash line
 // number.
 func TestDoctorMissingPathDeviation(t *testing.T) {
+	// GO-20 U2e T2 finding (owner: T5, expires with lib/_internal deletion): the
+	// legacy `cd:` deviation is no longer observable once bin/ai-specs execs the
+	// binary, so this case cannot pass as written. Skipped, assertions untouched.
+	t.Skip("GO-20 U2e T2 finding: legacy deviation not observable after the flip; owner T5")
 	bin, root := smokeSetup(t)
 	env := smokeEnv(root)
 	legacy := filepath.Join(root, "bin", "ai-specs")

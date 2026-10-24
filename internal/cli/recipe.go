@@ -2201,16 +2201,28 @@ func configureRejectedReport(recipeID, reason string, ignore bool) rcJSON {
 // as stdout+stderr concatenated (Python's `(proc.stdout or "") +
 // (proc.stderr or "")`). A process that cannot be spawned is a fatal error:
 // Python dies there with an uncaught traceback (exit 1, no report).
+// reentryEnv is the environment of a Go->launcher re-entry: AI_SPECS_HOME pinned
+// to the CLI home, and AI_SPECS_GO_BIN pinned to the running binary (self) so the
+// launcher execs this build instead of looking for dist/ (GO-20 U2e T2).
+func reentryEnv(home, self string) []string {
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "AI_SPECS_HOME=") || strings.HasPrefix(kv, "AI_SPECS_GO_BIN=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	env = append(env, "AI_SPECS_HOME="+home)
+	if self != "" {
+		env = append(env, "AI_SPECS_GO_BIN="+self)
+	}
+	return env
+}
+
 func configureFrontDoor(home, root string, argv ...string) (int, string, error) {
 	cmd := exec.Command(filepath.Join(home, "bin", "ai-specs"), argv...)
 	cmd.Dir = root
-	env := make([]string, 0, len(os.Environ())+1)
-	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "AI_SPECS_HOME=") {
-			env = append(env, kv)
-		}
-	}
-	cmd.Env = append(env, "AI_SPECS_HOME="+home)
+	cmd.Env = reentryEnv(home, selfPath())
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf

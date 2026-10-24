@@ -3208,3 +3208,26 @@ func envOfferBody(t *testing.T, path string) string {
 	}
 	return string(raw)
 }
+
+// GO-20 U2e T2: the front-door re-entry (recipe configure runs `sync` and
+// `doctor` through <home>/bin/ai-specs) pins the running binary for the
+// launcher, so the launcher never needs a dist/ build inside an installed home.
+func TestReentryEnvPinsRunningBinary(t *testing.T) {
+	t.Setenv("AI_SPECS_GO_BIN", "/stale/other-build")
+	env := reentryEnv("/home/x", "/bin/ai-specs-self")
+	var pinned, homes []string
+	for _, kv := range env {
+		switch {
+		case strings.HasPrefix(kv, "AI_SPECS_GO_BIN="):
+			pinned = append(pinned, kv)
+		case strings.HasPrefix(kv, "AI_SPECS_HOME="):
+			homes = append(homes, kv)
+		}
+	}
+	if len(pinned) != 1 || pinned[0] != "AI_SPECS_GO_BIN=/bin/ai-specs-self" {
+		t.Fatalf("AI_SPECS_GO_BIN entries = %q", pinned)
+	}
+	if len(homes) != 1 || homes[0] != "AI_SPECS_HOME=/home/x" {
+		t.Fatalf("AI_SPECS_HOME entries = %q", homes)
+	}
+}
