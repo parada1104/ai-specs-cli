@@ -166,3 +166,118 @@ func TestBinaryKindFailsClosedWithoutACommittedDigest(t *testing.T) {
 		t.Error("the current binary must stay untouched when the digest is missing")
 	}
 }
+
+// GO-20 U2e: after the flip the repo launcher bin/ai-specs execs
+// $AI_SPECS_HOME/dist/ai-specs, so a binary upgrade must also refresh that
+// copy with the very bytes it installed at LocalBin.
+
+// serveVerifiedAsset points the fake install's trust root and an httptest
+// server at payload, so a binary upgrade installs it.
+func serveVerifiedAsset(t *testing.T, f fakeInstall, payload []byte) *httptest.Server {
+	t.Helper()
+	asset := AssetName(runtime.GOOS, runtime.GOARCH)
+	sum := sha256.Sum256(payload)
+	writeFile(t, filepath.Join(f.aiSpecs, "bin", "SHA256SUMS"),
+		fmt.Sprintf("%s  %s\n", hex.EncodeToString(sum[:]), asset), 0o644)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/"+asset) {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(payload)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestBinaryUpgradeRefreshesDistCopy(t *testing.T) {
+	f := newFakeBinaryInstall(t, "1.0.0")
+	payload := binaryAssetPayload("1.1.0")
+	srv := serveVerifiedAsset(t, f, payload)
+
+	env := f.env()
+	env.ReleaseBase = srv.URL
+	var out, errb bytes.Buffer
+	if code := Run(nil, env, &out, &errb); code != ExitOK {
+		t.Fatalf("code=%d stderr=%s", code, errb.String())
+	}
+
+	installed, err := os.ReadFile(f.localBin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dist := filepath.Join(f.aiSpecs, "dist", "ai-specs")
+	got, err := os.ReadFile(dist)
+	if err != nil {
+		t.Fatalf("the upgrade must refresh the launcher copy at %s: %v", dist, err)
+	}
+	if !bytes.Equal(got, installed) || !bytes.Equal(got, payload) {
+		t.Errorf("dist copy must equal the new LocalBin bytes:\n dist: %q\n local: %q", got, installed)
+	}
+	if fi, err := os.Stat(dist); err != nil || fi.Mode().Perm()&0o111 == 0 {
+		t.Errorf("the dist copy must stay executable: %v", err)
+	}
+}
+
+func TestBinaryUpgradeDistCopyUsesCanonicalSymlinkedHome(t *testing.T) {
+	f := newFakeBinaryInstall(t, "1.0.0")
+	// ~/.ai-specs is a symlink to the real checkout directory (D-U2e-1).
+	real := f.aiSpecs + "-real"
+	if err := os.Rename(f.aiSpecs, real); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, f.aiSpecs); err != nil {
+		t.Fatal(err)
+	}
+	payload := binaryAssetPayload("1.1.0")
+	srv := serveVerifiedAsset(t, f, payload)
+
+	env := f.env() // Home stays the symlinked path
+	env.ReleaseBase = srv.URL
+	var out, errb bytes.Buffer
+	if code := Run(nil, env, &out, &errb); code != ExitOK {
+		t.Fatalf("code=%d stderr=%s", code, errb.String())
+	}
+
+	dist := filepath.Join(real, "dist", "ai-specs")
+	got, err := os.ReadFile(dist)
+	if err != nil {
+		t.Fatalf("the dist copy must be written under the canonical home %s: %v", dist, err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("dist copy under the canonical home must be the new bytes: %q", got)
+	}
+}
+
+func TestBinaryUpgradeReportsFailedDistRefresh(t *testing.T) {
+	f := newFakeBinaryInstall(t, "1.0.0")
+	// A regular file where the dist DIRECTORY must be makes the refresh fail.
+	writeFile(t, filepath.Join(f.aiSpecs, "dist"), "not a directory\n", 0o644)
+	payload := binaryAssetPayload("1.1.0")
+	srv := serveVerifiedAsset(t, f, payload)
+
+	env := f.env()
+	env.ReleaseBase = srv.URL
+	var out, errb bytes.Buffer
+	if code := Run(nil, env, &out, &errb); code == ExitOK {
+		t.Fatalf("a failed dist refresh must fail loudly; stdout=%s", out.String())
+	}
+	if !strings.Contains(errb.String(), "dist") {
+		t.Errorf("the failure must name the dist path: %q", errb.String())
+	}
+}
+
+func TestBinaryUpgradeDryRunDoesNotTouchDistCopy(t *testing.T) {
+	f := newFakeBinaryInstall(t, "1.0.0")
+	serveVerifiedAsset(t, f, binaryAssetPayload("1.1.0"))
+
+	env := f.env()
+	var out, errb bytes.Buffer
+	if code := Run([]string{"--dry-run"}, env, &out, &errb); code != ExitOK {
+		t.Fatalf("code=%d stderr=%s", code, errb.String())
+	}
+	dist := filepath.Join(f.aiSpecs, "dist", "ai-specs")
+	if _, err := os.Stat(dist); !os.IsNotExist(err) {
+		t.Errorf("a dry-run must not write the dist copy: stat err = %v", err)
+	}
+}
