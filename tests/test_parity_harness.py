@@ -308,5 +308,93 @@ class RunEntrypointTests(unittest.TestCase):
         self.assertIn("gate-present failing=0", out.getvalue())
 
 
+class VendorAddCloneNormalizationTests(unittest.TestCase):
+    """GO-20 U2e T4: N11 removes the vendor-skills.py clone-failure wrapper
+    for `add-dep` and `skills add` only, and still lets a real divergence fail."""
+
+    LEGACY = (
+        "fatal: repository 'A' does not exist\n"
+        "Traceback (most recent call last):\n"
+        '  File "vendor-skills.py", line 114, in clone\n'
+        "    subprocess.run(\n"
+        "subprocess.CalledProcessError: Command '['git', 'clone', '--depth', "
+        "'1', 'A']' returned non-zero exit status 128.\n"
+    )
+    GO = "fatal: repository 'A' does not exist\n  ✗ exit status 128\n"
+    EXPECTED = "fatal: repository 'A' does not exist\n"
+
+    def test_add_dep_traceback_and_status_normalize_to_fatal_line(self):
+        ctx = {"argv": ("add-dep", "/x")}
+        self.assertEqual(
+            parity.apply_normalizations("stderr", self.LEGACY, ctx),
+            self.EXPECTED)
+        self.assertEqual(
+            parity.apply_normalizations("stderr", self.GO, ctx),
+            self.EXPECTED)
+
+    def test_skills_add_is_normalized_too(self):
+        ctx = {"argv": ("skills", "add", "/x")}
+        self.assertEqual(
+            parity.apply_normalizations("stderr", self.LEGACY, ctx),
+            self.EXPECTED)
+        self.assertEqual(
+            parity.apply_normalizations("stderr", self.GO, ctx),
+            self.EXPECTED)
+
+    def test_other_verbs_are_not_touched(self):
+        ctx = {"argv": ("doctor",)}
+        self.assertEqual(
+            parity.apply_normalizations("stderr", self.LEGACY, ctx),
+            self.LEGACY)
+        self.assertEqual(
+            parity.apply_normalizations("stderr", self.GO, ctx), self.GO)
+
+    def test_different_fatal_lines_still_diverge(self):
+        ctx = {"argv": ("add-dep", "/x")}
+        legacy = self.LEGACY
+        go = self.GO.replace("'A'", "'B'")
+        self.assertNotEqual(
+            parity.apply_normalizations("stderr", legacy, ctx),
+            parity.apply_normalizations("stderr", go, ctx))
+
+    def test_n11_records_its_expiry(self):
+        entry = {n.rule_id: n for n in parity.NORMALIZATIONS}[
+            "N11-vendor-add-clone-failure"]
+        self.assertIn("T5", entry.description)
+
+
+class S3GapCoverageTests(unittest.TestCase):
+    """U2 S7 gap rule (GO-20 U2e T4): every named verb is covered by a corpus
+    step or recorded with an explicit reason. One subtest per gap."""
+
+    GAPS = ("hub", "upgrade", "skills", "add-dep", "configure-recipes",
+            "refresh-bundled", "recipe remove", "recipe configure")
+
+    def test_every_s3_gap_is_registered(self):
+        self.assertEqual(sorted(parity.S3_GAP_COVERAGE), sorted(self.GAPS))
+
+    def test_each_gap_is_covered_or_recorded(self):
+        names = {f.name: f for f in parity.CORPUS}
+        for gap in self.GAPS:
+            with self.subTest(gap=gap):
+                entry = parity.S3_GAP_COVERAGE[gap]
+                covers = entry.get("covers", ())
+                recorded = entry.get("recorded", ())
+                equivalent = entry.get("equivalent", ())
+                self.assertTrue(covers or recorded or equivalent,
+                                f"{gap}: neither covered, equivalent nor recorded")
+                for fixture_name, prefix in covers:
+                    if fixture_name not in names:
+                        self.fail(f"{gap}: fixture {fixture_name} missing")
+                    argvs = [s.argv for s in names[fixture_name].steps]
+                    self.assertTrue(
+                        any(a[:len(prefix)] == prefix for a in argvs),
+                        f"{gap}: {fixture_name} has no step {prefix}")
+                for reason in recorded:
+                    self.assertTrue(reason.strip())
+                for note in entry.get("equivalent", ()):
+                    self.assertTrue(note.strip())
+
+
 if __name__ == "__main__":
     unittest.main()
