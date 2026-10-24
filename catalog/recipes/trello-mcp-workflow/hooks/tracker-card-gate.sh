@@ -540,39 +540,30 @@ _ledger_binary() {
 }
 
 _ledger_field() {
-  # stdin: verdict JSON. $1: top-level key.
-  python3 -c '
-import json, sys
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    raise SystemExit(1)
-value = data.get(sys.argv[1], "")
-if isinstance(value, bool):
-    print("1" if value else "0")
-elif value is None:
-    print("")
-else:
-    print(value)
-' "$1" 2>/dev/null
+  # stdin: verdict JSON. $1: dotted path in that object. Read through the native
+  # `tracker field` verb; without the bridge there is no verdict to report.
+  local cli
+  cli="$(_tracker_cli_bridge)" || return 1
+  "$cli" tracker field "$1" 2>/dev/null
 }
 
 _ledger_ask() {
-  # $1 bin, $2 checkpoint, $3 root, $4 prefix; stdin: prompt JSON. The follow-up
-  # `--decide` forwards the raw stamped legacy hint so Go re-resolves the same
-  # effective mode it graded with (no host-resolved --ledger-mode).
+  # $1 bin, $2 checkpoint, $3 root, $4 prefix; stdin: full verdict JSON. The
+  # follow-up `--decide` forwards the raw stamped legacy hint so Go re-resolves
+  # the same effective mode it graded with (no host-resolved --ledger-mode).
+  # Without the bridge the display lines are skipped (accepted degradation) and
+  # the opt-out flow below runs exactly as before.
   local bin="$1" checkpoint="$2" root="$3" prefix="$4"
-  python3 -c '
-import json, sys
-try:
-    prompt = json.load(sys.stdin) or {}
-except Exception:
-    prompt = {}
-ev = prompt.get("evidence") or {}
-for side in ("local", "remote", "code", "git"):
-    print("  %s: %s" % (side, ev.get(side) or "(unavailable)"))
-print("  choices: " + ", ".join(prompt.get("choices") or []))
-' >&2 2>/dev/null
+  local payload side value cli
+  payload="$(cat)"
+  if cli="$(_tracker_cli_bridge)"; then
+    for side in local remote code git; do
+      value="$(printf '%s' "$payload" | "$cli" tracker field "prompt.evidence.$side" 2>/dev/null)"
+      printf '  %s: %s\n' "$side" "${value:-(unavailable)}" >&2
+    done
+    value="$(printf '%s' "$payload" | "$cli" tracker field prompt.choices 2>/dev/null)"
+    printf '  choices: %s\n' "$value" >&2
+  fi
   if ! { exec 3</dev/tty; } 2>/dev/null; then
     echo "${prefix}: ${checkpoint} needs a decision but no terminal is available; no opt-out was recorded — Tracker advisory, continuing without blocking." >&2
     return 0
@@ -653,8 +644,7 @@ _ledger_grade() {
     return 0
   fi
   if [ "$decision" = ask ]; then
-    printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get("prompt")))' 2>/dev/null \
-      | _ledger_ask "$bin" "$checkpoint" "$root" "$prefix"
+    printf '%s' "$out" | _ledger_ask "$bin" "$checkpoint" "$root" "$prefix"
     return $?
   fi
   if [ "$active" = 1 ] && [ "$decision" != allow ]; then
@@ -685,6 +675,68 @@ _resolve_repo() {
   [ -d "$dir" ] || return 1
   git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
   git -C "$dir" rev-parse --show-toplevel 2>/dev/null
+}
+
+# --- Bash relpath (os.path.relpath equivalence, no python) --------------------
+# Resolve the leaf's symlinks with a readlink loop, canonicalize the deepest
+# existing ancestor with `cd -P` + `pwd -P`, re-append the non-existing tail, and
+# strip the canonical root prefix. Bash 3.2: no associative arrays, no ${x,,},
+# no readlink -f. A target outside the root yields `..`-prefixed output.
+_canonical_path() {
+  local path="$1" hops=0 target dir tail=""
+  while [ -L "$path" ] && [ "$hops" -lt 40 ]; do
+    target="$(readlink "$path" 2>/dev/null)" || break
+    case "$target" in
+      /*) path="$target" ;;
+      *) path="$(dirname "$path")/$target" ;;
+    esac
+    hops=$((hops + 1))
+  done
+  dir="$path"
+  while [ -n "$dir" ] && [ "$dir" != "/" ] && [ ! -d "$dir" ]; do
+    tail="/$(basename "$dir")$tail"
+    dir="$(dirname "$dir")"
+  done
+  [ -n "$dir" ] && [ -d "$dir" ] || return 1
+  dir="$(cd -P "$dir" 2>/dev/null && pwd -P)" || return 1
+  [ -n "$dir" ] || return 1
+  printf '%s%s\n' "${dir%/}" "$tail"
+}
+
+_relative_to() {
+  local target="$1" base="$2"
+  [ "$target" = "$base" ] && { printf '.\n'; return 0; }
+  local out="" i=0 j
+  local tparts bparts
+  # read -a splits without pathname expansion, so a `*` in a path stays literal.
+  IFS=/ read -r -a tparts <<< "${target#/}"
+  IFS=/ read -r -a bparts <<< "${base#/}"
+  while [ "$i" -lt "${#tparts[@]}" ] && [ "$i" -lt "${#bparts[@]}" ]; do
+    [ "${tparts[$i]}" = "${bparts[$i]}" ] || break
+    i=$((i + 1))
+  done
+  j=$i
+  while [ "$j" -lt "${#bparts[@]}" ]; do
+    out="${out}../"
+    j=$((j + 1))
+  done
+  j=$i
+  while [ "$j" -lt "${#tparts[@]}" ]; do
+    out="${out}${tparts[$j]}"
+    j=$((j + 1))
+    [ "$j" -lt "${#tparts[@]}" ] && out="${out}/"
+  done
+  [ -n "$out" ] || out="."
+  case "$out" in */) out="${out%/}" ;; esac
+  printf '%s\n' "$out"
+}
+
+_repo_relative() {
+  local target base
+  target="$(_canonical_path "$1")" || return 1
+  base="$(_canonical_path "$2")" || return 1
+  [ -n "$target" ] && [ -n "$base" ] || return 1
+  _relative_to "$target" "$base"
 }
 
 # --- Direct host mode dispatch (CLI lifecycle surface) ------------------------
@@ -762,7 +814,7 @@ if [ "$kind" = path ]; then
   repo_root="$(_resolve_repo "$abs")" || exit 0
   [ -n "$repo_root" ] || exit 0
 
-  rel="$(python3 -c 'import os,sys; print(os.path.relpath(os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])))' "$abs" "$repo_root" 2>/dev/null)" || exit 0
+  rel="$(_repo_relative "$abs" "$repo_root")" || exit 0
   [ -n "$rel" ] || exit 0
   case "$rel" in ..|../*) exit 0 ;; esac
 
