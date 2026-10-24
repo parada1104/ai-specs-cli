@@ -72,6 +72,22 @@ def _git(cwd: Path, *args: str) -> None:
 
 
 class TrackerCardGateHookTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # The bridged gate uses the real native CLI built from this worktree, so
+        # the evidence bridge exercises the shipped `tracker slug|evidence` verbs.
+        cls._cli_tmp = tempfile.TemporaryDirectory()
+        cls.cli_home = Path(cls._cli_tmp.name)
+        (cls.cli_home / "dist").mkdir(parents=True)
+        subprocess.run(
+            ["go", "build", "-o", str(cls.cli_home / "dist" / "ai-specs"), "./cmd/ai-specs"],
+            cwd=ROOT, check=True, capture_output=True, text=True,
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._cli_tmp.cleanup()
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -103,8 +119,8 @@ class TrackerCardGateHookTests(unittest.TestCase):
         return stamped
 
     def _stamped_gate_bridged(self, mode: str = "warn") -> Path:
-        """A gate whose __TRACKER_LIB_INTERNAL__ stamp resolves the real bridge."""
-        return self._stamped_gate(mode, lib_internal=str(LIB_INTERNAL))
+        """A gate whose __TRACKER_CLI_HOME__ stamp resolves the native bridge."""
+        return self._stamped_gate(mode, cli_home=str(self.cli_home))
 
     def _change(self, slug: str = "demo-change", tracker_none: str | None = None) -> Path:
         folder = self.repo / "openspec" / "changes" / slug

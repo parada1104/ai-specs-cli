@@ -51,6 +51,9 @@ const (
 	routeSpecsPromote                       // native: `specs promote`, port of lib/_internal/spec_promotion.py (GO-20 U2e U-A)
 	routeGates                              // native: the `gates` family remainder — usage/help/unknown (GO-20 U2e U-B)
 	routeGatesPremerge                      // native: `gates premerge`, port of lib/_internal/premerge_guardian.py (GO-20 U2e U-B)
+	routeTracker                            // native: the `tracker` family remainder — usage/help/unknown (GO-20 U2e U-C)
+	routeTrackerSlug                        // native: `tracker slug`, port of ledger_bridge.change_slug (GO-20 U2e U-C)
+	routeTrackerEvidence                    // native: `tracker evidence`, port of ledger_bridge.evidence_payload (GO-20 U2e U-C)
 	routeUnknown                            // unknown command: usage error, exit 2
 )
 
@@ -183,6 +186,20 @@ func Route(args []string) route {
 		}
 		return route{kind: routeGates}
 	}
+	// `tracker slug` and `tracker evidence` (GO-20 U2e U-C) are the family's only
+	// verbs; every remaining arm (bare `tracker`, `--help|-h|help`, unknown
+	// subcommands) resolves to the native family remainder.
+	if args[0] == "tracker" {
+		if len(args) > 1 {
+			switch args[1] {
+			case "slug":
+				return route{kind: routeTrackerSlug}
+			case "evidence":
+				return route{kind: routeTrackerEvidence}
+			}
+		}
+		return route{kind: routeTracker}
+	}
 	return route{kind: routeUnknown}
 }
 
@@ -288,6 +305,15 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 	case routeGatesPremerge:
 		// args[0]=gates, args[1]=premerge: the verb's own grammar sees args[2:].
 		return runGatesPremerge(args[2:], stdout, stderr)
+	case routeTracker:
+		// args[0]=tracker: the family remainder sees the subcommand slot.
+		return runTrackerDispatch(args[1:], stdout, stderr)
+	case routeTrackerSlug:
+		// args[0]=tracker, args[1]=slug: the verb's own grammar sees args[2:].
+		return runTrackerSlug(args[2:], stdout, stderr)
+	case routeTrackerEvidence:
+		// args[0]=tracker, args[1]=evidence: the verb's own grammar sees args[2:].
+		return runTrackerEvidence(args[2:], stdout, stderr)
 	case routeRecipeAdd:
 		// args[0]=recipe, args[1]=add: recipe.sh shifts the subcommand before
 		// it execs recipe-add.sh, so the verb's own loop sees args[2:]. No
