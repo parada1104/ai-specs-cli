@@ -47,6 +47,8 @@ const (
 	routeConfigureRecipes                   // native: `configure-recipes`, port of lib/recipe-config.sh + config_wizard.py (GO-20 U6e)
 	routeRecipe                             // native: lib/recipe.sh's dispatcher remainder — usage/bare/unknown (GO-20 U6e)
 	routeRecipeInitVerb                     // native: `recipe init`, port of lib/recipe-init.sh (GO-20 U7-2)
+	routeSpecs                              // native: the `specs` family remainder — usage/help/unknown (GO-20 U2e U-A)
+	routeSpecsPromote                       // native: `specs promote`, port of lib/_internal/spec_promotion.py (GO-20 U2e U-A)
 	routeUnknown                            // unknown command: usage error, exit 2
 )
 
@@ -159,6 +161,16 @@ func Route(args []string) route {
 		}
 		return route{kind: routeRecipe}
 	}
+	// `specs promote` (GO-20 U2e U-A) is the family's only verb; the root
+	// dispatcher has no `promote` of its own, and every remaining arm of the
+	// family (bare `specs`, `--help|-h|help`, unknown subcommands) resolves to
+	// the native family remainder.
+	if args[0] == "specs" {
+		if len(args) > 1 && args[1] == "promote" {
+			return route{kind: routeSpecsPromote}
+		}
+		return route{kind: routeSpecs}
+	}
 	return route{kind: routeUnknown}
 }
 
@@ -252,6 +264,12 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		// subcommand before its wrapper, so the verb's own grammar sees
 		// args[2:] (GO-20 U7-2 ported the brief and its wrapper natively).
 		return runRecipeInitVerb(args[2:], home, selfPath(), stdout, stderr)
+	case routeSpecs:
+		// args[0]=specs: the family remainder sees the subcommand slot.
+		return runSpecsDispatch(args[1:], stdout, stderr)
+	case routeSpecsPromote:
+		// args[0]=specs, args[1]=promote: the verb's own grammar sees args[2:].
+		return runSpecsPromote(args[2:], stdout, stderr)
 	case routeRecipeAdd:
 		// args[0]=recipe, args[1]=add: recipe.sh shifts the subcommand before
 		// it execs recipe-add.sh, so the verb's own loop sees args[2:]. No
