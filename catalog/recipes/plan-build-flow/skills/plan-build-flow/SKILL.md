@@ -313,12 +313,12 @@ Sequence on the review branch:
 3. Open a PR (artifact gate satisfied).
 4. Promote canonical specs. Compose every delta under
    `openspec/changes/<slug>/specs/<domain>/spec.md` into
-   `openspec/specs/<domain>/spec.md` with the promotion helper and commit the
-   result on the review branch:
+   `openspec/specs/<domain>/spec.md` with the promotion helper (the
+   `ai-specs specs promote` verb, the Go port of
+   `lib/_internal/spec_promotion.py`) and commit the result on the review branch:
 
 ```bash
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/spec_promotion.py" \
-  <slug> --root <planning-root>
+ai-specs specs promote <slug> --root <planning-root>
 ```
 
    Composition follows the archive contract: `## ADDED Requirements` appends,

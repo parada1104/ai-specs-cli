@@ -57,6 +57,13 @@ Slice 1 = documentation and measured inventory only. No source or test change in
   install is compared as `EvalSymlinks(LocalBin)` against an unresolved `BinaryPath`, so it reports "not the standard
   global installation". Named unit, approved by the human; NOT implemented yet. Runs after T3c–T3e close, in plan order.
   Commit: pending.
+- **U-A** — Port `lib/_internal/spec_promotion.py` to Go (no Go equivalent). Surface, approved by Robert (L30): `ai-specs specs promote <slug> --root <planning-root>`, new family `specs`. Consumer: plan-build-flow `SKILL.md:320` and `README.md:75`, updated to the native verb. Route: one worker per unit with TDD; equivalence documented per case (L32). Depends on: none. Branch `change/go-20-u2e-u-a-spec-promote` from `6b4d3a5`. Commit: pending (see L32 for the slice plan and the gate state).
+- **U-B** — Port `lib/_internal/premerge_guardian.py` to Go (no Go equivalent). Surface, approved by Robert (L30): `ai-specs gates premerge --stage pre-merge|pre-archive [--tier light|standard|full]`, new family `gates`. Consumer: plan-build-flow `SKILL.md:342,371`. Sequential after U-A (shared plan-build-flow surface). Commit: pending.
+- **U-C** — Port the `ledger_bridge.py` verbs used by `catalog/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh:643,646` (`slug`, `evidence`). Surface, approved by Robert (L30): `ai-specs tracker slug` and `ai-specs tracker evidence`, new family `tracker`. The hook stays fail-open on a missing binary (no silent change of verdict). Partial Go base: `internal/doctor/checks_tracker.go`. Commit: pending.
+- **U-D** — Expose the `skill_contract.py` validation (`_cli_sync_metadata`, used by `bundled-skills/skill-sync/assets/sync.sh:15`) as `ai-specs skills validate`, existing family `skills`. Library already in `internal/skills/contract.go`. Small unit. Commit: pending.
+- **U-E** — narrow-checkout inlined in `install.sh` with git directly (L31). Commit: pending.
+- **U-F** — Python `python3` inline calls in product hooks (`tracker-card-gate.sh` at least 11, `plan-build-gate.sh`), classified per call: ledger-bridge calls go to U-C, independent JSON/text helpers go here. Runs after U-A..U-D and before the zero-Python declaration. Does NOT block the T5 deletion of `lib/_internal`. Commit: pending.
+- `vendor-skills.py`: no unit. Already ported (`internal/sync/vendorskills.go`); its only callers are `lib/*.sh` and `recipe-materialize.py`, both removed with T5.
 - **T8** — `validate.sh` once on the result, native assess per candidate, PR with auto-merge. Commit: pending.
 
 ## Log
@@ -329,3 +336,56 @@ Slice 1 = documentation and measured inventory only. No source or test change in
     - R3-003 (reliability, WARNING) `internal/cli/smoke_test.go:237-240`.
   - Mutation check (c) closed: 25 PTY cases of `tests/test_hub.py` and `tests/test_hub_tui.py` fail under mutation of the Go hub; `test_confirm_action_returns_bool` and `test_offer_init_decline` fail under a second mutation of the init offer. `test_none_maps_to_quit` is vacuous and sits in the T5 vacuity inventory (L23).
 - L29 — T2 landed. PR #451 (squash ac6a460) onto `epic/go-single-binary`; the squashed head was 09e22e1 (`--match-head-commit`). Native review `review-d12905c86464743d`: approved, acknowledged on 9e53224 (burn gentle-ai.review-acknowledged/v1), three informational WARNINGs (R3-001, R3-002, R3-003) documented in the PR body. The post-review docs commit 09e22e1 was validated with `validate.sh` (exit 0). Next: T5 (exit criteria: reactivate every row of the L28 table).
+- L30 — Surface approved by Robert (product decision, recorded here as approved). Family `skills` exists: `ai-specs skills validate`. New families: `ai-specs tracker evidence|slug`, `ai-specs specs promote <slug>`, `ai-specs gates premerge --stage pre-merge|pre-archive [--tier]`. No verb at the root: the root only announces families. Order of units: U-A, U-B (sequential, shared surface), U-C, U-D, U-E, U-F; vendor-skills has no unit. Each unit: TDD with equivalence documented against the legacy Python, its SKILL.md/README updated, `validate.sh` green per candidate, `assess` per candidate, PR to the epic, manual merge with `--match-head-commit` after Robert's explicit OK. The trust root (release/gate digests) is never touched without escalation to Robert.
+- L31 — U-E decision (narrow-checkout). At `install.sh:118` the Go binary does not exist yet (written at lines 191-242), so an internal Go step cannot run there. `upgrade` does not reapply it (`internal/upgrade/upgrade.go:395-400`, pinned by `TestUpgradeRunsNativelyAndSkipsTheShellPostSteps`), so no Go port is needed. Decision: inline the sparse-checkout in `install.sh` with direct git, keeping its guards (dirty tree skip, sparse probe, verify directories, disable on partial failure). Trade-off recorded: bash logic remains inside the install wrapper; this is in tension with "bash only as wrappers" and is flagged for Robert.
+
+- L32 — U-A (spec_promotion port). Evidence, golden regeneration and equivalence map.
+  - Code: `internal/specs/promote.go` (+ tests), `internal/cli/specs.go` (+ tests), family `specs` in `internal/cli/cli.go`, one help line in `internal/cli/help.txt` (approved by Robert under L30: the root announces families only), consumer docs `catalog/recipes/plan-build-flow/{SKILL.md,README.md}`. `lib/_internal/spec_promotion.py` and `tests/test_spec_promotion.py` are NOT deleted (T5). Go: `go test ./internal/specs ./internal/cli` 421 OK, 0 failed.
+  - Why the goldens changed (Robert's explicit decision, approved as a regeneration of exactly two goldens): the approved surface changed the frozen baseline for real. Normalizing it would mask real drift; reverting the README would keep a legacy command that stops working after T5.
+  - Freeze before this change: `tests/parity/goldens/` captured at 6340c27 (T2a, PR #447, squash 276fa85).
+  - Regenerated, exactly 4 files (`git status -- tests/parity/goldens` shows nothing else):
+    - `gate-absent/surface-verbs.json` and `gate-present/surface-verbs.json`: stdout of `help` gains one line, `+  specs promote <slug> --root <planning-root>  Compose change delta specs into canonical specs`. Nothing else in the step changes (argv, rc, stderr, tree).
+    - `gate-absent/all-recipes-enabled.json` and `gate-present/all-recipes-enabled.json`: the tree (30 entries, unchanged count) changes in 2 entries: `ai-specs/recipes/plan-build-flow/README.md` (sha256 fb04… → 8178…, the approved `specs promote` command) and `ai-specs/.ai-specs.lock` (3d4a… → d4f1…, its hash of that README). `legacy_launcher` moves 6340c27 → 6b4d3a5 in the four files.
+  - Intent: both lines are the product change approved in L30. They are not drift.
+  - Golden semantics, stated so it is not hidden: these four goldens are no longer a legacy oracle. They are the Go output for these two fixtures, which is the only way to reproduce the regenerated baseline after the flip (see the tooling note below).
+  - Tooling note (blocks any future full regeneration): `tests/parity/capture_goldens.py` runs `bin/ai-specs` as its leg. After the flip that launcher needs `dist/ai-specs` inside the scratch home, which `make_home` does not provide, so a capture writes "native binary not found" as the golden (observed and discarded, restored from HEAD before the real regeneration). The regeneration used a scratch wrapper (outside the repo) that runs the same `run_leg` with the Go binary built by `parity.build_go_binary`, as `tests/parity/run.py` does, and writes only the two selected fixtures. The script must be fixed in T5 before anyone regenerates all goldens.
+  - Equivalence map (tests/test_spec_promotion.py -> Go), Python retained until T5:
+    - `SpecPromotionTests`:
+      - test_added_requirement_is_appended_into_existing_canonical -> specs.TestAddedRequirementIsAppendedIntoExistingCanonical (exact canonical bytes)
+      - test_modified_requirement_replaces_canonical_block -> specs.TestModifiedRequirementReplacesCanonicalBlock
+      - test_new_domain_creates_a_canonical_spec -> specs.TestNewDomainCreatesCanonicalSpecFromTheDelta; specs.TestNewDomainCarriesTheDeltaPurpose (## Purpose branch)
+      - test_rerun_is_idempotent_and_resume_safe -> specs.TestRerunIsIdempotentAndResumeSafe
+      - test_unrelated_canonical_requirements_and_sections_are_preserved -> specs.TestUnrelatedCanonicalRequirementsAndSectionsArePreserved
+      - test_added_collision_with_different_content_is_rejected -> specs.TestAddedCollisionWithDifferentContentIsRejected; cli.TestSpecsPromoteBlockedExitsOne
+      - test_missing_modified_target_is_rejected -> specs.TestMissingModifiedTargetIsRejected
+      - test_renamed_operation_is_unsupported -> specs.TestRenamedOperationIsUnsupported
+      - test_removed_is_refused_without_the_explicit_safe_path -> specs.TestRemovedIsRefusedWithoutTheExplicitSafePath; cli.TestSpecsPromoteRemovedNeedsTheExplicitFlag
+      - test_one_blocked_domain_aborts_every_write -> specs.TestOneBlockedDomainAbortsEveryWrite
+      - test_active_same_domain_collision_blocks_before_any_write -> specs.TestActiveSameDomainCollisionBlocksBeforeAnyWrite; cli.TestSpecsPromoteBlockedExitsOne (rc 1, BLOCKED shape)
+      - test_active_collision_on_one_domain_blocks_every_domain -> specs.TestActiveCollisionOnOneDomainBlocksEveryDomain
+      - test_archived_unrelated_and_spec_less_changes_do_not_collide -> specs.TestArchivedUnrelatedAndSpecLessChangesDoNotCollide
+      - test_symlinked_active_change_is_not_followed_by_the_collision_scan -> specs.TestSymlinkedActiveChangeIsNotFollowedByTheCollisionScan
+      - test_slug_traversal_and_root_escape_are_rejected -> specs.TestSlugTraversalAndRootEscapeAreRejected
+      - test_non_planning_root_is_rejected -> specs.TestNonPlanningRootIsRejected
+      - test_symlinked_canonical_domain_is_rejected -> specs.TestSymlinkedCanonicalDomainIsRejected
+      - test_symlinked_openspec_ancestor_is_rejected -> specs.TestSymlinkedOpenspecAncestorIsRejected
+      - test_missing_specs_directory_is_a_no_op -> specs.TestMissingSpecsDirectoryIsANoOp
+      - test_promoter_has_no_network_surface -> NO Go test. Source-text check on the Python module; the Go package imports only stdlib. Python test kept until T5.
+    - `SpecPromotionCliTests`:
+      - test_cli_promotes_with_a_required_root_and_slug -> cli.TestSpecsPromoteComposesAndRerunsAsAlreadyPromoted
+      - test_cli_requires_the_root_flag -> cli.TestSpecsPromoteRequiresTheRootFlag
+      - test_cli_exits_nonzero_when_promotion_is_blocked -> cli.TestSpecsPromoteBlockedExitsOne
+    - Go-only (ported behaviour the Python tests do not cover): specs.TestEmptyDeltaIsANoOp, specs.TestModifiedWithoutCanonicalSpecIsRejected, specs.TestDeltaSectionRejections, specs.TestMissingChangeFolderIsRejected, specs.TestCheckFolderParityReportsUnpromotedDelta, specs.TestCompositionKeepsCanonicalBytesForCRLFInput, specs.TestAppendCreatesAMissingRequirementsSection, cli.TestSpecsPromoteNothingToPromote, cli.TestSpecsPromoteArgumentErrors, cli.TestSpecsPromoteHelp, cli.TestSpecsFamilyUsageAndRoute.
+  - Differential (worker, 26 fixtures, Python oracle vs Go verb): 26 PASS, 0 FAIL after normalizing each leg's own root (`<ROOT>`) and its scratch dirs (`<OUTSIDE>`). Oracle and fixtures are scratch (not committed); the differential is not a committed test.
+  - Known, not fixed here: `--root .` prints `openspec` where Python prints `./openspec` (Go cleans the path). The differential used absolute roots only. A write failure becomes a blocker (exit 1) instead of a traceback (exit 1): a deliberate divergence, untested by the corpus.
+  - Commit history (approved by Robert, option 1: six commits, each under ~450 authored lines):
+    1. `a5ceeca` feat(specs): port delta parsing, types and path safety (types.go, delta.go, paths.go). No tests yet.
+    2. `3696dd4` feat(specs): compose delta and orchestrate promotion (compose.go, promote.go). No tests yet.
+    3. `ea5d734` test(specs): helpers, delta and path-safety tests (7 tests).
+    4. `727fed6` test(specs): composition, promotion flow and collisions (20 tests; the package totals 32 entries, identical to the split baseline).
+    5. `2862559` feat(cli): specs family wiring and root help line.
+    6. this commit: docs, the four regenerated goldens and this entry.
+  - Test order, stated: each test file lands after the code it exercises, in the same unit. The history therefore has no RED commit. The RED step was observed in the worker session (undefined symbols before implementation, then one real assertion RED that was a fixture error, fixed) and is not reproduced in history. Accepted by Robert (L32, option 1): a new module has no earlier red state to record.
+  - Split: `internal/specs/promote.go` (725 lines) and `promote_test.go` (675) were split by responsibility before the commits, as pure block moves (39 code and 42 test blocks checked byte for byte). The same 32 test entries pass before and after the split.
+  - Hashes: recorded in the PR body and in Engram; the doc row above gets its hashes in a separate doc commit after merge.
+  - Escalation point: the parity expectation for this unit is the regeneration above, not a normalization. Any further golden change needs a new decision.
