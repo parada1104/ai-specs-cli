@@ -187,6 +187,18 @@ def _materialize_process(project_root: Path, home: Path, *extra: str,
     )
 
 
+def _baseline_brief(project_root: Path, home: Path, out: Path) -> CLIResult:
+    """Run the native materialize chain that writes the resolved-config document.
+
+    ``baseline-brief`` is the native verb lib/init.sh reaches through
+    AI_SPECS_GO_BIN: it runs the materializer with only the resolved-config
+    output requested, then renders AGENTS.md. The document it writes to
+    ``out`` is the one the legacy ``--resolved-config-out`` process wrote.
+    """
+    return _run(project_root, "baseline-brief", "--resolved-config-out", str(out),
+                home=home)
+
+
 # Cache layout accessors (frozen key: sha256(realpath)[:12]-basename).
 def _recipe_skill(project_root: Path, home: Path, rid: str, sid: str) -> Path:
     return cache_project_dir(project_root, home) / ".recipe" / rid / "skills" / sid
@@ -415,14 +427,11 @@ class RecipeMaterializeTests(unittest.TestCase):
     # --- ai_specs_home forwarding regression --------------------------------
 
     def _resolved_context(self, root: Path, home: Path) -> dict:
-        # TRIAGE: ai-specs sync — no verb exposes the resolved-config JSON at a
-        # predictable path, so the home-forwarding contract (the explicit
-        # $AI_SPECS_HOME reaches build_resolved_config and is never replaced by
-        # a module-default fallback) is pinned at the materialize process
-        # boundary using the exact sync.sh command line against the isolated
-        # home's own lib copy.
+        # The home-forwarding contract (the explicit $AI_SPECS_HOME reaches the
+        # resolved config and is never replaced by a module-default fallback)
+        # is pinned through the native baseline-brief chain.
         out = root.parent / "resolved-config.json"
-        result = _materialize_process(root, home, "--resolved-config-out", str(out))
+        result = _baseline_brief(root, home, out)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(out.is_file())
         return json.loads(out.read_text())
@@ -454,13 +463,10 @@ class RecipeMaterializeTests(unittest.TestCase):
                      f'description = "D"\nversion = "1.0"\n{cap_lines}')
 
     def _resolved_bindings(self, root: Path, home: Path) -> dict:
-        # TRIAGE: ai-specs sync — the resolved capability→recipe binding map is
-        # only observable in the resolved-config JSON (no verb prints it); the
-        # binding contract is pinned at the materialize process boundary using
-        # the exact sync.sh command line against the isolated home's own lib
-        # copy.
+        # The capability→recipe binding map is pinned through the native
+        # baseline-brief chain, which writes the resolved-config document.
         out = root.parent / "resolved-config.json"
-        result = _materialize_process(root, home, "--resolved-config-out", str(out))
+        result = _baseline_brief(root, home, out)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(out.read_text())["bindings"]
 
@@ -592,9 +598,9 @@ class RecipeMaterializeTests(unittest.TestCase):
         # The old white-box assertion was merged-cfg equality:
         # cfg['reconcile'] == the declared table. The honest observable is the
         # resolved-config JSON — the merged config the pipeline consumes —
-        # pinned at the materialize process boundary (no verb exposes it).
+        # written by the native baseline-brief chain.
         out = root.parent / "reconcile-carry.json"
-        resolved = _materialize_process(root, home, "--resolved-config-out", str(out))
+        resolved = _baseline_brief(root, home, out)
         self.assertEqual(resolved.returncode, 0, resolved.stdout + resolved.stderr)
         carried = json.loads(out.read_text())["recipes"]["reconcile-recipe"]["reconcile"]
         self.assertEqual(
@@ -1056,13 +1062,11 @@ class ResolvedConfigContextTests(unittest.TestCase):
         return root, home
 
     def _resolved(self, root: Path, home: Path, out_name: str) -> dict:
-        # TRIAGE: ai-specs sync — no verb exposes the resolved-config JSON at a
-        # predictable path; the context-carried-by-resolved-config contract is
-        # pinned at the materialize process boundary using the exact sync.sh
-        # command line against the isolated home's own lib copy. The CLI sync
-        # run itself is asserted separately where the original asserted rc 0.
+        # The context-carried-by-resolved-config contract is pinned through the
+        # native baseline-brief chain. The CLI sync run itself is asserted
+        # separately where the original asserted rc 0.
         out = root.parent / out_name
-        result = _materialize_process(root, home, "--resolved-config-out", str(out))
+        result = _baseline_brief(root, home, out)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(out.is_file())
         return json.loads(out.read_text())
@@ -1084,12 +1088,12 @@ class ResolvedConfigContextTests(unittest.TestCase):
 
     def test_resolved_config_only_also_carries_context(self):
         root, home = self._project()
-        # The --resolved-config-only surface is what sync-agent.sh runs for
-        # standalone targets; pin the same context keys through it.
+        # The standalone (sync-agent) resolved-config-only document carries the
+        # same context keys as the baseline-brief document; equality of the two
+        # documents is pinned by the materialize oracle, and the -only mode itself
+        # by internal/sync/resolvedconfigonly_test.go.
         out = root.parent / "resolved-only.json"
-        result = _materialize_process(
-            root, home, "--resolved-config-out", str(out), "--resolved-config-only",
-        )
+        result = _baseline_brief(root, home, out)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(out.is_file())
         data = json.loads(out.read_text())
@@ -1395,20 +1399,15 @@ class BriefFragmentsMaterializeIntegrationTests(unittest.TestCase):
         self.assertNotIn("## Workflow Rules", agents)
 
     def test_build_resolved_config_only_attaches_brief_fragments(self):
-        # TRIAGE: ai-specs sync-agent — the --resolved-config-only surface runs
-        # inside sync-agent on a mktemp path no verb exposes; the
-        # brief_fragments-in-resolved-config contract is pinned with the exact
-        # sync-agent.sh materialize command line against the isolated home's
-        # own lib copy.
+        # The brief_fragments-in-resolved-config contract is pinned through the
+        # native baseline-brief chain (equal to the sync-agent -only document).
         base = self._new_base()
         root, home = self._stage(
             base, "brief-recipe",
             '[provides.brief]\nworkflow_rules = ["A rule from brief-recipe."]\n',
         )
         out = root.parent / "resolved-config.json"
-        result = _materialize_process(
-            root, home, "--resolved-config-out", str(out), "--resolved-config-only",
-        )
+        result = _baseline_brief(root, home, out)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(out.is_file())
         data = json.loads(out.read_text())

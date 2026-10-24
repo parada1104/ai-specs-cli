@@ -38,7 +38,8 @@ Slice 1 = documentation and measured inventory only. No source or test change in
   - **T3b** `AgentsSubmenuManifestTests` (`lib/_internal` loader, no CLI surface). Go coverage in
     `internal/hub/interactive_test.go` (D12 cases) and `internal/config/agents_test.go`. Route: map each Python case to a Go test, then retire the Python class with the equivalence recorded (L12). Slice 3. Commit: 4b82b37 → e5f40a4 (PR #436).
   - **T3c** `_materialize_process` (`lib/_internal/recipe-materialize.py`). No native `materialize` verb; the native
-    chain is `baseline-brief` (`internal/cli/brief.go`). Route: rewrite against the real surface. Commit: pending.
+    chain is `baseline-brief` (`internal/cli/brief.go`). Route: rewrite against the real surface. Slice 4, branch
+    `change/go-20-u2e-flip-4` (base c2edbbf). Scope and the two hooks call sites that stay on the legacy process: L15. Commit: pending.
   - **T3d** `test_init_brief_route` (LEGACY_CLI; bash `lib/init.sh` seam via `AI_SPECS_GO_BIN`). Route: golden fixtures
     for the legacy comparison (L6). Commit: pending.
   - **T3e** `test_init_native` (legacy vs native oracle). Route: golden fixtures frozen from current legacy output (L6). Commit: pending.
@@ -152,3 +153,22 @@ Slice 1 = documentation and measured inventory only. No source or test change in
   (2) T3b commit hash recorded here in the next doc PR (as T1). (3) `binaryEntry` under a symlinked home approved as
   named unit T9, same class as D-U2e-1 (L7/L13), not in any merged PR, not implemented; to run after T3c–T3e close,
   in plan order. Engram records the same class.
+- L15 — Slice 4 (T3c), equivalence map for `_materialize_process`. Native observable: `baseline-brief <root>
+  --resolved-config-out <path>` (`internal/cli/brief.go`, `internal/sync/baselinebrief.go`) writes the resolved-config
+  document through the same spine. Rewritten to `_baseline_brief` (6 of 8 call sites; 229 assertions before and after,
+  none removed): `_resolved_context` (x2 tests), `_resolved_bindings`, the reconcile carry, `_resolved` (x4 tests),
+  `test_resolved_config_only_also_carries_context`, `test_build_resolved_config_only_attaches_brief_fragments`.
+  Equivalence: a scratch oracle (not committed) ran both legs on every rewritten call site: 11 resolved-config
+  comparisons, rc 0 on both legs, documents equal, including the two `--resolved-config-only` ones. The -only mode
+  itself is no longer invoked by the suite; it is pinned natively by `internal/sync/resolvedconfigonly_test.go`.
+  Mutation (real, compiling): `internal/sync/resolvedcatalog.go` writes `brief_fragments` as `resolvedFragmentsJSON(nil)`
+  makes 6 tests fail, including the rewritten brief-fragments test; reverted. A first mutation (deleting the line)
+  did not compile and was discarded; its failures were not evidence.
+  STAYS ON THE LEGACY PROCESS: `test_resolved_hooks_out_shape` and `test_resolved_hooks_env_carries_config`. Their
+  contract is the `--resolved-hooks-out` document, which has no native verb: `MaterializeRecipes` writes it only to
+  the in-process `ResolvedHooksOut` (`internal/sync/materialize.go`, `sync.go:344`), and its only oracle is the Python
+  differential (`materialize_test.go`). This keeps `lib/_internal/recipe-materialize.py` needed until T5 has a native
+  replacement. Decision needed before T5: a Go test on `MaterializeRecipes` for the hooks document, or a native flag
+  (a product change, not requested here).
+  Pre-existing, not touched: 14 type-checker notices on `_cap_recipe(caps=[...])` (list passed to a `tuple` hint,
+  test lines 478-512); the unittest suite passes.
