@@ -621,28 +621,8 @@ class TestInitShellGating(unittest.TestCase):
         target.mkdir()
         return target
 
-    def _run_init(self, target: Path, *args: str, extra_env: dict | None = None) -> CLIResult:
-        return _cli_run(target, "init", *args, home=self.home, base=self.base,
-                        extra_env=extra_env)
-
-    def _write_stub(self, base: Path, rc: int, write_out: bool = False) -> Path:
-        stub = base / f"stub-tui-{rc}.py"
-        body = f"""#!/usr/bin/env python3
-import argparse, sys
-from pathlib import Path
-p = argparse.ArgumentParser()
-p.add_argument("--target", required=True)
-p.add_argument("--name", default="")
-p.add_argument("--out", required=True)
-args = p.parse_args()
-if {write_out!r}:
-    Path(args.out).write_text('[project]\\nname = "stub"\\n\\n[agents]\\nenabled = ["claude"]\\n')
-    Path(args.out).with_suffix('.json').write_text('{{"name":"stub","agents":["claude"],"recipes":[]}}\\n')
-sys.exit({rc})
-"""
-        stub.write_text(body, encoding="utf-8")
-        stub.chmod(0o755)
-        return stub
+    def _run_init(self, target: Path, *args: str) -> CLIResult:
+        return _cli_run(target, "init", *args, home=self.home, base=self.base)
 
     def test_non_tty_auto_is_classic(self):
         target = self._workspace()
@@ -673,13 +653,19 @@ sys.exit({rc})
         self.assertIn("tui:     no", result.stdout)
 
     def test_tui_unavailable_falls_back_to_classic(self):
+        """`--tui` with a non-TTY stdin is the native rc-3 path: the wizard cannot
+        open its key source, so init falls back to classic without drawing a prompt."""
         target = self._workspace()
-        stub = self._write_stub(self.base, rc=3)
-        result = self._run_init(target, "--tui", extra_env={"AI_SPECS_INIT_TUI_PY": str(stub)})
+        result = self._run_init(target, "--tui")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertIn("falling back to classic init", result.stderr)
+        self.assertNotIn("Project name:", result.stdout + result.stderr)
         self.assertIn("tui:     no", result.stdout)
-        self.assertTrue((target / "ai-specs" / "ai-specs.toml").is_file())
+        manifest = target / "ai-specs" / "ai-specs.toml"
+        self.assertTrue(manifest.is_file())
+        # The classic manifest is named after the target directory; a wizard or
+        # hatch payload would carry its own name.
+        self.assertIn(f'name = "{target.name}"', manifest.read_text(encoding="utf-8"))
 
 class TestInitTuiPTYE2E(unittest.TestCase):
     """End-to-end PTY tests: real wizard via `ai-specs init --tui` under a
