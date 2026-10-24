@@ -1,4 +1,4 @@
-"""GO-20/U4 T9: differential black-box pins for the native `init` route.
+"""GO-20/U4 T9 + GO-20/U2e T3e: differential black-box pins for the native `init` route.
 
 The native ``init`` (``internal/cli/init.go``) must be observable-equal to the
 legacy ``lib/init.sh`` route, byte for byte, except the divergences recorded in
@@ -13,15 +13,20 @@ legacy ``lib/init.sh`` route, byte for byte, except the divergences recorded in
 * the ``RECIPE_MCP_TEMP:`` stdout lines name a fresh mktemp file per run, so
   they cannot be byte-compared either.
 
+Oracle (U2e T3e, odd/tasks/go-20-u2e-flip.md L18): the legacy outputs are frozen
+in ``tests/fixtures/init-native/golden.json``, captured from ``bin/ai-specs`` with
+the same normalization as this module. The native route is compared to those
+goldens. The two cases that prove the legacy shell is effective (the poison
+seam and the ``AI_SPECS_INIT_TUI_PY`` hatch) keep their live legacy leg as RED
+logic; only their outputs are compared to the golden.
+
 Everything else — exit code, stdout, stderr and the produced relative file
-tree with its bytes — must match between the two routes. Both legs run in
-throwaway projects that share the basename ``proj`` under one base dir, each
-with its own isolated CLI home, HOME and TMPDIR, so normalizing each leg's
-root maps both onto the same ``<TEMP>/...`` text.
+tree with its bytes — must match the golden.
 """
 from __future__ import annotations
 
 import difflib
+import json
 import os
 import re
 import shutil
@@ -37,6 +42,7 @@ from _blackbox import isolated_home, normalize_output, snapshot  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 LEGACY_CLI = _go_cli.legacy_cli()
+GOLDEN_PATH = ROOT / "tests" / "fixtures" / "init-native" / "golden.json"
 
 # Recorded non-contract lines (S10 + random per-run temps).
 _RECIPE_MCP_TEMP = re.compile(r"^RECIPE_MCP_TEMP:[^\n]*\n?", re.M)
@@ -47,15 +53,20 @@ LOCK_REL = "ai-specs/.ai-specs.lock"
 GITIGNORE_MARKER = "# --- ai-specs: agent-generated files (managed by ai-specs sync-agent) ---"
 
 
-def _diff(label: str, legacy: str, native: str) -> str:
-    """Unified diff for an assert message: legacy reference vs native observed."""
+def _golden(case: str) -> dict:
+    """The frozen legacy output for one case; a missing golden fails loudly."""
+    return json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))[case]
+
+
+def _diff(label: str, golden: str, native: str) -> str:
+    """Unified diff for an assert message: golden (legacy) expected vs native observed."""
     return (
-        f"{label} differ between routes (legacy=expected, native=observed):\n"
+        f"{label} differ from the legacy golden (golden=expected, native=observed):\n"
         + "".join(
             difflib.unified_diff(
-                legacy.splitlines(keepends=True),
+                golden.splitlines(keepends=True),
                 native.splitlines(keepends=True),
-                "legacy",
+                "golden",
                 "native",
             )
         )
@@ -70,7 +81,7 @@ def _strip_sha256(text: str) -> str:
 class _Route:
     """One leg of the differential: an isolated CLI home, a scratch HOME and
     TMPDIR, and a target project sharing the basename ``proj`` — all under
-    ``<base>/<name>/`` so path normalization maps both legs onto equal text."""
+    ``<base>/<name>/`` so path normalization maps every leg onto equal text."""
 
     def __init__(self, base: Path, name: str):
         self.root = base / name
@@ -102,7 +113,7 @@ class _Route:
         ``cwd`` defaults to the repository only for cases that pass an explicit
         target. A case whose argv has no positional makes the CLI read its own
         cwd as the project, so it must pass ``cwd=self.target`` — otherwise the
-        legacy route would initialize the checkout the suite runs in.
+        run would initialize the checkout the suite runs in.
         """
         return subprocess.run(
             [str(cli), "init", *args],
@@ -125,14 +136,22 @@ class _Route:
 
 
 class _Fixture:
-    """One base dir holding both legs (legacy/, native/) — the shape of
-    tests/test_init_brief_route.py, doubled so one test can diff the routes."""
+    """One base dir holding both legs (legacy/, native/) for the seam tests that
+    still run the legacy shell live."""
 
     def __init__(self, test: unittest.TestCase, prefix: str):
         self.base = Path(tempfile.mkdtemp(prefix=prefix))
         test.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
         self.legacy = _Route(self.base, "legacy")
         self.native = _Route(self.base, "native")
+
+
+def _native_route(test: unittest.TestCase, prefix: str) -> _Route:
+    """A native-only leg. Its root is ``<base>/native``, so normalization yields
+    the same ``<TEMP>/proj`` text the golden was captured with."""
+    base = Path(tempfile.mkdtemp(prefix=prefix))
+    test.addCleanup(shutil.rmtree, base, ignore_errors=True)
+    return _Route(base, "native")
 
 
 def _write_stub(base: Path, rc: int, write_out: bool = False) -> Path:
@@ -165,113 +184,109 @@ class InitNativeDifferentialTests(unittest.TestCase):
     def _native_cli(self) -> Path:
         go_cli = _go_cli.cli()
         if go_cli == LEGACY_CLI:
-            self.skipTest("the Go build is unavailable, so the two routes would be one program")
+            self.skipTest("the Go build is unavailable, so the golden would test the legacy route")
         return go_cli
 
-    def test_classic_init_is_byte_identical_to_the_legacy_route(self):
+    def test_classic_init_is_byte_identical_to_the_legacy_golden(self):
         native_cli = self._native_cli()
-        fixture = _Fixture(self, "ai-specs-init-native-classic-")
-        leg, nat = fixture.legacy, fixture.native
+        nat = _native_route(self, "ai-specs-init-native-classic-")
+        golden = _golden("classic")
 
-        leg_proc = leg.run(LEGACY_CLI, str(leg.target))
         nat_proc = nat.run(native_cli, str(nat.target))
 
         self.assertEqual(
-            leg_proc.returncode, nat_proc.returncode,
-            f"exit codes differ: legacy={leg_proc.returncode} native={nat_proc.returncode}\n"
-            f"legacy stderr:\n{leg_proc.stderr}\nnative stderr:\n{nat_proc.stderr}",
+            nat_proc.returncode, golden["returncode"],
+            f"exit code differs from the golden: native={nat_proc.returncode}\n"
+            f"native stderr:\n{nat_proc.stderr}",
         )
-        self.assertEqual(leg_proc.returncode, 0, leg_proc.stderr)
-        leg_out, nat_out = leg.stdout(leg_proc), nat.stdout(nat_proc)
-        self.assertEqual(leg_out, nat_out, _diff("stdout", leg_out, nat_out))
-        leg_err, nat_err = leg.stderr(leg_proc), nat.stderr(nat_proc)
-        self.assertEqual(leg_err, nat_err, _diff("stderr", leg_err, nat_err))
+        self.assertEqual(nat_proc.returncode, 0, nat_proc.stderr)
+        nat_out = nat.stdout(nat_proc)
+        self.assertEqual(golden["stdout"], nat_out, _diff("stdout", golden["stdout"], nat_out))
+        nat_err = nat.stderr(nat_proc)
+        self.assertEqual(golden["stderr"], nat_err, _diff("stderr", golden["stderr"], nat_err))
 
         # Identical relative tree with identical bytes — except the lock, whose
-        # sha256 rows cover per-project content and may differ by project name.
-        leg_tree, nat_tree = snapshot(leg.target), snapshot(nat.target)
-        self.assertEqual(sorted(leg_tree), sorted(nat_tree), "produced file trees differ")
-        for rel in sorted(leg_tree):
+        # sha256 rows cover per-project content and are compared stripped below.
+        golden_tree = {rel: tuple(value) for rel, value in golden["tree"].items()}
+        nat_tree = snapshot(nat.target)
+        self.assertEqual(sorted(golden_tree), sorted(nat_tree), "produced file trees differ from the golden")
+        for rel in sorted(golden_tree):
             if rel == LOCK_REL:
                 continue
-            self.assertEqual(leg_tree[rel], nat_tree[rel], f"{rel} differs between routes")
+            self.assertEqual(golden_tree[rel], nat_tree[rel], f"{rel} differs from the legacy golden")
 
-        self.assertIn(LOCK_REL, leg_tree, "legacy route produced no lock")
         self.assertIn(LOCK_REL, nat_tree, "native route produced no lock")
-        leg_lock = (leg.target / LOCK_REL).read_text(encoding="utf-8")
         nat_lock = (nat.target / LOCK_REL).read_text(encoding="utf-8")
-        for lock in (leg_lock, nat_lock):
-            self.assertIn('[managed."AGENTS.md"]', lock, "lock lost its AGENTS.md key")
+        self.assertIn('[managed."AGENTS.md"]', nat_lock, "lock lost its AGENTS.md key")
+        self.assertIn('[managed."AGENTS.md"]', golden["lock"], "golden lock lost its AGENTS.md key")
         self.assertEqual(
-            _strip_sha256(leg_lock), _strip_sha256(nat_lock),
-            _diff("lock (sha256 rows stripped)", _strip_sha256(leg_lock),
-                  _strip_sha256(nat_lock)),
+            golden["lock"], _strip_sha256(nat_lock),
+            _diff("lock (sha256 rows stripped)", golden["lock"], _strip_sha256(nat_lock)),
         )
 
-    def test_help_is_the_same_stdout_and_exit_0_on_both_routes(self):
+    def test_help_is_the_same_stdout_and_exit_0_as_the_legacy_golden(self):
         native_cli = self._native_cli()
-        fixture = _Fixture(self, "ai-specs-init-native-help-")
+        nat = _native_route(self, "ai-specs-init-native-help-")
+        golden = _golden("help")
 
-        leg_proc = fixture.legacy.run(LEGACY_CLI, "--help")
-        nat_proc = fixture.native.run(native_cli, "--help")
+        nat_proc = nat.run(native_cli, "--help")
 
-        self.assertEqual(leg_proc.returncode, 0, leg_proc.stderr)
+        self.assertEqual(golden["returncode"], 0)
         self.assertEqual(nat_proc.returncode, 0, nat_proc.stderr)
-        self.assertIn("Usage: ai-specs init", leg_proc.stdout)
-        self.assertEqual(leg_proc.stdout, nat_proc.stdout,
-                         _diff("help stdout", leg_proc.stdout, nat_proc.stdout))
-        self.assertEqual(leg_proc.stderr, nat_proc.stderr,
-                         _diff("help stderr", leg_proc.stderr, nat_proc.stderr))
+        self.assertIn("Usage: ai-specs init", golden["stdout"])
+        self.assertEqual(golden["stdout"], nat_proc.stdout,
+                         _diff("help stdout", golden["stdout"], nat_proc.stdout))
+        self.assertEqual(golden["stderr"], nat_proc.stderr,
+                         _diff("help stderr", golden["stderr"], nat_proc.stderr))
 
-    def test_unknown_flag_and_extra_positional_exit_2_with_same_stderr(self):
+    def test_unknown_flag_and_extra_positional_exit_2_with_the_golden_stderr(self):
         native_cli = self._native_cli()
-        fixture = _Fixture(self, "ai-specs-init-native-usage-")
-        leg, nat = fixture.legacy, fixture.native
+        nat = _native_route(self, "ai-specs-init-native-usage-")
 
-        leg_flag = leg.run(LEGACY_CLI, "--bogus-flag")
+        flag_golden = _golden("unknown_flag")
         nat_flag = nat.run(native_cli, "--bogus-flag")
-        self.assertEqual(leg_flag.returncode, 2, leg_flag.stderr)
+        self.assertEqual(flag_golden["returncode"], 2)
         self.assertEqual(nat_flag.returncode, 2, nat_flag.stderr)
-        leg_err, nat_err = leg.stderr(leg_flag), nat.stderr(nat_flag)
-        self.assertIn("ERROR: unknown flag: --bogus-flag", leg_err)
-        self.assertEqual(leg_err, nat_err, _diff("unknown-flag stderr", leg_err, nat_err))
-        self.assertEqual(leg_flag.stdout, "")
+        nat_err = nat.stderr(nat_flag)
+        self.assertIn("ERROR: unknown flag: --bogus-flag", flag_golden["stderr"])
+        self.assertEqual(flag_golden["stderr"], nat_err,
+                         _diff("unknown-flag stderr", flag_golden["stderr"], nat_err))
+        self.assertEqual(flag_golden["stdout"], "")
         self.assertEqual(nat_flag.stdout, "")
 
-        leg_pos = leg.run(LEGACY_CLI, str(leg.target), "second-arg")
+        pos_golden = _golden("extra_positional")
         nat_pos = nat.run(native_cli, str(nat.target), "second-arg")
-        self.assertEqual(leg_pos.returncode, 2, leg_pos.stderr)
+        self.assertEqual(pos_golden["returncode"], 2)
         self.assertEqual(nat_pos.returncode, 2, nat_pos.stderr)
-        leg_err, nat_err = leg.stderr(leg_pos), nat.stderr(nat_pos)
-        self.assertIn("ERROR: unexpected positional argument: second-arg", leg_err)
-        self.assertEqual(leg_err, nat_err, _diff("extra-positional stderr", leg_err, nat_err))
-        self.assertEqual(leg_pos.stdout, "")
+        nat_err = nat.stderr(nat_pos)
+        self.assertIn("ERROR: unexpected positional argument: second-arg", pos_golden["stderr"])
+        self.assertEqual(pos_golden["stderr"], nat_err,
+                         _diff("extra-positional stderr", pos_golden["stderr"], nat_err))
+        self.assertEqual(pos_golden["stdout"], "")
         self.assertEqual(nat_pos.stdout, "")
 
-    def test_missing_target_exits_1_with_same_stderr(self):
+    def test_missing_target_exits_1_with_the_golden_stderr(self):
         native_cli = self._native_cli()
-        fixture = _Fixture(self, "ai-specs-init-native-missing-")
-        leg, nat = fixture.legacy, fixture.native
+        nat = _native_route(self, "ai-specs-init-native-missing-")
+        golden = _golden("missing_target")
 
-        leg_proc = leg.run(LEGACY_CLI, str(leg.root / "does-not-exist"))
         nat_proc = nat.run(native_cli, str(nat.root / "does-not-exist"))
 
-        self.assertEqual(leg_proc.returncode, 1, leg_proc.stdout)
+        self.assertEqual(golden["returncode"], 1)
         self.assertEqual(nat_proc.returncode, 1, nat_proc.stdout)
-        leg_err, nat_err = leg.stderr(leg_proc), nat.stderr(nat_proc)
-        self.assertIn("ERROR: target path does not exist or is not a directory", leg_err)
-        self.assertIn("does-not-exist", leg_err)
+        nat_err = nat.stderr(nat_proc)
+        self.assertIn("ERROR: target path does not exist or is not a directory", golden["stderr"])
+        self.assertIn("does-not-exist", golden["stderr"])
         self.assertIn("does-not-exist", nat_err)
-        self.assertEqual(leg_err, nat_err, _diff("missing-target stderr", leg_err, nat_err))
+        self.assertEqual(golden["stderr"], nat_err,
+                         _diff("missing-target stderr", golden["stderr"], nat_err))
 
     def test_second_run_keeps_stdout_and_user_owned_bytes(self):
         native_cli = self._native_cli()
-        fixture = _Fixture(self, "ai-specs-init-native-second-")
-        leg, nat = fixture.legacy, fixture.native
+        nat = _native_route(self, "ai-specs-init-native-second-")
+        golden = _golden("second_run")
 
-        first_leg = leg.run(LEGACY_CLI, str(leg.target))
         first_nat = nat.run(native_cli, str(nat.target))
-        self.assertEqual(first_leg.returncode, 0, first_leg.stderr)
         self.assertEqual(first_nat.returncode, 0, first_nat.stderr)
 
         manifest = nat.target / "ai-specs" / "ai-specs.toml"
@@ -279,59 +294,50 @@ class InitNativeDifferentialTests(unittest.TestCase):
         manifest_before = manifest.read_bytes()
         gitignore_before = root_gitignore.read_bytes()
 
-        second_leg = leg.run(LEGACY_CLI, str(leg.target))
         second_nat = nat.run(native_cli, str(nat.target))
-        self.assertEqual(second_leg.returncode, 0, second_leg.stderr)
+        self.assertEqual(second_nat.returncode, golden["returncode"], second_nat.stderr)
         self.assertEqual(second_nat.returncode, 0, second_nat.stderr)
 
-        # The two routes still agree line for line on the idempotent rerun...
-        leg_out, nat_out = leg.stdout(second_leg), nat.stdout(second_nat)
-        self.assertEqual(leg_out, nat_out, _diff("second-run stdout", leg_out, nat_out))
-        # ...and the native rerun kept the user-owned bytes untouched (S4).
+        # The native rerun matches the legacy idempotent rerun line for line...
+        nat_out = nat.stdout(second_nat)
+        self.assertEqual(golden["stdout"], nat_out, _diff("second-run stdout", golden["stdout"], nat_out))
+        # ...and kept the user-owned bytes untouched (S4).
         self.assertIn("keep   ai-specs/ai-specs.toml", second_nat.stdout)
         self.assertEqual(manifest.read_bytes(), manifest_before,
                          "the second native run rewrote ai-specs/ai-specs.toml")
         self.assertEqual(root_gitignore.read_bytes(), gitignore_before,
                          "the second native run rewrote the root .gitignore")
 
-    def test_force_refreshes_the_root_gitignore_block_on_both_routes(self):
+    def test_force_refreshes_the_root_gitignore_block_to_the_golden(self):
         native_cli = self._native_cli()
-        fixture = _Fixture(self, "ai-specs-init-native-force-")
-        leg, nat = fixture.legacy, fixture.native
+        nat = _native_route(self, "ai-specs-init-native-force-")
+        golden = _golden("force")
 
-        first_leg = leg.run(LEGACY_CLI, str(leg.target))
         first_nat = nat.run(native_cli, str(nat.target))
-        self.assertEqual(first_leg.returncode, 0, first_leg.stderr)
         self.assertEqual(first_nat.returncode, 0, first_nat.stderr)
 
-        leg_gitignore = leg.target / ".gitignore"
         nat_gitignore = nat.target / ".gitignore"
-        fresh_bytes = leg_gitignore.read_bytes()
+        fresh_bytes = golden["gitignore"].encode("utf-8")
         self.assertEqual(nat_gitignore.read_bytes(), fresh_bytes,
-                         "first-run root .gitignore bytes differ between routes")
+                         "first-run root .gitignore bytes differ from the golden")
 
-        # Corrupt a line INSIDE the managed block on both legs: --force must
-        # strip the marked region and re-append the template over it.
-        for path in (leg_gitignore, nat_gitignore):
-            lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-            marker_at = next(i for i, ln in enumerate(lines)
-                             if ln.startswith(GITIGNORE_MARKER))
-            lines.insert(marker_at + 1, "# injected junk — --force must remove this\n")
-            path.write_text("".join(lines), encoding="utf-8")
+        # Corrupt a line INSIDE the managed block: --force must strip the marked
+        # region and re-append the template over it.
+        lines = nat_gitignore.read_text(encoding="utf-8").splitlines(keepends=True)
+        marker_at = next(i for i, ln in enumerate(lines) if ln.startswith(GITIGNORE_MARKER))
+        lines.insert(marker_at + 1, "# injected junk — --force must remove this\n")
+        nat_gitignore.write_text("".join(lines), encoding="utf-8")
 
-        force_leg = leg.run(LEGACY_CLI, "--force", str(leg.target))
         force_nat = nat.run(native_cli, "--force", str(nat.target))
-        self.assertEqual(force_leg.returncode, 0, force_leg.stderr)
+        self.assertEqual(force_nat.returncode, golden["returncode"], force_nat.stderr)
         self.assertEqual(force_nat.returncode, 0, force_nat.stderr)
 
-        self.assertIn("✓ refresh .gitignore (agent block)", force_leg.stdout)
+        self.assertIn("✓ refresh .gitignore (agent block)", golden["stdout"])
         self.assertIn("✓ refresh .gitignore (agent block)", force_nat.stdout)
-        leg_out, nat_out = leg.stdout(force_leg), nat.stdout(force_nat)
-        self.assertEqual(leg_out, nat_out, _diff("--force stdout", leg_out, nat_out))
-        self.assertEqual(leg_gitignore.read_bytes(), fresh_bytes,
-                         "legacy --force did not restore the fresh agent block")
+        nat_out = nat.stdout(force_nat)
+        self.assertEqual(golden["stdout"], nat_out, _diff("--force stdout", golden["stdout"], nat_out))
         self.assertEqual(nat_gitignore.read_bytes(), fresh_bytes,
-                         "native --force did not restore the fresh agent block")
+                         "native --force did not restore the golden agent block")
 
     def test_name_with_ampersand_lands_literally_on_the_native_route(self):
         # S8 (recorded divergence): the legacy render is
@@ -339,10 +345,9 @@ class InitNativeDifferentialTests(unittest.TestCase):
         # replacement as the whole match — so `R&D` would come out as
         # `R{{PROJECT_NAME}}D`. The native route substitutes literally. The
         # legacy output for this case is deliberately NOT asserted: the port is
-        # the documented correct behaviour here.
+        # the documented correct behaviour here, so it has no golden.
         native_cli = self._native_cli()
-        fixture = _Fixture(self, "ai-specs-init-native-ampname-")
-        nat = fixture.native
+        nat = _native_route(self, "ai-specs-init-native-ampname-")
 
         proc = nat.run(native_cli, "--name", "R&D", str(nat.target))
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -353,29 +358,24 @@ class InitNativeDifferentialTests(unittest.TestCase):
                          "the native route applied the legacy sed mangling")
 
     def test_manifest_directory_is_never_destroyed_and_exits_1(self):
-        # S4 + S3, from the verifier's probe: when ai-specs/ai-specs.toml is not
-        # a regular file, BOTH routes must refuse, exit 1, and leave the path
-        # exactly as they found it. stderr text is exempt (the shell's message is
-        # bash's own redirection error, not a designed diagnostic — S12).
+        # S4 + S3: when ai-specs/ai-specs.toml is not a regular file, the native
+        # route must refuse, exit 1, and leave the path exactly as it found it.
+        # stderr text is exempt (bash's own redirection error, S12).
         native_cli = self._native_cli()
-        fixture = _Fixture(self, "ai-specs-init-native-tomldir-")
-        leg, nat = fixture.legacy, fixture.native
+        nat = _native_route(self, "ai-specs-init-native-tomldir-")
+        golden = _golden("tomldir")
+        (nat.target / "ai-specs" / "ai-specs.toml").mkdir(parents=True)
 
-        for route in (leg, nat):
-            (route.target / "ai-specs" / "ai-specs.toml").mkdir(parents=True)
-
-        leg_proc = leg.run(LEGACY_CLI, str(leg.target))
         nat_proc = nat.run(native_cli, str(nat.target))
 
-        self.assertEqual(leg_proc.returncode, 1, leg_proc.stderr)
+        self.assertEqual(golden["returncode"], 1)
         self.assertEqual(nat_proc.returncode, 1, nat_proc.stderr)
-        for route, label in ((leg, "legacy"), (nat, "native")):
-            toml_path = route.target / "ai-specs" / "ai-specs.toml"
-            self.assertTrue(toml_path.is_dir(), f"{label}: the directory was replaced by a file")
-            self.assertEqual([], sorted(p.name for p in toml_path.iterdir()),
-                             f"{label}: something was written inside the directory")
-        self.assertEqual(leg.stdout(leg_proc), nat.stdout(nat_proc),
-                         _diff("stdout", leg.stdout(leg_proc), nat.stdout(nat_proc)))
+        toml_path = nat.target / "ai-specs" / "ai-specs.toml"
+        self.assertTrue(toml_path.is_dir(), "native: the directory was replaced by a file")
+        self.assertEqual([], sorted(p.name for p in toml_path.iterdir()),
+                         "native: something was written inside the directory")
+        nat_out = nat.stdout(nat_proc)
+        self.assertEqual(golden["stdout"], nat_out, _diff("stdout", golden["stdout"], nat_out))
 
     def test_missing_name_value_refuses_without_writing(self):
         # JD-B-001 (HIGH, converged with JD-A-001): a trailing `--name` aborts the
@@ -383,19 +383,17 @@ class InitNativeDifferentialTests(unittest.TestCase):
         # written. The port keeps the exit code; only the message text differs
         # (bash's own "shift count out of range" is not a designed message, S12).
         native_cli = self._native_cli()
-        fixture = _Fixture(self, "ai-specs-init-native-noname-")
-        leg, nat = fixture.legacy, fixture.native
+        nat = _native_route(self, "ai-specs-init-native-noname-")
+        golden = _golden("noname")
 
-        # No positional: each route reads its own cwd as the project, so the cwd
+        # No positional: the CLI reads its own cwd as the project, so the cwd
         # is the throwaway project and never the checkout.
-        leg_proc = leg.run(LEGACY_CLI, "--name", cwd=leg.target)
         nat_proc = nat.run(native_cli, "--name", cwd=nat.target)
 
-        self.assertEqual(leg_proc.returncode, 1, leg_proc.stderr)
+        self.assertEqual(golden["returncode"], 1)
         self.assertEqual(nat_proc.returncode, 1, nat_proc.stderr)
-        for route, label in ((leg, "legacy"), (nat, "native")):
-            written = sorted(p.relative_to(route.target) for p in route.target.rglob("*"))
-            self.assertEqual([], written, f"{label}: the aborted run wrote files")
+        written = sorted(p.relative_to(nat.target) for p in nat.target.rglob("*"))
+        self.assertEqual([], written, "native: the aborted run wrote files")
         self.assertIn("--name requires a value", nat_proc.stderr)
 
     def test_init_tui_py_env_seam_is_retired_for_the_native_verb(self):
@@ -407,25 +405,27 @@ class InitNativeDifferentialTests(unittest.TestCase):
         stub_dir = _Fixture(self, "ai-specs-init-native-hatch-stub-")
         stub = _write_stub(stub_dir.base, rc=1, write_out=False)
         extra = {"AI_SPECS_INIT_TUI_PY": str(stub)}
-        with_env = _Fixture(self, "ai-specs-init-native-hatch-env-").native
-        without_env = _Fixture(self, "ai-specs-init-native-hatch-bare-").native
+        with_env = _native_route(self, "ai-specs-init-native-hatch-env-")
+        without_env = _native_route(self, "ai-specs-init-native-hatch-bare-")
         env_proc = with_env.run(native_cli, "--tui", str(with_env.target), extra_env=extra)
         bare_proc = without_env.run(native_cli, "--tui", str(without_env.target))
         self.assertEqual(env_proc.returncode, bare_proc.returncode, env_proc.stderr)
         env_out, bare_out = with_env.stdout(env_proc), without_env.stdout(bare_proc)
-        self.assertEqual(env_out, bare_out, _diff("hatch-retired stdout", env_out, bare_out))
+        self.assertEqual(env_out, bare_out, _diff("hatch-retired stdout", bare_out, env_out))
         env_err, bare_err = with_env.stderr(env_proc), without_env.stderr(bare_proc)
-        self.assertEqual(env_err, bare_err, _diff("hatch-retired stderr", env_err, bare_err))
+        self.assertEqual(env_err, bare_err, _diff("hatch-retired stderr", bare_err, env_err))
 
     def test_native_wizard_never_executes_init_tui_py(self):
         # T4b-1, the nativity pin: the isolated home gets a REAL lib copy whose
         # init_tui.py is a poison that records its own execution and exits 3.
-        # The legacy leg proves the poison fires (the shell runs the Python
-        # wizard); the native leg must leave its marker ABSENT — if
-        # `init --tui` still delegated the whole verb to lib/init.sh, the
-        # poison would run there too and this assertion fails.
+        # The legacy leg stays LIVE here as RED logic: it proves the poison fires
+        # (the shell runs the Python wizard). The native leg must leave its marker
+        # ABSENT — if `init --tui` still delegated the whole verb to lib/init.sh,
+        # the poison would run there too and this assertion fails. Only the
+        # outputs are compared to the golden.
         native_cli = self._native_cli()
         fixture = _Fixture(self, "ai-specs-init-native-poison-")
+        golden = _golden("tui_poison")
 
         def poison_home(home: Path, marker: Path) -> None:
             lib = home / "lib"
@@ -459,67 +459,62 @@ class InitNativeDifferentialTests(unittest.TestCase):
         # marker, the same fallback line, the same classic result.
         self.assertFalse(nat_marker.exists(),
                          "the native route executed lib/_internal/init_tui.py — the wizard is not native")
+        self.assertEqual(nat_proc.returncode, golden["returncode"], nat_proc.stderr)
         self.assertEqual(nat_proc.returncode, 0, nat_proc.stderr)
         self.assertIn("falling back to classic init", nat_proc.stderr)
         self.assertTrue((fixture.native.target / "ai-specs" / "ai-specs.toml").is_file())
-        leg_out, nat_out = fixture.legacy.stdout(leg_proc), fixture.native.stdout(nat_proc)
-        self.assertEqual(leg_out, nat_out, _diff("poison stdout", leg_out, nat_out))
-        leg_err, nat_err = fixture.legacy.stderr(leg_proc), fixture.native.stderr(nat_proc)
-        self.assertEqual(leg_err, nat_err, _diff("poison stderr", leg_err, nat_err))
+        nat_out = fixture.native.stdout(nat_proc)
+        self.assertEqual(golden["stdout"], nat_out, _diff("poison stdout", golden["stdout"], nat_out))
+        nat_err = fixture.native.stderr(nat_proc)
+        self.assertEqual(golden["stderr"], nat_err, _diff("poison stderr", golden["stderr"], nat_err))
 
-    def test_forced_tui_without_a_tty_falls_back_to_classic_on_both_routes(self):
+    def test_forced_tui_without_a_tty_falls_back_to_classic_as_the_golden(self):
         # S15/S6: --tui with pipes must refuse before any prompt (exit 3 from
         # the wizard) and hand the run to the classic path with the legacy
-        # fallback line — identically on both routes.
+        # fallback line — identically to the golden.
         native_cli = self._native_cli()
-        fixture = _Fixture(self, "ai-specs-init-native-tui-nontty-")
-        leg, nat = fixture.legacy, fixture.native
+        nat = _native_route(self, "ai-specs-init-native-tui-nontty-")
+        golden = _golden("tui_nontty")
 
-        leg_proc = leg.run(LEGACY_CLI, "--tui", str(leg.target))
         nat_proc = nat.run(native_cli, "--tui", str(nat.target))
 
-        self.assertEqual(leg_proc.returncode, 0, leg_proc.stderr)
+        self.assertEqual(nat_proc.returncode, golden["returncode"], nat_proc.stderr)
         self.assertEqual(nat_proc.returncode, 0, nat_proc.stderr)
-        self.assertIn("falling back to classic init", leg_proc.stderr)
+        self.assertIn("falling back to classic init", golden["stderr"])
         self.assertIn("falling back to classic init", nat_proc.stderr)
         self.assertNotIn("Project name", nat_proc.stdout + nat_proc.stderr)
-        leg_out, nat_out = leg.stdout(leg_proc), nat.stdout(nat_proc)
-        self.assertEqual(leg_out, nat_out, _diff("tui-nontty stdout", leg_out, nat_out))
-        leg_err, nat_err = leg.stderr(leg_proc), nat.stderr(nat_proc)
-        self.assertEqual(leg_err, nat_err, _diff("tui-nontty stderr", leg_err, nat_err))
+        nat_out = nat.stdout(nat_proc)
+        self.assertEqual(golden["stdout"], nat_out, _diff("tui-nontty stdout", golden["stdout"], nat_out))
+        nat_err = nat.stderr(nat_proc)
+        self.assertEqual(golden["stderr"], nat_err, _diff("tui-nontty stderr", golden["stderr"], nat_err))
         self.assertTrue((nat.target / "ai-specs" / "ai-specs.toml").is_file())
 
-    def test_tui_over_an_existing_manifest_skips_on_both_routes(self):
+    def test_tui_over_an_existing_manifest_skips_as_the_golden(self):
         # init.sh's skip branch, at the native verb: --tui over a user-owned
         # manifest prints the skip line before the banner, runs classic with
-        # tui: no and keeps the bytes (S4) — identically on both routes.
+        # tui: no and keeps the bytes (S4) — identically to the golden.
         native_cli = self._native_cli()
-        fixture = _Fixture(self, "ai-specs-init-native-tui-skip-")
-        leg, nat = fixture.legacy, fixture.native
+        nat = _native_route(self, "ai-specs-init-native-tui-skip-")
+        golden = _golden("tui_skip")
         user = b'# hand-edited\nname = "keepme"\n'
-        for route in (leg, nat):
-            path = route.target / "ai-specs" / "ai-specs.toml"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(user)
+        path = nat.target / "ai-specs" / "ai-specs.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(user)
 
-        leg_proc = leg.run(LEGACY_CLI, "--tui", str(leg.target))
         nat_proc = nat.run(native_cli, "--tui", str(nat.target))
 
-        self.assertEqual(leg_proc.returncode, 0, leg_proc.stderr)
+        self.assertEqual(nat_proc.returncode, golden["returncode"], nat_proc.stderr)
         self.assertEqual(nat_proc.returncode, 0, nat_proc.stderr)
         skip = "  · skip TUI — ai-specs.toml already exists (never overwritten by init)"
-        self.assertIn(skip, leg_proc.stdout)
+        self.assertIn(skip, golden["stdout"])
         self.assertIn(skip, nat_proc.stdout)
         self.assertLess(nat_proc.stdout.index(skip), nat_proc.stdout.index("ai-specs init\n"))
         self.assertIn("tui:     no", nat_proc.stdout)
-        for route in (leg, nat):
-            path = route.target / "ai-specs" / "ai-specs.toml"
-            self.assertEqual(path.read_bytes(), user,
-                             f"{route.root.name}: the user's manifest changed")
-        leg_out, nat_out = leg.stdout(leg_proc), nat.stdout(nat_proc)
-        self.assertEqual(leg_out, nat_out, _diff("tui-skip stdout", leg_out, nat_out))
-        leg_err, nat_err = leg.stderr(leg_proc), nat.stderr(nat_proc)
-        self.assertEqual(leg_err, nat_err, _diff("tui-skip stderr", leg_err, nat_err))
+        self.assertEqual(path.read_bytes(), user, "the user's manifest changed")
+        nat_out = nat.stdout(nat_proc)
+        self.assertEqual(golden["stdout"], nat_out, _diff("tui-skip stdout", golden["stdout"], nat_out))
+        nat_err = nat.stderr(nat_proc)
+        self.assertEqual(golden["stderr"], nat_err, _diff("tui-skip stderr", golden["stderr"], nat_err))
 
 
 if __name__ == "__main__":
