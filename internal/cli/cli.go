@@ -56,6 +56,9 @@ const (
 	routeTrackerSlug                        // native: `tracker slug`, port of ledger_bridge.change_slug (GO-20 U2e U-C)
 	routeTrackerEvidence                    // native: `tracker evidence`, port of ledger_bridge.evidence_payload (GO-20 U2e U-C)
 	routeTrackerField                       // native: `tracker field`, JSON value reader for the hook helpers (GO-20 U2e U-F)
+	routeHook                               // native: the `hook` family remainder — usage/help/unknown (GO-20 U2e U-F2a)
+	routeHookField                          // native: `hook field`, JSON value reader for plan-build-gate.sh (GO-20 U2e U-F2a)
+	routeHookNormalizePath                  // native: `hook normalize-path`, canonical hook target (GO-20 U2e U-F2a)
 	routeUnknown                            // unknown command: usage error, exit 2
 )
 
@@ -193,6 +196,17 @@ func Route(args []string) route {
 	// `tracker slug` and `tracker evidence` (GO-20 U2e U-C) are the family's only
 	// verbs; every remaining arm (bare `tracker`, `--help|-h|help`, unknown
 	// subcommands) resolves to the native family remainder.
+	if args[0] == "hook" {
+		if len(args) > 1 {
+			switch args[1] {
+			case "field":
+				return route{kind: routeHookField}
+			case "normalize-path":
+				return route{kind: routeHookNormalizePath}
+			}
+		}
+		return route{kind: routeHook}
+	}
 	if args[0] == "tracker" {
 		if len(args) > 1 {
 			switch args[1] {
@@ -326,6 +340,15 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 	case routeTrackerField:
 		// args[0]=tracker, args[1]=field: the verb's own grammar sees args[2:].
 		return runTrackerFieldVerb(args[2:], stdin, stdout, stderr)
+	case routeHook:
+		// args[0]=hook: the family remainder sees the subcommand slot.
+		return runHookDispatch(args[1:], stdout, stderr)
+	case routeHookField:
+		// args[0]=hook, args[1]=field: the verb's own grammar sees args[2:].
+		return runHookField(args[2:], stdin, stdout, stderr)
+	case routeHookNormalizePath:
+		// args[0]=hook, args[1]=normalize-path: the verb's grammar sees args[2:].
+		return runHookNormalizePath(args[2:], stdin, stdout, stderr)
 	case routeRecipeAdd:
 		// args[0]=recipe, args[1]=add: recipe.sh shifts the subcommand before
 		// it execs recipe-add.sh, so the verb's own loop sees args[2:]. No
