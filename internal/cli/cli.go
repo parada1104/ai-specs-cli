@@ -55,6 +55,7 @@ const (
 	routeTracker                            // native: the `tracker` family remainder — usage/help/unknown (GO-20 U2e U-C)
 	routeTrackerSlug                        // native: `tracker slug`, port of ledger_bridge.change_slug (GO-20 U2e U-C)
 	routeTrackerEvidence                    // native: `tracker evidence`, port of ledger_bridge.evidence_payload (GO-20 U2e U-C)
+	routeTrackerField                       // native: `tracker field`, JSON value reader for the hook helpers (GO-20 U2e U-F)
 	routeUnknown                            // unknown command: usage error, exit 2
 )
 
@@ -199,6 +200,8 @@ func Route(args []string) route {
 				return route{kind: routeTrackerSlug}
 			case "evidence":
 				return route{kind: routeTrackerEvidence}
+			case "field":
+				return route{kind: routeTrackerField}
 			}
 		}
 		return route{kind: routeTracker}
@@ -320,6 +323,9 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 	case routeTrackerEvidence:
 		// args[0]=tracker, args[1]=evidence: the verb's own grammar sees args[2:].
 		return runTrackerEvidence(args[2:], stdout, stderr)
+	case routeTrackerField:
+		// args[0]=tracker, args[1]=field: the verb's own grammar sees args[2:].
+		return runTrackerFieldVerb(args[2:], stdin, stdout, stderr)
 	case routeRecipeAdd:
 		// args[0]=recipe, args[1]=add: recipe.sh shifts the subcommand before
 		// it execs recipe-add.sh, so the verb's own loop sees args[2:]. No

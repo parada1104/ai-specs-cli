@@ -37,6 +37,22 @@ RECIPE_DIR = ROOT / "catalog" / "recipes" / "trello-mcp-workflow"
 RECIPE_TOML = RECIPE_DIR / "recipe.toml"
 PLAN_BUILD_GATE = ROOT / "catalog" / "recipes" / "plan-build-flow" / "hooks" / "plan-build-gate.sh"
 TRACKER_GATE = RECIPE_DIR / "hooks" / "tracker-card-gate.sh"
+
+_CLI_HOME: Path | None = None
+
+
+def _cli_home() -> Path:
+    """A stamped CLI home holding the native ai-specs binary (verdict display reads through it)."""
+    global _CLI_HOME
+    if _CLI_HOME is None:
+        home = Path(tempfile.mkdtemp(prefix="ai-specs-cli-home-"))
+        (home / "dist").mkdir(parents=True)
+        subprocess.run(
+            ["go", "build", "-o", str(home / "dist" / "ai-specs"), "./cmd/ai-specs"],
+            cwd=ROOT, check=True, capture_output=True, text=True,
+        )
+        _CLI_HOME = home
+    return _CLI_HOME
 GUARDIAN = ROOT / "lib" / "_internal" / "premerge_guardian.py"
 DOCTOR = ROOT / "lib" / "_internal" / "doctor.py"
 LEGACY_RECIPE = "trello-mcp-workflow"
@@ -277,7 +293,7 @@ class LedgerModeConfigTests(unittest.TestCase):
         text = (
             TRACKER_GATE.read_text()
             .replace("__TRACKER_CARD_GATE_MODE__", gate_mode)
-            .replace("__TRACKER_CLI_HOME__", "")
+            .replace("__TRACKER_CLI_HOME__", str(_cli_home()))
             .replace("__TRACKER_LIB_INTERNAL__", str(LIB_INTERNAL))
         )
         path.write_text(text)
