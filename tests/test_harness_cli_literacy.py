@@ -16,10 +16,8 @@ process boundary:
   binary (decision D26), so the tests below that name it drive ``sync``.
 - ``ai-specs sync`` renders the AGENTS.md harness CLI-literacy pointer.
 
-No test may import ``lib/_internal`` modules. The one internal surface with
-no CLI verb (per-skill sync-metadata validation) is kept as a
-process-boundary invocation of the validator script, marked with a distinct
-``# TRIAGE:`` comment.
+No test may import ``lib/_internal`` modules. Per-skill sync-metadata
+validation runs through the native ``ai-specs skills validate`` verb.
 """
 from __future__ import annotations
 
@@ -37,7 +35,6 @@ from _blackbox import cache_project_dir, cli_path, invoke, temp_project  # noqa:
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLED = ROOT / "bundled-skills"
-SKILL_CONTRACT = ROOT / "lib" / "_internal" / "skill_contract.py"
 
 HARNESS_SKILLS = (
     "harness-lifecycle",
@@ -77,15 +74,9 @@ def _make_home(base: Path) -> Path:
 
 
 def sync_metadata_payload(path: Path) -> dict:
-    """Validate one skill's sync metadata through the validator's CLI surface.
-
-    # TRIAGE: python3 lib/_internal/skill_contract.py sync-metadata — no
-    bin/ai-specs verb exposes per-skill sync-metadata validation; the
-    process-boundary invocation preserves the original contract (enabled,
-    root scope, auto_invoke) without importing the module.
-    """
+    """Validate one skill's sync metadata through `ai-specs skills validate`."""
     proc = subprocess.run(
-        [sys.executable, str(SKILL_CONTRACT), "sync-metadata", str(path)],
+        [str(cli_path()), "skills", "validate", str(path)],
         text=True, capture_output=True, check=False, input="",
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout

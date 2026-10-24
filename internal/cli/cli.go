@@ -38,6 +38,7 @@ const (
 	routeSkillsList                         // native: `skills list`, port of lib/skills-list.sh (GO-20 U5a)
 	routeSkillsRemove                       // native: `skills remove`, port of lib/skills-remove.sh (GO-20 U5b)
 	routeSkillsAdd                          // native: `skills add`, port of lib/skills-add.sh (GO-20 U5c)
+	routeSkillsValidate                     // native: `skills validate`, port of skill_contract.py sync-metadata (GO-20 U2e U-D)
 	routeAddDep                             // native: `add-dep` — the same verb under bin/ai-specs's alias label (GO-20 U5c)
 	routeSkills                             // native: the lib/skills.sh dispatcher remainder (GO-20 U5c)
 	routeRecipeList                         // native: `recipe list`, port of lib/recipe-list.sh (GO-20 U6a)
@@ -131,6 +132,8 @@ func Route(args []string) route {
 				return route{kind: routeSkillsList}
 			case "remove":
 				return route{kind: routeSkillsRemove}
+			case "validate":
+				return route{kind: routeSkillsValidate}
 			}
 		}
 		return route{kind: routeSkills}
@@ -268,6 +271,9 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		// "$LIB_DIR/skills-add.sh" "$@"` — the same verb, one label shift less,
 		// and the exact label the legacy alias exported.
 		return runSkillsAdd(args[1:], r.invokedAs, home, stdin, stdout, stderr)
+	case routeSkillsValidate:
+		// args[0]=skills, args[1]=validate: the verb's own grammar sees args[2:].
+		return runSkillsValidate(args[2:], stdout, stderr)
 	case routeSkills:
 		// args[0]=skills: skills.sh shifts the verb before its case statement,
 		// so the dispatcher's own loop sees args[1:].

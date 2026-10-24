@@ -12,10 +12,10 @@ shopt -s nullglob
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$(dirname "$(dirname "$SCRIPT_DIR")")")")"
 SKILL_CONTRACT_HOME="${AI_SPECS_HOME:-$REPO_ROOT}"
-SKILL_CONTRACT_PY="$SKILL_CONTRACT_HOME/lib/_internal/skill_contract.py"
+AI_SPECS_BIN="${AI_SPECS_GO_BIN:-$SKILL_CONTRACT_HOME/dist/ai-specs}"
 
-if [ ! -f "$SKILL_CONTRACT_PY" ]; then
-    echo -e "${RED}Missing skill contract helper: $SKILL_CONTRACT_PY${NC}" >&2
+if [ ! -x "$AI_SPECS_BIN" ]; then
+    echo "Missing ai-specs binary: $AI_SPECS_BIN" >&2
     exit 1
 fi
 
@@ -69,7 +69,7 @@ missing=0
 while IFS= read -r skill_file; do
     [ -f "$skill_file" ] || continue
 
-    if ! metadata_json=$(python3 "$SKILL_CONTRACT_PY" sync-metadata "$skill_file"); then
+    if ! metadata_json=$("$AI_SPECS_BIN" skills validate "$skill_file"); then
         echo -e "  ${RED}invalid${NC} - $skill_file"
         missing=$((missing + 1))
         continue

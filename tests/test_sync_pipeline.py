@@ -1734,7 +1734,8 @@ class SkillSyncScriptTests(unittest.TestCase):
                 capture_output=True,
                 check=False,
                 input="",
-                env={**os.environ, "AI_SPECS_HOME": str(_home_for(repo_root / "skill-sync-probe"))},
+                env={**os.environ, "AI_SPECS_HOME": str(_home_for(repo_root / "skill-sync-probe")),
+                     "AI_SPECS_GO_BIN": str(CLI)},
             )
 
             self.assertEqual(proc.returncode, 0, proc.stderr)
