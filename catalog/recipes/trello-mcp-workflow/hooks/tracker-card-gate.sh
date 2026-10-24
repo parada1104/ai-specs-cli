@@ -620,10 +620,10 @@ _ledger_grade() {
     # an explicit `--write kind=exempt` made outside this host, never a side effect of
     # grading a checkpoint. The file is never created, modified, or deleted here.
     slug="$explicit_slug"
-    [ -n "$slug" ] || slug="$("$cli" tracker slug "$root")"
+    [ -n "$slug" ] || slug="$("$cli" tracker slug "$root" 2>/dev/null)"
     evidence="$(mktemp "${TMPDIR:-/tmp}/tracker-ledger-evidence.XXXXXX" 2>/dev/null)"
     if [ -n "$evidence" ]; then
-      if "$cli" tracker evidence "$root" "$slug" "$evidence"; then
+      if "$cli" tracker evidence "$root" "$slug" "$evidence" 2>/dev/null; then
         extra=(--evidence "$evidence")
       else
         rm -f "$evidence"; evidence=""
