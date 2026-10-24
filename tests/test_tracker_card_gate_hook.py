@@ -334,13 +334,26 @@ class TrackerCardGateHookTests(unittest.TestCase):
     def test_bash_relpath_keeps_glob_characters_literal(self):
         # A `*` in the target must not pathname-expand against the hook's cwd.
         text = GATE.read_text(encoding="utf-8")
-        start = text.index("_canonical_path() {")
+        start = text.index("_collapse_dots() {")
         end = text.index("# --- Direct host mode dispatch")
         with tempfile.TemporaryDirectory() as tmp:
             Path(tmp, "a1").touch()
             script = text[start:end] + "\n_relative_to '/x/a*/y' '/x'\n"
             r = subprocess.run(["bash", "-c", script], cwd=tmp, capture_output=True, text=True)
         self.assertEqual(r.stdout, "a*/y\n", r.stderr)
+
+    def test_bash_relpath_collapses_dotdot_through_missing_directory(self):
+        # R1-001: `..` after a missing directory must collapse lexically, as realpath does,
+        # so an outside target is reported as `../...` and the outside guard catches it.
+        text = GATE.read_text(encoding="utf-8")
+        start = text.index("_collapse_dots() {")
+        end = text.index("# --- Direct host mode dispatch")
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp, "repo")
+            repo.mkdir()
+            script = text[start:end] + f"\n_repo_relative '{repo}/missing/../../out/x.py' '{repo}'\n"
+            r = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        self.assertEqual(r.stdout, "../out/x.py\n", r.stderr)
 
     def test_openspec_paths_never_grade(self):
         target = self.repo / "openspec" / "changes" / "demo" / "proposal.md"

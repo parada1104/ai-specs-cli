@@ -682,6 +682,27 @@ _resolve_repo() {
 # existing ancestor with `cd -P` + `pwd -P`, re-append the non-existing tail, and
 # strip the canonical root prefix. Bash 3.2: no associative arrays, no ${x,,},
 # no readlink -f. A target outside the root yields `..`-prefixed output.
+# Lexical `.`/`..` collapse of an absolute path, as realpath does for the parts that
+# do not exist (R1-001). Stack-based; a `..` above the root stays at the root.
+_collapse_dots() {
+  local part n=0 i out=""
+  local -a parts stack
+  IFS=/ read -r -a parts <<< "$1"
+  for part in "${parts[@]}"; do
+    case "$part" in
+      ""|.) ;;
+      ..) [ "$n" -gt 0 ] && n=$((n - 1)) ;;
+      *) stack[$n]="$part"; n=$((n + 1)) ;;
+    esac
+  done
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    out="$out/${stack[$i]}"
+    i=$((i + 1))
+  done
+  printf '%s\n' "${out:-/}"
+}
+
 _canonical_path() {
   local path="$1" hops=0 target dir tail=""
   while [ -L "$path" ] && [ "$hops" -lt 40 ]; do
@@ -700,7 +721,7 @@ _canonical_path() {
   [ -n "$dir" ] && [ -d "$dir" ] || return 1
   dir="$(cd -P "$dir" 2>/dev/null && pwd -P)" || return 1
   [ -n "$dir" ] || return 1
-  printf '%s%s\n' "${dir%/}" "$tail"
+  _collapse_dots "${dir%/}$tail"
 }
 
 _relative_to() {
@@ -838,7 +859,7 @@ fi
 if [ "$kind" = shell ]; then
   repo_root="$(_resolve_repo "${cwd:-$PWD}")" || exit 0
   [ -n "$repo_root" ] || exit 0
-  while IFS=$'\t' read -r action detail; do
+  while IFS=$'\t' read -r action _detail; do
     [ -n "$action" ] || continue
     case "$action" in
       pr_create)
