@@ -9,6 +9,7 @@ routes' rendered bytes.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -24,6 +25,24 @@ ROOT = Path(__file__).resolve().parents[1]
 LEGACY_CLI = ROOT / "bin" / "ai-specs"
 PLACEHOLDER = "# AGENTS.md - Runtime context"
 BRIEF_MODULES = ("brief-render-policy.py", "agents-render.py", "recipe-materialize.py")
+
+# Golden of the legacy `init` route (U2e T3d). Captured from bin/ai-specs on a
+# fresh target with an isolated home; the native binary must reproduce it. The
+# legacy stderr is only the GO_*_BRIDGE_FALLBACK warnings of the Python path, which
+# appear without a verified worktree-gate binary and are dropped at capture time, so the
+# golden stderr is empty. Procedure and mapping: odd/tasks/go-20-u2e-flip.md (L17).
+GOLDEN_DIR = ROOT / "tests" / "fixtures" / "init-brief"
+_MCP_TEMP = re.compile(r"ai-specs-recipe-mcp-[A-Za-z0-9_]+\.json")
+_FALLBACK_LINE = re.compile(r"^\s*!?\s*GO_[A-Z_]*BRIDGE_FALLBACK:.*\n?", re.M)
+
+
+def _normalize(text: str, fixture: _Fixture) -> str:
+    text = text.replace(str(fixture.target), "<TARGET>").replace(str(fixture.base), "<BASE>")
+    return _MCP_TEMP.sub("<MCP_TEMP>", text)
+
+
+def _drop_fallback_lines(text: str) -> str:
+    return _FALLBACK_LINE.sub("", text)
 
 
 class _Fixture:
@@ -144,6 +163,24 @@ class InitBriefRouteTests(unittest.TestCase):
             (legacy.target / "AGENTS.md").read_bytes(),
             (native.target / "AGENTS.md").read_bytes(),
         )
+
+
+class InitBriefGoldenTests(unittest.TestCase):
+    def test_native_init_matches_the_legacy_golden(self):
+        go_cli = _go_cli.cli()
+        if go_cli == LEGACY_CLI:
+            self.skipTest("the Go build is unavailable, so the golden would test the legacy route")
+        fixture = _Fixture(self, "ai-specs-initbrief-golden-")
+
+        proc = fixture.run(go_cli, "init", env=fixture.env())
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        golden_stdout = (GOLDEN_DIR / "stdout.golden.txt").read_text(encoding="utf-8")
+        golden_stderr = (GOLDEN_DIR / "stderr.golden.txt").read_text(encoding="utf-8")
+        golden_agents = (GOLDEN_DIR / "AGENTS.md.golden").read_bytes()
+        self.assertEqual(_normalize(proc.stdout, fixture), golden_stdout)
+        self.assertEqual(_normalize(proc.stderr, fixture), golden_stderr)
+        self.assertEqual((fixture.target / "AGENTS.md").read_bytes(), golden_agents)
 
 
 if __name__ == "__main__":

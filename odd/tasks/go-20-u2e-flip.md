@@ -41,7 +41,7 @@ Slice 1 = documentation and measured inventory only. No source or test change in
     chain is `baseline-brief` (`internal/cli/brief.go`). Route: rewrite against the real surface. Slice 4, branch
     `change/go-20-u2e-flip-4` (base c2edbbf). Scope: L15; hooks part closed in Go: L16. Commit: efa7b63 (PR #438).
   - **T3d** `test_init_brief_route` (LEGACY_CLI; bash `lib/init.sh` seam via `AI_SPECS_GO_BIN`). Route: golden fixtures
-    for the legacy comparison (L6). Commit: pending.
+    for the legacy comparison (L6). Slice 5, branch `change/go-20-u2e-flip-5` (base fc03809). Equivalence and capture: L17. Commit: pending.
   - **T3e** `test_init_native` (legacy vs native oracle). Route: golden fixtures frozen from current legacy output (L6). Commit: pending.
 - **T4** — Extend the parity corpus to the S3 gaps or record each gap (`tests/parity/parity.py`). Commit: pending.
 - **T5** — Replace the five Python differentials (`config`, `deps`, `gatebinary`, `schema`, `target`) with native
@@ -198,3 +198,18 @@ Slice 1 = documentation and measured inventory only. No source or test change in
   golden-hooks tests PASS; LSP diagnostics clean on the test file.
   Process note: a background `validate.sh` started on a4063a1 was stopped before it finished. It ran on a worktree I was editing, so
   its result is not evidence. One `validate.sh` run is made on the final head.
+- L17 — Slice 5 (T3d), golden fixtures for `test_init_brief_route`. Frozen from the legacy route `bin/ai-specs init` on a fresh
+  target with an isolated home: `tests/fixtures/init-brief/AGENTS.md.golden` (805 bytes), `stdout.golden.txt`, `stderr.golden.txt`.
+  Normalization shared by capture and test (`_normalize`): target path -> `<TARGET>`, base dir -> `<BASE>`, the random recipe-MCP
+  temp file name -> `<MCP_TEMP>`. Stdout is otherwise byte-stable across runs (two captures compared). Stderr: the legacy route
+  prints only `GO_*_BRIDGE_FALLBACK` warnings (Python path without a verified worktree-gate binary); these are dropped at capture,
+  so the golden stderr is empty. The native route prints no such warnings, so its empty stderr equals the golden.
+  Equivalence measured before freezing: native vs legacy `AGENTS.md` identical (805 bytes); normalized stdout identical; stderr
+  identical after the fallback filter (both empty). The new test `InitBriefGoldenTests.test_native_init_matches_the_legacy_golden`
+  compares native stdout, stderr and `AGENTS.md` bytes with these goldens. It does not replace the legacy live comparison
+  `test_both_routes_render_the_same_bytes` or any seam test: no assertion removed; the live legacy test goes with `lib/` at T5.
+  RED: the test fails (FileNotFoundError) before the goldens exist. GREEN: `unittest tests.test_init_brief_route` 4 OK.
+  Mutations (real, reverted, compiling): stdout line `(baseline brief)` changed -> golden test fails; `Enabled runtimes`
+  separator changed in `internal/sync/agentsrender.go` -> golden test fails (failures=1, not build errors).
+  Capture procedure: a scratch script imports `tests/test_init_brief_route.py` helpers (`_Fixture`, `_normalize`, `_drop_fallback_lines`)
+  and writes the three files from `bin/ai-specs init`; not committed. Regenerate only with a human decision.
