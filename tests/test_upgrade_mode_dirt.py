@@ -106,7 +106,9 @@ def _make_fake_install(home: Path, version: str = "1.0.0", native: bool = False)
 
     # Mirror production .gitignore so pip --target lib/_vendor stays untracked;
     # the 12 MB native binary stays out of git as in tests/test_upgrade.py.
-    (ai_specs / ".gitignore").write_text("lib/_vendor\n" + ("bin/\n" if native else ""))
+    # GO-20 U2e PR-A: production also ignores dist/ (the installed native copy).
+    (ai_specs / ".gitignore").write_text(
+        "lib/_vendor\ndist/\n" + ("bin/\n" if native else ""))
 
     # GO-20 U1b-2b: install.sh installs the COMPILED BINARY as the entry now, so
     # the fixture has to look like a real installation — a committed trust root
