@@ -30,12 +30,18 @@ Slice 1 = documentation and measured inventory only. No source or test change in
 
 ## Tasks
 
-- **T1** — Measure the U2e inventory (S2, S3). Route: inline (read-only measurement). Commit: this slice.
+- **T1** — Measure the U2e inventory (S2, S3). Route: inline (read-only measurement). Commit: 7428268 → 182f96b (PR #432).
 - **T2** — Flip: `bin/ai-specs` execs the native binary for every verb (13 `bash "$LIB_DIR/…"` dispatch lines,
   `bin/ai-specs:38-50`). Blocked until T3 and the named test rows are native. Commit: pending.
-- **T3** — Retarget the U2e test rows to the native binary, no assertion removed: `test_init_brief_route`
-  (LEGACY_CLI), `AgentsSubmenuManifestTests` (`lib/_internal` loader), `test_init_native` (oracle), `test_upgrade_output`
-  (oracle `lib/_internal/changelog.py`), `_materialize_process` (`lib/_internal/recipe-materialize.py`). Commit: pending.
+- **T3** — Retarget the U2e test rows to the native binary, no assertion removed. Split into named units (L6):
+  - **T3a** `test_upgrade_output` (oracle seed `lib/_internal/changelog.py`). Slice 2 (this PR). Commit: pending.
+  - **T3b** `AgentsSubmenuManifestTests` (`lib/_internal` loader, no CLI surface). Go coverage already exists in
+    `internal/hub/interactive_test.go` (D12 cases). Route: map each Python case to a Go test, then retire the Python class with the equivalence recorded. Commit: pending.
+  - **T3c** `_materialize_process` (`lib/_internal/recipe-materialize.py`). No native `materialize` verb; the native
+    chain is `baseline-brief` (`internal/cli/brief.go`). Route: rewrite against the real surface. Commit: pending.
+  - **T3d** `test_init_brief_route` (LEGACY_CLI; bash `lib/init.sh` seam via `AI_SPECS_GO_BIN`). Route: golden fixtures
+    for the legacy comparison (L6). Commit: pending.
+  - **T3e** `test_init_native` (legacy vs native oracle). Route: golden fixtures frozen from current legacy output (L6). Commit: pending.
 - **T4** — Extend the parity corpus to the S3 gaps or record each gap (`tests/parity/parity.py`). Commit: pending.
 - **T5** — Replace the five Python differentials (`config`, `deps`, `gatebinary`, `schema`, `target`) with native
   checks that keep their assertions; then delete `lib/_internal`. Commit: pending.
@@ -76,3 +82,21 @@ Slice 1 = documentation and measured inventory only. No source or test change in
   - `internal/target/resolve.go:35` keeps `programName = "lib/_internal/target-resolve.py"` only for the usage
     string on stderr. Deleting `lib/_internal` requires changing it (parity row).
 - L5 — Trello: no card for U2e (S5). Engram 245 open item 1 (no card for D-U2d-9) also stands.
+- L6 — Slice 2 scope, human answers (verbatim): scope = "Solo las que encajan" (only T3a this slice; T3b-T3e
+  named units, not touched here); oracle for comparative rows = "Fixtures golden" (frozen from current legacy
+  output when their turn comes). T1 entry completed in this PR's doc commit: 7428268 → 182f96b.
+- L7 — Evidence, product defect (proposed debt D-U2e-1, not registered in Engram yet): on macOS, `TMPDIR` lives
+  under the `/var` → `/private/var` symlink. Baseline `test_upgrade_output` failed 9 of 11 before any change with
+  "~/.local/bin/ai-specs resolves outside ~/.ai-specs": `internal/upgrade/upgrade.go:253` compares the
+  `EvalSymlinks` target against the unresolved `ExpectedHome`. Not fixed here (product code, out of slice). The
+  fixture now canonicalizes its HOME with `realpath`. Robert to decide registration.
+- L8 — Human decision for `test_upgrade_notices.test_missing_parser_does_not_break_the_upgrade`, which used the
+  seed as its mutation target ("Mutar sin semilla"): the lambda is `unlink(missing_ok=True)`. The mutation is no
+  longer observable; the test keeps checking that the upgrade survives a missing parser. Its module also needs
+  `PYTHONPATH=tests` (pre-existing import by bare name, same on the epic base).
+- L9 — Human correction to L8 ("Semilla local al test"): L8's "Mutar sin semilla" was reverted because with the
+  seed absent `unlink(missing_ok=True)` is a no-op and silently drops the missing-parser coverage. The shared fixture
+  stays unseeded; only `test_missing_parser_does_not_break_the_upgrade` seeds `lib/_internal/changelog.py` into the
+  base install and origin, and its mutation is strict `unlink()` again. Shared-helper consumers of `setup_install`
+  (inventoried before any edit): `test_docs_drift_fixes.py`, `test_upgrade_notices.py`, `test_upgrade_output.py`;
+  none changed. The `validate.sh` run started on the L8 state was stopped and is re-run once on the final state.

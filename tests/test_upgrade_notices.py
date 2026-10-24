@@ -8,8 +8,11 @@ or execute a notice — only display it.
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from test_upgrade_output import UpgradeOutputTests, run
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class UpgradeNoticeTests(UpgradeOutputTests):
@@ -210,6 +213,14 @@ class UpgradeNoticeTests(UpgradeOutputTests):
     def test_missing_parser_does_not_break_the_upgrade(self):
         home = self.fake_home()
         ai_specs, bare = self.setup_install(home, version="0.21.0")
+        # GO-20 U2e: the shared fixture no longer seeds the Python parser. This test
+        # seeds it into the base install and origin so the mutation below has a file to remove.
+        parser = ai_specs / "lib" / "_internal" / "changelog.py"
+        parser.parent.mkdir(parents=True)
+        parser.write_bytes((ROOT / "lib" / "_internal" / "changelog.py").read_bytes())
+        run(["git", "add", "-A"], cwd=ai_specs)
+        run(["git", "commit", "-m", "seed parser"], cwd=ai_specs)
+        run(["git", "push", "origin", "main"], cwd=ai_specs)
         self.publish_mutated(
             ai_specs,
             bare,
