@@ -87,6 +87,22 @@ def _git(cwd: Path, *args: str) -> None:
 class TrackerLedgerHostDirectModeTests(unittest.TestCase):
     """`tracker-card-gate.sh` grades lifecycle checkpoints as a direct host."""
 
+    @classmethod
+    def setUpClass(cls):
+        # The evidence bridge is the native `ai-specs tracker slug|evidence` verbs,
+        # so the stamped CLI home carries the real binary built from this worktree.
+        cls._cli_tmp = tempfile.TemporaryDirectory()
+        cls.cli_home = Path(cls._cli_tmp.name)
+        (cls.cli_home / "dist").mkdir(parents=True)
+        subprocess.run(
+            ["go", "build", "-o", str(cls.cli_home / "dist" / "ai-specs"), "./cmd/ai-specs"],
+            cwd=ROOT, check=True, capture_output=True, text=True,
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._cli_tmp.cleanup()
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -109,8 +125,8 @@ class TrackerLedgerHostDirectModeTests(unittest.TestCase):
         stamped.write_text(
             GATE.read_text()
             .replace("__TRACKER_CARD_GATE_MODE__", mode)
-            .replace("__TRACKER_CLI_HOME__", "")
-            .replace("__TRACKER_LIB_INTERNAL__", str(LIB_INTERNAL))
+            .replace("__TRACKER_CLI_HOME__", str(self.cli_home))
+            .replace("__TRACKER_LIB_INTERNAL__", "")
         )
         stamped.chmod(0o755)
         return stamped
