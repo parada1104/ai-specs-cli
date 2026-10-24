@@ -8,7 +8,7 @@
     "skills"
    ],
    "rc": 2,
-   "stderr": "Usage: ai-specs skills <subcommand> [args]\nSubcommands:\n  add <url> [path] [flags]   Register a vendored skill ([[deps]]) and sync\n                             Flags: --id, --subdir, --scope, --license,\n                                    --attribution, --trigger, --no-sync\n  list [path]                List registered and installed skills\n  remove <id> [path]         Remove a vendored skill and prune ai-specs/.deps/<id>/\n  validate <skill_md_path>   Validate one SKILL.md's sync metadata (JSON)\nPath defaults to current directory. Run 'ai-specs skills add --help' for\nfull add flags.\n",
+   "stderr": "Usage: ai-specs skills <subcommand> [args]\nSubcommands:\n  add <url> [path] [flags]   Register a vendored skill ([[deps]]) and sync\n                             Flags: --id, --subdir, --scope, --license,\n                                    --attribution, --trigger, --no-sync\n  list [path]                List registered and installed skills\n  remove <id> [path]         Remove a vendored skill and prune ai-specs/.deps/<id>/\n  validate <skill_md_path>   Validate one SKILL.md's sync metadata (JSON)\n  field <path>               Print one JSON value of stdin at a dotted path\nPath defaults to current directory. Run 'ai-specs skills add --help' for\nfull add flags.\n",
    "stdout": "",
    "tree": [
     [
@@ -52,7 +52,7 @@
    ],
    "rc": 0,
    "stderr": "",
-   "stdout": "Usage: ai-specs skills <subcommand> [args]\nSubcommands:\n  add <url> [path] [flags]   Register a vendored skill ([[deps]]) and sync\n                             Flags: --id, --subdir, --scope, --license,\n                                    --attribution, --trigger, --no-sync\n  list [path]                List registered and installed skills\n  remove <id> [path]         Remove a vendored skill and prune ai-specs/.deps/<id>/\n  validate <skill_md_path>   Validate one SKILL.md's sync metadata (JSON)\nPath defaults to current directory. Run 'ai-specs skills add --help' for\nfull add flags.\n",
+   "stdout": "Usage: ai-specs skills <subcommand> [args]\nSubcommands:\n  add <url> [path] [flags]   Register a vendored skill ([[deps]]) and sync\n                             Flags: --id, --subdir, --scope, --license,\n                                    --attribution, --trigger, --no-sync\n  list [path]                List registered and installed skills\n  remove <id> [path]         Remove a vendored skill and prune ai-specs/.deps/<id>/\n  validate <skill_md_path>   Validate one SKILL.md's sync metadata (JSON)\n  field <path>               Print one JSON value of stdin at a dotted path\nPath defaults to current directory. Run 'ai-specs skills add --help' for\nfull add flags.\n",
    "tree": [
     [
      "ai-specs",
