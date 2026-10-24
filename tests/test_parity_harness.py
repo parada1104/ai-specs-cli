@@ -8,6 +8,8 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import io
+import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -165,7 +167,8 @@ class GateModeTests(unittest.TestCase):
         seen = []
 
         def fake_run_comparison(fixture, go_cli, workdir, mutate=None,
-                                gate_mode=parity.GATE_ABSENT, gate_bin=None):
+                                gate_mode=parity.GATE_ABSENT, gate_bin=None,
+                                live_legacy=None):
             seen.append((gate_mode, gate_bin))
             return [], f"legacy-vs-go | {gate_mode}"
 
@@ -245,6 +248,131 @@ class NegativeMutationTests(unittest.TestCase):
         deltas = self._mutation_deltas(_mutate_rc)
         self.assertTrue(deltas)
         self.assertTrue(any("exit code" in d for d in deltas))
+
+
+class GoldenCorpusTests(unittest.TestCase):
+    """GO-20 U2e T2a: the legacy leg is frozen in versioned goldens."""
+
+    def _captured_fixtures(self):
+        return [f for f in parity.CORPUS
+                if f.name not in parity.GOLDEN_EXCLUDED]
+
+    def test_every_fixture_has_a_gate_absent_golden(self):
+        for fixture in self._captured_fixtures():
+            with self.subTest(fixture=fixture.name):
+                path = parity.golden_path(fixture.name, parity.GATE_ABSENT)
+                self.assertTrue(path.is_file(), f"missing golden {path}")
+
+    def test_gate_present_goldens_exist_when_captured(self):
+        gdir = parity.GOLDENS_DIR / parity.GATE_PRESENT
+        self.assertTrue(gdir.is_dir(), f"missing goldens dir {gdir}")
+        unavailable = gdir / "NOT_CAPTURED.txt"
+        if unavailable.is_file():
+            self.assertTrue(unavailable.read_text().strip())
+            return
+        for fixture in self._captured_fixtures():
+            with self.subTest(fixture=fixture.name):
+                path = parity.golden_path(fixture.name, parity.GATE_PRESENT)
+                self.assertTrue(path.is_file(), f"missing golden {path}")
+
+    def test_goldens_round_trip_to_step_results(self):
+        fixture = self._captured_fixtures()[0]
+        path = parity.golden_path(fixture.name, parity.GATE_ABSENT)
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        leg = parity.load_golden_leg(fixture, parity.GATE_ABSENT)
+        self.assertEqual(raw["fixture"], fixture.name)
+        self.assertEqual(raw["gate_mode"], parity.GATE_ABSENT)
+        self.assertTrue(raw["legacy_launcher"])
+        self.assertEqual(len(leg.steps), len(raw["steps"]))
+        for step, item in zip(leg.steps, raw["steps"]):
+            self.assertEqual(list(step.argv), item["argv"])
+            self.assertEqual(step.rc, item["rc"])
+            self.assertEqual(step.stdout, item["stdout"])
+            self.assertEqual(step.stderr, item["stderr"])
+            self.assertEqual(parity.tree_to_json(step.tree), item["tree"])
+            self.assertEqual(step.tree, parity.tree_from_json(item["tree"]))
+
+    def test_missing_golden_fails_loudly_naming_the_fixture(self):
+        fixture = self._captured_fixtures()[0]
+        with tempfile.TemporaryDirectory(prefix="parity-golden-") as td, \
+                mock.patch.object(parity_impl, "GOLDENS_DIR", Path(td)):
+            with self.assertRaises(RuntimeError) as raised:
+                parity.load_golden_leg(fixture, parity.GATE_ABSENT)
+        self.assertIn(fixture.name, str(raised.exception))
+
+    def test_mutated_golden_stdout_reports_a_delta(self):
+        fixture = self._captured_fixtures()[0]
+        real = parity.load_golden_leg(fixture, parity.GATE_ABSENT)
+        source = parity.golden_path(fixture.name, parity.GATE_ABSENT)
+        raw = json.loads(source.read_text(encoding="utf-8"))
+        # Flip one byte of the first non-empty stdout (the negative control).
+        index = next(i for i, item in enumerate(raw["steps"])
+                     if item["stdout"])
+        stdout = raw["steps"][index]["stdout"]
+        flipped = ("X" if stdout[-1] != "X" else "Y")
+        raw["steps"][index]["stdout"] = stdout[:-1] + flipped
+        with tempfile.TemporaryDirectory(prefix="parity-golden-") as td:
+            target = Path(td) / parity.GATE_ABSENT / f"{fixture.name}.json"
+            target.parent.mkdir(parents=True)
+            target.write_text(json.dumps(raw, sort_keys=True, indent=1) + "\n",
+                              encoding="utf-8")
+            with mock.patch.object(parity_impl, "GOLDENS_DIR", Path(td)):
+                mutated = parity.load_golden_leg(fixture, parity.GATE_ABSENT)
+        deltas = parity.diff_legs(real, mutated)
+        self.assertTrue(deltas)
+        self.assertTrue(any("stdout" in delta for delta in deltas))
+
+    def test_mutated_live_go_stdout_reports_a_delta(self):
+        fixture = parity.CORPUS[0]
+        with tempfile.TemporaryDirectory(prefix="parity-golden-") as td:
+            deltas, _mode = parity.run_comparison(
+                fixture, go_cli=None, workdir=Path(td),
+                mutate=_mutate_stdout, live_legacy=True)
+        self.assertTrue(deltas)
+        self.assertTrue(any("stdout" in delta for delta in deltas))
+
+    def test_default_mode_runs_only_the_go_leg_live(self):
+        seen = []
+
+        def fake_run_leg(label, cli_path, fixture, scratch, gate_bin=None):
+            seen.append(label)
+            return parity.LegResult(label=label, cli_path=str(cli_path))
+
+        fixture = self._captured_fixtures()[0]
+        with tempfile.TemporaryDirectory(prefix="parity-golden-") as td, \
+                mock.patch.object(parity_impl, "run_leg", side_effect=fake_run_leg):
+            parity.run_comparison(fixture, go_cli=Path("/go/ai-specs-go"),
+                                  workdir=Path(td))
+        self.assertEqual(seen, ["other"])
+
+    def test_self_test_mode_still_runs_the_legacy_launcher_live(self):
+        seen = []
+
+        def fake_run_leg(label, cli_path, fixture, scratch, gate_bin=None):
+            seen.append((label, cli_path))
+            return parity.LegResult(label=label, cli_path=str(cli_path))
+
+        with tempfile.TemporaryDirectory(prefix="parity-golden-") as td, \
+                mock.patch.object(parity_impl, "run_leg", side_effect=fake_run_leg):
+            parity.run_comparison(parity.CORPUS[0], go_cli=None,
+                                  workdir=Path(td))
+        self.assertEqual([label for label, _ in seen], ["legacy", "other"])
+        self.assertTrue(all(path == parity.ROOT / "bin" / "ai-specs"
+                            for _label, path in seen))
+
+    @unittest.skipUnless(shutil.which("go"),
+                         "go toolchain unavailable: structured golden-vs-Go "
+                         "comparison skipped (mock-based controls above still "
+                         "run)")
+    def test_golden_vs_live_go_reports_zero_deltas(self):
+        fixture = parity.CORPUS[0]
+        with tempfile.TemporaryDirectory(prefix="parity-golden-") as td:
+            go_cli = parity.build_go_binary(Path(td))
+            if go_cli is None:
+                self.skipTest("Go build failed in this environment")
+            deltas, mode = parity.run_comparison(
+                fixture, go_cli=go_cli, workdir=Path(td))
+        self.assertEqual(deltas, [], f"{fixture.name}: {mode}")
 
 
 class RunEntrypointTests(unittest.TestCase):
