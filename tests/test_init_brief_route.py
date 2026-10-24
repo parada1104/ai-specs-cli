@@ -64,6 +64,9 @@ class _Fixture:
             "HOME": str(self.tmp / "home"),
             "TMPDIR": str(self.tmp),
             "AI_SPECS_HOME": str(self.home),
+            # The launcher execs the native binary (GO-20 U2e T2); pin it to the
+            # build of this worktree so the route never depends on dist/.
+            "AI_SPECS_GO_BIN": str(_go_cli.cli()),
             "AI_SPECS_NO_NETWORK": "1",
             "LC_ALL": "C",
             "LANG": "C",
@@ -114,6 +117,10 @@ def _recording_python(base: Path) -> tuple[Path, Path]:
 
 
 class InitBriefRouteTests(unittest.TestCase):
+    # GO-20 U2e T2 finding: the bash init seam (AI_SPECS_GO_BIN stub) no longer
+    # exists once bin/ai-specs execs the binary; the stub receives `init` itself.
+    # Owner: T5 (deletes lib/_internal and these seam tests). Expires with T5.
+    @unittest.expectedFailure
     def test_usable_seam_runs_the_native_verbs_and_no_brief_python(self):
         fixture = _Fixture(self, "ai-specs-initbrief-route-")
         seam, seam_log = _seam_stub(fixture.base)
@@ -134,6 +141,8 @@ class InitBriefRouteTests(unittest.TestCase):
         for module in BRIEF_MODULES:
             self.assertNotIn(module, python_calls, f"{module} still ran:\n{python_calls}")
 
+    # Same finding and owner as above (T5); expires with T5.
+    @unittest.expectedFailure
     def test_native_chain_failure_writes_the_placeholder(self):
         fixture = _Fixture(self, "ai-specs-initbrief-fail-")
         seam, _ = _seam_stub(fixture.base, chain_rc=1)

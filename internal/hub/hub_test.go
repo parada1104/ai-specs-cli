@@ -199,3 +199,24 @@ func TestMenuMatchesTheShellEntries(t *testing.T) {
 		}
 	}
 }
+
+// GO-20 U2e T2: a delegated child reaches the native binary through the
+// launcher, so the environment pins AI_SPECS_GO_BIN to the running binary and
+// drops any inherited value (the launcher must not pick another build).
+func TestChildEnvPinsNativeBinary(t *testing.T) {
+	t.Setenv("AI_SPECS_GO_BIN", "/stale/other-build")
+	self, err := os.Executable()
+	if err != nil {
+		t.Skipf("os.Executable unavailable: %v", err)
+	}
+	env := childEnv("/home/x")
+	var pinned []string
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "AI_SPECS_GO_BIN=") {
+			pinned = append(pinned, kv)
+		}
+	}
+	if len(pinned) != 1 || pinned[0] != "AI_SPECS_GO_BIN="+self {
+		t.Fatalf("AI_SPECS_GO_BIN entries = %q, want exactly [AI_SPECS_GO_BIN=%s]", pinned, self)
+	}
+}

@@ -1,22 +1,16 @@
 #!/usr/bin/env bash
 # ai-specs — global CLI for the ai-specs standard.
 #
-# Subcommands:
-# init [path] Bootstrap ai-specs/ in a project (idempotent)
-# sync [path] Reconcile manifest → refresh-bundled + vendor + AGENTS.md + agents
-# sync-agent [path] [--all|--<a>] Fan out per-agent configs only
-# refresh-bundled [path] Compatibility no-op (sync refreshes bundled assets)
-# add-dep <url> [path] Register a vendored skill (alias for 'skills add')
-# doctor [path] Diagnose project health (no project writes)
-# rules-audit [path] Inventory legacy rules for migration planning (read-only)
-# recipe list [path] List available and installed recipes
-# recipe add <id> [path] Add a recipe to the manifest
-# recipe init <id> [path] Print a read-only recipe init brief
-# recipe configure <id> [path] Inspect or apply recipe config non-interactively
-# upgrade [--dry-run] [--force] Upgrade the global installation safely
-# version Print CLI version
-# hub [path] Interactive status + command menu (also bare `ai-specs`)
-# help Show this help
+# Every verb is served by the native binary (cmd/ai-specs). This launcher only
+# resolves that binary and execs it with the untouched argument list; the verb
+# table, help text and exit codes live in the Go CLI (internal/cli).
+#
+# Binary resolution, in order:
+#   1. $AI_SPECS_GO_BIN  (exported by the Go CLI to the processes it starts,
+#      and by tests that pin a specific build)
+#   2. $AI_SPECS_HOME/dist/ai-specs  (produced by scripts/build-cli.sh)
+# A missing binary fails loudly with exit 1. There is no legacy fallback: the
+# Bash/Python route was retired by GO-20 U2e (T2).
 set -e
 SOURCE="${BASH_SOURCE[0]}"
 while [[ -L "$SOURCE" ]]; do
@@ -27,58 +21,11 @@ done
 BIN_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
 AI_SPECS_HOME="${AI_SPECS_HOME:-$(cd "$BIN_DIR/.." && pwd)}"
 export AI_SPECS_HOME
-LIB_DIR="$AI_SPECS_HOME/lib"
-if [[ $# -eq 0 ]]; then
-    cmd="hub"
-else
-    cmd="$1"
-    shift
+
+NATIVE_BIN="${AI_SPECS_GO_BIN:-$AI_SPECS_HOME/dist/ai-specs}"
+if [[ ! -x "$NATIVE_BIN" ]]; then
+    echo "ai-specs: native binary not found at $NATIVE_BIN" >&2
+    echo "Build it with scripts/build-cli.sh, or set AI_SPECS_GO_BIN." >&2
+    exit 1
 fi
-case "$cmd" in
-hub) bash "$LIB_DIR/hub.sh" "$@" ;;
-init) bash "$LIB_DIR/init.sh" "$@" ;;
-sync) bash "$LIB_DIR/sync.sh" "$@" ;;
-sync-agent) bash "$LIB_DIR/sync-agent.sh" "$@" ;;
-refresh-bundled) bash "$LIB_DIR/refresh-bundled.sh" "$@" ;;
-add-dep) AI_SPECS_INVOKED_AS="ai-specs add-dep" bash "$LIB_DIR/skills-add.sh" "$@" ;;
-skills) bash "$LIB_DIR/skills.sh" "$@" ;;
-doctor) bash "$LIB_DIR/doctor.sh" "$@" ;;
-rules-audit) bash "$LIB_DIR/rules-audit.sh" "$@" ;;
-recipe) bash "$LIB_DIR/recipe.sh" "$@" ;;
-configure-recipes) bash "$LIB_DIR/recipe-config.sh" "$@" ;;
-upgrade) bash "$LIB_DIR/upgrade.sh" "$@" ;;
-version|-v|--version) bash "$LIB_DIR/version.sh" ;;
-help|-h|--help) cat <<EOF
-ai-specs — declarative per-project AI agent config
-Usage: ai-specs <command> [args]
-Commands:
-  init [path] Bootstrap ai-specs/ in a project (TTY opens onboarding)
-  sync [path] Refresh bundled + vendor deps + regen AGENTS.md + sync agents
-               use --adopt-brief for an explicit existing-brief handoff
-  sync-agent [path] [--all | --<agent>] Fan out per-agent configs only
-  refresh-bundled [path] Compatibility no-op: bundled assets are embedded in
-               the CLI and sync refreshes them; this verb changes nothing
-  add-dep <url> [path] Register a vendored skill (alias for 'skills add')
-  doctor [path] Diagnose project health (no project writes)
-  rules-audit [path] Inventory legacy rules for migration planning (read-only)
-  skills add <url> [path] [flags] Register a vendored skill ([[deps]]) and sync
-  skills list [path]          List registered and installed skills
-  skills remove <id> [path]   Remove a vendored skill from the manifest
-  recipe list [path]          List available and installed recipes
-  recipe add <id> [path]      Add a recipe to the manifest
-  recipe init <id> [path]     Print a read-only recipe init brief
-  recipe configure <id> [path]  Inspect or apply recipe config non-interactively
-  configure-recipes [path]    Configure recipe config, CLI deps, harness env
-  upgrade [--dry-run] [--force] Upgrade the global installation safely
-  version Print CLI version
-  hub [path] Interactive status + command menu (also bare `ai-specs`;
-               can rewrite ai-specs.toml and run commands)
-  help Show this help
-Path defaults to current directory. Run any subcommand with --help for details.
-Repo: https://github.com/parada1104/ai-specs-cli
-EOF
-;;
-*) echo "ai-specs: unknown command '$cmd'" >&2
-   echo "Run 'ai-specs help' for usage." >&2
-   exit 2 ;;
-esac
+exec "$NATIVE_BIN" "$@"
