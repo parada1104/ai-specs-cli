@@ -32,7 +32,7 @@
 # Tokens stamped at sync (gitignored project copy):
 #   __TRACKER_CARD_GATE_MODE__   (raw legacy gate_mode hint; default warn)
 #   __TRACKER_CLI_HOME__         (CLI install home for binary resolution)
-#   __TRACKER_LIB_INTERNAL__     (CLI lib/_internal dir holding ledger_bridge.py)
+#   __TRACKER_LIB_INTERNAL__     (legacy materializer placeholder; not read here)
 #
 # Config / env (all read by Go's ledger-mode resolver, never by this host):
 #   TRACKER_LEDGER_MODE       strongest mode env (always|ask|warn)
@@ -502,37 +502,17 @@ fi  # end hook-payload parsing (skipped in direct host mode)
 # witness-bound recipe config, that hint and the warn default. A
 # missing/unverified binary, a parse error, or an IO failure fails open (exit 0).
 
-# The evidence bridge lives beside the CLI's other internals. Its stamp follows the
-# same materialize path as __TRACKER_CLI_HOME__; an empty or unstamped value means the
-# bridge is unavailable, so the evidence file is skipped (fail open), exactly like a
-# missing/unverified binary. The bridge is acquisition only: no host derives a ledger
-# write from a planning-tree artifact (R1).
-_ledger_bridge() {
-  case "$stamped_lib_internal" in
+# The evidence bridge is the native CLI (`ai-specs tracker slug|evidence`) at the
+# stamped CLI home. An empty or unstamped home, or a missing/non-executable
+# binary, means the bridge is unavailable, so the evidence file is skipped (fail
+# open), exactly like a missing/unverified binary. The bridge is acquisition
+# only: no host derives a ledger write from a planning-tree artifact (R1).
+_tracker_cli_bridge() {
+  case "$stamped_cli_home" in
     ""|__*) return 1 ;;
   esac
-  [ -f "$stamped_lib_internal/ledger_bridge.py" ] || return 1
-  printf '%s\n' "$stamped_lib_internal"
-}
-
-_ledger_bridge_call() {
-  # $1 bridge dir, $2 verb, then the verb's arguments. Acquisition only: it prints
-  # the verb's stdout (or writes the evidence file) and never grades.
-  local lib="$1" verb="$2"
-  shift 2
-  python3 - "$lib" "$verb" "$@" <<'PY' 2>/dev/null
-import json, sys
-from pathlib import Path
-lib, verb = sys.argv[1], sys.argv[2]
-sys.path.insert(0, lib)
-import ledger_bridge
-root = Path(sys.argv[3])
-if verb == "slug":
-    print(ledger_bridge.change_slug(root))
-elif verb == "evidence":
-    payload = ledger_bridge.evidence_payload(root, sys.argv[4] or None)
-    Path(sys.argv[5]).write_text(json.dumps(payload), encoding="utf-8")
-PY
+  [ -x "$stamped_cli_home/dist/ai-specs" ] || return 1
+  printf '%s\n' "$stamped_cli_home/dist/ai-specs"
 }
 
 _ledger_binary() {
@@ -632,18 +612,18 @@ _ledger_grade() {
     echo "${prefix}: tracker-ledger: no verified gate binary resolved; failing open (run ai-specs sync / ai-specs doctor)" >&2
     return 0
   fi
-  local extra=() evidence="" lib=""
-  if lib="$(_ledger_bridge)"; then
+  local extra=() evidence="" cli=""
+  if cli="$(_tracker_cli_bridge)"; then
     local slug
     # R1: the host never converts an artifact into a ledger write. A planning-tree
     # tracker.none file is presentation and evidence only; recording the exemption is
     # an explicit `--write kind=exempt` made outside this host, never a side effect of
     # grading a checkpoint. The file is never created, modified, or deleted here.
     slug="$explicit_slug"
-    [ -n "$slug" ] || slug="$(_ledger_bridge_call "$lib" slug "$root")"
+    [ -n "$slug" ] || slug="$("$cli" tracker slug "$root")"
     evidence="$(mktemp "${TMPDIR:-/tmp}/tracker-ledger-evidence.XXXXXX" 2>/dev/null)"
     if [ -n "$evidence" ]; then
-      if _ledger_bridge_call "$lib" evidence "$root" "$slug" "$evidence"; then
+      if "$cli" tracker evidence "$root" "$slug" "$evidence"; then
         extra=(--evidence "$evidence")
       else
         rm -f "$evidence"; evidence=""

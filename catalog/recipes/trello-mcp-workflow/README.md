@@ -241,7 +241,7 @@ JSON. Grade paths keep failing open.
 
 `tracker-card-gate.sh` (pre-tool-use hook and direct host mode) passes a
 bridge-built `--evidence`
-file (`lib/_internal/ledger_bridge.py`, acquisition only): `local` is the ledger's
+file (`ai-specs tracker evidence`, acquisition only): `local` is the ledger's
 own store snapshot, `code` is the change's `## Tracker` `card_id`, and `git` is that
 same id when a `pr:` is recorded. The `--evidence` `remote` side stays **unwired**:
 remote reconciliation is a separate, explicit `--reconcile` comparison documented in
