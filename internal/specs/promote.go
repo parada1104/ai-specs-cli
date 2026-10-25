@@ -190,8 +190,8 @@ func CheckFolderParity(root, folder string) []string {
 			continue
 		}
 		blockers = append(blockers, fmt.Sprintf(
-			"specs/%s/spec.md is not promoted into openspec/specs/%s/spec.md (%s); run the "+
-				"canonical spec promoter (lib/_internal/spec_promotion.py) before archive",
+			"specs/%s/spec.md is not promoted into openspec/specs/%s/spec.md (%s); run "+
+				"`ai-specs specs promote <slug> --root <root>` before archive",
 			plan.Domain, plan.Domain, strings.Join(plan.Composition.Pending, ", ")))
 	}
 	return blockers

@@ -59,8 +59,8 @@ directories. Sync SHALL also delete leftover `ai-specs/.resolved-skills/` and
 
 ### Requirement: Shared CLI helpers stay in AI_SPECS_HOME
 
-Shared recipe helpers that are identical for every project (for example
-`premerge_guardian.py`) SHALL live under `$AI_SPECS_HOME`. Sync MUST NOT stage
+Shared recipe helpers that are identical for every project (for example the
+`ai-specs gates premerge` command) SHALL live under `$AI_SPECS_HOME`. Sync MUST NOT stage
 those helpers into the project tree under `ai-specs/bin/` or under the
 per-project cache.
 
@@ -69,7 +69,7 @@ per-project cache.
 - GIVEN an enabled recipe that previously staged `ai-specs/bin/premerge_guardian.py`
 - WHEN sync completes
 - THEN the project MUST NOT require `ai-specs/bin/premerge_guardian.py`
-- AND agents invoke the helper from `$AI_SPECS_HOME/lib/_internal/premerge_guardian.py`
+- AND agents invoke `ai-specs gates premerge`
 
 ### Requirement: Root agent gitignore refresh on sync
 

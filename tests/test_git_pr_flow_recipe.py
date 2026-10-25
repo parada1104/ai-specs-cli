@@ -212,12 +212,12 @@ class GitPrFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         self.assertNotIn("ai-specs/bin/premerge_guardian.py", text)
 
     def test_canonical_guardian_lives_in_cli_home(self):
-        """The canonical guardian ships in the CLI home's lib/_internal, never
-        in the project. Observable through the isolated CLI-home layout the
-        CLI actually runs against."""
+        """The canonical guardian is the native `ai-specs gates premerge` in the
+        CLI binary, never in the project and no longer a Python copy under the
+        CLI home's lib/_internal (GO-20 U2e, T5 PR1 retired the Python module)."""
         canon = self.home / "lib" / "_internal" / "premerge_guardian.py"
-        self.assertTrue(canon.is_file())
-        self.assertIn("pre-merge guardian", canon.read_text().lower())
+        self.assertFalse(canon.exists())
+        self.assertTrue((ROOT / "internal" / "gates" / "gates.go").is_file())
 
 
 class GitPrFlowGoldenContentTests(unittest.TestCase):

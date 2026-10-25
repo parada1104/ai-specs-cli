@@ -251,8 +251,7 @@ func TestCheckFolderParityReportsUnpromotedDelta(t *testing.T) {
 	folder := writeDelta(t, root, "pending-change", "capability", deltaDoc(addedSection(addedBlock)))
 
 	want := "specs/capability/spec.md is not promoted into openspec/specs/capability/spec.md " +
-		"(ADDED Added requirement); run the canonical spec promoter " +
-		"(lib/_internal/spec_promotion.py) before archive"
+		"(ADDED Added requirement); run `ai-specs specs promote <slug> --root <root>` before archive"
 	got := CheckFolderParity(root, folder)
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("CheckFolderParity = %q, want [%q]", got, want)

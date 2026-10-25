@@ -53,7 +53,7 @@ def _cli_home() -> Path:
         )
         _CLI_HOME = home
     return _CLI_HOME
-GUARDIAN = ROOT / "lib" / "_internal" / "premerge_guardian.py"
+GUARDIAN = ROOT / "internal" / "gates" / "gates.go"  # native port of the deleted premerge_guardian.py
 DOCTOR = ROOT / "lib" / "_internal" / "doctor.py"
 LEGACY_RECIPE = "trello-mcp-workflow"
 LIB_INTERNAL = ROOT / "lib" / "_internal"

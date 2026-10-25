@@ -39,6 +39,7 @@ const (
 	routeSkillsRemove                       // native: `skills remove`, port of lib/skills-remove.sh (GO-20 U5b)
 	routeSkillsAdd                          // native: `skills add`, port of lib/skills-add.sh (GO-20 U5c)
 	routeSkillsValidate                     // native: `skills validate`, port of skill_contract.py sync-metadata (GO-20 U2e U-D)
+	routeSkillsField                        // native: `skills field`, the JSON field reader skill-sync's sync.sh uses (GO-20 U2e T5)
 	routeAddDep                             // native: `add-dep` — the same verb under bin/ai-specs's alias label (GO-20 U5c)
 	routeSkills                             // native: the lib/skills.sh dispatcher remainder (GO-20 U5c)
 	routeRecipeList                         // native: `recipe list`, port of lib/recipe-list.sh (GO-20 U6a)
@@ -139,6 +140,8 @@ func Route(args []string) route {
 				return route{kind: routeSkillsRemove}
 			case "validate":
 				return route{kind: routeSkillsValidate}
+			case "field":
+				return route{kind: routeSkillsField}
 			}
 		}
 		return route{kind: routeSkills}
@@ -294,6 +297,10 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 	case routeSkillsValidate:
 		// args[0]=skills, args[1]=validate: the verb's own grammar sees args[2:].
 		return runSkillsValidate(args[2:], stdout, stderr)
+	case routeSkillsField:
+		// args[0]=skills, args[1]=field: the same shift; the shared reader owns
+		// the grammar (one <path>, shared helper, stderr+2 on usage errors).
+		return runJSONField(args[2:], stdin, stdout, stderr, "ai-specs skills field", skillsFieldUsage, false)
 	case routeSkills:
 		// args[0]=skills: skills.sh shifts the verb before its case statement,
 		// so the dispatcher's own loop sees args[1:].

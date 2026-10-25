@@ -70,7 +70,7 @@ func promote(t *testing.T, root, slug, delta string) {
 func filterPromotionBlockers(blockers []string) []string {
 	var found []string
 	for _, blocker := range blockers {
-		if strings.Contains(blocker, "spec_promotion") || strings.Contains(strings.ToLower(blocker), "canonical") {
+		if strings.Contains(blocker, "`ai-specs specs promote <slug> --root <root>`") || strings.Contains(strings.ToLower(blocker), "canonical") {
 			found = append(found, blocker)
 		}
 	}
@@ -87,6 +87,9 @@ func TestPrearchiveBlocksAnUnpromotedStandardDelta(t *testing.T) {
 	}
 	if len(filterPromotionBlockers(result.Blockers)) == 0 {
 		t.Fatalf("blockers %q are not promotion blockers", result.Blockers)
+	}
+	if !strings.Contains(strings.Join(result.Blockers, "\n"), "`ai-specs specs promote <slug> --root <root>`") {
+		t.Fatalf("blockers %q lack the native promote verb", result.Blockers)
 	}
 	for _, blocker := range filterPromotionBlockers(result.Blockers) {
 		if !strings.HasPrefix(blocker, "changes/unpromoted: ") {

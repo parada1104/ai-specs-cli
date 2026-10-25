@@ -1,13 +1,15 @@
-"""Pin the skill-sync consumer to the native `ai-specs skills validate` verb.
+"""Pin the skill-sync consumer to the native `ai-specs skills validate` and
+`skills field` verbs.
 
 bundled-skills/skill-sync/assets/sync.sh must validate each SKILL.md through the
-native binary (AI_SPECS_GO_BIN), not the retired lib/_internal validator. A stub
-binary records its argv, so this test fails if the script goes back to python3
-(mutation check for GO-20 U2e, U-D).
+native binary (AI_SPECS_GO_BIN) and extract its fields with `skills field`, not
+the retired python3 JSON one-liners. A stub binary records its argv, so this
+test fails if the script goes back to python3 (mutation check for GO-20 U2e).
 """
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -36,6 +38,15 @@ printf '%s\\n' "$*" >> "$STUB_LOG"
 if [ "$STUB_FAIL" = "1" ]; then
   echo '{"error": {"field": "name", "message": "is required", "path": null}}' >&2
   exit 1
+fi
+if [ "$1 $2" = "skills field" ]; then
+  cat > /dev/null
+  case "$3" in
+    name) echo demo ;;
+    scope) echo root ;;
+    auto_invoke) echo 'Run demo' ;;
+  esac
+  exit 0
 fi
 echo '{"enabled": true, "name": "demo", "scope": ["root"], "auto_invoke": ["Run demo"], "warnings": []}'
 """
@@ -78,8 +89,13 @@ class SkillSyncConsumerTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("All skills have sync metadata", proc.stdout)
         lines = self.log.read_text().splitlines()
-        self.assertEqual(len(lines), 1, lines)
         self.assertRegex(lines[0], r"^skills validate .*ai-specs/skills/demo/SKILL\.md$")
+        for expected in ("^skills field name$", "^skills field scope$", "^skills field auto_invoke$"):
+            self.assertTrue(
+                any(re.search(expected, line) for line in lines),
+                f"missing {expected} in {lines}",
+            )
+        self.assertNotIn("python3", SYNC_SH.read_text())
 
     def test_invalid_skill_is_reported_as_invalid(self):
         proc = self.run_sync(fail=True)
