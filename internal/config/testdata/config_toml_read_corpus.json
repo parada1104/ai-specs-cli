@@ -26,5 +26,41 @@
  "internal_config_testdata_diff_recipes.toml": {
   "base64": false,
   "content": "# Synthetic differential fixture: recipes with/without version+config,\n# non-string enabled/version values.\n[recipes.a]\nenabled = true\nversion = \"1.0.0\"\nconfig = {x = 1}\n\n[recipes.b]\nversion = 42\n\n[recipes.c]\nenabled = \"yes\"\nversion = true\n\n[recipes.d]\nconfig = {nested = {deep = [1, 2]}}\n\n[recipes.\"quoted.id\"]\nenabled = false\nversion = 1.5\n"
+ },
+ "internal_config_testdata_write_dep_crlf.toml": {
+  "base64": false,
+  "content": "# Write-corpus fixture: CRLF manifest with two [[deps]] blocks for\r\n# first-of-two removal; output must come out LF-normalized on both sides.\r\n[agents]\r\nenabled = [\"claude\"]\r\n\r\n[[deps]]\r\nid = \"first\"\r\nsource = \"u\"\r\n\r\n[[deps]]\r\nid = \"second\"\r\nsource = \"v\"\r\n"
+ },
+ "internal_config_testdata_write_dep_guard.toml": {
+  "base64": false,
+  "content": "# Write-corpus fixture: VALID TOML whose dep removal regresses to invalid\n# (same multi-line-array segmenter trick as write_recipe_guard.toml).\n[[deps]]\nid = \"doom\"\nitems = [\n[\"x\"],\n]\n\n[after]\ny = 1\n"
+ },
+ "internal_config_testdata_write_dep_invalid_base.toml": {
+  "base64": false,
+  "content": "# Write-corpus fixture: ALREADY-INVALID TOML dep case — removal proceeds.\n[[deps]]\nid = \"x\"\nbroken = =\n"
+ },
+ "internal_config_testdata_write_deps_two.toml": {
+  "base64": false,
+  "content": "# Write-corpus fixture: two [[deps]] blocks; removal must take exactly one.\n# comment\n\n[project]\nname = \"deps-test\"\n\n[[deps]]\nid = \"first\"\nsource = \"git::https://example.com/first\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"second\"\nsource = \"git::https://example.com/second\"\nscope = [\"x\", \"y\"]\n"
+ },
+ "internal_config_testdata_write_recipe_basic.toml": {
+  "base64": false,
+  "content": "# Write-corpus fixture: recipes with sub-tables (config) for segment removal.\n[project]\nname = \"write-test\"\n\n[recipes.a]\nenabled = true\n\n[recipes.a.config]\nk = \"v\"\n\n[recipes.b]\nenabled = false\n"
+ },
+ "internal_config_testdata_write_recipe_crlf.toml": {
+  "base64": false,
+  "content": "# Write-corpus fixture: CRLF manifest for segment removal. python's\r\n# read_text translates CRLF to LF in memory, so the round-trip output is\r\n# LF-normalized on both sides — including inside multi-line strings.\r\n[project]\r\nname = \"crlf-test\"\r\n\r\n[recipes.a]\r\nenabled = true\r\ndesc = \"\"\"\r\nmulti\r\nline\r\n\"\"\"\r\n\r\n[recipes.a.config]\r\nk = \"v\"\r\n\r\n[recipes.b]\r\nenabled = false\r\n"
+ },
+ "internal_config_testdata_write_recipe_crlf_guard.toml": {
+  "base64": false,
+  "content": "# Write-corpus fixture: CRLF manifest whose removal regresses to invalid.\r\n# The valid→invalid guard refuses, so the ORIGINAL CRLF bytes must stay\r\n# untouched on disk on both sides (the heredoc exits before writing).\r\n[recipes.doom]\r\nitems = [\r\n[\"x\"],\r\n]\r\n\r\n[after]\r\ny = 1\r\n"
+ },
+ "internal_config_testdata_write_recipe_guard.toml": {
+  "base64": false,
+  "content": "# Write-corpus fixture: VALID TOML whose removal regresses to invalid.\n# The multi-line array contains column-0 '[' lines, which the segmenter\n# treats as headers; removing the [recipes.doom] header segment orphans the\n# array lines and the valid→invalid guard must fire.\n[recipes.doom]\nitems = [\n[\"x\"],\n]\n\n[after]\ny = 1\n"
+ },
+ "internal_config_testdata_write_recipe_invalid_base.toml": {
+  "base64": false,
+  "content": "# Write-corpus fixture: ALREADY-INVALID TOML — removal proceeds because the\n# guard only refuses a valid→invalid regression.\n[recipes.x]\nenabled = true\nbroken = =\n"
  }
 }

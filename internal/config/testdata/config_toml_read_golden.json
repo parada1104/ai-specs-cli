@@ -208,5 +208,275 @@
   "exit_code": 0,
   "stderr": "",
   "stdout": "{\"a\": {\"enabled\": true, \"version\": \"1.0.0\", \"config\": {\"x\": 1}}, \"b\": {\"enabled\": false, \"version\": \"42\", \"config\": {}}, \"c\": {\"enabled\": false, \"version\": \"True\", \"config\": {}}, \"d\": {\"enabled\": false, \"version\": \"\", \"config\": {\"nested\": {\"deep\": [1, 2]}}}, \"quoted.id\": {\"enabled\": false, \"version\": \"1.5\", \"config\": {}}}\n"
+ },
+ "internal_config_testdata_write_dep_crlf.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": [\"claude\"]}\n"
+ },
+ "internal_config_testdata_write_dep_crlf.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_dep_crlf.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[{\"id\": \"first\", \"source\": \"u\"}, {\"id\": \"second\", \"source\": \"v\"}]\n"
+ },
+ "internal_config_testdata_write_dep_crlf.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_dep_crlf.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_write_dep_crlf.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_dep_guard.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_write_dep_guard.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_dep_guard.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[{\"id\": \"doom\", \"items\": [[\"x\"]]}]\n"
+ },
+ "internal_config_testdata_write_dep_guard.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_dep_guard.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_write_dep_guard.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_dep_invalid_base.toml.agents": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 4, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_dep_invalid_base.toml.bindings": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 4, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_dep_invalid_base.toml.deps": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 4, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_dep_invalid_base.toml.mcp": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 4, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_dep_invalid_base.toml.project": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 4, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_dep_invalid_base.toml.recipes": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 4, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_deps_two.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_write_deps_two.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_deps_two.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[{\"id\": \"first\", \"source\": \"git::https://example.com/first\", \"scope\": [\"root\"]}, {\"id\": \"second\", \"source\": \"git::https://example.com/second\", \"scope\": [\"x\", \"y\"]}]\n"
+ },
+ "internal_config_testdata_write_deps_two.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_deps_two.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"deps-test\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_write_deps_two.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_recipe_basic.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_write_recipe_basic.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_recipe_basic.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_recipe_basic.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_recipe_basic.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"write-test\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_write_recipe_basic.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"a\": {\"enabled\": true, \"version\": \"\", \"config\": {\"k\": \"v\"}}, \"b\": {\"enabled\": false, \"version\": \"\", \"config\": {}}}\n"
+ },
+ "internal_config_testdata_write_recipe_crlf.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_write_recipe_crlf.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_recipe_crlf.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_recipe_crlf.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_recipe_crlf.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"crlf-test\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_write_recipe_crlf.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"a\": {\"enabled\": true, \"version\": \"\", \"config\": {\"k\": \"v\"}}, \"b\": {\"enabled\": false, \"version\": \"\", \"config\": {}}}\n"
+ },
+ "internal_config_testdata_write_recipe_crlf_guard.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_write_recipe_crlf_guard.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_recipe_crlf_guard.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_recipe_crlf_guard.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_recipe_crlf_guard.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_write_recipe_crlf_guard.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"doom\": {\"enabled\": false, \"version\": \"\", \"config\": {}}}\n"
+ },
+ "internal_config_testdata_write_recipe_guard.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_write_recipe_guard.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_recipe_guard.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_recipe_guard.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_recipe_guard.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_write_recipe_guard.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"doom\": {\"enabled\": false, \"version\": \"\", \"config\": {}}}\n"
+ },
+ "internal_config_testdata_write_recipe_invalid_base.toml.agents": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 5, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_recipe_invalid_base.toml.bindings": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 5, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_recipe_invalid_base.toml.deps": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 5, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_recipe_invalid_base.toml.mcp": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 5, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_recipe_invalid_base.toml.project": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 5, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_recipe_invalid_base.toml.recipes": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 5, column 10)\n",
+  "stdout": ""
  }
 }
