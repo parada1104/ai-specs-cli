@@ -10,8 +10,9 @@ import (
 )
 
 // Frozen oracle bundles for the toml-read differential. Each slice extends
-// them; S1 covers the seven diff_* inputs, S2 the nine write_* inputs and S3
-// the repo manifest plus the two target-resolve fixtures. The live Python
+// them; S1 covers the seven diff_* inputs, S2 the nine write_* inputs, S3
+// the repo manifest plus the two target-resolve fixtures and S4 the four
+// large catalog recipes. The live Python
 // differential (TestDifferentialReadSections) still compares all 31 inputs
 // until S6 retires it.
 const (
@@ -52,8 +53,17 @@ var tomlReadFrozenS3 = []string{
 	"tests_fixtures_target-resolve_root-only_ai-specs_ai-specs.toml",
 }
 
+// tomlReadFrozenS4 lists the inputs of slice S4: the four large catalog recipes
+// (24 byte-compared pairs, no refusal).
+var tomlReadFrozenS4 = []string{
+	"catalog_recipes_plan-build-flow_recipe.toml",
+	"catalog_recipes_trello-mcp-workflow_recipe.toml",
+	"catalog_recipes_vault-canonical-store_recipe.toml",
+	"catalog_recipes_worktree-flow_recipe.toml",
+}
+
 // tomlReadFrozenTotal is the input count the bundles must hold after every slice so far.
-var tomlReadFrozenTotal = len(tomlReadFrozenS1) + len(tomlReadFrozenS2) + len(tomlReadFrozenS3)
+var tomlReadFrozenTotal = len(tomlReadFrozenS1) + len(tomlReadFrozenS2) + len(tomlReadFrozenS3) + len(tomlReadFrozenS4)
 
 var tomlReadFrozenSections = []string{"project", "agents", "deps", "mcp", "recipes", "bindings"}
 
@@ -190,6 +200,17 @@ func TestFrozenDiffReadSectionsS3(t *testing.T) {
 	t.Logf("frozen differential S3: compared %d pairs; %d refused", compared, refused)
 	if compared != 3*len(tomlReadFrozenSections) || refused != 0 {
 		t.Fatalf("compared %d and refused %d pairs; S3 requires 18 compared and 0 refused",
+			compared, refused)
+	}
+}
+
+// TestFrozenDiffReadSectionsS4 covers the four large catalog recipes:
+// 24 byte-compared pairs and no refusal.
+func TestFrozenDiffReadSectionsS4(t *testing.T) {
+	compared, refused := tomlReadFrozenCheck(t, tomlReadFrozenS4)
+	t.Logf("frozen differential S4: compared %d pairs; %d refused", compared, refused)
+	if compared != 4*len(tomlReadFrozenSections) || refused != 0 {
+		t.Fatalf("compared %d and refused %d pairs; S4 requires 24 compared and 0 refused",
 			compared, refused)
 	}
 }

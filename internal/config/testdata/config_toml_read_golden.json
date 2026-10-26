@@ -568,5 +568,125 @@
   "exit_code": 0,
   "stderr": "",
   "stdout": "{}\n"
+ },
+ "catalog_recipes_trello-mcp-workflow_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_trello-mcp-workflow_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_trello-mcp-workflow_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_trello-mcp-workflow_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_trello-mcp-workflow_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_trello-mcp-workflow_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_worktree-flow_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_worktree-flow_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_worktree-flow_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_worktree-flow_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_worktree-flow_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_worktree-flow_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_plan-build-flow_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_plan-build-flow_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_plan-build-flow_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_plan-build-flow_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_plan-build-flow_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_plan-build-flow_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_vault-canonical-store_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_vault-canonical-store_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_vault-canonical-store_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_vault-canonical-store_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_vault-canonical-store_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_vault-canonical-store_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
  }
 }
