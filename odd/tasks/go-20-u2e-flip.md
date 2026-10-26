@@ -515,3 +515,11 @@ Slice 1 = documentation and measured inventory only. No source or test change in
   - Size: about 372 authored and data lines in the code commit. The hook meter (about 198k lines against `origin/main`) is the whole branch history, not the review measure (L39).
   - Limits: corpus entries are frozen copies of the 9 `write_*` files, so drift in the live fixtures is no longer seen by the frozen test (same class as L46 and L48). Golden records are a snapshot of `toml-read.py` at capture; regeneration needs a human decision. The live differential still covers all 31 inputs until S6.
   - Next: S3 = `ai-specs/ai-specs.toml` plus `tests/fixtures/target-resolve` (3 inputs), in a new session, from the epic tip that contains S2, with its own candidate and its own `assess`.
+
+- L50 — T5 PR2-A2 `toml-read`, slice S3 (partition of six slices by Cody, attributed to Cody, not Robert).
+  - S2 merge: PR #470 squash `b35c601` on `epic/go-single-binary` (over S1 `82386f0`).
+  - S3 scope: `ai-specs/ai-specs.toml` (repo manifest) and the two `tests/fixtures/target-resolve` manifests (`multi-target`, `root-only`), 3 inputs × 6 sections = 18 pairs, all compared, 0 refused. Bundles extended byte-exactly from `948a84b`: corpus 19 entries, golden 114 records (cumulative S1+S2+S3).
+  - Evidence: live Python `toml-read.py` reproduces the 18 `948a84b` goldens 18/18 (exit, stdout, stderr). GREEN frozen S1 42, S2 42+12, S3 18. Live differential (unchanged) 174 compared / 12 refusals; `TestDifferentialWrites` PASS. RED: golden `tests_fixtures_target-resolve_root-only_ai-specs_ai-specs.toml [project]` mutated, FAIL `byte mismatch` rc 1; restored, sha256 `5050bf68…` identical.
+  - Limits: the frozen copies of the repo manifest and the target-resolve fixtures no longer detect drift of the live files; regeneration needs a human decision (same class as L46, L48, L49). Live differential still covers all 31 inputs until S6.
+  - Next: S4 catalog-large (`trello`, `worktree-flow`, `plan-build-flow`, `vault-canonical-store`; 4 inputs) in a new session/worktree from the epic tip containing S3.
+  - Code commit: `80d71a1` (3 files: test, corpus, golden; only additions in testdata). Validate: `validate-s3-code.log`, rc 0. The hook meter (197,930 lines against `origin/main`) is the whole branch history, not the review measure (L39).
