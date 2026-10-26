@@ -1,0 +1,30 @@
+{
+ "internal_config_testdata_diff_bindings_deps.toml": {
+  "base64": false,
+  "content": "# Synthetic differential fixture: bindings filtering, deps with nested\n# inline tables and verbatim extra keys.\n[[bindings]]\ncapability = \"tracker\"\nrecipe = \"trello\"\n\n[[bindings]]\ncapability = \"orphan\"\n\n[[bindings]]\ncapability = \"half\"\nrecipe = 5\n\n[[deps]]\nid = \"first\"\nsource = \"git::https://example.com/a\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"second\"\nsource = \"git::https://example.com/b\"\nscope = [\"a\", \"b\"]\nvendor = {pin = \"v1\", nested = {x = 2}}\nratio = 1.5\nref = \"main\"\n"
+ },
+ "internal_config_testdata_diff_empty.toml": {
+  "base64": false,
+  "content": "# Synthetic differential fixture: completely empty manifest.\n"
+ },
+ "internal_config_testdata_diff_mcp.toml": {
+  "base64": false,
+  "content": "# Synthetic differential fixture: mcp env-list form, environment fallback,\n# timeout/enabled variants, extra keys verbatim.\n[mcp.alpha]\ncommand = \"npx\"\nargs = [\"-y\", \"server\"]\nenv = [\"FOO\", \"BAR \", \"\", 42]\ntimeout = 30\nenabled = true\n\n[mcp.beta]\ncommand = [\"python\", \"-m\"]\nenv = \"not-a-dict\"\ntimeout = 1.5\ncustom = \"kept\"\n\n[mcp.gamma]\nenvironment = {A = \"1\", B = \"2\"}\n\n[mcp.delta]\ncommand = 5\nenabled = \"yes\"\ntimeout = true\n"
+ },
+ "internal_config_testdata_diff_missing.toml": {
+  "base64": false,
+  "content": "# Synthetic differential fixture: only partial sections present.\n[project]\nsubrepos = [\"  a  \", \"\", \"b\", 5]\n"
+ },
+ "internal_config_testdata_diff_mixed.toml": {
+  "base64": false,
+  "content": "# Synthetic differential fixture: mixed array types, non-string command,\n# int/float timeouts, large integers, floats in deps.\n[mcp.x]\ncommand = 5\nargs = [1, \"a\", true]\nenv = {A = \"1\"}\ntimeout = 9007199254740993\n\n[mcp.y]\ncommand = [\"python\", \"-m\"]\ntimeout = 5e-05\n\n[mcp.z]\ncommand = [\"npx\", 1, true]\n\n[[deps]]\nid = \"flo\"\nsource = \"u\"\nweight = 1.0\nscale = 1e21\n"
+ },
+ "internal_config_testdata_diff_nonascii.toml": {
+  "base64": false,
+  "content": "# Synthetic differential fixture: non-ASCII strings (ensure_ascii \\uXXXX,\n# astral surrogate pairs), stripped subrepos.\n[project]\nname = \"café ☕ 🚀\"\nsubrepos = [\"  x  \", \"\", \"y\"]\n\n[mcp.unicode]\ncommand = \"eñe\"\nargs = [\"táb\"]\n"
+ },
+ "internal_config_testdata_diff_recipes.toml": {
+  "base64": false,
+  "content": "# Synthetic differential fixture: recipes with/without version+config,\n# non-string enabled/version values.\n[recipes.a]\nenabled = true\nversion = \"1.0.0\"\nconfig = {x = 1}\n\n[recipes.b]\nversion = 42\n\n[recipes.c]\nenabled = \"yes\"\nversion = true\n\n[recipes.d]\nconfig = {nested = {deep = [1, 2]}}\n\n[recipes.\"quoted.id\"]\nenabled = false\nversion = 1.5\n"
+ }
+}
