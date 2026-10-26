@@ -688,5 +688,245 @@
   "exit_code": 0,
   "stderr": "",
   "stdout": "[]\n"
+ },
+ "catalog_recipes_bitbucket-pr-flow_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_bitbucket-pr-flow_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_bitbucket-pr-flow_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_bitbucket-pr-flow_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_bitbucket-pr-flow_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_bitbucket-pr-flow_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_git-pr-flow_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_git-pr-flow_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_git-pr-flow_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_git-pr-flow_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_git-pr-flow_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_git-pr-flow_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_gitlab-mr-flow_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_gitlab-mr-flow_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_gitlab-mr-flow_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_gitlab-mr-flow_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_gitlab-mr-flow_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_gitlab-mr-flow_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_jinna-mcp-recipe_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_jinna-mcp-recipe_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_jinna-mcp-recipe_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_jinna-mcp-recipe_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_jinna-mcp-recipe_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_jinna-mcp-recipe_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_playwright-mcp_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_playwright-mcp_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_playwright-mcp_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_playwright-mcp_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_playwright-mcp_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_playwright-mcp_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_playwright-ui-flow_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_playwright-ui-flow_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_playwright-ui-flow_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_playwright-ui-flow_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_playwright-ui-flow_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_playwright-ui-flow_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_session-context_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_session-context_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_session-context_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_session-context_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_session-context_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_session-context_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_tdd-flow_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_tdd-flow_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_tdd-flow_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_tdd-flow_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_tdd-flow_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_tdd-flow_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
  }
 }
