@@ -11,8 +11,8 @@ import (
 
 // Frozen oracle bundles for the toml-read differential. Each slice extends
 // them; S1 covers the seven diff_* inputs, S2 the nine write_* inputs, S3
-// the repo manifest plus the two target-resolve fixtures and S4 the four
-// large catalog recipes. The live Python
+// the repo manifest plus the two target-resolve fixtures, S4 the four
+// large catalog recipes and S5 the eight small catalog recipes. The live Python
 // differential (TestDifferentialReadSections) still compares all 31 inputs
 // until S6 retires it.
 const (
@@ -62,8 +62,21 @@ var tomlReadFrozenS4 = []string{
 	"catalog_recipes_worktree-flow_recipe.toml",
 }
 
+// tomlReadFrozenS5 lists the inputs of slice S5: the eight small catalog recipes
+// (48 byte-compared pairs, no refusal).
+var tomlReadFrozenS5 = []string{
+	"catalog_recipes_bitbucket-pr-flow_recipe.toml",
+	"catalog_recipes_git-pr-flow_recipe.toml",
+	"catalog_recipes_gitlab-mr-flow_recipe.toml",
+	"catalog_recipes_jinna-mcp-recipe_recipe.toml",
+	"catalog_recipes_playwright-mcp_recipe.toml",
+	"catalog_recipes_playwright-ui-flow_recipe.toml",
+	"catalog_recipes_session-context_recipe.toml",
+	"catalog_recipes_tdd-flow_recipe.toml",
+}
+
 // tomlReadFrozenTotal is the input count the bundles must hold after every slice so far.
-var tomlReadFrozenTotal = len(tomlReadFrozenS1) + len(tomlReadFrozenS2) + len(tomlReadFrozenS3) + len(tomlReadFrozenS4)
+var tomlReadFrozenTotal = len(tomlReadFrozenS1) + len(tomlReadFrozenS2) + len(tomlReadFrozenS3) + len(tomlReadFrozenS4) + len(tomlReadFrozenS5)
 
 var tomlReadFrozenSections = []string{"project", "agents", "deps", "mcp", "recipes", "bindings"}
 
@@ -200,6 +213,17 @@ func TestFrozenDiffReadSectionsS3(t *testing.T) {
 	t.Logf("frozen differential S3: compared %d pairs; %d refused", compared, refused)
 	if compared != 3*len(tomlReadFrozenSections) || refused != 0 {
 		t.Fatalf("compared %d and refused %d pairs; S3 requires 18 compared and 0 refused",
+			compared, refused)
+	}
+}
+
+// TestFrozenDiffReadSectionsS5 covers the eight small catalog recipes:
+// 48 byte-compared pairs and no refusal.
+func TestFrozenDiffReadSectionsS5(t *testing.T) {
+	compared, refused := tomlReadFrozenCheck(t, tomlReadFrozenS5)
+	t.Logf("frozen differential S5: compared %d pairs; %d refused", compared, refused)
+	if compared != 8*len(tomlReadFrozenSections) || refused != 0 {
+		t.Fatalf("compared %d and refused %d pairs; S5 requires 48 compared and 0 refused",
 			compared, refused)
 	}
 }
