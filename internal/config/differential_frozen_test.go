@@ -10,9 +10,10 @@ import (
 )
 
 // Frozen oracle bundles for the toml-read differential. Each slice extends
-// them; S1 covers the seven diff_* inputs and S2 the nine write_* inputs. The
-// live Python differential (TestDifferentialReadSections) still compares all
-// 31 inputs until S6 retires it.
+// them; S1 covers the seven diff_* inputs, S2 the nine write_* inputs and S3
+// the repo manifest plus the two target-resolve fixtures. The live Python
+// differential (TestDifferentialReadSections) still compares all 31 inputs
+// until S6 retires it.
 const (
 	tomlReadFrozenGoldenPath = "testdata/config_toml_read_golden.json"
 	tomlReadFrozenCorpusPath = "testdata/config_toml_read_corpus.json"
@@ -43,8 +44,16 @@ var tomlReadFrozenS2 = []string{
 	"internal_config_testdata_write_recipe_invalid_base.toml",
 }
 
+// tomlReadFrozenS3 lists the inputs of slice S3: the repo manifest and the two
+// target-resolve fixtures (18 byte-compared pairs, no refusal).
+var tomlReadFrozenS3 = []string{
+	"ai-specs_ai-specs.toml",
+	"tests_fixtures_target-resolve_multi-target_ai-specs_ai-specs.toml",
+	"tests_fixtures_target-resolve_root-only_ai-specs_ai-specs.toml",
+}
+
 // tomlReadFrozenTotal is the input count the bundles must hold after every slice so far.
-var tomlReadFrozenTotal = len(tomlReadFrozenS1) + len(tomlReadFrozenS2)
+var tomlReadFrozenTotal = len(tomlReadFrozenS1) + len(tomlReadFrozenS2) + len(tomlReadFrozenS3)
 
 var tomlReadFrozenSections = []string{"project", "agents", "deps", "mcp", "recipes", "bindings"}
 
@@ -170,6 +179,17 @@ func TestFrozenDiffReadSectionsS2(t *testing.T) {
 	t.Logf("frozen differential S2: compared %d pairs; %d both-fail invalid_base pairs", compared, refused)
 	if compared != 7*len(tomlReadFrozenSections) || refused != 2*len(tomlReadFrozenSections) {
 		t.Fatalf("compared %d and refused %d pairs; S2 requires 42 compared and 12 refused",
+			compared, refused)
+	}
+}
+
+// TestFrozenDiffReadSectionsS3 covers the repo manifest and the two
+// target-resolve fixtures: 18 byte-compared pairs and no refusal.
+func TestFrozenDiffReadSectionsS3(t *testing.T) {
+	compared, refused := tomlReadFrozenCheck(t, tomlReadFrozenS3)
+	t.Logf("frozen differential S3: compared %d pairs; %d refused", compared, refused)
+	if compared != 3*len(tomlReadFrozenSections) || refused != 0 {
+		t.Fatalf("compared %d and refused %d pairs; S3 requires 18 compared and 0 refused",
 			compared, refused)
 	}
 }
