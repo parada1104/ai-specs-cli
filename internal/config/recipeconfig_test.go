@@ -9,21 +9,22 @@ package config
 //
 // The file header of recipeconfig.go claims byte-parity with the gate's
 // shared/recipeconfigwrite.go over shared fixtures; TestUpdateRecipeConfig
-// MatchesGateCopy is that claim's evidence — it runs the SAME fixtures
-// through shared.ApplyRecipeConfigWrite (which parses through the gate's
-// bounded embedded-Python seam, so it needs python3) and requires identical
-// resulting bytes, identical changed flags and identical refusal strings.
+// MatchesGateCopy is that claim's evidence — it runs the SAME fixtures and
+// requires identical resulting bytes, identical changed flags and identical
+// refusal strings against the gate outputs frozen in the recipeconfig_golden
+// section of testdata/config_recipeconfig.json. The gate copy parses TOML
+// through its embedded-Python seam, so its results were captured once; this
+// file never executes an interpreter.
 
 import (
+	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/schema"
 	"ai-specs.dev/ai-specs/internal/toml"
-	shared "ai-specs.dev/worktree-gate/shared"
 )
 
 // ── fixtures ───────────────────────────────────────────────────────────────
@@ -547,73 +548,59 @@ func TestWriteProjectKey(t *testing.T) {
 // promoted writer and the gate's shared copy (S6: promoted, not copied — the
 // gate module cannot import internal/, and the root module's require/replace
 // cycle forbids the reverse) produce the SAME bytes for the same fixtures and
-// the SAME refusal strings. The gate copy parses through its bounded
-// embedded-Python seam, so this test skips LOUDLY without python3.
+// the SAME refusal strings. The gate copy's results were captured once through
+// its embedded-Python TOML seam and are frozen in the recipeconfig_golden
+// section of testdata/config_recipeconfig.json; this test needs no interpreter.
 func TestUpdateRecipeConfigMatchesGateCopy(t *testing.T) {
-	requireGatePython(t)
 	fixtures := []struct {
-		name     string
+		slug     string
 		base     string
 		recipeID string
 		values   []ConfigValue
-		json     string // the SAME values in the shared envelope's insertion order
 	}{
 		{
-			name: "plain scalar write", base: recipeConfigUnitManifest, recipeID: "demo",
+			slug: "plain-scalar-write", base: recipeConfigUnitManifest, recipeID: "demo",
 			values: []ConfigValue{{"retries", int64(9)}},
-			json:   `{"retries":9}`,
 		},
 		{
-			name: "dotted write into an inline table", base: recipeConfigUnitManifest, recipeID: "demo",
+			slug: "dotted-inline-table", base: recipeConfigUnitManifest, recipeID: "demo",
 			values: []ConfigValue{{"reconcile.max_age_seconds", int64(60)}},
-			json:   `{"reconcile.max_age_seconds":60}`,
 		},
 		{
-			name: "dotted write into a header table", base: recipeConfigUnitManifestHeaderTable, recipeID: "demo",
+			slug: "dotted-header-table", base: recipeConfigUnitManifestHeaderTable, recipeID: "demo",
 			values: []ConfigValue{{"reconcile.max_age_seconds", int64(60)}},
-			json:   `{"reconcile.max_age_seconds":60}`,
 		},
 		{
-			name: "whole-table and dotted conflict refusal", base: recipeConfigUnitManifest, recipeID: "demo",
+			slug: "whole-table-dotted-conflict", base: recipeConfigUnitManifest, recipeID: "demo",
 			values: []ConfigValue{
 				{"reconcile", mustInlineTable(t, `{scope_field="list_id"}`)},
 				{"reconcile.max_age_seconds", int64(60)},
 			},
-			json: `{"reconcile":{"scope_field":"list_id"},"reconcile.max_age_seconds":60}`,
 		},
 		{
-			name: "new recipe block appended", base: "[project]\nname = \"unit\"\n", recipeID: "fresh",
+			slug: "new-recipe-block", base: "[project]\nname = \"unit\"\n", recipeID: "fresh",
 			values: []ConfigValue{{"retries", int64(1)}},
-			json:   `{"retries":1}`,
 		},
 	}
 	for _, tc := range fixtures {
-		t.Run(tc.name, func(t *testing.T) {
-			pathA := writeUnitManifest(t, tc.base)
-			pathB := writeUnitManifest(t, tc.base)
-
-			changedA, refusalA, errA := UpdateRecipeConfig(pathA, tc.recipeID, tc.values)
-			ordered, derr := shared.DecodeOrdered([]byte(tc.json))
-			if derr != nil {
-				t.Fatalf("decode shared envelope: %v", derr)
+		t.Run(tc.slug, func(t *testing.T) {
+			gate := loadRecipeConfigGateOracle(t, tc.slug)
+			if gate.Error != "" {
+				t.Fatalf("frozen gate oracle recorded an error: %s", gate.Error)
 			}
-			om, ok := ordered.(*shared.OrderedMap)
-			if !ok {
-				t.Fatalf("decoded %T, want *shared.OrderedMap", ordered)
+			path := writeUnitManifest(t, tc.base)
+			changed, refusal, err := UpdateRecipeConfig(path, tc.recipeID, tc.values)
+			if err != nil {
+				t.Fatalf("internal/config error: %v", err)
 			}
-			changedB, refusalB, errB := shared.ApplyRecipeConfigWrite(pathB, tc.recipeID, om)
-
-			if errA != nil || errB != nil {
-				t.Fatalf("errors: internal/config %v, gate %v", errA, errB)
+			if changed != gate.Changed {
+				t.Errorf("changed: internal/config = %v, gate = %v", changed, gate.Changed)
 			}
-			if changedA != changedB {
-				t.Errorf("changed: internal/config = %v, gate = %v", changedA, changedB)
+			if refusal != gate.Refusal {
+				t.Errorf("refusal mismatch:\n internal/config = %q\n gate           = %q", refusal, gate.Refusal)
 			}
-			if refusalA != refusalB {
-				t.Errorf("refusal mismatch:\n internal/config = %q\n gate           = %q", refusalA, refusalB)
-			}
-			if gotA, gotB := readFile(t, pathA), readFile(t, pathB); gotA != gotB {
-				t.Errorf("bytes diverge:\n internal/config = %q\n gate           = %q", gotA, gotB)
+			if got := readFile(t, path); got != gate.Manifest {
+				t.Errorf("bytes diverge:\n internal/config = %q\n gate           = %q", got, gate.Manifest)
 			}
 		})
 	}
@@ -636,8 +623,9 @@ func TestUpdateRecipeConfigMatchesGateCopy(t *testing.T) {
 //
 // Do NOT repair the promoted copy to match the gate: the corruption is the
 // gate's defect and is recorded in odd/tasks/go-20-u6-recipe.md (L6's
-// one-grader paragraph and L8). The native subtest runs without python3; only
-// the gate leg needs the embedded-Python seam and skips LOUDLY without it.
+// one-grader paragraph and L8). The gate leg asserts the frozen gate oracle
+// in the recipeconfig_golden section of testdata/config_recipeconfig.json, so
+// neither subtest runs an interpreter.
 func TestUpdateRecipeConfigRefusesADatetimeTheGateCopyCorrupts(t *testing.T) {
 	base := `[project]
 name = "unit"
@@ -649,7 +637,6 @@ enabled = true
 reconcile = { scope_field = "board_id", stamped = 1979-05-27T07:32:00Z }
 `
 	values := []ConfigValue{{"reconcile.max_age_seconds", int64(60)}}
-	envelope := `{"reconcile.max_age_seconds":60}`
 
 	t.Run("promoted copy refuses before any write", func(t *testing.T) {
 		path := writeUnitManifest(t, base)
@@ -669,49 +656,62 @@ reconcile = { scope_field = "board_id", stamped = 1979-05-27T07:32:00Z }
 	})
 
 	t.Run("gate copy corrupts the datetime into a quoted string", func(t *testing.T) {
-		requireGatePython(t)
-		path := writeUnitManifest(t, base)
-		ordered, derr := shared.DecodeOrdered([]byte(envelope))
-		if derr != nil {
-			t.Fatalf("decode shared envelope: %v", derr)
+		gate := loadRecipeConfigGateOracle(t, "datetime-gate-corruption")
+		if gate.Error != "" || gate.Refusal != "" {
+			t.Fatalf("frozen gate refusal/error = %q/%q, want it to accept the write", gate.Refusal, gate.Error)
 		}
-		om, ok := ordered.(*shared.OrderedMap)
-		if !ok {
-			t.Fatalf("decoded %T, want *shared.OrderedMap", ordered)
+		if !gate.Changed {
+			t.Fatal("frozen gate changed = false, want true (it silently wrote the corruption)")
 		}
-		changed, refusal, err := shared.ApplyRecipeConfigWrite(path, "demo", om)
-		if err != nil || refusal != "" {
-			t.Fatalf("gate refusal/err = %q/%v, want it to accept the write", refusal, err)
-		}
-		if !changed {
-			t.Fatal("gate changed = false, want true (it silently writes the corruption)")
-		}
-		got := readFile(t, path)
 		const corrupt = `stamped = "1979-05-27 07:32:00+00:00"`
-		if !strings.Contains(got, corrupt) {
-			t.Errorf("gate manifest = %q, want the corrupted line %q", got, corrupt)
+		if !strings.Contains(gate.Manifest, corrupt) {
+			t.Errorf("frozen gate manifest = %q, want the corrupted line %q", gate.Manifest, corrupt)
 		}
-		if strings.Contains(got, "1979-05-27T07:32:00Z") {
-			t.Errorf("gate manifest = %q, want the date-time literal replaced by the corruption", got)
+		if strings.Contains(gate.Manifest, "1979-05-27T07:32:00Z") {
+			t.Errorf("frozen gate manifest = %q, want the date-time literal replaced by the corruption", gate.Manifest)
 		}
 	})
 }
 
-// requireGatePython probes tomllib LOUDLY for the gate copy's bounded
-// embedded-Python parse seam (run with PATH=/tmp/pybin:$PATH on this machine,
-// whose plain python3 is 3.9 without tomllib). Extracted so the byte-identity
-// table and the documented-divergence case skip with one shared message.
-func requireGatePython(t *testing.T) {
+// recipeConfigGateOracle is one frozen gate-copy result in this file's
+// recipeconfig_golden section. The gate copy parses TOML through its bounded
+// embedded-Python (tomllib) seam, so its results were captured once — with a
+// Python ≥3.11 interpreter present on PATH, tomllib importable — in two
+// identical runs; the tests assert them without executing an interpreter.
+type recipeConfigGateOracle struct {
+	Changed  bool   `json:"changed"`
+	Refusal  string `json:"refusal"`
+	Error    string `json:"error"`
+	Manifest string `json:"manifest"`
+}
+
+// configRecipeConfigPath is the frozen oracle file for the recipe-config gate
+// differential; this file never reads another differential's data.
+const configRecipeConfigPath = "testdata/config_recipeconfig.json"
+
+func loadRecipeConfigGateOracle(t *testing.T, slug string) recipeConfigGateOracle {
 	t.Helper()
-	python3, err := exec.LookPath("python3")
+	raw, err := os.ReadFile(configRecipeConfigPath)
 	if err != nil {
-		t.Skipf("python3 unavailable (the gate copy parses TOML through its embedded-Python seam): %v", err)
+		t.Fatalf("read frozen oracle file %s: %v", configRecipeConfigPath, err)
 	}
-	probe := exec.Command(python3, "-c", "import tomllib")
-	probe.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	if out, perr := probe.CombinedOutput(); perr != nil {
-		t.Skipf("python3 CANNOT import tomllib, so the gate copy's parser seam is dead — probe `python3 -c 'import tomllib'` said %v: %s (run with a Python ≥3.11 on PATH, e.g. PATH=/tmp/pybin:$PATH go test ./internal/config/)", perr, out)
+	var sections map[string]map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &sections); err != nil {
+		t.Fatalf("decode %s: %v", configRecipeConfigPath, err)
 	}
+	records, ok := sections["recipeconfig_golden"]
+	if !ok {
+		t.Fatalf("frozen oracle file %s has no recipeconfig_golden section", configRecipeConfigPath)
+	}
+	record, ok := records[slug]
+	if !ok {
+		t.Fatalf("frozen oracle file %s has no recipeconfig_golden/%s record", configRecipeConfigPath, slug)
+	}
+	var rec recipeConfigGateOracle
+	if err := json.Unmarshal(record, &rec); err != nil {
+		t.Fatalf("decode frozen recipe-config record recipeconfig_golden/%s: %v", slug, err)
+	}
+	return rec
 }
 
 func readFile(t *testing.T, path string) string {
