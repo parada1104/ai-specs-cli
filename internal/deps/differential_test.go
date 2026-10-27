@@ -151,7 +151,12 @@ func TestResolvePlanDifferential(t *testing.T) {
 				t.Fatalf("%s has no record %q", depsPlanGoldenPath, name)
 			}
 			isolateProviderPath(t, c)
-			home := t.TempDir()
+			// resolvedHome, not the raw t.TempDir: provider.CacheRoot resolves
+			// symlinks (resolvePath), so on macOS the cache_root embeds the
+			// /private/var form while an unresolved TMPDIR gives /var/folders —
+			// the exact host-bound normalization misses recorded as the
+			// unexplained 09-/10- focal failures of L54/L55.
+			home := resolvedHome(t)
 			legacy := decodeProjection(t, "frozen", record)
 			mine := hostBoundNormalize(decodeObject(t, "native", resolveForDifferential(t, c, home)), home)
 			if !reflect.DeepEqual(legacy, mine) {

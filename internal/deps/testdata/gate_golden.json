@@ -1,0 +1,209 @@
+{
+  "gate_golden": {
+    "00-nothing-missing": {
+      "result": true,
+      "stdout": "",
+      "stderr": "OK    jq            JSON processor\n",
+      "prompts": [],
+      "commands": []
+    },
+    "01-two-missing-declined": {
+      "result": true,
+      "stdout": "",
+      "stderr": "WARN  jq            JSON processor (not found on PATH) → https://example.com/jq\nWARN  npx           Node runner (not found on PATH)\n  → npx: install 'npx' manually\nWARN  jq            JSON processor (not found on PATH) → https://example.com/jq\nWARN  npx           Node runner (not found on PATH)\n",
+      "prompts": [
+        "Install jq now? (brew install jq)",
+        "2 required CLI tool(s) missing. Configure anyway?"
+      ],
+      "commands": []
+    },
+    "02-package-installed": {
+      "result": true,
+      "stdout": "",
+      "stderr": "WARN  gh            GitHub CLI (not found on PATH) → https://cli.github.com\n  ✓ gh installed\nOK    gh            GitHub CLI\n",
+      "prompts": [
+        "Install gh now? (brew install gh)"
+      ],
+      "commands": [
+        [
+          "brew",
+          "install",
+          "gh"
+        ]
+      ]
+    },
+    "03-package-exit-1": {
+      "result": false,
+      "stdout": "",
+      "stderr": "WARN  gh            GitHub CLI (not found on PATH) → https://cli.github.com\n  ! install gh exited 1\n    see https://cli.github.com\nWARN  gh            GitHub CLI (not found on PATH) → https://cli.github.com\n",
+      "prompts": [
+        "Install gh now? (brew install gh)",
+        "1 required CLI tool(s) missing. Configure anyway?"
+      ],
+      "commands": [
+        [
+          "brew",
+          "install",
+          "gh"
+        ]
+      ]
+    },
+    "04-package-timeout": {
+      "result": false,
+      "stdout": "",
+      "stderr": "WARN  gh            GitHub CLI (not found on PATH) → https://cli.github.com\n  ! install gh failed: Command '['brew', 'install', 'gh']' timed out after 300 seconds\nWARN  gh            GitHub CLI (not found on PATH) → https://cli.github.com\n",
+      "prompts": [
+        "Install gh now? (brew install gh)",
+        "1 required CLI tool(s) missing. Configure anyway?"
+      ],
+      "commands": [
+        [
+          "brew",
+          "install",
+          "gh"
+        ]
+      ]
+    },
+    "05-installed-not-on-path": {
+      "result": false,
+      "stdout": "",
+      "stderr": "WARN  gh            GitHub CLI (not found on PATH) → https://cli.github.com\n  ! gh still not on PATH after install\n    see https://cli.github.com\nWARN  gh            GitHub CLI (not found on PATH) → https://cli.github.com\n",
+      "prompts": [
+        "Install gh now? (brew install gh)",
+        "1 required CLI tool(s) missing. Configure anyway?"
+      ],
+      "commands": [
+        [
+          "brew",
+          "install",
+          "gh"
+        ]
+      ]
+    },
+    "06-apt-on-linux": {
+      "result": true,
+      "stdout": "",
+      "stderr": "WARN  jq            JSON processor (not found on PATH) → https://example.com/jq\n  ✓ jq installed\nOK    jq            JSON processor\n",
+      "prompts": [
+        "Install jq now? (sudo apt-get install -y jq)"
+      ],
+      "commands": [
+        [
+          "sudo",
+          "apt-get",
+          "install",
+          "-y",
+          "jq"
+        ]
+      ]
+    },
+    "07-apt-exit-1": {
+      "result": false,
+      "stdout": "",
+      "stderr": "WARN  jq            JSON processor (not found on PATH) → https://example.com/jq\n  ! install jq exited 1\n    see https://example.com/jq\nWARN  jq            JSON processor (not found on PATH) → https://example.com/jq\n",
+      "prompts": [
+        "Install jq now? (sudo apt-get install -y jq)",
+        "1 required CLI tool(s) missing. Configure anyway?"
+      ],
+      "commands": [
+        [
+          "sudo",
+          "apt-get",
+          "install",
+          "-y",
+          "jq"
+        ]
+      ]
+    },
+    "08-apt-run-error": {
+      "result": false,
+      "stdout": "",
+      "stderr": "WARN  jq            JSON processor (not found on PATH) → https://example.com/jq\n  ! install jq failed: Command '['sudo', 'apt-get', 'install', '-y', 'jq']' timed out after 300 seconds\nWARN  jq            JSON processor (not found on PATH) → https://example.com/jq\n",
+      "prompts": [
+        "Install jq now? (sudo apt-get install -y jq)",
+        "1 required CLI tool(s) missing. Configure anyway?"
+      ],
+      "commands": [
+        [
+          "sudo",
+          "apt-get",
+          "install",
+          "-y",
+          "jq"
+        ]
+      ]
+    },
+    "09-provider-verified": {
+      "result": true,
+      "stdout": "",
+      "stderr": "WARN  jinna         Jinna MCP (no managed version)\n  GitHub Release installation plan for 'jinna':\n    repository:      parada1104/jinna-provider\n    release policy:  latest-stable (latest non-draft, non-prerelease tag)\n    target:          \u003cGOOS\u003e/\u003cGOARCH\u003e\n    expected asset:  jinna_\u003cversion\u003e_\u003cGOOS\u003e_\u003cGOARCH\u003e.tar.gz\n    destination:     \u003cHOME\u003e/cache/bin/jinna\n    checksum source: SHA256SUMS from the same release\n    minimum version: not declared\n    replacement:     an existing PATH provider is never modified; a verified managed version is reused\n  ✓ jinna installed (1.4.2)\nOK    jinna         Jinna MCP\n",
+      "prompts": [
+        "Install jinna now? (GitHub Release parada1104/jinna-provider (latest-stable) for \u003cGOOS\u003e/\u003cGOARCH\u003e)"
+      ],
+      "commands": []
+    },
+    "10-provider-failure": {
+      "result": false,
+      "stdout": "",
+      "stderr": "WARN  jinna         Jinna MCP (no managed version)\n  GitHub Release installation plan for 'jinna':\n    repository:      parada1104/jinna-provider\n    release policy:  latest-stable (latest non-draft, non-prerelease tag)\n    target:          \u003cGOOS\u003e/\u003cGOARCH\u003e\n    expected asset:  jinna_\u003cversion\u003e_\u003cGOOS\u003e_\u003cGOARCH\u003e.tar.gz\n    destination:     \u003cHOME\u003e/cache/bin/jinna\n    checksum source: SHA256SUMS from the same release\n    minimum version: not declared\n    replacement:     an existing PATH provider is never modified; a verified managed version is reused\n  ! install jinna failed: provider download URL is not an allowlisted HTTPS URL\nWARN  jinna         Jinna MCP (no managed version)\n",
+      "prompts": [
+        "Install jinna now? (GitHub Release parada1104/jinna-provider (latest-stable) for \u003cGOOS\u003e/\u003cGOARCH\u003e)",
+        "1 required CLI tool(s) missing. Configure anyway?"
+      ],
+      "commands": []
+    },
+    "11-plan-resolution-aborts-the-batch": {
+      "result": false,
+      "stdout": "",
+      "stderr": "WARN  gh            GitHub CLI (not found on PATH) → https://cli.github.com\nWARN  jinna         Jinna MCP (no managed version)\ninstall offer skipped: provider dependency is not the allowlisted GitHub Release installer\n",
+      "prompts": [
+        "2 required CLI tool(s) missing. Configure anyway?"
+      ],
+      "commands": []
+    },
+    "12-mixed-kind-loop-order": {
+      "result": false,
+      "stdout": "",
+      "stderr": "WARN  jinna         Jinna MCP (no managed version)\nWARN  custom-tool   Custom tool (not found on PATH) → https://example.com/custom\nWARN  jq            JSON processor (not found on PATH) → https://example.com/jq\n  GitHub Release installation plan for 'jinna':\n    repository:      parada1104/jinna-provider\n    release policy:  latest-stable (latest non-draft, non-prerelease tag)\n    target:          \u003cGOOS\u003e/\u003cGOARCH\u003e\n    expected asset:  jinna_\u003cversion\u003e_\u003cGOOS\u003e_\u003cGOARCH\u003e.tar.gz\n    destination:     \u003cHOME\u003e/cache/bin/jinna\n    checksum source: SHA256SUMS from the same release\n    minimum version: not declared\n    replacement:     an existing PATH provider is never modified; a verified managed version is reused\n  ✓ jinna installed (1.4.2)\n  → custom-tool: https://example.com/custom\n  ! jq still not on PATH after install\n    see https://example.com/jq\nWARN  jinna         Jinna MCP (no managed version)\nWARN  custom-tool   Custom tool (not found on PATH) → https://example.com/custom\nWARN  jq            JSON processor (not found on PATH) → https://example.com/jq\n",
+      "prompts": [
+        "Install jinna now? (GitHub Release parada1104/jinna-provider (latest-stable) for \u003cGOOS\u003e/\u003cGOARCH\u003e)",
+        "Install jq now? (brew install jq)",
+        "3 required CLI tool(s) missing. Configure anyway?"
+      ],
+      "commands": [
+        [
+          "brew",
+          "install",
+          "jq"
+        ]
+      ]
+    },
+    "13-off-tty": {
+      "result": false,
+      "stdout": "",
+      "stderr": "WARN  jq            JSON processor (not found on PATH) → https://example.com/jq\n",
+      "prompts": [
+        "1 required CLI tool(s) missing. Configure anyway?"
+      ],
+      "commands": []
+    },
+    "14-unanswered-confirm": {
+      "result": false,
+      "stdout": "",
+      "stderr": "WARN  jq            JSON processor (not found on PATH) → https://example.com/jq\n",
+      "prompts": [
+        "1 required CLI tool(s) missing. Configure anyway?"
+      ],
+      "commands": []
+    },
+    "15-unknown-binary-is-guidance": {
+      "result": false,
+      "stdout": "",
+      "stderr": "WARN  custom-tool   Custom (not found on PATH)\n  → custom-tool: install 'custom-tool' manually\nWARN  custom-tool   Custom (not found on PATH)\n",
+      "prompts": [
+        "1 required CLI tool(s) missing. Configure anyway?"
+      ],
+      "commands": []
+    }
+  }
+}
