@@ -153,7 +153,7 @@ func TestResolvePlanDifferential(t *testing.T) {
 			isolateProviderPath(t, c)
 			home := t.TempDir()
 			legacy := decodeProjection(t, "frozen", record)
-			mine := decodeProjection(t, "native", hostBoundTokens(resolveForDifferential(t, c, home), home))
+			mine := hostBoundNormalize(decodeObject(t, "native", resolveForDifferential(t, c, home)), home)
 			if !reflect.DeepEqual(legacy, mine) {
 				t.Errorf("plan differential mismatch\n legacy: %v\n    new: %v", legacy, mine)
 			}
@@ -181,11 +181,81 @@ func loadPlanGolden(t *testing.T) map[string]string {
 	return out
 }
 
-// hostBoundTokens applies the capture's normalization to the port's output.
-func hostBoundTokens(text, home string) string {
-	text = strings.ReplaceAll(text, home, "<HOME>")
-	text = strings.ReplaceAll(text, runtime.GOOS, "<GOOS>")
-	return strings.ReplaceAll(text, runtime.GOARCH, "<GOARCH>")
+// hostBoundNormalize applies the capture's tokens to the port's output, in the
+// exact fields that carry the host: provider.goos, provider.goarch,
+// provider.cache_root, the target phrase of display, and the target and home
+// phrases of described. A runtime.GOOS or runtime.GOARCH string in any other
+// field stays as written, so a difference there still fails the comparison.
+func hostBoundNormalize(projection map[string]any, home string) map[string]any {
+	goos, goarch := runtime.GOOS, runtime.GOARCH
+	out := make(map[string]any, len(projection))
+	for key, value := range projection {
+		out[key] = value
+	}
+	if target, ok := projection["provider"].(map[string]any); ok {
+		normalized := make(map[string]any, len(target))
+		for key, value := range target {
+			normalized[key] = value
+		}
+		if v, _ := target["goos"].(string); v == goos {
+			normalized["goos"] = "<GOOS>"
+		}
+		if v, _ := target["goarch"].(string); v == goarch {
+			normalized["goarch"] = "<GOARCH>"
+		}
+		if v, _ := target["cache_root"].(string); strings.HasPrefix(v, home) {
+			normalized["cache_root"] = "<HOME>" + strings.TrimPrefix(v, home)
+		}
+		out["provider"] = normalized
+	}
+	if v, ok := projection["display"].(string); ok {
+		out["display"] = strings.ReplaceAll(v, "for "+goos+"/"+goarch, "for <GOOS>/<GOARCH>")
+	}
+	if v, ok := projection["described"].(string); ok {
+		v = strings.ReplaceAll(v, home, "<HOME>")
+		v = strings.ReplaceAll(v, "target:          "+goos+"/"+goarch, "target:          <GOOS>/<GOARCH>")
+		v = strings.ReplaceAll(v, "_"+goos+"_"+goarch+".tar.gz", "_<GOOS>_<GOARCH>.tar.gz")
+		out["described"] = v
+	}
+	return out
+}
+
+// TestHostBoundNormalizeLeavesOtherFieldsAlone is the negative control of the
+// scoped normalization: a runtime target string outside the target fields must
+// survive normalization unchanged.
+func TestHostBoundNormalizeLeavesOtherFieldsAlone(t *testing.T) {
+	home := "/scratch/home"
+	projection := map[string]any{
+		"binary":       runtime.GOOS + "-" + runtime.GOARCH,
+		"guidance_url": "https://example.com/" + runtime.GOOS,
+		"display":      "GitHub Release x for " + runtime.GOOS + "/" + runtime.GOARCH,
+		"provider": map[string]any{
+			"goos": runtime.GOOS, "goarch": runtime.GOARCH, "cache_root": home + "/cache",
+		},
+	}
+	got := hostBoundNormalize(projection, home)
+	if got["binary"] != projection["binary"] {
+		t.Errorf("binary was normalized: %v", got["binary"])
+	}
+	if got["guidance_url"] != projection["guidance_url"] {
+		t.Errorf("guidance_url was normalized: %v", got["guidance_url"])
+	}
+	if got["display"] != "GitHub Release x for <GOOS>/<GOARCH>" {
+		t.Errorf("display target not tokenized: %v", got["display"])
+	}
+	p := got["provider"].(map[string]any)
+	if p["goos"] != "<GOOS>" || p["goarch"] != "<GOARCH>" || p["cache_root"] != "<HOME>/cache" {
+		t.Errorf("provider target not tokenized: %v", p)
+	}
+}
+
+func decodeObject(t *testing.T, label, text string) map[string]any {
+	t.Helper()
+	obj, ok := decodeProjection(t, label, text).(map[string]any)
+	if !ok {
+		t.Fatalf("%s projection is not an object: %q", label, text)
+	}
+	return obj
 }
 
 func decodeProjection(t *testing.T, label, text string) any {
