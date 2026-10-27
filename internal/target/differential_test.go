@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -58,13 +59,25 @@ func loadTargetGolden(t *testing.T) map[string]frozenRecord {
 	return g
 }
 
-// normalizeBase replaces a case's scratch base with <TMP>, resolved form first
-// (macOS /var -> /private/var), the same normalization as the capture.
+// pathValueKeys are the JSON fields whose value is an absolute scratch path in
+// the plan output. Only these values are rewritten; every other byte is compared
+// as written. The same rule is applied by the capture script.
+const pathValueKeys = `(?:root|manifest|planning_root|path|manifest_source|derived_ai_specs)`
+
+// normalizeBase rewrites a case's scratch base to <TMP> only where it is a path
+// value: a path field of the JSON plan, or the prefix of an "error: " line on
+// stderr. The resolved form is rewritten first (macOS /var -> /private/var).
 func normalizeBase(s, base string) string {
-	if resolved, err := filepath.EvalSymlinks(base); err == nil {
-		s = strings.ReplaceAll(s, resolved, "<TMP>")
+	paths := []string{base}
+	if resolved, err := filepath.EvalSymlinks(base); err == nil && resolved != base {
+		paths = []string{resolved, base}
 	}
-	return strings.ReplaceAll(s, base, "<TMP>")
+	for _, p := range paths {
+		q := regexp.QuoteMeta(p)
+		s = regexp.MustCompile(`("`+pathValueKeys+`": ")`+q).ReplaceAllString(s, "${1}<TMP>")
+		s = regexp.MustCompile(`(?m)^(error: )`+q).ReplaceAllString(s, "${1}<TMP>")
+	}
+	return s
 }
 
 // runGoCLI drives the Go Run with the same argument list (program name
@@ -76,20 +89,27 @@ func runGoCLI(t *testing.T, args ...string) cliResult {
 	return cliResult{outBuf.String(), errBuf.String(), code}
 }
 
-// compareDifferential asserts byte-identical stdout, stderr, and exit code.
-func compareDifferential(t *testing.T, name string, py, gRes cliResult) {
+// firstMismatch describes the first difference between the frozen record and
+// the Go result, or returns "" when exit code, stdout and stderr are identical.
+func firstMismatch(want, got cliResult) string {
+	switch {
+	case want.code != got.code:
+		return fmt.Sprintf("exit code: frozen=%d go=%d", want.code, got.code)
+	case want.stdout != got.stdout:
+		return "stdout bytes differ (" + firstDiff(want.stdout, got.stdout) + ")"
+	case want.stderr != got.stderr:
+		return "stderr bytes differ (" + firstDiff(want.stderr, got.stderr) + ")"
+	}
+	return ""
+}
+
+// compareDifferential asserts byte-identical stdout, stderr, and exit code
+// against the frozen record, printing both sides on a mismatch.
+func compareDifferential(t *testing.T, name string, want, got cliResult) {
 	t.Helper()
-	if py.code != gRes.code {
-		t.Errorf("%s: exit code mismatch: python=%d go=%d\npython stderr: %q\ngo stderr: %q",
-			name, py.code, gRes.code, py.stderr, gRes.stderr)
-		return
-	}
-	if py.stdout != gRes.stdout {
-		t.Errorf("%s: stdout bytes differ\n--- python ---\n%s\n--- go ---\n%s", name, py.stdout, gRes.stdout)
-		return
-	}
-	if py.stderr != gRes.stderr {
-		t.Errorf("%s: stderr bytes differ\n--- python ---\n%q\n--- go ---\n%q", name, py.stderr, gRes.stderr)
+	if m := firstMismatch(want, got); m != "" {
+		t.Errorf("%s: %s\n--- frozen stdout ---\n%s\n--- go stdout ---\n%s\n--- frozen stderr ---\n%q\n--- go stderr ---\n%q",
+			name, m, want.stdout, got.stdout, want.stderr, got.stderr)
 	}
 }
 
@@ -556,6 +576,54 @@ func TestDifferentialErrors(t *testing.T) {
 				t.Errorf("%s: code=%d stderr=%q want substring %q", tc.name, py.code, py.stderr, tc.wantSub)
 			}
 		})
+	}
+}
+
+// TestFrozenNormalizeControls runs the real topology-bogus case and proves that
+// the comparison still fails when a field that is not a path diverges, and that
+// the normalizer does not hide a scratch path written into such a field.
+func TestFrozenNormalizeControls(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "proj")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	buildTree(t, dir, tree{manifest: "[project]\nname = \"t\"\nrepo_topology = \"bogus\"\n"})
+	rec, ok := loadTargetGolden(t)["topology-bogus"]
+	if !ok {
+		t.Fatal("no frozen record topology-bogus")
+	}
+	want := cliResult{rec.Stdout, rec.Stderr, rec.Code}
+	raw := runGoCLI(t, dir)
+
+	run := func(mutate func(string) string) cliResult {
+		got := raw
+		got.stdout = normalizeBase(mutate(raw.stdout), base)
+		got.stderr = normalizeBase(raw.stderr, base)
+		return got
+	}
+	if m := firstMismatch(want, run(func(s string) string { return s })); m != "" {
+		t.Fatalf("unmutated control must match the frozen record: %s", m)
+	}
+	replaceField := func(from, to string) func(string) string {
+		return func(s string) string {
+			if !strings.Contains(s, from) {
+				t.Fatalf("control needle %q missing from the Go output", from)
+			}
+			return strings.Replace(s, from, to, 1)
+		}
+	}
+	// A divergence in a field that is not a path must still fail.
+	if m := firstMismatch(want, run(replaceField(`"via": "auto"`, `"via": "mutated"`))); m == "" {
+		t.Error("non-path field divergence was not detected")
+	}
+	// A scratch path written into a non-path field must not be rewritten away.
+	// The frozen copy holds <TMP> in that field, so only a normalizer that
+	// rewrites path values alone keeps the raw path and the record apart.
+	wantLeak := want
+	wantLeak.stdout = strings.Replace(want.stdout, `"configured": "auto"`, `"configured": "<TMP>/proj"`, 1)
+	if m := firstMismatch(wantLeak, run(replaceField(`"configured": "auto"`, `"configured": "`+dir+`"`))); m == "" {
+		t.Error("scratch path in a non-path field was hidden by the normalizer")
 	}
 }
 
