@@ -1,7 +1,8 @@
-// Differential between the native Acquire and Python's gate_binary.acquire
-// (T7/C2c). Both graders run against the same temp home — one Go leg, then the
-// cache wiped and one Python leg — and the status projection plus the cache
-// tree must match exactly.
+// Differential between the native Acquire and the frozen legacy oracle of
+// Python's gate_binary.acquire (T7/C2c, T5). The oracle was captured once
+// through the legacy driver on the same fixture layout; the test replays every
+// case against the native Acquire and compares the status projection and the
+// cache tree byte for byte with the frozen record. No Python runs here.
 //
 // The decided same-user divergences are excluded on purpose and covered by the
 // package's own tests instead:
@@ -15,47 +16,40 @@
 package gatebinary
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 )
 
-// differentialDriver loads gate_binary.py, pins detect_platform and _asset_url
-// to the arguments the Go leg used, runs acquire and prints the shared status
-// keys as JSON.
-const differentialDriver = `import importlib.util, json, sys
-from pathlib import Path
-spec = importlib.util.spec_from_file_location("gate_binary_differential", sys.argv[1])
-if spec is None or spec.loader is None:
-    raise RuntimeError("unable to load gate_binary.py at %s" % sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = mod
-spec.loader.exec_module(mod)
-mod.detect_platform = lambda: (sys.argv[2], sys.argv[3])
-mod._asset_url = lambda version, asset_name: sys.argv[4] + "/v" + version + "/" + asset_name
-status = mod.acquire(
-    gate_impl="auto",
-    ai_specs_home=Path(sys.argv[5]),
-    offline=sys.argv[6] == "1",
-)
-print(json.dumps({
-    "attempted": status.get("attempted"),
-    "installed": status.get("installed"),
-    "platform": list(status.get("platform") or ("", "")),
-    "cache_path": status.get("cache_path"),
-    "warn": status.get("warn"),
-    "mismatch": status.get("mismatch"),
-}))
-`
+// acquireGoldenPath is the frozen oracle: one record per case, keyed by case
+// name, each holding the status projection and the cache tree after acquire.
+const acquireGoldenPath = "testdata/acquire_golden.json"
 
-// differentialStatus is the status projection both legs are compared on: the
-// keys Python's acquire documents (the Go Verification evidence and the Go-only
+// acquireGoldenCases is the complete case list; the golden must hold exactly
+// one record per name.
+var acquireGoldenCases = []string{
+	"01-offline-no-cached-binary",
+	"02-offline-local-build-no-source",
+	"03-download-installs-verified",
+	"04-download-digest-mismatch",
+	"05-unsupported-platform",
+}
+
+type acquireRecord struct {
+	Status map[string]any    `json:"status"`
+	Tree   map[string]string `json:"tree"`
+}
+
+type acquireGolden struct {
+	Cases map[string]acquireRecord `json:"cases"`
+}
+
+// differentialStatus is the status projection the oracle compares on: the keys
+// Python's acquire documents (the Go Verification evidence and the Go-only
 // boundary behavior are out of scope).
 type differentialStatus struct {
 	Attempted bool      `json:"attempted"`
@@ -124,108 +118,165 @@ func diffTree(t *testing.T, home string) map[string]string {
 	return files
 }
 
-func runDifferentialPython(t *testing.T, python3, module, home, goos, goarch, baseURL string, offline bool, pathDir string) map[string]any {
-	t.Helper()
-	offlineFlag := "0"
-	if offline {
-		offlineFlag = "1"
-	}
-	cmd := exec.Command(python3, append([]string{"-c", differentialDriver},
-		module, goos, goarch, baseURL, home, offlineFlag)...)
-	cmd.Env = append(os.Environ(), "PATH="+pathDir, "PYTHONDONTWRITEBYTECODE=1")
-	var out, errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("python acquire: %v\n%s", err, errBuf.String())
-	}
-	var status map[string]any
-	if err := json.Unmarshal(out.Bytes(), &status); err != nil {
-		t.Fatalf("python status: %v\n%s", err, out.String())
-	}
-	return status
+// acquireTokens holds the per-run values the oracle replaces by fixed tokens:
+// the scratch home (raw and symlink-resolved forms), the fake-go directory and
+// the loopback asset server URL. Every other host-shaped string is compared as
+// written.
+type acquireTokens struct {
+	home  string
+	tools string
+	base  string
 }
 
-func TestAcquireDifferentialAgainstPython(t *testing.T) {
-	python3, err := exec.LookPath("python3")
+func (k acquireTokens) text(s string) string {
+	if k.home != "" {
+		s = strings.ReplaceAll(s, k.home, "<HOME>")
+	}
+	if k.tools != "" {
+		s = strings.ReplaceAll(s, k.tools, "<TOOLS>")
+	}
+	if k.base != "" {
+		s = strings.ReplaceAll(s, k.base, "<BASE>")
+	}
+	return s
+}
+
+func (k acquireTokens) value(v any) any {
+	switch x := v.(type) {
+	case string:
+		return k.text(x)
+	case []any:
+		out := make([]any, len(x))
+		for i, item := range x {
+			out[i] = k.value(item)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for key, item := range x {
+			out[key] = k.value(item)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+func (k acquireTokens) tree(files map[string]string) map[string]string {
+	out := make(map[string]string, len(files))
+	for rel, content := range files {
+		out[rel] = k.text(content)
+	}
+	return out
+}
+
+func loadAcquireGolden(t *testing.T) acquireGolden {
+	t.Helper()
+	raw, err := os.ReadFile(acquireGoldenPath)
 	if err != nil {
-		t.Skip("python3 unavailable")
+		t.Fatalf("read frozen oracle %s: %v", acquireGoldenPath, err)
 	}
-	module, err := filepath.Abs(filepath.Join("..", "..", "lib", "_internal", "gate_binary.py"))
+	var golden acquireGolden
+	if err := json.Unmarshal(raw, &golden); err != nil {
+		t.Fatalf("decode frozen oracle %s: %v", acquireGoldenPath, err)
+	}
+	if len(golden.Cases) != len(acquireGoldenCases) {
+		t.Fatalf("frozen oracle holds %d records; the cases need exactly %d",
+			len(golden.Cases), len(acquireGoldenCases))
+	}
+	for _, name := range acquireGoldenCases {
+		if _, ok := golden.Cases[name]; !ok {
+			t.Fatalf("frozen oracle has no record for case %s", name)
+		}
+	}
+	return golden
+}
+
+// resolvedHome is the scratch home in its symlink-resolved form: the native
+// Acquire reports resolved paths, so the tokens must match that form.
+func resolvedHome(t *testing.T) string {
+	t.Helper()
+	home, err := filepath.EvalSymlinks(newHome(t))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("resolve home: %v", err)
 	}
-	if _, err := os.Stat(module); err != nil {
-		t.Skipf("gate_binary.py unavailable: %v", err)
-	}
+	return home
+}
+
+func TestAcquireDifferentialAgainstFrozenOracle(t *testing.T) {
 	t.Setenv("AI_SPECS_GATE_BUILD", "")
-	emptyPath := t.TempDir()
+	golden := loadAcquireGolden(t)
 	fakeGoDir := t.TempDir()
 	writeExec(t, filepath.Join(fakeGoDir, "go"), "#!/bin/sh\nexit 1\n")
-	hostGoos, hostGoarch := DetectHostPlatform()
 	srv, _ := assetServer(t, gateScript())
+	platform := [2]string{"darwin", "arm64"}
 
-	// run executes the Go leg, wipes the cache, executes the Python leg and
-	// compares the status projection and the cache tree byte for byte.
-	run := func(name, digest string, opts AcquireOptions, pythonPath string, platform [2]string) {
+	// run executes the native Acquire on a fresh home and compares the status
+	// projection and the cache tree with the frozen record of the same case.
+	run := func(name, digest string, opts AcquireOptions, goos, goarch string, tools string) {
 		t.Run(name, func(t *testing.T) {
-			home := newHome(t)
+			home := resolvedHome(t)
 			if digest != "" {
-				writeSums(t, home, digest, AssetName(platform[0], platform[1]))
+				writeSums(t, home, digest, AssetName(goos, goarch))
 			}
 			goOpts := opts
 			goOpts.GateImpl = "auto"
 			goOpts.Home = home
-			goOpts.GOOS, goOpts.GOARCH = platform[0], platform[1]
-			goStatus := normalizedJSON(t, projectAcquireStatus(Acquire(goOpts)))
-			goTree := diffTree(t, home)
+			goOpts.GOOS, goOpts.GOARCH = goos, goarch
+			keys := acquireTokens{home: home, tools: tools, base: opts.BaseURL}
+			got := keys.value(normalizedJSON(t, projectAcquireStatus(Acquire(goOpts))))
+			gotTree := keys.tree(diffTree(t, home))
 
-			if err := os.RemoveAll(filepath.Join(home, "cache")); err != nil {
-				t.Fatalf("reset cache: %v", err)
+			record := golden.Cases[name]
+			wantStatus := record.Status
+			if !reflect.DeepEqual(got, wantStatus) {
+				t.Fatalf("status:\n--- go ---\n%v\n--- frozen oracle ---\n%v", got, wantStatus)
 			}
-			pyStatus := runDifferentialPython(t, python3, module, home,
-				platform[0], platform[1], opts.BaseURL, opts.Offline, pythonPath)
-
-			if !reflect.DeepEqual(goStatus, pyStatus) {
-				t.Fatalf("status:\n--- go ---\n%v\n--- python ---\n%v", goStatus, pyStatus)
-			}
-			goTreeAfter := diffTree(t, home)
-			if !reflect.DeepEqual(goTree, goTreeAfter) {
-				t.Fatalf("cache tree:\n--- go ---\n%v\n--- python ---\n%v", goTree, goTreeAfter)
+			if !reflect.DeepEqual(gotTree, record.Tree) {
+				t.Fatalf("cache tree:\n--- go ---\n%v\n--- frozen oracle ---\n%v", gotTree, record.Tree)
 			}
 		})
 	}
 
 	// Shared branch: offline, no cached binary, no local-build tool — the
 	// missing-digest branch is never reached.
-	run("offline with no cached binary", "",
+	run(acquireGoldenCases[0], "",
 		AcquireOptions{Offline: true, LookPath: func(string) (string, error) {
 			return "", errors.New("no go")
 		}},
-		emptyPath, [2]string{hostGoos, hostGoarch})
+		platform[0], platform[1], "")
 
 	// Shared branch: offline with a toolchain and a committed digest, but no
 	// gate Go source in the home — both graders fail the build the same way.
-	run("offline local build without gate source", strings.Repeat("a", 64),
+	run(acquireGoldenCases[1], strings.Repeat("a", 64),
 		AcquireOptions{Offline: true, LookPath: func(string) (string, error) {
 			return filepath.Join(fakeGoDir, "go"), nil
 		}},
-		fakeGoDir, [2]string{hostGoos, hostGoarch})
+		platform[0], platform[1], fakeGoDir)
 
 	// Shared branch: the download installs the digest-verified binary plus its
 	// receipt, byte for byte.
-	run("download installs the verified binary", sha256Hex(gateScript()),
-		AcquireOptions{BaseURL: srv.URL}, os.Getenv("PATH"),
-		[2]string{hostGoos, hostGoarch})
+	run(acquireGoldenCases[2], sha256Hex(gateScript()),
+		AcquireOptions{BaseURL: srv.URL}, platform[0], platform[1], "")
 
 	// Shared branch: a downloaded artifact that misses the committed digest is
 	// deleted, recorded and never executed.
-	run("download digest mismatch", strings.Repeat("a", 64),
-		AcquireOptions{BaseURL: srv.URL}, os.Getenv("PATH"),
-		[2]string{hostGoos, hostGoarch})
+	run(acquireGoldenCases[3], strings.Repeat("a", 64),
+		AcquireOptions{BaseURL: srv.URL}, platform[0], platform[1], "")
 
 	// Shared branch: a platform outside the published matrix warns and
 	// acquires nothing.
-	run("unsupported platform", "",
-		AcquireOptions{}, os.Getenv("PATH"), [2]string{"solaris", "riscv"})
+	run(acquireGoldenCases[4], "",
+		AcquireOptions{}, "solaris", "riscv", "")
+}
+
+// Negative control: the normalizer replaces only the exact home, tools and
+// asset URL; any other host-shaped string survives as written.
+func TestAcquireNormalizeLeavesOtherStringsAlone(t *testing.T) {
+	k := acquireTokens{home: "/scratch/home", tools: "/scratch/tools", base: "http://127.0.0.1:1"}
+	got := k.text("/scratch/home/cache and /scratch/homeextra and /elsewhere, /scratch/tools, http://127.0.0.1:1/v9")
+	want := "<HOME>/cache and <HOME>extra and /elsewhere, <TOOLS>, <BASE>/v9"
+	if got != want {
+		t.Fatalf("normalized %q, want %q", got, want)
+	}
 }
