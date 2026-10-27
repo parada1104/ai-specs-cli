@@ -1,32 +1,42 @@
 package deps
 
-// Differential test for Gate: the legacy bytes and the port's, on the same
-// scripted terminal. testdata/gate_driver.py drives the REAL
-// config_wizard._dep_gate with the probe, questionary, dep_install's
-// package-manager calls and the provider install all scripted; this side runs
-// Gate with the same script. Both emit one canonical projection — the verdict,
-// the two streams, the confirm messages in order and the commands run — and the
-// test requires them value for value.
+// Differential test for Gate against its FROZEN legacy oracle.
+// testdata/gate_golden.json holds the canonical projection the REAL legacy
+// config_wizard._dep_gate produced for each case below, captured once through
+// testdata/gate_driver.py with the probe, questionary, dep_install's
+// package-manager calls, the provider install and the isatty answers all
+// scripted. Tests never run an interpreter: Gate runs on the same scripted
+// terminal (runNativeGate) and its projection must equal the frozen record
+// value for value, one record per case.
+//
+// Host-bound strings were tokenized at capture and are tokenized here by
+// gateNormalizeText: the scratch home becomes <HOME>, and the provider target
+// becomes <GOOS>/<GOARCH> in its three exact phrases (the capture host was
+// darwin/arm64). Every other host-shaped string is compared as written.
 //
 // The fixture lines stay under 80 columns on purpose: rich wraps the console at
 // its default width off the TTY, and the port emits one unwrapped line per
 // result. Every line the gate can print in practice is short (a binary, a
 // purpose, the URL), so the constraint belongs to the fixture, not the port.
+// gate_driver.py stays on disk until the lib/_internal deletion, but no test
+// executes it.
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
+	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/provider"
 	"ai-specs.dev/ai-specs/internal/schema"
 )
+
+const gateGoldenPath = "testdata/gate_golden.json"
 
 // gateDriverDep is one recipe [[deps.cli]] entry as the driver reads it.
 type gateDriverDep struct {
@@ -80,36 +90,6 @@ type projectGate struct {
 	Stderr   string     `json:"stderr"`
 	Prompts  []string   `json:"prompts"`
 	Commands [][]string `json:"commands"`
-}
-
-func (c gateDifferentialCase) payload(home string) map[string]any {
-	probe := make([][]gateDriverResult, len(c.Probe))
-	copy(probe, c.Probe)
-	recipe := map[string]any{"id": "demo", "cli_deps": c.Deps}
-	if recipe["cli_deps"] == nil {
-		recipe["cli_deps"] = []gateDriverDep{}
-	}
-	answers := c.Answers
-	if answers == nil {
-		answers = []bool{}
-	}
-	which := c.Which
-	if which == nil {
-		which = []string{}
-	}
-	payload := map[string]any{
-		"home":    home,
-		"tty":     c.TTY,
-		"recipe":  recipe,
-		"probe":   probe,
-		"answers": answers,
-		"which":   which,
-		"install": c.Install,
-	}
-	if c.System != "" {
-		payload["system"] = strings.ToUpper(c.System[:1]) + c.System[1:]
-	}
-	return payload
 }
 
 // runNativeGate is the port's side of the comparison.
@@ -202,36 +182,67 @@ func buildGateRecipe(deps []gateDriverDep) *schema.Recipe {
 	return &schema.Recipe{ID: "demo", CliDeps: cliDeps}
 }
 
-func runLegacyGateDriver(t *testing.T, c gateDifferentialCase, home string) projectGate {
-	t.Helper()
-	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	driver := filepath.Join(root, "internal", "deps", "testdata", "gate_driver.py")
-	body, err := json.Marshal(c.payload(home))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("python3", driver, root)
-	cmd.Stdin = bytes.NewReader(body)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("legacy gate driver failed: %v\nstderr: %s", err, stderr.String())
-	}
-	var out projectGate
-	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
-		t.Fatalf("legacy gate driver emitted non-JSON %q: %v", stdout.String(), err)
-	}
-	if out.Prompts == nil {
-		out.Prompts = []string{}
-	}
-	if out.Commands == nil {
-		out.Commands = [][]string{}
-	}
+// gateNormalizeText tokenizes the exact phrases of the gate projection that
+// carry the capture host: the scratch home, and the provider target phrases
+// (the capture host was darwin/arm64). Every other host-shaped string is
+// compared as written, so a difference there still fails the comparison.
+func gateNormalizeText(text, home string) string {
+	goos, goarch := runtime.GOOS, runtime.GOARCH
+	out := strings.ReplaceAll(text, home, "<HOME>")
+	out = strings.ReplaceAll(out, "target:          "+goos+"/"+goarch, "target:          <GOOS>/<GOARCH>")
+	out = strings.ReplaceAll(out, "_"+goos+"_"+goarch+".tar.gz", "_<GOOS>_<GOARCH>.tar.gz")
+	out = strings.ReplaceAll(out, "for "+goos+"/"+goarch, "for <GOOS>/<GOARCH>")
 	return out
+}
+
+// normalizeGateProjection applies gateNormalizeText to every string the
+// projection carries: both streams, every prompt message and every command
+// argument.
+func normalizeGateProjection(p projectGate, home string) projectGate {
+	p.Stdout = gateNormalizeText(p.Stdout, home)
+	p.Stderr = gateNormalizeText(p.Stderr, home)
+	for i, message := range p.Prompts {
+		p.Prompts[i] = gateNormalizeText(message, home)
+	}
+	for i, command := range p.Commands {
+		for j, arg := range command {
+			p.Commands[i][j] = gateNormalizeText(arg, home)
+		}
+	}
+	return p
+}
+
+// loadGateGolden returns the frozen gate records keyed by case name.
+func loadGateGolden(t *testing.T) map[string]json.RawMessage {
+	t.Helper()
+	raw, err := os.ReadFile(gateGoldenPath)
+	if err != nil {
+		t.Fatalf("read frozen oracle %s: %v", gateGoldenPath, err)
+	}
+	var doc struct {
+		GateGolden map[string]json.RawMessage `json:"gate_golden"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decode %s: %v", gateGoldenPath, err)
+	}
+	return doc.GateGolden
+}
+
+// TestGateNormalizeLeavesOtherHostStringsAlone is the negative control of the
+// scoped normalization: a host-shaped string outside the target phrases and
+// outside the scratch home must survive normalization unchanged.
+func TestGateNormalizeLeavesOtherHostStringsAlone(t *testing.T) {
+	goos, goarch := runtime.GOOS, runtime.GOARCH
+	text := "check " + goos + "-" + goarch + " tool; see https://example.com/" + goos + "; asset x_" + goarch + ".zip"
+	if got := gateNormalizeText(text, "/scratch/home"); got != text {
+		t.Errorf("out-of-scope host string was normalized: %q", got)
+	}
+	if got := gateNormalizeText("dest /private/var/scratch/cache/bin/jinna", "/private/var/scratch"); got != "dest <HOME>/cache/bin/jinna" {
+		t.Errorf("home phrase not tokenized: %q", got)
+	}
+	if got := gateNormalizeText("target:          "+goos+"/"+goarch, "/scratch/home"); got != "target:          <GOOS>/<GOARCH>" {
+		t.Errorf("target phrase not tokenized: %q", got)
+	}
 }
 
 // resolvedHome is the same absolute path on both sides: t.TempDir's macOS
@@ -247,7 +258,10 @@ func resolvedHome(t *testing.T) string {
 	return resolved
 }
 
-func TestGateDifferential(t *testing.T) {
+// gateDifferentialCases is the frozen case matrix. Its order defines the
+// golden record keys (NN-name); adding, removing or reordering a case is a
+// contract change to the frozen oracle.
+func gateDifferentialCases() []gateDifferentialCase {
 	missingJQ := gateDriverResult{Binary: "jq", Purpose: "JSON processor", Detail: "not found on PATH",
 		InstallURL: "https://example.com/jq", Required: true}
 	presentJQ := gateDriverResult{Binary: "jq", Purpose: "JSON processor", InstallURL: "https://example.com/jq",
@@ -273,7 +287,7 @@ func TestGateDifferential(t *testing.T) {
 	customDep := gateDriverDep{Binary: "custom-tool", Purpose: "Custom tool", Required: true,
 		InstallURL: "https://example.com/custom"}
 
-	cases := []gateDifferentialCase{
+	return []gateDifferentialCase{
 		{Name: "nothing-missing", TTY: true, Deps: []gateDriverDep{jqDep}, Probe: [][]gateDriverResult{{presentJQ}}},
 		{Name: "two-missing-declined", TTY: true, Deps: []gateDriverDep{jqDep, npxDep},
 			Probe: [][]gateDriverResult{{missingJQ, missingNPX}}, Answers: []bool{false, true},
@@ -329,12 +343,28 @@ func TestGateDifferential(t *testing.T) {
 			Probe:   [][]gateDriverResult{{{Binary: "custom-tool", Purpose: "Custom", Detail: "not found on PATH", Required: true}}},
 			Answers: []bool{false}},
 	}
+}
 
-	for i, c := range cases {
-		t.Run(fmt.Sprintf("%02d-%s", i, c.Name), func(t *testing.T) {
+func TestGateDifferential(t *testing.T) {
+	golden := loadGateGolden(t)
+	if len(golden) != len(gateDifferentialCases()) {
+		t.Fatalf("%s holds %d records; the cases need exactly %d", gateGoldenPath, len(golden), len(gateDifferentialCases()))
+	}
+	for i, c := range gateDifferentialCases() {
+		name := fmt.Sprintf("%02d-%s", i, c.Name)
+		t.Run(name, func(t *testing.T) {
+			record, ok := golden[name]
+			if !ok {
+				t.Fatalf("%s has no record %q", gateGoldenPath, name)
+			}
+			var legacy projectGate
+			if err := json.Unmarshal(record, &legacy); err != nil {
+				t.Fatalf("decode frozen record %s: %v", name, err)
+			}
+			// Each case runs the port on a fresh home and is compared with its
+			// frozen legacy record.
 			home := resolvedHome(t)
-			legacy := runLegacyGateDriver(t, c, home)
-			mine := runNativeGate(t, c, home)
+			mine := normalizeGateProjection(runNativeGate(t, c, home), home)
 			if !reflect.DeepEqual(legacy, mine) {
 				t.Errorf("gate differential mismatch\n legacy: %+v\n    new: %+v", legacy, mine)
 			}
