@@ -3,6 +3,7 @@ package target
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -35,33 +36,35 @@ type cliResult struct {
 	code   int
 }
 
-// runPythonCLI drives `python3 lib/_internal/target-resolve.py <root>` with
-// cwd = the worktree root, so sys.argv[0] is exactly
-// "lib/_internal/target-resolve.py" — the literal the Go side claims too.
-func runPythonCLI(t *testing.T, root string) cliResult {
-	t.Helper()
-	return runPythonCLIArgs(t, root)
+// Frozen oracle: testdata/target_golden.json holds the exit code, stdout and
+// stderr of the legacy target-resolve.py for every case of this file, captured
+// once with each case's scratch base normalized to <TMP>. No Python runs here.
+type frozenRecord struct {
+	Code   int    `json:"code"`
+	Stdout string `json:"stdout"`
+	Stderr string `json:"stderr"`
 }
 
-func runPythonCLIArgs(t *testing.T, args ...string) cliResult {
+func loadTargetGolden(t *testing.T) map[string]frozenRecord {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "python3", append([]string{"lib/_internal/target-resolve.py"}, args...)...)
-	cmd.Dir = repoRoot(t)
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	var outBuf, errBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
-	err := cmd.Run()
+	raw, err := os.ReadFile(filepath.Join("testdata", "target_golden.json"))
 	if err != nil {
-		ee, ok := err.(*exec.ExitError)
-		if !ok {
-			t.Fatalf("python3 lib/_internal/target-resolve.py %v: %v", args, err)
-		}
-		return cliResult{outBuf.String(), errBuf.String(), ee.ExitCode()}
+		t.Fatalf("read frozen oracle: %v", err)
 	}
-	return cliResult{outBuf.String(), errBuf.String(), 0}
+	var g map[string]frozenRecord
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatalf("decode frozen oracle: %v", err)
+	}
+	return g
+}
+
+// normalizeBase replaces a case's scratch base with <TMP>, resolved form first
+// (macOS /var -> /private/var), the same normalization as the capture.
+func normalizeBase(s, base string) string {
+	if resolved, err := filepath.EvalSymlinks(base); err == nil {
+		s = strings.ReplaceAll(s, resolved, "<TMP>")
+	}
+	return strings.ReplaceAll(s, base, "<TMP>")
 }
 
 // runGoCLI drives the Go Run with the same argument list (program name
@@ -175,29 +178,21 @@ func copyDir(t *testing.T, src, dst string) {
 	}
 }
 
-// runDifferential runs both CLIs against root with args (default: [root]) and
-// compares bytes + exit code.
-func runDifferential(t *testing.T, name, root string, goArgs []string) {
+// runFrozen runs the Go CLI with args, normalizes its scratch base, and asserts
+// byte-identical stdout, stderr and exit code against the frozen record `name`.
+// It returns the frozen record for the caller's own assertions.
+func runFrozen(t *testing.T, name, base string, args ...string) cliResult {
 	t.Helper()
-	if goArgs == nil {
-		goArgs = []string{root}
+	rec, ok := loadTargetGolden(t)[name]
+	if !ok {
+		t.Fatalf("%s: no frozen record in testdata/target_golden.json", name)
 	}
-	py := runPythonCLI(t, root)
-	gRes := runGoCLI(t, goArgs...)
-	if py.code != gRes.code {
-		t.Errorf("%s: exit code mismatch: python=%d go=%d\npython stderr: %q\ngo stderr: %q",
-			name, py.code, gRes.code, py.stderr, gRes.stderr)
-		return
-	}
-	if py.stdout != gRes.stdout {
-		t.Errorf("%s: stdout bytes differ (%s)\n--- python ---\n%s\n--- go ---\n%s",
-			name, firstDiff(py.stdout, gRes.stdout), py.stdout, gRes.stdout)
-		return
-	}
-	if py.stderr != gRes.stderr {
-		t.Errorf("%s: stderr bytes differ (%s)\n--- python ---\n%q\n--- go ---\n%q",
-			name, firstDiff(py.stderr, gRes.stderr), py.stderr, gRes.stderr)
-	}
+	oracle := cliResult{rec.Stdout, rec.Stderr, rec.Code}
+	gRes := runGoCLI(t, args...)
+	gRes.stdout = normalizeBase(gRes.stdout, base)
+	gRes.stderr = normalizeBase(gRes.stderr, base)
+	compareDifferential(t, name, oracle, gRes)
+	return oracle
 }
 
 // --- TestDifferentialPlanJSON ------------------------------------------------
@@ -214,7 +209,7 @@ func TestDifferentialPlanJSON(t *testing.T) {
 			tmp := t.TempDir()
 			dir := filepath.Join(tmp, fixture)
 			copyDir(t, filepath.Join(root, "tests", "fixtures", "target-resolve", fixture), dir)
-			runDifferential(t, fixture, dir, nil)
+			runFrozen(t, "fixture-"+fixture, tmp, dir)
 		})
 	}
 
@@ -352,7 +347,7 @@ func TestDifferentialPlanJSON(t *testing.T) {
 				t.Fatal(err)
 			}
 			buildTree(t, dir, tc.tree)
-			runDifferential(t, tc.name, dir, nil)
+			runFrozen(t, tc.name, filepath.Dir(dir), dir)
 		})
 	}
 
@@ -371,7 +366,7 @@ func TestDifferentialPlanJSON(t *testing.T) {
 			manifest: "[project]\nname = \"t\"\nsubrepos = [\"sneaky\"]\n",
 			links:    map[string]string{"sneaky": outside},
 		})
-		runDifferential(t, "symlink-escape", dir, nil)
+		runFrozen(t, "symlink-escape", tmp, dir)
 	})
 
 	t.Run("symlink-dangling-outside", func(t *testing.T) {
@@ -388,7 +383,7 @@ func TestDifferentialPlanJSON(t *testing.T) {
 			manifest: "[project]\nname = \"t\"\nsubrepos = [\"dangle\"]\n",
 			links:    map[string]string{"dangle": filepath.Join(outside, "nope")},
 		})
-		runDifferential(t, "symlink-dangling-outside", dir, nil)
+		runFrozen(t, "symlink-dangling-outside", tmp, dir)
 	})
 
 	t.Run("symlink-to-file", func(t *testing.T) {
@@ -401,17 +396,15 @@ func TestDifferentialPlanJSON(t *testing.T) {
 			files:    []string{"f.txt"},
 			links:    map[string]string{"lfile": "f.txt"},
 		})
-		runDifferential(t, "symlink-to-file", dir, nil)
+		runFrozen(t, "symlink-to-file", filepath.Dir(dir), dir)
 	})
 
 	t.Run("nonexistent-root", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "missing")
-		py := runPythonCLI(t, dir)
-		gRes := runGoCLI(t, dir)
-		if py.code != 1 || gRes.code != 1 {
-			t.Errorf("nonexistent-root: want exit 1, python=%d go=%d", py.code, gRes.code)
+		py := runFrozen(t, "nonexistent-root", filepath.Dir(dir), dir)
+		if py.code != 1 {
+			t.Errorf("nonexistent-root: want exit 1, got %d", py.code)
 		}
-		compareDifferential(t, "nonexistent-root", py, gRes)
 	})
 }
 
@@ -468,9 +461,7 @@ func TestDifferentialTopologySubmodules(t *testing.T) {
 		buildTree(t, super, tree{
 			manifest: "[project]\nname = \"super\"\nsubrepos = [\"sub\"]\n",
 		})
-		py := runPythonCLI(t, super)
-		gRes := runGoCLI(t, super)
-		compareDifferential(t, "super-with-submodule", py, gRes)
+		py := runFrozen(t, "super-with-submodule", tmp, super)
 		if py.code != 0 {
 			t.Fatalf("super-with-submodule: expected exit 0, got %d (stderr: %s)", py.code, py.stderr)
 		}
@@ -489,9 +480,7 @@ func TestDifferentialTopologySubmodules(t *testing.T) {
 		}
 		gitRun(t, super, "init", "-q", ".")
 		buildTree(t, super, tree{manifest: "[project]\nname = \"plain\"\nsubrepos = []\n"})
-		py := runPythonCLI(t, super)
-		gRes := runGoCLI(t, super)
-		compareDifferential(t, "super-without-submodules", py, gRes)
+		py := runFrozen(t, "super-without-submodules", tmp, super)
 		if !strings.Contains(py.stdout, `"resolved": "standalone"`) {
 			t.Errorf("super-without-submodules: stdout missing standalone topology:\n%s", py.stdout)
 		}
@@ -503,30 +492,24 @@ func TestDifferentialTopologySubmodules(t *testing.T) {
 func TestDifferentialErrors(t *testing.T) {
 	t.Run("missing-manifest", func(t *testing.T) {
 		dir := t.TempDir()
-		py := runPythonCLI(t, dir)
-		gRes := runGoCLI(t, dir)
-		want := fmt.Sprintf("error: %s not found\n", filepath.Join(resolveNonStrict(absClean(dir)), "ai-specs", "ai-specs.toml"))
+		py := runFrozen(t, "missing-manifest", dir, dir)
+		want := "error: <TMP>/ai-specs/ai-specs.toml not found\n"
 		if py.stderr != want || py.code != 1 {
-			t.Errorf("missing-manifest python: code=%d stderr=%q want %q", py.code, py.stderr, want)
+			t.Errorf("missing-manifest: code=%d stderr=%q want %q", py.code, py.stderr, want)
 		}
-		compareDifferential(t, "missing-manifest", py, gRes)
 	})
 
 	t.Run("usage-zero-args", func(t *testing.T) {
-		py := runPythonCLIArgs(t)
-		gRes := runGoCLI(t)
+		py := runFrozen(t, "usage-zero-args", t.TempDir())
 		want := "Usage: lib/_internal/target-resolve.py <project_root>\n"
 		if py.stderr != want || py.code != 2 {
-			t.Errorf("usage python: code=%d stderr=%q want %q", py.code, py.stderr, want)
+			t.Errorf("usage: code=%d stderr=%q want %q", py.code, py.stderr, want)
 		}
-		compareDifferential(t, "usage-zero-args", py, gRes)
 	})
 
 	t.Run("usage-two-args", func(t *testing.T) {
 		dir := t.TempDir()
-		py := runPythonCLIArgs(t, dir, "extra")
-		gRes := runGoCLI(t, dir, "extra")
-		compareDifferential(t, "usage-two-args", py, gRes)
+		py := runFrozen(t, "usage-two-args", dir, dir, "extra")
 		if py.code != 2 {
 			t.Errorf("usage-two-args: want exit 2, got %d", py.code)
 		}
@@ -568,12 +551,10 @@ func TestDifferentialErrors(t *testing.T) {
 				t.Fatal(err)
 			}
 			buildTree(t, dir, tree{manifest: tc.manifest, files: tc.tree.files, dirs: tc.tree.dirs, links: tc.tree.links})
-			py := runPythonCLI(t, dir)
-			gRes := runGoCLI(t, dir)
+			py := runFrozen(t, "errors/"+tc.name, filepath.Dir(dir), dir)
 			if !strings.Contains(py.stderr, tc.wantSub) || py.code != 1 {
-				t.Errorf("%s python: code=%d stderr=%q want substring %q", tc.name, py.code, py.stderr, tc.wantSub)
+				t.Errorf("%s: code=%d stderr=%q want substring %q", tc.name, py.code, py.stderr, tc.wantSub)
 			}
-			compareDifferential(t, tc.name, py, gRes)
 		})
 	}
 }
