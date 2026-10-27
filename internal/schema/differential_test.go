@@ -1,12 +1,13 @@
 package schema
 
-// Differential tests against the legacy Python implementation
-// (lib/_internal/recipe_schema.py), whose validation error strings are a
-// FROZEN surface per docs/go-migration-parity-contract.md.
+// Differential tests against the frozen oracle of the legacy Python
+// implementation (lib/_internal/recipe_schema.py), whose validation error
+// strings are a FROZEN surface per docs/go-migration-parity-contract.md.
 //
-// The Python side runs via testdata/driver.py; both sides emit the same
-// canonical projection of the parsed Recipe (or the exact error string) and
-// the test requires byte-for-byte equality.
+// The oracle outputs (testdata/driver.py, captured once) live in
+// testdata/schema_golden.json. Both sides emit the same canonical projection
+// of the parsed Recipe (or the exact error string); the test requires
+// byte-for-byte equality. No Python runs here.
 
 import (
 	"bytes"
@@ -14,7 +15,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -33,29 +33,33 @@ func repoRoot(t *testing.T) string {
 	return abs
 }
 
-func runDriver(t *testing.T, root string, args ...string) string {
-	t.Helper()
-	driver := filepath.Join(root, "internal", "schema", "testdata", "driver.py")
-	cmd := exec.Command("python3", append([]string{driver}, args...)...)
-	cmd.Dir = root
-	var out, errb bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errb
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("python driver failed: %v\nstderr: %s", err, errb.String())
-	}
-	return strings.TrimSpace(out.String())
+// schemaGolden is the frozen legacy oracle: clean recipes keyed by their
+// repo-relative path, fixtures keyed by file name.
+type schemaGolden struct {
+	Clean    map[string]any           `json:"clean"`
+	Fixtures map[string]schemaFixture `json:"fixtures"`
 }
 
-func decodeDriver(t *testing.T, line string) map[string]any {
+type schemaFixture struct {
+	Mode   string `json:"mode"`
+	OK     bool   `json:"ok"`
+	Error  string `json:"error"`
+	Recipe any    `json:"recipe"`
+}
+
+func loadSchemaGolden(t *testing.T, root string) schemaGolden {
 	t.Helper()
-	dec := json.NewDecoder(strings.NewReader(line))
-	dec.UseNumber()
-	var payload map[string]any
-	if err := dec.Decode(&payload); err != nil {
-		t.Fatalf("driver emitted non-JSON output: %q: %v", line, err)
+	raw, err := os.ReadFile(filepath.Join(root, "internal", "schema", "testdata", "schema_golden.json"))
+	if err != nil {
+		t.Fatalf("read frozen oracle: %v", err)
 	}
-	return payload
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var g schemaGolden
+	if err := dec.Decode(&g); err != nil {
+		t.Fatalf("decode frozen oracle: %v", err)
+	}
+	return g
 }
 
 // --- canonical JSON (mirrors python json.dumps(sort_keys=True,
@@ -372,6 +376,7 @@ func canonShape(shape any) any {
 
 func TestDifferentialAgainstPython(t *testing.T) {
 	root := repoRoot(t)
+	golden := loadSchemaGolden(t, root)
 	cleanCount, okCount, errCount := 0, 0, 0
 
 	// Clean corpus: every real recipe.toml, loaded end to end via
@@ -387,13 +392,17 @@ func TestDifferentialAgainstPython(t *testing.T) {
 	if len(corpus) < 20 {
 		t.Fatalf("clean corpus unexpectedly small: %d", len(corpus))
 	}
+	if len(corpus) != len(golden.Clean) {
+		t.Fatalf("tree holds %d clean recipes, frozen oracle %d; regenerate the bundle", len(corpus), len(golden.Clean))
+	}
 	for _, path := range corpus {
-		line := runDriver(t, root, "load", path)
-		payload := decodeDriver(t, line)
-		if ok, _ := payload["ok"].(bool); !ok {
-			t.Errorf("%s: python rejected clean recipe: %v", path, payload["error"])
+		rel, _ := filepath.Rel(root, path)
+		want, ok := golden.Clean[filepath.ToSlash(rel)]
+		if !ok {
+			t.Errorf("%s: no frozen record; regenerate the bundle", rel)
 			continue
 		}
+		payload := map[string]any{"ok": true, "recipe": want}
 		goRec, err := LoadRecipeToml(path)
 		if err != nil {
 			t.Errorf("%s: go LoadRecipeToml failed: %v", path, err)
@@ -491,8 +500,18 @@ func TestDifferentialAgainstPython(t *testing.T) {
 				}
 				dirArg = dir
 			}
-			line := runDriver(t, root, "validate", fx, dirArg)
-			payload := decodeDriver(t, line)
+			fxRec, ok := golden.Fixtures[name]
+			if !ok {
+				t.Fatalf("no frozen record for %s; regenerate the bundle", name)
+			}
+			wantMode := "-"
+			if tempNames[name] {
+				wantMode = "temp:" + name
+			}
+			if fxRec.Mode != wantMode {
+				t.Fatalf("frozen mode %q, test mode %q", fxRec.Mode, wantMode)
+			}
+			payload := map[string]any{"ok": fxRec.OK, "error": fxRec.Error, "recipe": fxRec.Recipe}
 
 			data, err := os.ReadFile(fx)
 			if err != nil {
