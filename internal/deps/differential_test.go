@@ -1,24 +1,29 @@
 package deps
 
-// Differential test against the legacy implementation
-// (lib/_internal/dep_install.py). The Python side runs via
-// testdata/driver.py with shutil.which and platform.system scripted per case;
-// both sides emit the same canonical projection of the resolved plan (or the
-// exact error string) and the test requires equality of the decoded JSON — the
-// key ORDER is the encoder's, and the projection's VALUES are the contract.
+// Frozen oracle for the plan differential. testdata/deps_plan_golden.json holds
+// the canonical projection the legacy resolver (lib/_internal/dep_install.py,
+// run once through testdata/driver.py with shutil.which and platform.system
+// scripted per case) produced for each case below. Tests never run an
+// interpreter: the port's projection must equal the frozen record value for
+// value. Host-bound strings are tokenized on both sides: the scratch home
+// becomes <HOME>, and the provider target becomes <GOOS>/<GOARCH> (the capture
+// host was darwin/arm64). The key ORDER is the encoder's; the VALUES are the
+// contract.
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"os/exec"
+	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/provider"
 )
+
+const depsPlanGoldenPath = "testdata/deps_plan_golden.json"
 
 type differentialCase struct {
 	Binary        string   `json:"binary"`
@@ -29,6 +34,27 @@ type differentialCase struct {
 	MinVersion    string   `json:"min_version,omitempty"`
 	Which         []string `json:"which,omitempty"`
 	System        string   `json:"system,omitempty"`
+	// PathStub puts a non-provider executable named Binary on the case's PATH
+	// (the capture host had gh 2.102.0 installed). It is never an input of the
+	// plan; the frozen record must hold with or without it.
+	PathStub bool `json:"-"`
+}
+
+// isolateProviderPath gives every github-release case its own PATH, so no host
+// binary can reach a provider case; the stub keeps the captured precondition.
+func isolateProviderPath(t *testing.T, c differentialCase) {
+	t.Helper()
+	if c.Installer != KindGitHubRelease {
+		return
+	}
+	dir := t.TempDir()
+	if c.PathStub {
+		stub := "#!/bin/sh\necho \"" + c.Binary + " version 2.102.0\"\n"
+		if err := os.WriteFile(filepath.Join(dir, c.Binary), []byte(stub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
 }
 
 func requestOf(c differentialCase) PlanRequest {
@@ -99,7 +125,7 @@ func TestResolvePlanDifferential(t *testing.T) {
 		{
 			Binary: "gh", InstallURL: "https://cli.github.com/",
 			Installer: "github-release", Repository: provider.Repository,
-			ReleasePolicy: "latest-stable",
+			ReleasePolicy: "latest-stable", PathStub: true,
 		},
 		{
 			Binary: "jinna", Installer: "github-release", Repository: "someone/else",
@@ -111,18 +137,55 @@ func TestResolvePlanDifferential(t *testing.T) {
 		},
 	}
 
+	golden := loadPlanGolden(t)
+	if len(golden) != len(cases) {
+		t.Fatalf("%s holds %d records; the cases need exactly %d", depsPlanGoldenPath, len(golden), len(cases))
+	}
 	for i, c := range cases {
-		// Each case is resolved by the legacy driver and by the port, on the
-		// same home, and the projections must match value for value.
-		t.Run(fmt.Sprintf("%02d-%s-%s", i, c.Binary, c.System), func(t *testing.T) {
+		// Each case is resolved by the port on a fresh home and compared with
+		// its frozen legacy record.
+		name := fmt.Sprintf("%02d-%s-%s", i, c.Binary, c.System)
+		t.Run(name, func(t *testing.T) {
+			record, ok := golden[name]
+			if !ok {
+				t.Fatalf("%s has no record %q", depsPlanGoldenPath, name)
+			}
+			isolateProviderPath(t, c)
 			home := t.TempDir()
-			legacy := decodeProjection(t, "legacy", runLegacyPlanDriver(t, home, c))
-			mine := decodeProjection(t, "native", resolveForDifferential(t, c, home))
+			legacy := decodeProjection(t, "frozen", record)
+			mine := decodeProjection(t, "native", hostBoundTokens(resolveForDifferential(t, c, home), home))
 			if !reflect.DeepEqual(legacy, mine) {
 				t.Errorf("plan differential mismatch\n legacy: %v\n    new: %v", legacy, mine)
 			}
 		})
 	}
+}
+
+// loadPlanGolden returns the frozen plan records keyed by case name.
+func loadPlanGolden(t *testing.T) map[string]string {
+	t.Helper()
+	raw, err := os.ReadFile(depsPlanGoldenPath)
+	if err != nil {
+		t.Fatalf("read frozen oracle %s: %v", depsPlanGoldenPath, err)
+	}
+	var doc struct {
+		PlanGolden map[string]json.RawMessage `json:"plan_golden"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decode %s: %v", depsPlanGoldenPath, err)
+	}
+	out := make(map[string]string, len(doc.PlanGolden))
+	for name, record := range doc.PlanGolden {
+		out[name] = string(record)
+	}
+	return out
+}
+
+// hostBoundTokens applies the capture's normalization to the port's output.
+func hostBoundTokens(text, home string) string {
+	text = strings.ReplaceAll(text, home, "<HOME>")
+	text = strings.ReplaceAll(text, runtime.GOOS, "<GOOS>")
+	return strings.ReplaceAll(text, runtime.GOARCH, "<GOARCH>")
 }
 
 func decodeProjection(t *testing.T, label, text string) any {
@@ -154,26 +217,4 @@ func resolveForDifferential(t *testing.T, c differentialCase, home string) strin
 		t.Fatalf("marshal projection: %v", err)
 	}
 	return string(encoded)
-}
-
-func runLegacyPlanDriver(t *testing.T, home string, c differentialCase) string {
-	t.Helper()
-	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	driver := filepath.Join(root, "internal", "deps", "testdata", "driver.py")
-	payload, err := json.Marshal(map[string]any{"home": home, "cases": []differentialCase{c}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("python3", driver, root)
-	cmd.Stdin = bytes.NewReader(payload)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("legacy driver failed: %v\nstderr: %s", err, stderr.String())
-	}
-	return strings.TrimSpace(stdout.String())
 }
