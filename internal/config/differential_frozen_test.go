@@ -12,9 +12,9 @@ import (
 // Frozen oracle bundles for the toml-read differential. Each slice extends
 // them; S1 covers the seven diff_* inputs, S2 the nine write_* inputs, S3
 // the repo manifest plus the two target-resolve fixtures, S4 the four
-// large catalog recipes and S5 the eight small catalog recipes. The live Python
-// differential (TestDifferentialReadSections) still compares all 31 inputs
-// until S6 retires it.
+// large catalog recipes and S5 the eight small catalog recipes. S6 retired the
+// live Python differential (TestDifferentialReadSections); the bundles hold all
+// 31 inputs and TestFrozenDiffReadSectionsComplete requires 31 × 6.
 const (
 	tomlReadFrozenGoldenPath = "testdata/config_toml_read_golden.json"
 	tomlReadFrozenCorpusPath = "testdata/config_toml_read_corpus.json"
@@ -236,5 +236,59 @@ func TestFrozenDiffReadSectionsS4(t *testing.T) {
 	if compared != 4*len(tomlReadFrozenSections) || refused != 0 {
 		t.Fatalf("compared %d and refused %d pairs; S4 requires 24 compared and 0 refused",
 			compared, refused)
+	}
+}
+
+// TestFrozenDiffReadSectionsComplete requires the frozen bundles to cover all 31
+// inputs × 6 sections without the live Python differential: the slice lists
+// partition the corpus exactly (no duplicate, no missing, no extra input), the
+// golden holds exactly one record per input and section, and replaying every
+// input gives 174 byte-compared pairs plus 12 both-fail invalid_base pairs (186).
+func TestFrozenDiffReadSectionsComplete(t *testing.T) {
+	corpus := tomlReadFrozenBundle(t, tomlReadFrozenCorpusPath)
+	golden := tomlReadFrozenBundle(t, tomlReadFrozenGoldenPath)
+
+	slices := [][]string{tomlReadFrozenS1, tomlReadFrozenS2, tomlReadFrozenS3, tomlReadFrozenS4, tomlReadFrozenS5}
+	seen := map[string]int{}
+	for _, s := range slices {
+		for _, name := range s {
+			seen[name]++
+		}
+	}
+	for name, n := range seen {
+		if n != 1 {
+			t.Errorf("input %s listed in %d slices; each input belongs to exactly one", name, n)
+		}
+		if _, ok := corpus[name]; !ok {
+			t.Errorf("slice input %s is absent from the frozen corpus", name)
+		}
+	}
+	for name := range corpus {
+		if seen[name] == 0 {
+			t.Errorf("frozen corpus input %s is not covered by any slice", name)
+		}
+	}
+	if len(corpus) != 31 || len(seen) != 31 {
+		t.Fatalf("corpus holds %d inputs and slices cover %d; completeness requires 31", len(corpus), len(seen))
+	}
+	if len(golden) != 31*len(tomlReadFrozenSections) {
+		t.Fatalf("golden holds %d records; completeness requires 31 × 6 = 186", len(golden))
+	}
+	for name := range corpus {
+		for _, section := range tomlReadFrozenSections {
+			if _, ok := golden[name+"."+section]; !ok {
+				t.Errorf("golden has no record for %s [%s]", name, section)
+			}
+		}
+	}
+
+	all := make([]string, 0, len(seen))
+	for _, s := range slices {
+		all = append(all, s...)
+	}
+	compared, refused := tomlReadFrozenCheck(t, all)
+	t.Logf("frozen completeness: compared %d pairs; %d both-fail invalid_base pairs", compared, refused)
+	if compared != 174 || refused != 12 {
+		t.Fatalf("compared %d and refused %d pairs; completeness requires 174 compared and 12 refused", compared, refused)
 	}
 }
