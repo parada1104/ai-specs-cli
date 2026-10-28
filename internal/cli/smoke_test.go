@@ -210,59 +210,68 @@ func matchPath(s string, forms []string) int {
 	return -1
 }
 
+// smokeRepoRoot marks a case that runs in the repository root (resolved per run).
+const smokeRepoRoot = "<repo-root>"
+
+// smokeCases is the legacy differential table of TestDifferentialSmoke. It is a
+// package variable so that TestDifferentialSmokeKeysComplete compares the frozen
+// oracle with exactly these cases.
+var smokeCases = []struct {
+	name   string
+	args   []string
+	dir    string // empty: per-case temp cwd
+	native bool   // compare against the embedded help bytes, not the launcher
+}{
+	// help/-h: bin/ai-specs's heredoc is UNQUOTED (`cat <<EOF`), so the
+	// `ai-specs` inside backticks in the hub description is
+	// command-substituted at runtime — the legacy launcher's help output
+	// depends on PATH and is never byte-identical to the heredoc source.
+	// The contract mandates the source bytes (internal/cli/help.txt), so
+	// these two cases pin the Go output to the embed instead of the
+	// legacy launcher.
+	{"help", []string{"help"}, "", true},
+	{"help-alias", []string{"-h"}, "", true},
+	{"version", []string{"version"}, "", false},
+	{"recipe-usage", []string{"recipe"}, "", false},
+	{"skills-usage", []string{"skills"}, "", false},
+	{"add-dep-noargs", []string{"add-dep"}, "", false},
+	// Bare invocation must reach hub.sh with the original (empty) argv —
+	// legacy no-shift semantics — not panic on the verb slice shift.
+	{"hub-bare-nontty", []string{}, "", false},
+	{"hub-uninitialized-nontty", []string{"hub"}, "", false},
+	{"rules-audit-missing-path", []string{"rules-audit", "does-not-exist"}, "", false},
+	{"sync-missing-path", []string{"sync", "does-not-exist"}, "", false},
+	// sync-agent usage surfaces: the heredoc, the exit-2 contract, and the
+	// pre-write cd failure (no writes happen before the diagnostic).
+	{"sync-agent-help", []string{"sync-agent", "--help"}, "", false},
+	{"sync-agent-unknown-flag", []string{"sync-agent", "--bogus"}, "", false},
+	{"sync-agent-second-positional", []string{"sync-agent", "a", "b"}, "", false},
+	{"sync-agent-missing-path", []string{"sync-agent", "does-not-exist"}, "", false},
+	// Trailing value-taking flags die rc 1 with NO output and no writes
+	// (JD-A-002, the D20 defect class): `shift 2` fails under set -e
+	// before the flag loop ends.
+	{"sync-agent-flag-last-target", []string{"sync-agent", "--target"}, "", false},
+	{"sync-agent-flag-last-source-root", []string{"sync-agent", "--source-root"}, "", false},
+	// The repo root is an initialized ai-specs project; without a TTY
+	// config_wizard.py exits 3 right after the read-only pre-checks.
+	{"configure-recipes-nontty", []string{"configure-recipes"}, smokeRepoRoot, false},
+	// Argument validation fires before any git/network operation in
+	// lib/upgrade.sh (the parse loop is the first executable block).
+	{"upgrade-unknown-arg", []string{"upgrade", "--bogus"}, "", false},
+}
+
 // TestDifferentialSmoke compares the Go binary with the frozen legacy launcher.
 func TestDifferentialSmoke(t *testing.T) {
 	bin, root := smokeSetup(t)
 	env := smokeEnv(root)
 	frozen := loadLegacySmokeGolden(t)
 
-	cases := []struct {
-		name   string
-		args   []string
-		dir    string // empty: per-case temp cwd
-		native bool   // compare against the embedded help bytes, not the launcher
-	}{
-		// help/-h: bin/ai-specs's heredoc is UNQUOTED (`cat <<EOF`), so the
-		// `ai-specs` inside backticks in the hub description is
-		// command-substituted at runtime — the legacy launcher's help output
-		// depends on PATH and is never byte-identical to the heredoc source.
-		// The contract mandates the source bytes (internal/cli/help.txt), so
-		// these two cases pin the Go output to the embed instead of the
-		// legacy launcher.
-		{"help", []string{"help"}, "", true},
-		{"help-alias", []string{"-h"}, "", true},
-		{"version", []string{"version"}, "", false},
-		{"recipe-usage", []string{"recipe"}, "", false},
-		{"skills-usage", []string{"skills"}, "", false},
-		{"add-dep-noargs", []string{"add-dep"}, "", false},
-		// Bare invocation must reach hub.sh with the original (empty) argv —
-		// legacy no-shift semantics — not panic on the verb slice shift.
-		{"hub-bare-nontty", []string{}, "", false},
-		{"hub-uninitialized-nontty", []string{"hub"}, "", false},
-		{"rules-audit-missing-path", []string{"rules-audit", "does-not-exist"}, "", false},
-		{"sync-missing-path", []string{"sync", "does-not-exist"}, "", false},
-		// sync-agent usage surfaces: the heredoc, the exit-2 contract, and the
-		// pre-write cd failure (no writes happen before the diagnostic).
-		{"sync-agent-help", []string{"sync-agent", "--help"}, "", false},
-		{"sync-agent-unknown-flag", []string{"sync-agent", "--bogus"}, "", false},
-		{"sync-agent-second-positional", []string{"sync-agent", "a", "b"}, "", false},
-		{"sync-agent-missing-path", []string{"sync-agent", "does-not-exist"}, "", false},
-		// Trailing value-taking flags die rc 1 with NO output and no writes
-		// (JD-A-002, the D20 defect class): `shift 2` fails under set -e
-		// before the flag loop ends.
-		{"sync-agent-flag-last-target", []string{"sync-agent", "--target"}, "", false},
-		{"sync-agent-flag-last-source-root", []string{"sync-agent", "--source-root"}, "", false},
-		// The repo root is an initialized ai-specs project; without a TTY
-		// config_wizard.py exits 3 right after the read-only pre-checks.
-		{"configure-recipes-nontty", []string{"configure-recipes"}, root, false},
-		// Argument validation fires before any git/network operation in
-		// lib/upgrade.sh (the parse loop is the first executable block).
-		{"upgrade-unknown-arg", []string{"upgrade", "--bogus"}, "", false},
-	}
-
-	for _, tc := range cases {
+	for _, tc := range smokeCases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := tc.dir
+			if dir == smokeRepoRoot {
+				dir = root
+			}
 			if dir == "" {
 				dir = t.TempDir() // one shared cwd per case for both runs
 			}
@@ -429,6 +438,30 @@ func TestFrozenPlaceholdersOnlyAtPathPositions(t *testing.T) {
 					i = end
 				}
 			}
+		}
+	}
+}
+
+// TestDifferentialSmokeKeysComplete requires the frozen oracle to hold exactly
+// the legacy cases of smokeCases (native help cases excluded) plus the
+// doctor-missing-path record. A record without a case, or a case without a
+// record, fails here, so a removed case cannot leave a dead record behind.
+func TestDifferentialSmokeKeysComplete(t *testing.T) {
+	frozen := loadLegacySmokeGolden(t)
+	want := map[string]bool{"doctor-missing-path": true}
+	for _, tc := range smokeCases {
+		if !tc.native {
+			want[tc.name] = true
+		}
+	}
+	for name := range want {
+		if _, ok := frozen[name]; !ok {
+			t.Errorf("case %s has no frozen record", name)
+		}
+	}
+	for name := range frozen {
+		if !want[name] {
+			t.Errorf("frozen record %s has no case", name)
 		}
 	}
 }
