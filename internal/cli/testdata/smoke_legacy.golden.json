@@ -1,0 +1,87 @@
+{
+  "add-dep-noargs": {
+    "exit": 2,
+    "stderr": "ERROR: <git-url> is required.\nRun 'ai-specs add-dep --help' for usage.\n",
+    "stdout": "Usage: ai-specs add-dep <git-url> [path] [flags]\n\nRegister a vendored skill in ai-specs.toml (under [[deps]]) and run sync.\n\nArguments:\n  git-url               Source URL (e.g. https://github.com/obra/superpowers)\n  path                  Project root (default: current directory)\n\nFlags:\n  --id <id>             Skill ID (default: last URL path component, .git stripped)\n  --subdir <subpath>    Subdir within the repo where SKILL.md lives (multi-skill repos)\n  --scope <s1,s2,...>   Comma-list for metadata.scope (default: root)\n  --license <license>   License string (default: empty)\n  --attribution <auth>  vendor_attribution (default: URL author)\n  --ref <ref>           Git ref to pin (tag/branch/sha; default: none)\n  --trigger <text>      auto_invoke entry (default: \"When working on <id>\")\n  --no-sync             Don't run 'ai-specs sync' after registering\n"
+  },
+  "configure-recipes-nontty": {
+    "exit": 3,
+    "stderr": "configure-recipes requires an interactive TTY\n",
+    "stdout": ""
+  },
+  "doctor-missing-path": {
+    "exit": 1,
+    "stderr": "<ROOT>/lib/doctor.sh: line 46: cd: <DIR>/does-not-exist: No such file or directory\n",
+    "stdout": ""
+  },
+  "hub-bare-nontty": {
+    "exit": 2,
+    "stderr": "ERROR: no ai-specs project at <DIR>\nRun 'ai-specs init' to create one.\n",
+    "stdout": ""
+  },
+  "hub-uninitialized-nontty": {
+    "exit": 2,
+    "stderr": "ERROR: no ai-specs project at <DIR>\nRun 'ai-specs init' to create one.\n",
+    "stdout": ""
+  },
+  "recipe-usage": {
+    "exit": 2,
+    "stderr": "Usage: ai-specs recipe <subcommand> [args]\nSubcommands:\n  list [path]      List available and installed recipes\n  add <id> [path]  Add a recipe to the manifest\n  init <id> [path]   Print a read-only initialization brief\n  configure <id> [path] [options]  Inspect or apply recipe config non-interactively\n  remove <id> [path]  Remove a recipe from the manifest\nPath defaults to current directory.\n",
+    "stdout": ""
+  },
+  "rules-audit-missing-path": {
+    "exit": 2,
+    "stderr": "ERROR: not a directory: <DIR>/does-not-exist\n",
+    "stdout": ""
+  },
+  "skills-usage": {
+    "exit": 2,
+    "stderr": "Usage: ai-specs skills <subcommand> [args]\nSubcommands:\n  add <url> [path] [flags]   Register a vendored skill ([[deps]]) and sync\n                             Flags: --id, --subdir, --scope, --license,\n                                    --attribution, --trigger, --no-sync\n  list [path]                List registered and installed skills\n  remove <id> [path]         Remove a vendored skill and prune ai-specs/.deps/<id>/\n  validate <skill_md_path>   Validate one SKILL.md's sync metadata (JSON)\n  field <path>               Print one JSON value of stdin at a dotted path\nPath defaults to current directory. Run 'ai-specs skills add --help' for\nfull add flags.\n",
+    "stdout": ""
+  },
+  "sync-agent-flag-last-source-root": {
+    "exit": 1,
+    "stderr": "",
+    "stdout": ""
+  },
+  "sync-agent-flag-last-target": {
+    "exit": 1,
+    "stderr": "",
+    "stdout": ""
+  },
+  "sync-agent-help": {
+    "exit": 0,
+    "stderr": "",
+    "stdout": "Usage: ai-specs sync-agent [path] [--all | --<agent>...] [--adopt-brief] [-v|--verbose]\n       ai-specs sync-agent --source-root <root> --target <path> [--all | --<agent>...] [--adopt-brief] [-v|--verbose]\n\nRender per-agent configs from the root manifest.\n\nArguments:\n  path             Target path when using the legacy single-target form\n\nFlags:\n  --source-root    Root project that owns ai-specs/ai-specs.toml (default: target)\n  --target         Target directory receiving derived local artifacts\n  --resolved-hooks Pre-resolved runtime-hooks JSON (from recipe-materialize)\n  --adopt-brief   Explicitly adopt the current AGENTS.md as the managed runtime-brief baseline\n  --all            All agents listed under [agents].enabled in ai-specs.toml\n  --claude         Claude Code  (CLAUDE.md, .claude/skills, .mcp.json)\n  --cursor         Cursor       (.cursor/mcp.json)\n  --opencode       OpenCode     (opencode.json, .opencode/skills, .opencode/commands)\n  --codex          Codex        (.codex/config.toml)\n  --copilot        GitHub Copilot (.github/copilot-instructions.md)\n  --gemini         Gemini CLI   (GEMINI.md, .gemini/skills, .gemini/settings.json)\n  --pi             Pi (pi.dev)  (.pi/skills, .mcp.json)\n  --omp            Oh My Pi     (.omp/skills, .omp/mcp.json, .omp/commands)\n  -v, --verbose    Print full per-step detail instead of compact summaries\n\nIf no selector is given, defaults to --all.\n"
+  },
+  "sync-agent-missing-path": {
+    "exit": 1,
+    "stderr": "<ROOT>/lib/sync-agent.sh: line 108: cd: <DIR>/does-not-exist: No such file or directory\n",
+    "stdout": ""
+  },
+  "sync-agent-second-positional": {
+    "exit": 2,
+    "stderr": "ERROR: unexpected positional argument: b\n",
+    "stdout": ""
+  },
+  "sync-agent-unknown-flag": {
+    "exit": 2,
+    "stderr": "ERROR: unknown flag: --bogus\nRun 'ai-specs sync-agent --help' for usage.\n",
+    "stdout": ""
+  },
+  "sync-missing-path": {
+    "exit": 1,
+    "stderr": "<ROOT>/lib/sync.sh: line 76: cd: <DIR>/does-not-exist: No such file or directory\n",
+    "stdout": ""
+  },
+  "upgrade-unknown-arg": {
+    "exit": 2,
+    "stderr": "Unknown argument: --bogus\nUsage: ai-specs upgrade [--dry-run] [--force] [-v|--verbose]\n\nSafely upgrade the global ai-specs installation to the latest origin/main.\n\nFlags:\n  --dry-run       Show what would change without modifying the repository.\n  --force         Proceed even if the working tree has uncommitted changes.\n  -v, --verbose   Show the full git output instead of one line per step.\n  -h, --help      Show this help.\n\nExit codes:\n  0   Success or dry-run completed.\n  1   Broken or missing installation.\n  2   Dev / non-standard checkout, or invalid usage (unknown argument).\n  3   Pre-flight check failed (dirty tree, non-fast-forward, etc.).\n  4   Git fetch or merge failed.\n  5   Post-upgrade verification failed (symlink broken).\n",
+    "stdout": ""
+  },
+  "version": {
+    "exit": 0,
+    "stderr": "",
+    "stdout": "0.24.0\n"
+  }
+}

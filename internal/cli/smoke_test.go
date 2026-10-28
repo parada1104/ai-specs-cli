@@ -1,10 +1,13 @@
 package cli
 
-// Differential smoke test: the built Go binary vs the legacy `bash
-// bin/ai-specs` launcher. Every case runs BOTH with an identical environment
-// (AI_SPECS_HOME pinned to the repo root, PYTHONDONTWRITEBYTECODE=1 per
-// parity contract §6) and asserts byte-identical stdout, byte-identical
-// stderr and an identical exit code.
+// Differential smoke test: the built Go binary vs the frozen output of the
+// legacy `bash bin/ai-specs` launcher (testdata/smoke_legacy.golden.json). The
+// oracle was captured before the flip (GO-20 U2e T2) from the pre-flip
+// launcher over the same lib/ tree, with AI_SPECS_HOME pinned to the checkout
+// and PYTHONDONTWRITEBYTECODE=1 per parity contract §6. After the flip the
+// live launcher execs this binary, so a live run would compare Go with itself.
+// Every case asserts byte-identical stdout, stderr and exit code after the
+// scratch root (<ROOT>) and the case directory (<DIR>) are normalized.
 //
 // Only usage surfaces and verified side-effect-free invocations are
 // exercised; anything that could write (init, refresh-bundled, recipe
@@ -13,6 +16,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -128,11 +132,57 @@ func exitCodeOf(err error) int {
 	return -1 // exec failure: must never happen for these cases
 }
 
-// TestDifferentialSmoke compares the Go binary with the legacy launcher.
+// legacyRecord is one frozen run of the pre-flip legacy launcher.
+type legacyRecord struct {
+	Exit   int    `json:"exit"`
+	Stdout string `json:"stdout"`
+	Stderr string `json:"stderr"`
+}
+
+// loadLegacySmokeGolden reads the frozen oracle. A missing or stale record fails
+// the test: the oracle is never recomputed from the live tree.
+func loadLegacySmokeGolden(t *testing.T) map[string]legacyRecord {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("testdata", "smoke_legacy.golden.json"))
+	if err != nil {
+		t.Fatalf("read frozen legacy oracle: %v", err)
+	}
+	var recs map[string]legacyRecord
+	if err := json.Unmarshal(b, &recs); err != nil {
+		t.Fatalf("parse frozen legacy oracle: %v", err)
+	}
+	return recs
+}
+
+// pathForms returns the resolved form of p before the raw one. Resolved first:
+// the raw path is a substring of its resolved form (/var vs /private/var).
+func pathForms(p string) []string {
+	if r, err := filepath.EvalSymlinks(p); err == nil && r != p {
+		return []string{r, p}
+	}
+	return []string{p}
+}
+
+// smokeNormalizer maps one run's scratch paths to the placeholders of the frozen
+// oracle: the repository root to <ROOT>, the case directory to <DIR>.
+func smokeNormalizer(root, dir string) *strings.Replacer {
+	var pairs []string
+	for _, f := range pathForms(root) {
+		pairs = append(pairs, f, "<ROOT>")
+	}
+	if dir != root {
+		for _, f := range pathForms(dir) {
+			pairs = append(pairs, f, "<DIR>")
+		}
+	}
+	return strings.NewReplacer(pairs...)
+}
+
+// TestDifferentialSmoke compares the Go binary with the frozen legacy launcher.
 func TestDifferentialSmoke(t *testing.T) {
 	bin, root := smokeSetup(t)
 	env := smokeEnv(root)
-	legacy := filepath.Join(root, "bin", "ai-specs")
+	frozen := loadLegacySmokeGolden(t)
 
 	cases := []struct {
 		name   string
@@ -207,16 +257,19 @@ func TestDifferentialSmoke(t *testing.T) {
 				}
 				return
 			}
-			legOut, legErr, legCode := runOne("bash", append([]string{legacy}, args...), env, dir)
-
-			if !bytes.Equal(goOut, legOut) {
-				t.Errorf("stdout mismatch:\n go:   %q\n bash: %q", goOut, legOut)
+			want, ok := frozen[tc.name]
+			if !ok {
+				t.Fatalf("no frozen legacy record for %s", tc.name)
 			}
-			if !bytes.Equal(goErr, legErr) {
-				t.Errorf("stderr mismatch:\n go:   %q\n bash: %q", goErr, legErr)
+			norm := smokeNormalizer(root, dir)
+			if got := norm.Replace(string(goOut)); got != want.Stdout {
+				t.Errorf("stdout mismatch:\n go:     %q\n frozen: %q", got, want.Stdout)
 			}
-			if goCode != legCode {
-				t.Errorf("exit code mismatch: go = %d, bash = %d", goCode, legCode)
+			if got := norm.Replace(string(goErr)); got != want.Stderr {
+				t.Errorf("stderr mismatch:\n go:     %q\n frozen: %q", got, want.Stderr)
+			}
+			if goCode != want.Exit {
+				t.Errorf("exit code mismatch: go = %d, frozen legacy = %d", goCode, want.Exit)
 			}
 		})
 	}
@@ -234,13 +287,8 @@ func TestDifferentialSmoke(t *testing.T) {
 // the message the Python guard intended instead of fabricating a bash line
 // number.
 func TestDoctorMissingPathDeviation(t *testing.T) {
-	// GO-20 U2e T2 finding (owner: T5, expires with lib/_internal deletion): the
-	// legacy `cd:` deviation is no longer observable once bin/ai-specs execs the
-	// binary, so this case cannot pass as written. Skipped, assertions untouched.
-	t.Skip("GO-20 U2e T2 finding: legacy deviation not observable after the flip; owner T5")
 	bin, root := smokeSetup(t)
 	env := smokeEnv(root)
-	legacy := filepath.Join(root, "bin", "ai-specs")
 
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "does-not-exist")
@@ -251,22 +299,22 @@ func TestDoctorMissingPathDeviation(t *testing.T) {
 	resolvedMissing := filepath.Join(resolvedDir, "does-not-exist")
 
 	goOut, goErr, goCode := runOne(bin, []string{"doctor", missing}, env, dir)
-	legOut, legErr, legCode := runOne("bash", []string{legacy, "doctor", missing}, env, dir)
+	leg := loadLegacySmokeGolden(t)["doctor-missing-path"]
 
 	// The frozen exit code is preserved on both sides; neither writes stdout.
-	if goCode != 1 || legCode != 1 {
-		t.Errorf("exit codes: go = %d, bash = %d; want 1 for both", goCode, legCode)
+	if goCode != 1 || leg.Exit != 1 {
+		t.Errorf("exit codes: go = %d, frozen legacy = %d; want 1 for both", goCode, leg.Exit)
 	}
-	if len(goOut) != 0 || len(legOut) != 0 {
-		t.Errorf("stdout: go = %q, bash = %q; want empty", goOut, legOut)
+	if len(goOut) != 0 || leg.Stdout != "" {
+		t.Errorf("stdout: go = %q, frozen legacy = %q; want empty", goOut, leg.Stdout)
 	}
 
-	// Legacy: bash's own cd diagnostic names the missing path. The line number
-	// is a bash artifact and is deliberately not matched.
-	if !strings.Contains(string(legErr), "cd:") ||
-		!strings.Contains(string(legErr), missing) ||
-		!strings.Contains(string(legErr), "No such file or directory") {
-		t.Errorf("legacy stderr = %q; want bash's `cd: <path>: No such file or directory`", legErr)
+	// Legacy (frozen): bash's own cd diagnostic names the missing path, normalized
+	// to <DIR>. The line number is a bash artifact and is deliberately not matched.
+	if !strings.Contains(leg.Stderr, "cd:") ||
+		!strings.Contains(leg.Stderr, "<DIR>/does-not-exist") ||
+		!strings.Contains(leg.Stderr, "No such file or directory") {
+		t.Errorf("frozen legacy stderr = %q; want bash's `cd: <path>: No such file or directory`", leg.Stderr)
 	}
 
 	// Port: the Python guard's intended message, on the resolved target.
