@@ -1,0 +1,2138 @@
+{
+  "oracle": {
+    "driver": "projectcache_ref.py",
+    "python": "3.14.7",
+    "python_version": [
+      3,
+      14
+    ]
+  },
+  "cases": [
+    {
+      "name": "cli path root",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "path",
+        "cli_kind": "root",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "\u003cTMP\u003e/home/cache/projects/\u003cKEY\u003e-project\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": "cHJvamVjdF9yb290ID0gIjxUTVA+L3Byb2plY3QiCmNyZWF0ZWRfYXQgPSAiPFRJTUU+Igo="
+        },
+        "modes": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": 420
+        },
+        "dirs": [
+          "home",
+          "home/cache",
+          "home/cache/projects",
+          "home/cache/projects/\u003cKEY\u003e-project",
+          "project"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli path recipe",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "path",
+        "cli_kind": "recipe",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "\u003cTMP\u003e/home/cache/projects/\u003cKEY\u003e-project/.recipe\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": "cHJvamVjdF9yb290ID0gIjxUTVA+L3Byb2plY3QiCmNyZWF0ZWRfYXQgPSAiPFRJTUU+Igo="
+        },
+        "modes": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": 420
+        },
+        "dirs": [
+          "home",
+          "home/cache",
+          "home/cache/projects",
+          "home/cache/projects/\u003cKEY\u003e-project",
+          "project"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli path deps",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "path",
+        "cli_kind": "deps",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "\u003cTMP\u003e/home/cache/projects/\u003cKEY\u003e-project/.deps\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": "cHJvamVjdF9yb290ID0gIjxUTVA+L3Byb2plY3QiCmNyZWF0ZWRfYXQgPSAiPFRJTUU+Igo="
+        },
+        "modes": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": 420
+        },
+        "dirs": [
+          "home",
+          "home/cache",
+          "home/cache/projects",
+          "home/cache/projects/\u003cKEY\u003e-project",
+          "project"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli path bundled",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "path",
+        "cli_kind": "bundled",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "\u003cTMP\u003e/home/cache/projects/\u003cKEY\u003e-project/.bundled\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": "cHJvamVjdF9yb290ID0gIjxUTVA+L3Byb2plY3QiCmNyZWF0ZWRfYXQgPSAiPFRJTUU+Igo="
+        },
+        "modes": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": 420
+        },
+        "dirs": [
+          "home",
+          "home/cache",
+          "home/cache/projects",
+          "home/cache/projects/\u003cKEY\u003e-project",
+          "project"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli path commands",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "path",
+        "cli_kind": "commands",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "\u003cTMP\u003e/home/cache/projects/\u003cKEY\u003e-project/commands\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": "cHJvamVjdF9yb290ID0gIjxUTVA+L3Byb2plY3QiCmNyZWF0ZWRfYXQgPSAiPFRJTUU+Igo="
+        },
+        "modes": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": 420
+        },
+        "dirs": [
+          "home",
+          "home/cache",
+          "home/cache/projects",
+          "home/cache/projects/\u003cKEY\u003e-project",
+          "project"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli path resolved-skills",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "path",
+        "cli_kind": "resolved-skills",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "\u003cTMP\u003e/home/cache/projects/\u003cKEY\u003e-project/resolved-skills\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": "cHJvamVjdF9yb290ID0gIjxUTVA+L3Byb2plY3QiCmNyZWF0ZWRfYXQgPSAiPFRJTUU+Igo="
+        },
+        "modes": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": 420
+        },
+        "dirs": [
+          "home",
+          "home/cache",
+          "home/cache/projects",
+          "home/cache/projects/\u003cKEY\u003e-project",
+          "project"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli path unknown kind",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "path",
+        "cli_kind": "nope",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "unknown path kind: nope\n",
+        "rc": 2,
+        "files": {},
+        "modes": {},
+        "dirs": [
+          "home",
+          "project"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli path missing kind",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "path",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "Usage: project-cache.py \u003cproject_root\u003e path \u003ckind\u003e\n",
+        "rc": 2,
+        "files": {},
+        "modes": {},
+        "dirs": [
+          "home",
+          "project"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli unknown action",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "bogus",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "unknown action: bogus\n",
+        "rc": 2,
+        "files": {},
+        "modes": {},
+        "dirs": [
+          "home",
+          "project"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli ensure fresh",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "ensure",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "\u003cTMP\u003e/home/cache/projects/\u003cKEY\u003e-project\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": "cHJvamVjdF9yb290ID0gIjxUTVA+L3Byb2plY3QiCmNyZWF0ZWRfYXQgPSAiPFRJTUU+Igo="
+        },
+        "modes": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": 420
+        },
+        "dirs": [
+          "home",
+          "home/cache",
+          "home/cache/projects",
+          "home/cache/projects/\u003cKEY\u003e-project",
+          "project"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli ensure refresh stale root",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "ensure",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "\u003cTMP\u003e/home/cache/projects/\u003cKEY\u003e-project\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": "cHJvamVjdF9yb290ID0gIjxUTVA+L3Byb2plY3QiCmZvbyA9IDEKcHJvamVjdF9yb290ID0gIjxUTVA+L3Byb2plY3QiCg=="
+        },
+        "modes": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": 420
+        },
+        "dirs": [
+          "home",
+          "home/cache",
+          "home/cache/projects",
+          "home/cache/projects/\u003cKEY\u003e-project",
+          "project"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli ensure blocked parent",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "ensure",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "RuntimeError: cache not writable at \u003cTMP\u003e/home/cache/projects/\u003cKEY\u003e-project: [Errno 20] Not a directory: '\u003cTMP\u003e/home/cache/projects/\u003cKEY\u003e-project'\n",
+        "rc": 1,
+        "files": {
+          "home/cache": "YmxvY2s="
+        },
+        "modes": {
+          "home/cache": 420
+        },
+        "dirs": [
+          "home",
+          "project"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli merge fresh dest",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "merge-commands",
+        "cli_dest": "out",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "  ✓ merged 2 command file(s) → \u003cTMP\u003e/project/out\n",
+        "stderr": "  ! command 'cmd2' present in cache and ai-specs/commands/; local hand-authored wins\n",
+        "rc": 0,
+        "files": {
+          "home/bundled-commands/cmd1.md": "IyBjbWQxCg==",
+          "home/bundled-skills/alpha/SKILL.md": "IyBhbHBoYQo=",
+          "home/bundled-skills/beta/SKILL.md": "IyBiZXRhCg==",
+          "home/cache/projects/\u003cKEY\u003e-project/commands/cmd2.md": "IyByZWNpcGUgY21kMgo=",
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": "cHJvamVjdF9yb290ID0gIjxUTVA+L3Byb2plY3QiCmNyZWF0ZWRfYXQgPSAiPFRJTUU+Igo=",
+          "project/ai-specs/commands/cmd2.md": "IyBsb2NhbCBjbWQyCg==",
+          "project/ai-specs/commands/local.md": "IyBsb2NhbAo=",
+          "project/out/cmd2.md": "IyBsb2NhbCBjbWQyCg==",
+          "project/out/local.md": "IyBsb2NhbAo="
+        },
+        "modes": {
+          "home/bundled-commands/cmd1.md": 493,
+          "home/bundled-skills/alpha/SKILL.md": 420,
+          "home/bundled-skills/beta/SKILL.md": 420,
+          "home/cache/projects/\u003cKEY\u003e-project/commands/cmd2.md": 420,
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": 420,
+          "project/ai-specs/commands/cmd2.md": 420,
+          "project/ai-specs/commands/local.md": 420,
+          "project/out/cmd2.md": 420,
+          "project/out/local.md": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-commands",
+          "home/bundled-skills",
+          "home/bundled-skills/alpha",
+          "home/bundled-skills/beta",
+          "home/cache",
+          "home/cache/projects",
+          "home/cache/projects/\u003cKEY\u003e-project",
+          "home/cache/projects/\u003cKEY\u003e-project/commands",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/commands",
+          "project/out"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli merge existing dest",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "merge-commands",
+        "cli_dest": "out",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "  ✓ merged 0 command file(s) → \u003cTMP\u003e/project/out\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/bundled-commands/cmd1.md": "IyBjbWQxCg==",
+          "home/bundled-skills/alpha/SKILL.md": "IyBhbHBoYQo=",
+          "home/bundled-skills/beta/SKILL.md": "IyBiZXRhCg==",
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": "cHJvamVjdF9yb290ID0gIjxUTVA+L3Byb2plY3QiCmNyZWF0ZWRfYXQgPSAiPFRJTUU+Igo="
+        },
+        "modes": {
+          "home/bundled-commands/cmd1.md": 420,
+          "home/bundled-skills/alpha/SKILL.md": 420,
+          "home/bundled-skills/beta/SKILL.md": 420,
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-commands",
+          "home/bundled-skills",
+          "home/bundled-skills/alpha",
+          "home/bundled-skills/beta",
+          "home/cache",
+          "home/cache/projects",
+          "home/cache/projects/\u003cKEY\u003e-project",
+          "project",
+          "project/out"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli merge missing dest",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "merge-commands",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "Usage: project-cache.py \u003cproject_root\u003e merge-commands \u003cdest\u003e\n",
+        "rc": 2,
+        "files": {},
+        "modes": {},
+        "dirs": [
+          "home",
+          "project"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli merge symlink dest rmtree refuses",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "merge-commands",
+        "cli_dest": "linkdest",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "OSError: [Errno None] None: PosixPath('\u003cTMP\u003e/project/linkdest')\n",
+        "rc": 1,
+        "files": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": "cHJvamVjdF9yb290ID0gIjxUTVA+L3Byb2plY3QiCmNyZWF0ZWRfYXQgPSAiPFRJTUU+Igo="
+        },
+        "modes": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": 420
+        },
+        "dirs": [
+          "home",
+          "home/cache",
+          "home/cache/projects",
+          "home/cache/projects/\u003cKEY\u003e-project",
+          "project",
+          "project/realdest"
+        ],
+        "links": {
+          "project/linkdest": "\u003cTMP\u003e/project/realdest"
+        },
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli merge regular-file dest rmtree refuses",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "merge-commands",
+        "cli_dest": "destfile",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "NotADirectoryError: [Errno 20] Not a directory: PosixPath('\u003cTMP\u003e/project/destfile')\n",
+        "rc": 1,
+        "files": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": "cHJvamVjdF9yb290ID0gIjxUTVA+L3Byb2plY3QiCmNyZWF0ZWRfYXQgPSAiPFRJTUU+Igo=",
+          "project/destfile": "a2VlcAo="
+        },
+        "modes": {
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": 420,
+          "project/destfile": 420
+        },
+        "dirs": [
+          "home",
+          "home/cache",
+          "home/cache/projects",
+          "home/cache/projects/\u003cKEY\u003e-project",
+          "project"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli merge unreadable command aborts",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "merge-commands",
+        "cli_dest": "out",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "PermissionError: [Errno 13] Permission denied: '\u003cTMP\u003e/home/cache/projects/\u003cKEY\u003e-project/.bundled/commands/b.md'\n",
+        "rc": 1,
+        "files": {
+          "home/cache/projects/\u003cKEY\u003e-project/.bundled/commands/a.md": "IyBhCg==",
+          "home/cache/projects/\u003cKEY\u003e-project/.bundled/commands/b.md": "\u003cunreadable\u003e",
+          "home/cache/projects/\u003cKEY\u003e-project/commands/c.md": "IyBjCg==",
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": "cHJvamVjdF9yb290ID0gIjxUTVA+L3Byb2plY3QiCmNyZWF0ZWRfYXQgPSAiPFRJTUU+Igo=",
+          "project/out/a.md": "IyBhCg=="
+        },
+        "modes": {
+          "home/cache/projects/\u003cKEY\u003e-project/.bundled/commands/a.md": 420,
+          "home/cache/projects/\u003cKEY\u003e-project/.bundled/commands/b.md": 0,
+          "home/cache/projects/\u003cKEY\u003e-project/commands/c.md": 420,
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": 420,
+          "project/out/a.md": 420
+        },
+        "dirs": [
+          "home",
+          "home/cache",
+          "home/cache/projects",
+          "home/cache/projects/\u003cKEY\u003e-project",
+          "home/cache/projects/\u003cKEY\u003e-project/.bundled",
+          "home/cache/projects/\u003cKEY\u003e-project/.bundled/commands",
+          "home/cache/projects/\u003cKEY\u003e-project/commands",
+          "project",
+          "project/out"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli merge bundled managed duplicate",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "merge-commands",
+        "cli_dest": "out",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "  ✓ merged 1 command file(s) → \u003cTMP\u003e/project/out\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/cache/projects/\u003cKEY\u003e-project/.bundled/commands/dup.md": "IyBidW5kbGVkCg==",
+          "home/cache/projects/\u003cKEY\u003e-project/commands/dup.md": "IyBtYW5hZ2VkCg==",
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": "cHJvamVjdF9yb290ID0gIjxUTVA+L3Byb2plY3QiCmNyZWF0ZWRfYXQgPSAiPFRJTUU+Igo=",
+          "project/out/dup.md": "IyBtYW5hZ2VkCg=="
+        },
+        "modes": {
+          "home/cache/projects/\u003cKEY\u003e-project/.bundled/commands/dup.md": 420,
+          "home/cache/projects/\u003cKEY\u003e-project/commands/dup.md": 420,
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": 420,
+          "project/out/dup.md": 420
+        },
+        "dirs": [
+          "home",
+          "home/cache",
+          "home/cache/projects",
+          "home/cache/projects/\u003cKEY\u003e-project",
+          "home/cache/projects/\u003cKEY\u003e-project/.bundled",
+          "home/cache/projects/\u003cKEY\u003e-project/.bundled/commands",
+          "home/cache/projects/\u003cKEY\u003e-project/commands",
+          "project",
+          "project/out"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "cli merge preserves source modes",
+      "spec": {
+        "mode": "cli",
+        "cli_action": "merge-commands",
+        "cli_dest": "out",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "  ✓ merged 3 command file(s) → \u003cTMP\u003e/project/out\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/cache/projects/\u003cKEY\u003e-project/.bundled/commands/ro.md": "cm8K",
+          "home/cache/projects/\u003cKEY\u003e-project/.bundled/commands/script.md": "IyEvYmluL3NoCg==",
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": "cHJvamVjdF9yb290ID0gIjxUTVA+L3Byb2plY3QiCmNyZWF0ZWRfYXQgPSAiPFRJTUU+Igo=",
+          "project/ai-specs/commands/local.md": "bG9jYWwK",
+          "project/out/local.md": "bG9jYWwK",
+          "project/out/ro.md": "cm8K",
+          "project/out/script.md": "IyEvYmluL3NoCg=="
+        },
+        "modes": {
+          "home/cache/projects/\u003cKEY\u003e-project/.bundled/commands/ro.md": 292,
+          "home/cache/projects/\u003cKEY\u003e-project/.bundled/commands/script.md": 493,
+          "home/cache/projects/\u003cKEY\u003e-project/meta.toml": 420,
+          "project/ai-specs/commands/local.md": 384,
+          "project/out/local.md": 384,
+          "project/out/ro.md": 292,
+          "project/out/script.md": 493
+        },
+        "dirs": [
+          "home",
+          "home/cache",
+          "home/cache/projects",
+          "home/cache/projects/\u003cKEY\u003e-project",
+          "home/cache/projects/\u003cKEY\u003e-project/.bundled",
+          "home/cache/projects/\u003cKEY\u003e-project/.bundled/commands",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/commands",
+          "project/out"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remove bundled skill matches",
+      "spec": {
+        "mode": "lib",
+        "fn": "remove_bundled_skill_leftovers",
+        "args": {
+          "ai_specs": "ai-specs"
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "  ✓ removed leftover bundled skill ai-specs/skills/alpha/\n",
+        "stderr": "  ! keeping customized ai-specs/skills/beta/ (differs from CLI-bundled source and lock; resolve manually)\n",
+        "rc": 0,
+        "files": {
+          "home/bundled-commands/cmd1.md": "IyBjbWQxCg==",
+          "home/bundled-skills/alpha/SKILL.md": "IyBhbHBoYQo=",
+          "home/bundled-skills/beta/SKILL.md": "IyBiZXRhCg==",
+          "project/ai-specs/skills/beta/SKILL.md": "IyBlZGl0ZWQK",
+          "project/ai-specs/skills/local/SKILL.md": "IyBsb2NhbAo="
+        },
+        "modes": {
+          "home/bundled-commands/cmd1.md": 420,
+          "home/bundled-skills/alpha/SKILL.md": 420,
+          "home/bundled-skills/beta/SKILL.md": 420,
+          "project/ai-specs/skills/beta/SKILL.md": 420,
+          "project/ai-specs/skills/local/SKILL.md": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-commands",
+          "home/bundled-skills",
+          "home/bundled-skills/alpha",
+          "home/bundled-skills/beta",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/skills",
+          "project/ai-specs/skills/beta",
+          "project/ai-specs/skills/local"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remove bundled skill lock hash",
+      "spec": {
+        "mode": "lib",
+        "fn": "remove_bundled_skill_leftovers",
+        "args": {
+          "ai_specs": "ai-specs"
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "  ✓ removed leftover bundled skill ai-specs/skills/alpha/\n  ✓ removed leftover bundled skill ai-specs/skills/beta/\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/bundled-commands/cmd1.md": "IyBjbWQxCg==",
+          "home/bundled-skills/alpha/SKILL.md": "IyBhbHBoYQo=",
+          "home/bundled-skills/beta/SKILL.md": "IyBiZXRhCg==",
+          "project/ai-specs/.ai-specs.lock": "W3NraWxscy4iYWxwaGEiXQoiU0tJTEwubWQiID0gIjBjNzMyZWQxNjdjMjFlZDFlOWE0NzJkNTAyMThmZmQ5YzJlYmVkN2VmNDYzZTBhY2U0NWUwMWZjMjU1NjZiYWQiCg=="
+        },
+        "modes": {
+          "home/bundled-commands/cmd1.md": 420,
+          "home/bundled-skills/alpha/SKILL.md": 420,
+          "home/bundled-skills/beta/SKILL.md": 420,
+          "project/ai-specs/.ai-specs.lock": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-commands",
+          "home/bundled-skills",
+          "home/bundled-skills/alpha",
+          "home/bundled-skills/beta",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/skills"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remove bundled skill malformed lock",
+      "spec": {
+        "mode": "lib",
+        "fn": "remove_bundled_skill_leftovers",
+        "args": {
+          "ai_specs": "ai-specs"
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "  ✓ removed leftover bundled skill ai-specs/skills/alpha/\n",
+        "stderr": "  ! keeping customized ai-specs/skills/beta/ (differs from CLI-bundled source and lock; resolve manually)\n",
+        "rc": 0,
+        "files": {
+          "home/bundled-commands/cmd1.md": "IyBjbWQxCg==",
+          "home/bundled-skills/alpha/SKILL.md": "IyBhbHBoYQo=",
+          "home/bundled-skills/beta/SKILL.md": "IyBiZXRhCg==",
+          "project/ai-specs/.ai-specs.lock": "W3NraWxscy4K",
+          "project/ai-specs/skills/beta/SKILL.md": "IyBlZGl0ZWQK"
+        },
+        "modes": {
+          "home/bundled-commands/cmd1.md": 420,
+          "home/bundled-skills/alpha/SKILL.md": 420,
+          "home/bundled-skills/beta/SKILL.md": 420,
+          "project/ai-specs/.ai-specs.lock": 420,
+          "project/ai-specs/skills/beta/SKILL.md": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-commands",
+          "home/bundled-skills",
+          "home/bundled-skills/alpha",
+          "home/bundled-skills/beta",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/skills",
+          "project/ai-specs/skills/beta"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remove bundled skill git tracked",
+      "spec": {
+        "mode": "lib",
+        "fn": "remove_bundled_skill_leftovers",
+        "args": {
+          "ai_specs": "ai-specs"
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "  ✓ removed leftover bundled skill ai-specs/skills/alpha/\n  ℹ git still tracks removed CLI-bundled skill(s): alpha\n    To stop committing them (ai-specs will not modify the index):\n    git rm -r --cached ai-specs/skills/alpha\n    # then commit when ready\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/bundled-commands/cmd1.md": "IyBjbWQxCg==",
+          "home/bundled-skills/alpha/SKILL.md": "IyBhbHBoYQo=",
+          "home/bundled-skills/beta/SKILL.md": "IyBiZXRhCg=="
+        },
+        "modes": {
+          "home/bundled-commands/cmd1.md": 420,
+          "home/bundled-skills/alpha/SKILL.md": 420,
+          "home/bundled-skills/beta/SKILL.md": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-commands",
+          "home/bundled-skills",
+          "home/bundled-skills/alpha",
+          "home/bundled-skills/beta",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/skills"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remove bundled skill oserror keeps dir",
+      "spec": {
+        "mode": "lib",
+        "fn": "remove_bundled_skill_leftovers",
+        "args": {
+          "ai_specs": "ai-specs"
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "  ! failed to remove leftover ai-specs/skills/alpha/: [Errno 13] Permission denied: PosixPath('\u003cTMP\u003e/project/ai-specs/skills/alpha')\n",
+        "rc": 0,
+        "files": {
+          "home/bundled-commands/cmd1.md": "IyBjbWQxCg==",
+          "home/bundled-skills/alpha/SKILL.md": "IyBhbHBoYQo=",
+          "home/bundled-skills/beta/SKILL.md": "IyBiZXRhCg==",
+          "project/ai-specs/skills/alpha/SKILL.md": "IyBhbHBoYQo="
+        },
+        "modes": {
+          "home/bundled-commands/cmd1.md": 420,
+          "home/bundled-skills/alpha/SKILL.md": 420,
+          "home/bundled-skills/beta/SKILL.md": 420,
+          "project/ai-specs/skills/alpha/SKILL.md": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-commands",
+          "home/bundled-skills",
+          "home/bundled-skills/alpha",
+          "home/bundled-skills/beta",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/skills",
+          "project/ai-specs/skills/alpha"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remove bundled skill symlink dir kept",
+      "spec": {
+        "mode": "lib",
+        "fn": "remove_bundled_skill_leftovers",
+        "args": {
+          "ai_specs": "ai-specs"
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "  ! failed to remove leftover ai-specs/skills/alpha/: [Errno None] None: PosixPath('\u003cTMP\u003e/project/ai-specs/skills/alpha')\n",
+        "rc": 0,
+        "files": {
+          "home/bundled-commands/cmd1.md": "IyBjbWQxCg==",
+          "home/bundled-skills/alpha/SKILL.md": "IyBhbHBoYQo=",
+          "home/bundled-skills/beta/SKILL.md": "IyBiZXRhCg==",
+          "project/realalpha/SKILL.md": "IyBhbHBoYQo="
+        },
+        "modes": {
+          "home/bundled-commands/cmd1.md": 420,
+          "home/bundled-skills/alpha/SKILL.md": 420,
+          "home/bundled-skills/beta/SKILL.md": 420,
+          "project/realalpha/SKILL.md": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-commands",
+          "home/bundled-skills",
+          "home/bundled-skills/alpha",
+          "home/bundled-skills/beta",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/skills",
+          "project/realalpha"
+        ],
+        "links": {
+          "project/ai-specs/skills/alpha": "\u003cTMP\u003e/project/realalpha"
+        },
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remove bundled command matches",
+      "spec": {
+        "mode": "lib",
+        "fn": "remove_bundled_command_leftovers",
+        "args": {
+          "ai_specs": "ai-specs"
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "  ✓ removed leftover bundled command ai-specs/commands/cmd1.md\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/bundled-commands/cmd1.md": "IyBjbWQxCg==",
+          "home/bundled-skills/alpha/SKILL.md": "IyBhbHBoYQo=",
+          "home/bundled-skills/beta/SKILL.md": "IyBiZXRhCg==",
+          "project/ai-specs/commands/user.md": "IyB1c2VyCg=="
+        },
+        "modes": {
+          "home/bundled-commands/cmd1.md": 420,
+          "home/bundled-skills/alpha/SKILL.md": 420,
+          "home/bundled-skills/beta/SKILL.md": 420,
+          "project/ai-specs/commands/user.md": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-commands",
+          "home/bundled-skills",
+          "home/bundled-skills/alpha",
+          "home/bundled-skills/beta",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/commands"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remove bundled command lock hash",
+      "spec": {
+        "mode": "lib",
+        "fn": "remove_bundled_command_leftovers",
+        "args": {
+          "ai_specs": "ai-specs"
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "  ✓ removed leftover bundled command ai-specs/commands/cmd1.md\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/bundled-commands/cmd1.md": "IyBjbWQxCg==",
+          "home/bundled-skills/alpha/SKILL.md": "IyBhbHBoYQo=",
+          "home/bundled-skills/beta/SKILL.md": "IyBiZXRhCg==",
+          "project/ai-specs/.ai-specs.lock": "W2NvbW1hbmRzXQoiY21kMS5tZCIgPSAiNjkwMmI4NjQwOTA4NjZiNzQzOTNiMmYwYjVjNDk2ZjY0NTVhYjJlN2VkMDhlMDYzYmZjMTZlODhkMTcyODExOCIK"
+        },
+        "modes": {
+          "home/bundled-commands/cmd1.md": 420,
+          "home/bundled-skills/alpha/SKILL.md": 420,
+          "home/bundled-skills/beta/SKILL.md": 420,
+          "project/ai-specs/.ai-specs.lock": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-commands",
+          "home/bundled-skills",
+          "home/bundled-skills/alpha",
+          "home/bundled-skills/beta",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/commands"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remove bundled command suffix filter",
+      "spec": {
+        "mode": "lib",
+        "fn": "remove_bundled_command_leftovers",
+        "args": {
+          "ai_specs": "ai-specs"
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "  ✓ removed leftover bundled command ai-specs/commands/.hidden.md\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/bundled-commands/..md": "IyAuLm1kCg==",
+          "home/bundled-commands/.hidden.md": "IyAuaGlkZGVuLm1kCg==",
+          "home/bundled-commands/.md": "IyAubWQK",
+          "home/bundled-commands/a.md.bak": "IyBhLm1kLmJhawo=",
+          "project/ai-specs/commands/..md": "IyAuLm1kCg==",
+          "project/ai-specs/commands/.md": "IyAubWQK",
+          "project/ai-specs/commands/a.md.bak": "IyBhLm1kLmJhawo="
+        },
+        "modes": {
+          "home/bundled-commands/..md": 420,
+          "home/bundled-commands/.hidden.md": 420,
+          "home/bundled-commands/.md": 420,
+          "home/bundled-commands/a.md.bak": 420,
+          "project/ai-specs/commands/..md": 420,
+          "project/ai-specs/commands/.md": 420,
+          "project/ai-specs/commands/a.md.bak": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-commands",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/commands"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remove recipe command leftovers",
+      "spec": {
+        "mode": "lib",
+        "fn": "remove_recipe_command_leftovers",
+        "args": {
+          "lock_commands": {
+            "locked.md": "77ab03980ce00a0169120ac5fdf5fdff63db485ea864964b90987362a6ee73c7"
+          },
+          "project_root": ".",
+          "recipe_sources": {
+            "src.md": "catalog/src.md"
+          }
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "  ✓ removed leftover recipe command ai-specs/commands/locked.md\n  ✓ removed leftover recipe command ai-specs/commands/managed.md\n  ✓ removed leftover recipe command ai-specs/commands/src.md\n",
+        "stderr": "  ! keeping local/customized ai-specs/commands/edited.md (differs from recipe-managed cache/source and legacy provenance; resolve manually)\n",
+        "rc": 0,
+        "files": {
+          "home/cache/projects/\u003cKEY\u003e-project/commands/edited.md": "IyBtYW5hZ2VkIGVkaXRlZAo=",
+          "home/cache/projects/\u003cKEY\u003e-project/commands/managed.md": "IyBtYW5hZ2VkCg==",
+          "project/ai-specs/commands/edited.md": "IyB1c2VyIGVkaXRlZAo=",
+          "project/ai-specs/commands/keep.md": "IyBsb2NhbCBrZWVwCg==",
+          "project/catalog/src.md": "IyByZWNpcGUgc291cmNlCg=="
+        },
+        "modes": {
+          "home/cache/projects/\u003cKEY\u003e-project/commands/edited.md": 420,
+          "home/cache/projects/\u003cKEY\u003e-project/commands/managed.md": 420,
+          "project/ai-specs/commands/edited.md": 420,
+          "project/ai-specs/commands/keep.md": 420,
+          "project/catalog/src.md": 420
+        },
+        "dirs": [
+          "home",
+          "home/cache",
+          "home/cache/projects",
+          "home/cache/projects/\u003cKEY\u003e-project",
+          "home/cache/projects/\u003cKEY\u003e-project/commands",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/commands",
+          "project/catalog"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remove recipe command suffix filter",
+      "spec": {
+        "mode": "lib",
+        "fn": "remove_recipe_command_leftovers",
+        "args": {
+          "project_root": "."
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "  ✓ removed leftover recipe command ai-specs/commands/.hidden.md\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/cache/projects/\u003cKEY\u003e-project/commands/..md": "IyAuLm1kCg==",
+          "home/cache/projects/\u003cKEY\u003e-project/commands/.hidden.md": "IyAuaGlkZGVuLm1kCg==",
+          "home/cache/projects/\u003cKEY\u003e-project/commands/.md": "IyAubWQK",
+          "home/cache/projects/\u003cKEY\u003e-project/commands/a.md.bak": "IyBhLm1kLmJhawo=",
+          "project/ai-specs/commands/..md": "IyAuLm1kCg==",
+          "project/ai-specs/commands/.md": "IyAubWQK",
+          "project/ai-specs/commands/a.md.bak": "IyBhLm1kLmJhawo="
+        },
+        "modes": {
+          "home/cache/projects/\u003cKEY\u003e-project/commands/..md": 420,
+          "home/cache/projects/\u003cKEY\u003e-project/commands/.hidden.md": 420,
+          "home/cache/projects/\u003cKEY\u003e-project/commands/.md": 420,
+          "home/cache/projects/\u003cKEY\u003e-project/commands/a.md.bak": 420,
+          "project/ai-specs/commands/..md": 420,
+          "project/ai-specs/commands/.md": 420,
+          "project/ai-specs/commands/a.md.bak": 420
+        },
+        "dirs": [
+          "home",
+          "home/cache",
+          "home/cache/projects",
+          "home/cache/projects/\u003cKEY\u003e-project",
+          "home/cache/projects/\u003cKEY\u003e-project/commands",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/commands"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "bundled skill ids",
+      "spec": {
+        "mode": "lib",
+        "fn": "bundled_skill_ids",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/bundled-skills/alpha/SKILL.md": "IyBhCg==",
+          "home/bundled-skills/gamma/README.md": "IyBnCg==",
+          "home/bundled-skills/note.txt": "bgo=",
+          "home/bundled-skills/zeta/SKILL.md": "IyB6Cg=="
+        },
+        "modes": {
+          "home/bundled-skills/alpha/SKILL.md": 420,
+          "home/bundled-skills/gamma/README.md": 420,
+          "home/bundled-skills/note.txt": 420,
+          "home/bundled-skills/zeta/SKILL.md": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-skills",
+          "home/bundled-skills/alpha",
+          "home/bundled-skills/gamma",
+          "home/bundled-skills/zeta",
+          "project"
+        ],
+        "links": {},
+        "result": [
+          "alpha",
+          "zeta"
+        ],
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "bundled command ids",
+      "spec": {
+        "mode": "lib",
+        "fn": "bundled_command_ids",
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/bundled-commands/..md": "IyA0Cg==",
+          "home/bundled-commands/.hidden.md": "IyAzCg==",
+          "home/bundled-commands/README.txt": "IyA1Cg==",
+          "home/bundled-commands/cmd1.md": "IyAxCg==",
+          "home/bundled-commands/x.tar.md": "IyAyCg=="
+        },
+        "modes": {
+          "home/bundled-commands/..md": 420,
+          "home/bundled-commands/.hidden.md": 420,
+          "home/bundled-commands/README.txt": 420,
+          "home/bundled-commands/cmd1.md": 420,
+          "home/bundled-commands/x.tar.md": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-commands",
+          "home/bundled-commands/dir.md",
+          "project"
+        ],
+        "links": {},
+        "result": [
+          "..md",
+          ".hidden",
+          "cmd1",
+          "x.tar"
+        ],
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "is git work tree true",
+      "spec": {
+        "mode": "lib",
+        "fn": "_is_git_work_tree",
+        "args": {
+          "project_root": "."
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "project/README.md": "IyByCg=="
+        },
+        "modes": {
+          "project/README.md": 420
+        },
+        "dirs": [
+          "home",
+          "project"
+        ],
+        "links": {},
+        "result": true,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "is git work tree false",
+      "spec": {
+        "mode": "lib",
+        "fn": "_is_git_work_tree",
+        "args": {
+          "project_root": "."
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "project/README.md": "IyByCg=="
+        },
+        "modes": {
+          "project/README.md": 420
+        },
+        "dirs": [
+          "home",
+          "project"
+        ],
+        "links": {},
+        "result": false,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "git ls files",
+      "spec": {
+        "mode": "lib",
+        "fn": "_git_ls_files",
+        "args": {
+          "pathspec": "ai-specs/skills/alpha",
+          "project_root": "."
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "project/ai-specs/skills/alpha/SKILL.md": "IyBhCg==",
+          "project/other.txt": "bwo="
+        },
+        "modes": {
+          "project/ai-specs/skills/alpha/SKILL.md": 420,
+          "project/other.txt": 420
+        },
+        "dirs": [
+          "home",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/skills",
+          "project/ai-specs/skills/alpha"
+        ],
+        "links": {},
+        "result": [
+          "ai-specs/skills/alpha/SKILL.md"
+        ],
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "tracked skill leftovers",
+      "spec": {
+        "mode": "lib",
+        "fn": "tracked_bundled_skill_leftovers",
+        "args": {
+          "project_root": "."
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/bundled-skills/alpha/SKILL.md": "IyBhCg==",
+          "home/bundled-skills/beta/SKILL.md": "IyBiCg==",
+          "project/ai-specs/skills/beta/SKILL.md": "IyBiCg=="
+        },
+        "modes": {
+          "home/bundled-skills/alpha/SKILL.md": 420,
+          "home/bundled-skills/beta/SKILL.md": 420,
+          "project/ai-specs/skills/beta/SKILL.md": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-skills",
+          "home/bundled-skills/alpha",
+          "home/bundled-skills/beta",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/skills",
+          "project/ai-specs/skills/alpha",
+          "project/ai-specs/skills/beta"
+        ],
+        "links": {},
+        "result": [],
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "tracked command leftovers detached",
+      "spec": {
+        "mode": "lib",
+        "fn": "tracked_bundled_command_leftovers",
+        "args": {
+          "project_root": "."
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/bundled-commands/cmd1.md": "IyBjCg=="
+        },
+        "modes": {
+          "home/bundled-commands/cmd1.md": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-commands",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/commands"
+        ],
+        "links": {},
+        "result": [
+          "cmd1"
+        ],
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "tracked skill leftovers non-git",
+      "spec": {
+        "mode": "lib",
+        "fn": "tracked_bundled_skill_leftovers",
+        "args": {
+          "project_root": "."
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "home/bundled-skills/alpha/SKILL.md": "IyBhCg=="
+        },
+        "modes": {
+          "home/bundled-skills/alpha/SKILL.md": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-skills",
+          "home/bundled-skills/alpha",
+          "project"
+        ],
+        "links": {},
+        "result": [],
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remediation skill",
+      "spec": {
+        "mode": "lib",
+        "fn": "format_tracked_bundled_remediation",
+        "args": {
+          "bundled_ids": [
+            "a",
+            "b"
+          ]
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "",
+        "rc": 0,
+        "files": {},
+        "modes": {},
+        "dirs": [
+          "home",
+          "project"
+        ],
+        "links": {},
+        "result": "  \u2139 git still tracks removed CLI-bundled skill(s): a, b\n    To stop committing them (ai-specs will not modify the index):\n    git rm -r --cached ai-specs/skills/a ai-specs/skills/b\n    # then commit when ready",
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remediation command",
+      "spec": {
+        "mode": "lib",
+        "fn": "format_tracked_bundled_remediation",
+        "args": {
+          "bundled_ids": [
+            "a",
+            "b"
+          ],
+          "kind": "command",
+          "path_template": "ai-specs/commands/{name}.md",
+          "recursive": false
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "",
+        "rc": 0,
+        "files": {},
+        "modes": {},
+        "dirs": [
+          "home",
+          "project"
+        ],
+        "links": {},
+        "result": "  \u2139 git still tracks removed CLI-bundled command(s): a, b\n    To stop committing them (ai-specs will not modify the index):\n    git rm --cached ai-specs/commands/a.md ai-specs/commands/b.md\n    # then commit when ready",
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remove legacy origin",
+      "spec": {
+        "mode": "lib",
+        "fn": "remove_legacy_origin",
+        "args": {
+          "project_root": "."
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "  ✓ migrated overrides recipeA → ai-specs/recipes/recipeA/overrides/\n  ✓ removed leftover ai-specs/.recipe/\n  ✓ removed leftover ai-specs/.resolved-skills/\n  ✓ removed leftover ai-specs/.internal/\n  ✓ removed leftover ai-specs/bin/premerge_guardian.py\n  ✓ removed empty ai-specs/bin/\n  ✓ removed leftover bundled skill ai-specs/skills/alpha/\n",
+        "stderr": "  ! keeping customized ai-specs/skills/beta/ (differs from CLI-bundled source and lock; resolve manually)\n",
+        "rc": 0,
+        "files": {
+          "home/bundled-commands/cmd1.md": "IyBjbWQxCg==",
+          "home/bundled-skills/alpha/SKILL.md": "IyBhbHBoYQo=",
+          "home/bundled-skills/beta/SKILL.md": "IyBiZXRhCg==",
+          "project/ai-specs/.deps/dep/marker": "IyBkCg==",
+          "project/ai-specs/recipes/recipeA/overrides/ov.md": "IyBvdgo=",
+          "project/ai-specs/recipes/recipeB/overrides/keep.md": "IyBrZWVwCg==",
+          "project/ai-specs/skills/beta/SKILL.md": "IyBlZGl0ZWQK"
+        },
+        "modes": {
+          "home/bundled-commands/cmd1.md": 420,
+          "home/bundled-skills/alpha/SKILL.md": 420,
+          "home/bundled-skills/beta/SKILL.md": 420,
+          "project/ai-specs/.deps/dep/marker": 420,
+          "project/ai-specs/recipes/recipeA/overrides/ov.md": 420,
+          "project/ai-specs/recipes/recipeB/overrides/keep.md": 420,
+          "project/ai-specs/skills/beta/SKILL.md": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-commands",
+          "home/bundled-skills",
+          "home/bundled-skills/alpha",
+          "home/bundled-skills/beta",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/.deps",
+          "project/ai-specs/.deps/dep",
+          "project/ai-specs/recipes",
+          "project/ai-specs/recipes/recipeA",
+          "project/ai-specs/recipes/recipeA/overrides",
+          "project/ai-specs/recipes/recipeB",
+          "project/ai-specs/recipes/recipeB/overrides",
+          "project/ai-specs/skills",
+          "project/ai-specs/skills/beta"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remove legacy origin fresh migration",
+      "spec": {
+        "mode": "lib",
+        "fn": "remove_legacy_origin",
+        "args": {
+          "project_root": "."
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "  ✓ migrated overrides recipeA → ai-specs/recipes/recipeA/overrides/\n  ✓ migrated overrides recipeB → ai-specs/recipes/recipeB/overrides/\n  ✓ removed leftover ai-specs/.recipe/\n  ✓ removed leftover ai-specs/.resolved-skills/\n  ✓ removed leftover ai-specs/.internal/\n  ✓ removed leftover ai-specs/bin/premerge_guardian.py\n  ✓ removed empty ai-specs/bin/\n  ✓ removed leftover bundled skill ai-specs/skills/alpha/\n",
+        "stderr": "  ! keeping customized ai-specs/skills/beta/ (differs from CLI-bundled source and lock; resolve manually)\n",
+        "rc": 0,
+        "files": {
+          "home/bundled-commands/cmd1.md": "IyBjbWQxCg==",
+          "home/bundled-skills/alpha/SKILL.md": "IyBhbHBoYQo=",
+          "home/bundled-skills/beta/SKILL.md": "IyBiZXRhCg==",
+          "project/ai-specs/.deps/dep/marker": "IyBkCg==",
+          "project/ai-specs/recipes/recipeA/overrides/ov.md": "IyBvdgo=",
+          "project/ai-specs/recipes/recipeB/overrides/ov.md": "IyBvdiBiCg==",
+          "project/ai-specs/skills/beta/SKILL.md": "IyBlZGl0ZWQK"
+        },
+        "modes": {
+          "home/bundled-commands/cmd1.md": 420,
+          "home/bundled-skills/alpha/SKILL.md": 420,
+          "home/bundled-skills/beta/SKILL.md": 420,
+          "project/ai-specs/.deps/dep/marker": 420,
+          "project/ai-specs/recipes/recipeA/overrides/ov.md": 420,
+          "project/ai-specs/recipes/recipeB/overrides/ov.md": 420,
+          "project/ai-specs/skills/beta/SKILL.md": 420
+        },
+        "dirs": [
+          "home",
+          "home/bundled-commands",
+          "home/bundled-skills",
+          "home/bundled-skills/alpha",
+          "home/bundled-skills/beta",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/.deps",
+          "project/ai-specs/.deps/dep",
+          "project/ai-specs/recipes",
+          "project/ai-specs/recipes/recipeA",
+          "project/ai-specs/recipes/recipeA/overrides",
+          "project/ai-specs/recipes/recipeB",
+          "project/ai-specs/recipes/recipeB/overrides",
+          "project/ai-specs/skills",
+          "project/ai-specs/skills/beta"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remove legacy origin symlink dir kept",
+      "spec": {
+        "mode": "lib",
+        "fn": "remove_legacy_origin",
+        "args": {
+          "project_root": "project"
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "  ! failed to remove leftover ai-specs/.resolved-skills/: [Errno None] None: PosixPath('\u003cTMP\u003e/project/project/ai-specs/.resolved-skills')\n",
+        "rc": 0,
+        "files": {},
+        "modes": {},
+        "dirs": [
+          "home",
+          "project",
+          "project/project",
+          "project/project/ai-specs",
+          "project/realrs"
+        ],
+        "links": {
+          "project/project/ai-specs/.resolved-skills": "\u003cTMP\u003e/project/realrs"
+        },
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remove legacy origin symlinks resolved",
+      "spec": {
+        "mode": "lib",
+        "fn": "remove_legacy_origin",
+        "args": {
+          "project_root": "."
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "  ✓ migrated overrides recipeA → ai-specs/recipes/recipeA/overrides/\n  ✓ removed leftover ai-specs/.recipe/\n",
+        "stderr": "",
+        "rc": 0,
+        "files": {
+          "project/ai-specs/recipes/recipeA/overrides/dirlink/inner.md": "IyBpbm5lcgo=",
+          "project/ai-specs/recipes/recipeA/overrides/filelink.md": "IyByZWFsCg==",
+          "project/ai-specs/recipes/recipeA/overrides/real.md": "IyByZWFsCg==",
+          "project/ai-specs/recipes/recipeA/overrides/sub/inner.md": "IyBpbm5lcgo="
+        },
+        "modes": {
+          "project/ai-specs/recipes/recipeA/overrides/dirlink/inner.md": 493,
+          "project/ai-specs/recipes/recipeA/overrides/filelink.md": 420,
+          "project/ai-specs/recipes/recipeA/overrides/real.md": 420,
+          "project/ai-specs/recipes/recipeA/overrides/sub/inner.md": 493
+        },
+        "dirs": [
+          "home",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/recipes",
+          "project/ai-specs/recipes/recipeA",
+          "project/ai-specs/recipes/recipeA/overrides",
+          "project/ai-specs/recipes/recipeA/overrides/dirlink",
+          "project/ai-specs/recipes/recipeA/overrides/sub"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remove legacy origin dangling symlink warns",
+      "spec": {
+        "mode": "lib",
+        "fn": "remove_legacy_origin",
+        "args": {
+          "project_root": "."
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "  ! failed to migrate overrides for 'recipeA': [('\u003cTMP\u003e/project/ai-specs/.recipe/recipeA/overrides/dangling', '\u003cTMP\u003e/project/ai-specs/recipes/recipeA/overrides/dangling', \"[Errno 2] No such file or directory: '\u003cTMP\u003e/project/ai-specs/.recipe/recipeA/overrides/dangling'\")]\n  ! failed to migrate overrides for 'recipeB': [('\u003cTMP\u003e/project/ai-specs/.recipe/recipeB/overrides/dangling', '\u003cTMP\u003e/project/ai-specs/recipes/recipeB/overrides/dangling', \"[Errno 2] No such file or directory: '\u003cTMP\u003e/project/ai-specs/.recipe/recipeB/overrides/dangling'\")]\n  ! skipping removal of ai-specs/.recipe/ — one or more override migrations failed; re-run ai-specs sync to retry\n",
+        "rc": 0,
+        "files": {
+          "project/ai-specs/.recipe/recipeA/overrides/ok.md": "IyBvayByZWNpcGVBCg==",
+          "project/ai-specs/.recipe/recipeB/overrides/ok.md": "IyBvayByZWNpcGVCCg==",
+          "project/ai-specs/recipes/recipeA/overrides/ok.md": "IyBvayByZWNpcGVBCg==",
+          "project/ai-specs/recipes/recipeB/overrides/ok.md": "IyBvayByZWNpcGVCCg=="
+        },
+        "modes": {
+          "project/ai-specs/.recipe/recipeA/overrides/ok.md": 420,
+          "project/ai-specs/.recipe/recipeB/overrides/ok.md": 420,
+          "project/ai-specs/recipes/recipeA/overrides/ok.md": 420,
+          "project/ai-specs/recipes/recipeB/overrides/ok.md": 420
+        },
+        "dirs": [
+          "home",
+          "project",
+          "project/ai-specs",
+          "project/ai-specs/.recipe",
+          "project/ai-specs/.recipe/recipeA",
+          "project/ai-specs/.recipe/recipeA/overrides",
+          "project/ai-specs/.recipe/recipeB",
+          "project/ai-specs/.recipe/recipeB/overrides",
+          "project/ai-specs/recipes",
+          "project/ai-specs/recipes/recipeA",
+          "project/ai-specs/recipes/recipeA/overrides",
+          "project/ai-specs/recipes/recipeB",
+          "project/ai-specs/recipes/recipeB/overrides"
+        ],
+        "links": {
+          "project/ai-specs/.recipe/recipeA/overrides/dangling": "\u003cTMP\u003e/project/ai-specs/missing/nope",
+          "project/ai-specs/.recipe/recipeB/overrides/dangling": "\u003cTMP\u003e/project/ai-specs/missing/nope"
+        },
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "remove legacy origin regular-file leftovers",
+      "spec": {
+        "mode": "lib",
+        "fn": "remove_legacy_origin",
+        "args": {
+          "project_root": "."
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "  ! failed to remove leftover ai-specs/.recipe/: [Errno 20] Not a directory: PosixPath('\u003cTMP\u003e/project/ai-specs/.recipe')\n  ! failed to remove leftover ai-specs/.resolved-skills/: [Errno 20] Not a directory: PosixPath('\u003cTMP\u003e/project/ai-specs/.resolved-skills')\n  ! failed to remove leftover ai-specs/.internal/: [Errno 20] Not a directory: PosixPath('\u003cTMP\u003e/project/ai-specs/.internal')\n",
+        "rc": 0,
+        "files": {
+          "project/ai-specs/.internal": "ZmlsZQo=",
+          "project/ai-specs/.recipe": "ZmlsZQo=",
+          "project/ai-specs/.resolved-skills": "ZmlsZQo="
+        },
+        "modes": {
+          "project/ai-specs/.internal": 420,
+          "project/ai-specs/.recipe": 420,
+          "project/ai-specs/.resolved-skills": 420
+        },
+        "dirs": [
+          "home",
+          "project",
+          "project/ai-specs"
+        ],
+        "links": {},
+        "result": null,
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    },
+    {
+      "name": "gate backup path",
+      "spec": {
+        "mode": "lib",
+        "fn": "gate_backup_path",
+        "args": {
+          "content_sha": "deadbeef",
+          "project_root": "project",
+          "rel_path": "ai-specs/hooks/gate.sh"
+        },
+        "ai_specs_home": "\u003cTMP\u003e/home",
+        "cli_home": "\u003cTMP\u003e/home",
+        "root": "\u003cTMP\u003e/project",
+        "home": "\u003cTMP\u003e/home",
+        "sandbox": "\u003cTMP\u003e"
+      },
+      "ref": {
+        "stdout": "",
+        "stderr": "",
+        "rc": 0,
+        "files": {},
+        "modes": {},
+        "dirs": [
+          "home",
+          "project"
+        ],
+        "links": {},
+        "result": "\u003cTMP\u003e/home/cache/projects/\u003cKEY\u003e-project/backups/2d715d78061a41360a60addd4262c9d1af59916db462c6c65b2225ad425b7fdc/deadbeef.sh",
+        "python_version": [
+          3,
+          14
+        ]
+      }
+    }
+  ],
+  "realpath": {
+    "inputs": [
+      "\u003cTMP\u003e/abslink/../target.txt",
+      "\u003cTMP\u003e/rellink/../target.txt",
+      "\u003cTMP\u003e/dangling/..",
+      "\u003cTMP\u003e/dangling/sub/../file",
+      "\u003cTMP\u003e/loop_a",
+      "\u003cTMP\u003e/loop_a/..",
+      "\u003cTMP\u003e/deep/a/b/c/../../target.txt",
+      "\u003cTMP\u003e/deep/a/./b//c",
+      "\u003cTMP\u003e",
+      "\u003cTMP\u003e/d/abslink/../target.txt",
+      "\u003cTMP\u003e/d/rellink/../target.txt",
+      "\u003cTMP\u003e/filelink/../file.txt",
+      "\u003cTMP\u003e/dotlink/../target.txt",
+      "\u003cTMP\u003e/chain1/../target.txt",
+      "\u003cTMP\u003e/dangling/../target.txt",
+      "\u003cTMP\u003e/loop_a/x",
+      "\u003cTMP\u003e/loop_a/../x"
+    ],
+    "python": [
+      "\u003cTMP\u003e/deep/a/b/target.txt",
+      "\u003cTMP\u003e/deep/a/b/target.txt",
+      "\u003cTMP\u003e/missing",
+      "\u003cTMP\u003e/missing/nope/file",
+      "\u003cTMP\u003e/loop_a",
+      "\u003cTMP\u003e",
+      "\u003cTMP\u003e/deep/a/target.txt",
+      "\u003cTMP\u003e/deep/a/b/c",
+      "\u003cTMP\u003e",
+      "\u003cTMP\u003e/other/target.txt",
+      "\u003cTMP\u003e/other/target.txt",
+      "\u003cTMP\u003e/file.txt",
+      "\u003cTMP\u003e/other/target.txt",
+      "\u003cTMP\u003e/other/target.txt",
+      "\u003cTMP\u003e/missing/target.txt",
+      "\u003cTMP\u003e/loop_a/x",
+      "\u003cTMP\u003e/x"
+    ]
+  }
+}

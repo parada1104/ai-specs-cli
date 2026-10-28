@@ -99,7 +99,8 @@ func TestRenderProjectCacheMissingHome(t *testing.T) {
 }
 
 // TestCacheKeyFrozen pins the FROZEN derivation against a value computed by the
-// real Python module (python3 -c "import project-cache; cache_key(Path('/'))").
+// real Python module (python3 -c "import project-cache; cache_key(Path('/'))")
+// and frozen in testdata/projectcache_golden.json.
 func TestCacheKeyFrozen(t *testing.T) {
 	if got := CacheKey("/"); got != "8a5edab28263-project" {
 		t.Errorf("CacheKey(\"/\") = %q, want %q", got, "8a5edab28263-project")
@@ -232,39 +233,11 @@ func readFile(t *testing.T, path string) string {
 	return string(data)
 }
 
-// pyRealpaths returns os.path.realpath(p) for each path, computed by the real
-// Python interpreter (the oracle for Path.resolve()/realpath semantics).
-func pyRealpaths(t *testing.T, paths []string) []string {
+// pcRealpathCandidates seeds the realpath fixture under dir and returns the
+// pinned candidate list. Capture and test share it, so the frozen oracle leg
+// and the Go leg run against the very same shapes.
+func pcRealpathCandidates(t *testing.T, dir string) []string {
 	t.Helper()
-	payload, err := json.Marshal(paths)
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := "import json,os,sys;print(json.dumps([os.path.realpath(p) for p in json.load(sys.stdin)]))"
-	cmd := exec.Command("python3", "-c", script)
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	cmd.Stdin = bytes.NewReader(payload)
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("python realpath: %v", err)
-	}
-	var got []string
-	if err := json.Unmarshal(out, &got); err != nil {
-		t.Fatalf("parse realpath output: %v\n%s", err, out)
-	}
-	return got
-}
-
-// TestResolvePathMatchesPythonRealpath pins the posixpath.realpath(strict=False)
-// algorithm: each component's symlinks resolve BEFORE `..` pops against the
-// resolved prefix; a dangling component leaves the tail unresolved; a symlink
-// loop returns the looping link unresolved. Clean-first (filepath.Abs/Clean)
-// collapses `..` before symlink resolution and diverges on every case below.
-func TestResolvePathMatchesPythonRealpath(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	dir := t.TempDir()
 	deep := filepath.Join(dir, "deep", "a", "b", "c")
 	if err := os.MkdirAll(deep, 0o755); err != nil {
 		t.Fatal(err)
@@ -313,10 +286,31 @@ func TestResolvePathMatchesPythonRealpath(t *testing.T) {
 		dir + "/loop_a/x",
 		dir + "/loop_a/../x",
 	}
-	want := pyRealpaths(t, candidates)
+	return candidates
+}
+
+// TestResolvePathMatchesPythonRealpath pins the posixpath.realpath(strict=False)
+// algorithm against the frozen bundle: each component's symlinks resolve BEFORE
+// `..` pops against the resolved prefix; a dangling component leaves the tail
+// unresolved; a symlink loop returns the looping link unresolved. Clean-first
+// (filepath.Abs/Clean) collapses `..` before symlink resolution and diverges on
+// every case below.
+func TestResolvePathMatchesPythonRealpath(t *testing.T) {
+	golden := pcLoadGolden(t)
+	dir := t.TempDir()
+	candidates := pcRealpathCandidates(t, dir)
+	if len(golden.Realpath.Inputs) != len(candidates) || len(golden.Realpath.Python) != len(candidates) {
+		t.Fatalf("frozen realpath record has %d inputs / %d outputs, want %d",
+			len(golden.Realpath.Inputs), len(golden.Realpath.Python), len(candidates))
+	}
+	repl := pcTokenReplacer(t, dir, "")
 	for i, p := range candidates {
-		if got := ResolvePath(p); got != want[i] {
-			t.Errorf("ResolvePath(%q) = %q, want python %q", p, got, want[i])
+		if got := repl.Replace(p); got != golden.Realpath.Inputs[i] {
+			t.Fatalf("realpath candidate drift at %d: frozen %q, built %q", i, golden.Realpath.Inputs[i], got)
+		}
+		got := ResolvePath(p)
+		if tok := repl.Replace(got); tok != golden.Realpath.Python[i] {
+			t.Errorf("ResolvePath(%q) = %q, want frozen python %q", p, got, golden.Realpath.Python[i])
 		}
 	}
 }
@@ -554,22 +548,229 @@ type pcCase struct {
 	refDivergence *refDivergence
 }
 
-func TestProjectCacheDifferential(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	refScript := filepath.Join(repoRoot, "internal", "projectcache", "testdata", "projectcache_ref.py")
+// pcGolden is the frozen bundle captured once from the real Python driver
+// testdata/projectcache_ref.py. The bundle IS the oracle: a missing or
+// incomplete bundle fails, never skips. Every host-bound value (the sandbox
+// root, the repository path inside an uncaught traceback) is stored as a
+// placeholder in the exact fields that carry it; every other field is compared
+// as written.
+type pcGolden struct {
+	Oracle struct {
+		Driver        string `json:"driver"`
+		Python        string `json:"python"`
+		PythonVersion []int  `json:"python_version"`
+	} `json:"oracle"`
+	Cases    []pcGoldenCase `json:"cases"`
+	Realpath struct {
+		Inputs []string `json:"inputs"`
+		Python []string `json:"python"`
+	} `json:"realpath"`
+}
 
-	for _, tc := range pcCases(t) {
+type pcGoldenCase struct {
+	Name string `json:"name"`
+	Spec pcSpec `json:"spec"`
+	Ref  pcRef  `json:"ref"`
+}
+
+func pcLoadGolden(t *testing.T) *pcGolden {
+	t.Helper()
+	path := filepath.Join("testdata", "projectcache_golden.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read frozen oracle: %v", err)
+	}
+	var golden pcGolden
+	if err := json.Unmarshal(data, &golden); err != nil {
+		t.Fatalf("parse frozen oracle %s: %v", path, err)
+	}
+	if golden.Oracle.Driver == "" || golden.Oracle.Python == "" || len(golden.Cases) == 0 {
+		t.Fatalf("frozen oracle %s carries no oracle identity or no cases", path)
+	}
+	return &golden
+}
+
+// pcTokenReplacer maps the sandbox root, exactly as the frozen bundle carries
+// it, to <TMP>, and the cache-key prefix derived from that root to <KEY>. Both
+// the raw t.TempDir() spelling and the host-resolved one are mapped because
+// /var resolves to /private/var on macOS; the mapping is symmetric (capture
+// applied the same replacer). No other path is touched.
+func pcTokenReplacer(t *testing.T, dir string, cacheKeys ...string) *strings.Replacer {
+	t.Helper()
+	pairs := make([]string, 0, 8)
+	seen := map[string]bool{}
+	add := func(p, tok string) {
+		if p == "" || p == string(filepath.Separator) || seen[p] {
+			return
+		}
+		seen[p] = true
+		pairs = append(pairs, p, tok)
+	}
+	for _, key := range cacheKeys {
+		add(key, "<KEY>")
+	}
+	// The resolved spelling next: it is never a prefix of the raw one.
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		add(resolved, "<TMP>")
+	}
+	add(dir, "<TMP>")
+	return strings.NewReplacer(pairs...)
+}
+
+// pcCacheKeyPrefix is the FROZEN cache-key prefix (sha256 of realpath, 12 hex
+// digits) for a project root. It is derived from the sandbox path, so the
+// frozen bundle carries it as <KEY>.
+func pcCacheKeyPrefix(root string) string {
+	sum := sha256.Sum256([]byte(ResolvePath(root)))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+func pcTokenizeBytes(repl *strings.Replacer, b []byte) []byte {
+	return []byte(repl.Replace(string(b)))
+}
+
+func pcTokenizeValues(repl *strings.Replacer, m map[string]string) map[string]string {
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[repl.Replace(k)] = repl.Replace(v)
+	}
+	return out
+}
+
+// pcTokenizeModes tokenizes the snapshot's relative keys (a cache directory
+// name embeds the host-derived cache key) and keeps the mode bits as written.
+func pcTokenizeModes(repl *strings.Replacer, m map[string]int) map[string]int {
+	out := make(map[string]int, len(m))
+	for k, v := range m {
+		out[repl.Replace(k)] = v
+	}
+	return out
+}
+
+func pcTokenizeDirs(repl *strings.Replacer, dirs []string) []string {
+	out := make([]string, len(dirs))
+	for i, d := range dirs {
+		out[i] = repl.Replace(d)
+	}
+	return out
+}
+
+// pcTokenizeFiles maps <TMP>/<KEY> inside each snapshot file's key and bytes,
+// so a frozen body is compared as written modulo the sandbox root and the
+// cache key derived from it.
+func pcTokenizeFiles(t *testing.T, files map[string]string, repl *strings.Replacer) map[string]string {
+	t.Helper()
+	out := make(map[string]string, len(files))
+	for k, v := range files {
+		if v == "<unreadable>" {
+			out[repl.Replace(k)] = v
+			continue
+		}
+		raw, err := base64.StdEncoding.DecodeString(v)
+		if err != nil {
+			t.Fatalf("snapshot file %s is not base64: %v", k, err)
+		}
+		out[repl.Replace(k)] = base64.StdEncoding.EncodeToString([]byte(repl.Replace(string(raw))))
+	}
+	return out
+}
+
+// pcTokenizeSpec round-trips through JSON so nested argument strings are
+// tokenized too; the frozen spec is then compared field for field.
+func pcTokenizeSpec(t *testing.T, spec pcSpec, repl *strings.Replacer) pcSpec {
+	t.Helper()
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatalf("marshal spec: %v", err)
+	}
+	var out pcSpec
+	if err := json.Unmarshal([]byte(repl.Replace(string(raw))), &out); err != nil {
+		t.Fatalf("unmarshal tokenized spec: %v", err)
+	}
+	return out
+}
+
+// pcGoldenCaseByName returns the frozen record for a case name and fails when
+// the bundle is missing it.
+func pcGoldenCaseByName(t *testing.T, golden *pcGolden, name string) pcGoldenCase {
+	t.Helper()
+	for _, rec := range golden.Cases {
+		if rec.Name == name {
+			return rec
+		}
+	}
+	t.Fatalf("frozen oracle is missing case %q", name)
+	return pcGoldenCase{}
+}
+
+// pcSpecCacheKeys returns the cache-key prefixes the case can surface: the
+// spec root and, for lib functions that take a project-relative root, the
+// roots their arguments resolve to. Each is derived from the sandbox path, so
+// the frozen bundle carries them as <KEY>.
+func pcSpecCacheKeys(spec pcSpec) []string {
+	roots := []string{spec.Root}
+	for _, arg := range []string{"project_root", "ai_specs"} {
+		if rel, ok := spec.Args[arg].(string); ok {
+			roots = append(roots, filepath.Join(spec.Root, rel))
+		}
+	}
+	seen := map[string]bool{}
+	keys := make([]string, 0, len(roots))
+	for _, root := range roots {
+		key := pcCacheKeyPrefix(root)
+		if !seen[key] {
+			seen[key] = true
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+// TestGoldenTokenizeOnlyHostBoundValues is the negative control for the scoped
+// tokenizer: only the sandbox root and the cache key derived from it are
+// normalized; a literal placeholder or a path that merely looks host-bound is
+// compared as written.
+func TestGoldenTokenizeOnlyHostBoundValues(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "project")
+	repl := pcTokenReplacer(t, dir, pcSpecCacheKeys(pcSpec{Root: root})...)
+
+	if got := repl.Replace(root + "/meta.toml"); got != "<TMP>/project/meta.toml" {
+		t.Fatalf("sandbox root was not tokenized: %q", got)
+	}
+	key := pcCacheKeyPrefix(root)
+	if got := repl.Replace("home/cache/projects/" + key + "-project"); got != "home/cache/projects/<KEY>-project" {
+		t.Fatalf("cache key was not tokenized: %q", got)
+	}
+	for _, s := range []string{"<TMP>/x", "<KEY>-project", "/usr/local/bin/tool", "deadbeef.sh"} {
+		if got := repl.Replace(s); got != s {
+			t.Errorf("non-host value %q was rewritten to %q", s, got)
+		}
+	}
+}
+
+func TestProjectCacheDifferential(t *testing.T) {
+	golden := pcLoadGolden(t)
+	cases := pcCases()
+	if len(golden.Cases) != len(cases) {
+		t.Fatalf("frozen bundle has %d cases, want %d", len(golden.Cases), len(cases))
+	}
+	seen := make(map[string]bool, len(golden.Cases))
+	for _, rec := range golden.Cases {
+		if seen[rec.Name] {
+			t.Fatalf("frozen bundle has duplicate case %q", rec.Name)
+		}
+		seen[rec.Name] = true
+	}
+
+	for _, tc := range pcCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			T := t.TempDir()
 			t.Cleanup(func() { pcChmodWritable(T) })
 			root := filepath.Join(T, "project")
 			home := filepath.Join(T, "home")
+
+			rec := pcGoldenCaseByName(t, golden, tc.name)
 
 			spec := pcSpec{
 				Mode:        "lib",
@@ -590,14 +791,26 @@ func TestProjectCacheDifferential(t *testing.T) {
 				}
 			}
 
-			// Leg 1: the real Python module (CLI subprocess or importlib call).
-			pcSeedLeg(t, T, root, home, tc)
-			ref := pcRunRef(t, refScript, spec)
+			repl := pcTokenReplacer(t, T, pcSpecCacheKeys(spec)...)
+			if got := pcTokenizeSpec(t, spec, repl); !reflect.DeepEqual(got, rec.Spec) {
+				t.Fatalf("case precondition drift: frozen %+v, built %+v", rec.Spec, got)
+			}
 
-			// Leg 2: the Go port on an identical, freshly reset tree.
+			// The oracle leg is the frozen record; the Go port runs on a freshly
+			// seeded tree with the same inputs.
+			ref := rec.Ref
 			pcSeedLeg(t, T, root, home, tc)
-			goOut, goErr, goRC, goResult := pcRunGo(t, spec, root, home)
+			goOut, goErr, goRC, goResult := pcRunGo(t, spec, root)
 			goFiles, goModes, goDirs, goLinks := pcSnapshot(t, T)
+
+			// Compare in the frozen bundle's placeholder space, symmetrically.
+			goOut = repl.Replace(goOut)
+			goErr = repl.Replace(goErr)
+			goFiles = pcTokenizeFiles(t, goFiles, repl)
+			goModes = pcTokenizeModes(repl, goModes)
+			goDirs = pcTokenizeDirs(repl, goDirs)
+			goLinks = pcTokenizeValues(repl, goLinks)
+			goResult = pcTokenizeBytes(repl, goResult)
 
 			if tc.safetyException {
 				pcAssertSafetyException(t, ref, goOut, goErr, goFiles, goModes, goDirs, goLinks)
@@ -739,30 +952,8 @@ func pcGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-func pcRunRef(t *testing.T, refScript string, spec pcSpec) pcRef {
-	t.Helper()
-	payload, err := json.Marshal(spec)
-	if err != nil {
-		t.Fatalf("marshal spec: %v", err)
-	}
-	cmd := exec.Command("python3", refScript)
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	cmd.Stdin = bytes.NewReader(payload)
-	var out, errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("ref driver failed: %v\nstderr: %s", err, errBuf.String())
-	}
-	var ref pcRef
-	if err := json.Unmarshal(out.Bytes(), &ref); err != nil {
-		t.Fatalf("parse ref JSON: %v\nraw: %s", err, out.String())
-	}
-	return ref
-}
-
 // pcRunGo invokes the Go port with the same inputs the driver received.
-func pcRunGo(t *testing.T, spec pcSpec, root, home string) (string, string, int, []byte) {
+func pcRunGo(t *testing.T, spec pcSpec, root string) (string, string, int, []byte) {
 	t.Helper()
 	var out, errBuf bytes.Buffer
 	var result any
@@ -1236,7 +1427,7 @@ func pcSeedBundled(t *testing.T, home string) {
 	pcWrite(t, filepath.Join(home, "bundled-commands", "cmd1.md"), "# cmd1\n", 0o644)
 }
 
-func pcCases(t *testing.T) []pcCase {
+func pcCases() []pcCase {
 	shaOld := sha256Hex([]byte("# old alpha\n"))
 
 	return []pcCase{
