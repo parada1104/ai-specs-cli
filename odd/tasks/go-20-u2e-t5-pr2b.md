@@ -1,0 +1,41 @@
+# Go 20 / U2e T5 PR2-B — freeze the remaining live Python oracles (feature)
+
+Program: `odd/tasks/go-20-u2e-flip.md` (T5, reconciled in L60). Base `047de79` (epic tip, PR #480 PR3 merged).
+Branch `change/go-20-u2e-t5-pr2b-s1`. This document covers slice S1 only; S2 and later start after S1 merges.
+
+## Specs
+
+- S1 — Parent request, verbatim: "congela los oráculos Python del primer slice preservando precondiciones, efectos y controles negativos, decide partición coherente y entrega secuencial. Valida candidato y assess exacto; crea PR al épico y detente antes de solicitar o ejecutar merge hasta mi contraste explícito (no infieras un guard). Scratch, TMPDIR y GOTMPDIR bajo /Users/robert/.hermes/profiles/cody/cache/scratch; no retires Python ni toques development o hooks/config. Al 429 avísame; no cambies default."
+- S2 — Freeze means: every Go test that runs a Python oracle stops running it; its inputs (preconditions), outputs and effects are captured once into a frozen bundle under `testdata/`; the case matrix and every negative control (refusals, mutation controls, completeness checks, refusal writes nothing) are kept. No assertion is removed. A missing golden fails; no skip is added.
+- S3 — No Python is retired in this feature: oracle `.py` files and `lib/_internal` stay on disk until T5 PR4b. `development`, hooks and config are not touched. Default behaviour is not changed.
+- S4 — Partition (Cody, technical decision): S1 = `cliversion`, `lock`, `provider`, `projectcache`, one commit each, one PR. `schema/testdata/driver.py` is already frozen (L58, `82e8b96`) and no test runs it: no new freeze; its file removal waits for PR4b. `deps` (L54-L56) and `config` run no Python today (config's `recipe_remove_ref.py` is referenced only in comments). Remaining live runners after S1: the 13 `internal/sync/testdata/*_ref.py` oracles, as later slices by family, each after the previous one merges.
+- S5 — Validation per candidate: `tests/validate.sh` once on the final head, `TMPDIR`, `GOTMPDIR` and `GOCACHE` under `/Users/robert/.hermes/profiles/cody/cache/scratch/go20-t5-pr2b-s1`, `AI_SPECS_GO_BIN` pointing at a scratch build; parity gate-absent and gate-present `failing=0`. `gentle_review assess` exact with base `047de7952e2b9e53a696649589b7186bb2b7f5d7` and `committedOnly` true.
+- S6 — Delivery: PR to `epic/go-single-binary`, then stop before any merge until Robert's explicit contrast. No `--no-verify`, no `core.hooksPath` override.
+- S7 — A 429 from any provider is reported to Robert at once.
+
+## Tasks
+
+- **T1** — Freeze `cliversion` (`version_ref.py`). Golden `internal/cliversion/testdata/version_golden.json`, 85 records (not 36 as first written). Commit: `cc36a44`.
+- **T2** — Freeze `lock` (`write_lock_ref.py`). Goldens `write_lock_golden.json` (23 records: 17 written bytes, 6 refusals) and `roundtrip_golden.json`. Commit: `5929219`.
+- **T3** — Freeze `provider` (`provider_ref.py`). Golden `provider_golden.json`, 36 records. Host-bound tokens `<GOOS>`/`<GOARCH>` only in the fields that carry the host (fixed after review, see L3). Commit: `babe7fb`.
+- **T4** — Freeze `projectcache` (`projectcache_ref.py`). Golden `projectcache_golden.json`, 48 differential records plus 17 realpath records, captured from Python 3.14.7. Commit: `69fce86`.
+- **T5** — Document S1 (this file), then validate, assess, push, PR, stop before merge.
+
+## Log
+
+- L1 — Parent request verbatim: see S1.
+- L2 — Discrepancy: Engram 308 lists `schema/testdata/driver.py` in S1, but L58 already froze schema. Treated as already done, not re-frozen. Engram 308's count of 23 oracles also includes deps and schema, which were frozen in L54-L58.
+- L3 — Host-independence. The `provider` golden was first captured with a host guard (`oracle.host`, failing on non-darwin/arm64). Review found that `release-binaries.yml` runs `go test ./internal/...` on `ubuntu-latest`, so the guard would fail CI. Fixed in `babe7fb` by tokenizing host-bound values in their exact fields (L55/L56 precedent) with a negative control (`TestProviderHostNormalizeLeavesOtherFieldsAlone`). Cross-compile proof only (`GOOS=linux GOARCH=amd64 go test -c`); no Linux run was observed.
+- L4 — Measured sizes (`git show --numstat`), not estimates:
+  - `cc36a44` cliversion: 61 lines of test code, 89 golden lines.
+  - `5929219` lock: 163 lines of test code, 228 golden lines.
+  - `babe7fb` provider: 347 lines of test code, 376 golden lines.
+  - `69fce86` projectcache: 335 lines of test code, 2,138 golden lines (one record per line, data only).
+  - S1 total against `047de79`: 1,035 authored test lines and 2,831 data lines.
+  - Slice boundary: the four commits are independently reviewable and each builds and passes alone. The PR as a whole exceeds the ~400-line guidance because of the projectcache data, which is the frozen record the test reads and cannot be split from its test without leaving a partial golden. This is recorded as a review risk for Robert, not hidden.
+- L5 — Evidence per task (writer evidence checked by the parent, not accepted on report alone):
+  - Each test: `go test` green on the package, `gofmt -l` empty, `go vet` clean, no `exec.Command` of Python in the four packages (grep), no new `t.Skip` (diff grep).
+  - RED by moving each golden aside (missing-file failure), GREEN after restore, and a single-record mutation that fails exactly one subtest, then restore with sha256 identical.
+  - Linux cross-compile of the changed packages: OK.
+- L6 — Limits, stated: each golden is a snapshot of the Python oracle at capture; a legacy change is not seen until regeneration, which needs a human decision (same class as L46, L48-L59). Scratch captures and backups live outside the worktree under the authorized scratch.
+- L7 — Next: T5 validation on the final head (`tests/validate.sh` once, scratch TMPDIR), `gentle_review assess` exact, push with an explicit refspec, PR to `epic/go-single-binary`, stop before merge for Robert's contrast.
