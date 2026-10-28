@@ -163,19 +163,51 @@ func pathForms(p string) []string {
 	return []string{p}
 }
 
-// smokeNormalizer maps one run's scratch paths to the placeholders of the frozen
-// oracle: the repository root to <ROOT>, the case directory to <DIR>.
-func smokeNormalizer(root, dir string) *strings.Replacer {
-	var pairs []string
-	for _, f := range pathForms(root) {
-		pairs = append(pairs, f, "<ROOT>")
+// firstMismatch compares actual with a frozen record. The record holds <ROOT>
+// and <DIR> exactly where the run printed the scratch repository root and the
+// case directory; every other byte must match as written. Nothing in actual is
+// rewritten, so a scratch path printed anywhere the record does not place a
+// placeholder is a mismatch. It returns the byte offset in actual of the first
+// disagreement, or -1 when the two match.
+func firstMismatch(frozen, actual, root, dir string) int {
+	i, j := 0, 0
+	for i < len(frozen) {
+		switch {
+		case strings.HasPrefix(frozen[i:], "<ROOT>"):
+			if n := matchPath(actual[j:], pathForms(root)); n >= 0 {
+				i += len("<ROOT>")
+				j += n
+				continue
+			}
+			return j
+		case strings.HasPrefix(frozen[i:], "<DIR>"):
+			if n := matchPath(actual[j:], pathForms(dir)); n >= 0 {
+				i += len("<DIR>")
+				j += n
+				continue
+			}
+			return j
+		}
+		if j >= len(actual) || frozen[i] != actual[j] {
+			return j
+		}
+		i++
+		j++
 	}
-	if dir != root {
-		for _, f := range pathForms(dir) {
-			pairs = append(pairs, f, "<DIR>")
+	if j != len(actual) {
+		return j
+	}
+	return -1
+}
+
+// matchPath returns the length of the first form that prefixes s, or -1.
+func matchPath(s string, forms []string) int {
+	for _, f := range forms {
+		if strings.HasPrefix(s, f) {
+			return len(f)
 		}
 	}
-	return strings.NewReplacer(pairs...)
+	return -1
 }
 
 // TestDifferentialSmoke compares the Go binary with the frozen legacy launcher.
@@ -261,12 +293,11 @@ func TestDifferentialSmoke(t *testing.T) {
 			if !ok {
 				t.Fatalf("no frozen legacy record for %s", tc.name)
 			}
-			norm := smokeNormalizer(root, dir)
-			if got := norm.Replace(string(goOut)); got != want.Stdout {
-				t.Errorf("stdout mismatch:\n go:     %q\n frozen: %q", got, want.Stdout)
+			if j := firstMismatch(want.Stdout, string(goOut), root, dir); j >= 0 {
+				t.Errorf("stdout differs from the frozen oracle at byte %d:\n go:     %q\n frozen: %q", j, goOut, want.Stdout)
 			}
-			if got := norm.Replace(string(goErr)); got != want.Stderr {
-				t.Errorf("stderr mismatch:\n go:     %q\n frozen: %q", got, want.Stderr)
+			if j := firstMismatch(want.Stderr, string(goErr), root, dir); j >= 0 {
+				t.Errorf("stderr differs from the frozen oracle at byte %d:\n go:     %q\n frozen: %q", j, goErr, want.Stderr)
 			}
 			if goCode != want.Exit {
 				t.Errorf("exit code mismatch: go = %d, frozen legacy = %d", goCode, want.Exit)
@@ -321,5 +352,83 @@ func TestDoctorMissingPathDeviation(t *testing.T) {
 	want := "ERROR: " + resolvedMissing + " is not a directory.\n"
 	if string(goErr) != want {
 		t.Errorf("go stderr = %q, want %q", goErr, want)
+	}
+}
+
+// TestFirstMismatchPlacesPathsExactly pins the frozen matcher. A placeholder
+// accepts the scratch path only at its own position; a scratch path printed
+// in unrelated literal text is a mismatch at its exact byte offset, never
+// hidden by a rewrite of the actual output.
+func TestFirstMismatchPlacesPathsExactly(t *testing.T) {
+	const root = "/scratch/run-root"
+	const dir = "/scratch/run-dir"
+
+	t.Run("placeholder accepts the path at its position", func(t *testing.T) {
+		frozen := "<ROOT>/lib/doctor.sh: cd: <DIR>/x\n"
+		actual := root + "/lib/doctor.sh: cd: " + dir + "/x\n"
+		if j := firstMismatch(frozen, actual, root, dir); j != -1 {
+			t.Errorf("mismatch at %d; want none", j)
+		}
+	})
+
+	t.Run("a wrong path at a placeholder is a mismatch", func(t *testing.T) {
+		frozen := "<ROOT>/lib/doctor.sh\n"
+		actual := "/elsewhere/lib/doctor.sh\n"
+		if j := firstMismatch(frozen, actual, root, dir); j != 0 {
+			t.Errorf("mismatch at %d; want 0", j)
+		}
+	})
+
+	t.Run("scratch path in unrelated text fails at its offset", func(t *testing.T) {
+		// Real frozen record, no placeholders in it: any injected path must fail.
+		frozen := loadLegacySmokeGolden(t)["version"].Stdout
+		const note = "note: "
+		actual := frozen + note + root + "\n"
+		// The first disagreement is the first byte the record does not cover:
+		// the injected text starts right after the frozen bytes.
+		if j := firstMismatch(frozen, actual, root, dir); j != len(frozen) {
+			t.Errorf("mismatch at %d; want the first unmatched byte at %d", j, len(frozen))
+		}
+		if got := actual[len(frozen)+len(note):]; got != root+"\n" {
+			t.Fatalf("control setup: injected path not at its offset: %q", got)
+		}
+	})
+
+	t.Run("scratch path replacing literal text fails", func(t *testing.T) {
+		frozen := loadLegacySmokeGolden(t)["configure-recipes-nontty"].Stderr
+		actual := root + "\n"
+		if j := firstMismatch(frozen, actual, root, dir); j != 0 {
+			t.Errorf("mismatch at %d; want 0", j)
+		}
+	})
+}
+
+// TestFrozenPlaceholdersOnlyAtPathPositions guards the frozen oracle itself.
+// A capture that rewrote scratch substrings globally would leave <ROOT> or
+// <DIR> inside literal text; here every placeholder must sit where a path
+// is printed (after a line start, space, colon or tab; before a slash,
+// colon, space, quote or end of line).
+func TestFrozenPlaceholdersOnlyAtPathPositions(t *testing.T) {
+	before := map[byte]bool{' ': true, ':': true, '\t': true, '\n': true}
+	after := map[byte]bool{'/': true, ':': true, ' ': true, '\n': true, '\'': true, '"': true, ')': true}
+	for name, rec := range loadLegacySmokeGolden(t) {
+		for field, text := range map[string]string{"stdout": rec.Stdout, "stderr": rec.Stderr} {
+			for _, tag := range []string{"<ROOT>", "<DIR>"} {
+				for i := 0; ; {
+					k := strings.Index(text[i:], tag)
+					if k < 0 {
+						break
+					}
+					p := i + k
+					end := p + len(tag)
+					okBefore := p == 0 || before[text[p-1]]
+					okAfter := end == len(text) || after[text[end]]
+					if !okBefore || !okAfter {
+						t.Errorf("%s.%s: %s is not at a path position: %q", name, field, tag, text[max(0, p-20):min(len(text), end+20)])
+					}
+					i = end
+				}
+			}
+		}
 	}
 }
