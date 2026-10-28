@@ -1,0 +1,162 @@
+{
+  "absolute-path-error": {
+    "code": 1,
+    "stdout": "",
+    "stderr": "{\"error\": {\"path\": \"/etc\", \"reason\": \"must be relative to the root\"}}\n"
+  },
+  "backslash-and-duplicate": {
+    "code": 0,
+    "stdout": "{\n  \"root\": \"<TMP>/proj\",\n  \"manifest\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n  \"planning_root\": \"<TMP>/proj\",\n  \"topology\": {\n    \"resolved\": \"standalone\",\n    \"configured\": \"auto\",\n    \"via\": \"auto\",\n    \"source\": \"default\"\n  },\n  \"declared_only\": true,\n  \"fanout_targets\": [\n    \"pkg/a\"\n  ],\n  \"worktrees_dir\": \".worktrees\",\n  \"gitmodules\": {\n    \"path\": \"<TMP>/proj/.gitmodules\",\n    \"mode\": \"advisory-only\",\n    \"present\": false\n  },\n  \"targets\": [\n    {\n      \"name\": \"root\",\n      \"kind\": \"root\",\n      \"path\": \"<TMP>/proj\",\n      \"rel\": \".\",\n      \"planning_root\": \"<TMP>/proj\",\n      \"derived_ai_specs\": \"<TMP>/proj/ai-specs\",\n      \"manifest_source\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    },\n    {\n      \"name\": \"pkg/a\",\n      \"kind\": \"subrepo\",\n      \"path\": \"<TMP>/proj/pkg/a\",\n      \"rel\": \"pkg/a\",\n      \"planning_root\": \"<TMP>/proj\",\n      \"derived_ai_specs\": \"<TMP>/proj/pkg/a/ai-specs\",\n      \"manifest_source\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  "empty-entries": {
+    "code": 0,
+    "stdout": "{\n  \"root\": \"<TMP>/proj\",\n  \"manifest\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n  \"planning_root\": \"<TMP>/proj\",\n  \"topology\": {\n    \"resolved\": \"standalone\",\n    \"configured\": \"auto\",\n    \"via\": \"auto\",\n    \"source\": \"default\"\n  },\n  \"declared_only\": true,\n  \"fanout_targets\": [],\n  \"worktrees_dir\": \".worktrees\",\n  \"gitmodules\": {\n    \"path\": \"<TMP>/proj/.gitmodules\",\n    \"mode\": \"advisory-only\",\n    \"present\": false\n  },\n  \"targets\": [\n    {\n      \"name\": \"root\",\n      \"kind\": \"root\",\n      \"path\": \"<TMP>/proj\",\n      \"rel\": \".\",\n      \"planning_root\": \"<TMP>/proj\",\n      \"derived_ai_specs\": \"<TMP>/proj/ai-specs\",\n      \"manifest_source\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  "errors/absolute-path": {
+    "code": 1,
+    "stdout": "",
+    "stderr": "{\"error\": {\"path\": \"/abs\", \"reason\": \"must be relative to the root\"}}\n"
+  },
+  "errors/escape": {
+    "code": 1,
+    "stdout": "",
+    "stderr": "{\"error\": {\"path\": \"../out\", \"reason\": \"escapes the root\"}}\n"
+  },
+  "errors/missing-dir": {
+    "code": 1,
+    "stdout": "",
+    "stderr": "{\"error\": {\"path\": \"ghost\", \"reason\": \"directory does not exist\"}}\n"
+  },
+  "errors/not-a-dir": {
+    "code": 1,
+    "stdout": "",
+    "stderr": "{\"error\": {\"path\": \"f.txt\", \"reason\": \"path is not a directory\"}}\n"
+  },
+  "escape-error": {
+    "code": 1,
+    "stdout": "",
+    "stderr": "{\"error\": {\"path\": \"../outside\", \"reason\": \"escapes the root\"}}\n"
+  },
+  "fixture-multi-target": {
+    "code": 0,
+    "stdout": "{\n  \"root\": \"<TMP>/multi-target\",\n  \"manifest\": \"<TMP>/multi-target/ai-specs/ai-specs.toml\",\n  \"planning_root\": \"<TMP>/multi-target\",\n  \"topology\": {\n    \"resolved\": \"standalone\",\n    \"configured\": \"auto\",\n    \"via\": \"auto\",\n    \"source\": \"default\"\n  },\n  \"declared_only\": true,\n  \"fanout_targets\": [\n    \"packages/a\",\n    \"packages/b\"\n  ],\n  \"worktrees_dir\": \".worktrees\",\n  \"gitmodules\": {\n    \"path\": \"<TMP>/multi-target/.gitmodules\",\n    \"mode\": \"advisory-only\",\n    \"present\": false\n  },\n  \"targets\": [\n    {\n      \"name\": \"root\",\n      \"kind\": \"root\",\n      \"path\": \"<TMP>/multi-target\",\n      \"rel\": \".\",\n      \"planning_root\": \"<TMP>/multi-target\",\n      \"derived_ai_specs\": \"<TMP>/multi-target/ai-specs\",\n      \"manifest_source\": \"<TMP>/multi-target/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    },\n    {\n      \"name\": \"packages/a\",\n      \"kind\": \"subrepo\",\n      \"path\": \"<TMP>/multi-target/packages/a\",\n      \"rel\": \"packages/a\",\n      \"planning_root\": \"<TMP>/multi-target\",\n      \"derived_ai_specs\": \"<TMP>/multi-target/packages/a/ai-specs\",\n      \"manifest_source\": \"<TMP>/multi-target/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    },\n    {\n      \"name\": \"packages/b\",\n      \"kind\": \"subrepo\",\n      \"path\": \"<TMP>/multi-target/packages/b\",\n      \"rel\": \"packages/b\",\n      \"planning_root\": \"<TMP>/multi-target\",\n      \"derived_ai_specs\": \"<TMP>/multi-target/packages/b/ai-specs\",\n      \"manifest_source\": \"<TMP>/multi-target/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  "fixture-root-only": {
+    "code": 0,
+    "stdout": "{\n  \"root\": \"<TMP>/root-only\",\n  \"manifest\": \"<TMP>/root-only/ai-specs/ai-specs.toml\",\n  \"planning_root\": \"<TMP>/root-only\",\n  \"topology\": {\n    \"resolved\": \"standalone\",\n    \"configured\": \"auto\",\n    \"via\": \"auto\",\n    \"source\": \"default\"\n  },\n  \"declared_only\": true,\n  \"fanout_targets\": [],\n  \"worktrees_dir\": \".worktrees\",\n  \"gitmodules\": {\n    \"path\": \"<TMP>/root-only/.gitmodules\",\n    \"mode\": \"advisory-only\",\n    \"present\": false\n  },\n  \"targets\": [\n    {\n      \"name\": \"root\",\n      \"kind\": \"root\",\n      \"path\": \"<TMP>/root-only\",\n      \"rel\": \".\",\n      \"planning_root\": \"<TMP>/root-only\",\n      \"derived_ai_specs\": \"<TMP>/root-only/ai-specs\",\n      \"manifest_source\": \"<TMP>/root-only/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  "missing-dir-error": {
+    "code": 1,
+    "stdout": "",
+    "stderr": "{\"error\": {\"path\": \"ghost\", \"reason\": \"directory does not exist\"}}\n"
+  },
+  "missing-manifest": {
+    "code": 1,
+    "stdout": "",
+    "stderr": "error: <TMP>/ai-specs/ai-specs.toml not found\n"
+  },
+  "non-string-filtered": {
+    "code": 0,
+    "stdout": "{\n  \"root\": \"<TMP>/proj\",\n  \"manifest\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n  \"planning_root\": \"<TMP>/proj\",\n  \"topology\": {\n    \"resolved\": \"standalone\",\n    \"configured\": \"auto\",\n    \"via\": \"auto\",\n    \"source\": \"default\"\n  },\n  \"declared_only\": true,\n  \"fanout_targets\": [],\n  \"worktrees_dir\": \".worktrees\",\n  \"gitmodules\": {\n    \"path\": \"<TMP>/proj/.gitmodules\",\n    \"mode\": \"advisory-only\",\n    \"present\": false\n  },\n  \"targets\": [\n    {\n      \"name\": \"root\",\n      \"kind\": \"root\",\n      \"path\": \"<TMP>/proj\",\n      \"rel\": \".\",\n      \"planning_root\": \"<TMP>/proj\",\n      \"derived_ai_specs\": \"<TMP>/proj/ai-specs\",\n      \"manifest_source\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  "nonexistent-root": {
+    "code": 1,
+    "stdout": "",
+    "stderr": "error: <TMP>/missing/ai-specs/ai-specs.toml not found\n"
+  },
+  "normpath-collapse": {
+    "code": 0,
+    "stdout": "{\n  \"root\": \"<TMP>/proj\",\n  \"manifest\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n  \"planning_root\": \"<TMP>/proj\",\n  \"topology\": {\n    \"resolved\": \"standalone\",\n    \"configured\": \"auto\",\n    \"via\": \"auto\",\n    \"source\": \"default\"\n  },\n  \"declared_only\": true,\n  \"fanout_targets\": [\n    \"dup\"\n  ],\n  \"worktrees_dir\": \".worktrees\",\n  \"gitmodules\": {\n    \"path\": \"<TMP>/proj/.gitmodules\",\n    \"mode\": \"advisory-only\",\n    \"present\": false\n  },\n  \"targets\": [\n    {\n      \"name\": \"root\",\n      \"kind\": \"root\",\n      \"path\": \"<TMP>/proj\",\n      \"rel\": \".\",\n      \"planning_root\": \"<TMP>/proj\",\n      \"derived_ai_specs\": \"<TMP>/proj/ai-specs\",\n      \"manifest_source\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    },\n    {\n      \"name\": \"dup\",\n      \"kind\": \"subrepo\",\n      \"path\": \"<TMP>/proj/dup\",\n      \"rel\": \"dup\",\n      \"planning_root\": \"<TMP>/proj\",\n      \"derived_ai_specs\": \"<TMP>/proj/dup/ai-specs\",\n      \"manifest_source\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  "not-a-dir-error": {
+    "code": 1,
+    "stdout": "",
+    "stderr": "{\"error\": {\"path\": \"f.txt\", \"reason\": \"path is not a directory\"}}\n"
+  },
+  "super-with-submodule": {
+    "code": 0,
+    "stdout": "{\n  \"root\": \"<TMP>/super\",\n  \"manifest\": \"<TMP>/super/ai-specs/ai-specs.toml\",\n  \"planning_root\": \"<TMP>/super\",\n  \"topology\": {\n    \"resolved\": \"monorepo-submodules\",\n    \"configured\": \"auto\",\n    \"via\": \"auto\",\n    \"source\": \"default\"\n  },\n  \"declared_only\": true,\n  \"fanout_targets\": [\n    \"sub\"\n  ],\n  \"worktrees_dir\": \".worktrees\",\n  \"gitmodules\": {\n    \"path\": \"<TMP>/super/.gitmodules\",\n    \"mode\": \"advisory-only\",\n    \"present\": true\n  },\n  \"targets\": [\n    {\n      \"name\": \"root\",\n      \"kind\": \"root\",\n      \"path\": \"<TMP>/super\",\n      \"rel\": \".\",\n      \"planning_root\": \"<TMP>/super\",\n      \"derived_ai_specs\": \"<TMP>/super/ai-specs\",\n      \"manifest_source\": \"<TMP>/super/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    },\n    {\n      \"name\": \"sub\",\n      \"kind\": \"subrepo\",\n      \"path\": \"<TMP>/super/sub\",\n      \"rel\": \"sub\",\n      \"planning_root\": \"<TMP>/super\",\n      \"derived_ai_specs\": \"<TMP>/super/sub/ai-specs\",\n      \"manifest_source\": \"<TMP>/super/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  "super-without-submodules": {
+    "code": 0,
+    "stdout": "{\n  \"root\": \"<TMP>/plain\",\n  \"manifest\": \"<TMP>/plain/ai-specs/ai-specs.toml\",\n  \"planning_root\": \"<TMP>/plain\",\n  \"topology\": {\n    \"resolved\": \"standalone\",\n    \"configured\": \"auto\",\n    \"via\": \"auto\",\n    \"source\": \"default\"\n  },\n  \"declared_only\": true,\n  \"fanout_targets\": [],\n  \"worktrees_dir\": \".worktrees\",\n  \"gitmodules\": {\n    \"path\": \"<TMP>/plain/.gitmodules\",\n    \"mode\": \"advisory-only\",\n    \"present\": false\n  },\n  \"targets\": [\n    {\n      \"name\": \"root\",\n      \"kind\": \"root\",\n      \"path\": \"<TMP>/plain\",\n      \"rel\": \".\",\n      \"planning_root\": \"<TMP>/plain\",\n      \"derived_ai_specs\": \"<TMP>/plain/ai-specs\",\n      \"manifest_source\": \"<TMP>/plain/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  "symlink-dangling-outside": {
+    "code": 1,
+    "stdout": "",
+    "stderr": "{\"error\": {\"path\": \"dangle\", \"reason\": \"escapes the root after resolution\"}}\n"
+  },
+  "symlink-escape": {
+    "code": 1,
+    "stdout": "",
+    "stderr": "{\"error\": {\"path\": \"sneaky\", \"reason\": \"escapes the root after resolution\"}}\n"
+  },
+  "symlink-inside": {
+    "code": 0,
+    "stdout": "{\n  \"root\": \"<TMP>/proj\",\n  \"manifest\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n  \"planning_root\": \"<TMP>/proj\",\n  \"topology\": {\n    \"resolved\": \"standalone\",\n    \"configured\": \"auto\",\n    \"via\": \"auto\",\n    \"source\": \"default\"\n  },\n  \"declared_only\": true,\n  \"fanout_targets\": [\n    \"alias\"\n  ],\n  \"worktrees_dir\": \".worktrees\",\n  \"gitmodules\": {\n    \"path\": \"<TMP>/proj/.gitmodules\",\n    \"mode\": \"advisory-only\",\n    \"present\": false\n  },\n  \"targets\": [\n    {\n      \"name\": \"root\",\n      \"kind\": \"root\",\n      \"path\": \"<TMP>/proj\",\n      \"rel\": \".\",\n      \"planning_root\": \"<TMP>/proj\",\n      \"derived_ai_specs\": \"<TMP>/proj/ai-specs\",\n      \"manifest_source\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    },\n    {\n      \"name\": \"alias\",\n      \"kind\": \"subrepo\",\n      \"path\": \"<TMP>/proj/real\",\n      \"rel\": \"alias\",\n      \"planning_root\": \"<TMP>/proj\",\n      \"derived_ai_specs\": \"<TMP>/proj/real/ai-specs\",\n      \"manifest_source\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  "symlink-to-file": {
+    "code": 1,
+    "stdout": "",
+    "stderr": "{\"error\": {\"path\": \"lfile\", \"reason\": \"path is not a directory\"}}\n"
+  },
+  "topology-bogus": {
+    "code": 0,
+    "stdout": "{\n  \"root\": \"<TMP>/proj\",\n  \"manifest\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n  \"planning_root\": \"<TMP>/proj\",\n  \"topology\": {\n    \"resolved\": \"standalone\",\n    \"configured\": \"auto\",\n    \"via\": \"auto\",\n    \"source\": \"project\"\n  },\n  \"declared_only\": true,\n  \"fanout_targets\": [],\n  \"worktrees_dir\": \".worktrees\",\n  \"gitmodules\": {\n    \"path\": \"<TMP>/proj/.gitmodules\",\n    \"mode\": \"advisory-only\",\n    \"present\": false\n  },\n  \"targets\": [\n    {\n      \"name\": \"root\",\n      \"kind\": \"root\",\n      \"path\": \"<TMP>/proj\",\n      \"rel\": \".\",\n      \"planning_root\": \"<TMP>/proj\",\n      \"derived_ai_specs\": \"<TMP>/proj/ai-specs\",\n      \"manifest_source\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  "topology-legacy-recipe": {
+    "code": 0,
+    "stdout": "{\n  \"root\": \"<TMP>/proj\",\n  \"manifest\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n  \"planning_root\": \"<TMP>/proj\",\n  \"topology\": {\n    \"resolved\": \"standalone\",\n    \"configured\": \"standalone\",\n    \"via\": \"config\",\n    \"source\": \"legacy-recipe\"\n  },\n  \"declared_only\": true,\n  \"fanout_targets\": [],\n  \"worktrees_dir\": \".worktrees\",\n  \"gitmodules\": {\n    \"path\": \"<TMP>/proj/.gitmodules\",\n    \"mode\": \"advisory-only\",\n    \"present\": false\n  },\n  \"targets\": [\n    {\n      \"name\": \"root\",\n      \"kind\": \"root\",\n      \"path\": \"<TMP>/proj\",\n      \"rel\": \".\",\n      \"planning_root\": \"<TMP>/proj\",\n      \"derived_ai_specs\": \"<TMP>/proj/ai-specs\",\n      \"manifest_source\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  "topology-project": {
+    "code": 0,
+    "stdout": "{\n  \"root\": \"<TMP>/proj\",\n  \"manifest\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n  \"planning_root\": \"<TMP>/proj\",\n  \"topology\": {\n    \"resolved\": \"monorepo-apps\",\n    \"configured\": \"monorepo-apps\",\n    \"via\": \"config\",\n    \"source\": \"project\"\n  },\n  \"declared_only\": true,\n  \"fanout_targets\": [],\n  \"worktrees_dir\": \".worktrees\",\n  \"gitmodules\": {\n    \"path\": \"<TMP>/proj/.gitmodules\",\n    \"mode\": \"advisory-only\",\n    \"present\": false\n  },\n  \"targets\": [\n    {\n      \"name\": \"root\",\n      \"kind\": \"root\",\n      \"path\": \"<TMP>/proj\",\n      \"rel\": \".\",\n      \"planning_root\": \"<TMP>/proj\",\n      \"derived_ai_specs\": \"<TMP>/proj/ai-specs\",\n      \"manifest_source\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  "usage-two-args": {
+    "code": 2,
+    "stdout": "",
+    "stderr": "Usage: lib/_internal/target-resolve.py <project_root>\n"
+  },
+  "usage-zero-args": {
+    "code": 2,
+    "stdout": "",
+    "stderr": "Usage: lib/_internal/target-resolve.py <project_root>\n"
+  },
+  "worktrees-config-dict": {
+    "code": 0,
+    "stdout": "{\n  \"root\": \"<TMP>/proj\",\n  \"manifest\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n  \"planning_root\": \"<TMP>/proj\",\n  \"topology\": {\n    \"resolved\": \"standalone\",\n    \"configured\": \"auto\",\n    \"via\": \"auto\",\n    \"source\": \"default\"\n  },\n  \"declared_only\": true,\n  \"fanout_targets\": [],\n  \"worktrees_dir\": \"custom-wt\",\n  \"gitmodules\": {\n    \"path\": \"<TMP>/proj/.gitmodules\",\n    \"mode\": \"advisory-only\",\n    \"present\": false\n  },\n  \"targets\": [\n    {\n      \"name\": \"root\",\n      \"kind\": \"root\",\n      \"path\": \"<TMP>/proj\",\n      \"rel\": \".\",\n      \"planning_root\": \"<TMP>/proj\",\n      \"derived_ai_specs\": \"<TMP>/proj/ai-specs\",\n      \"manifest_source\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  "worktrees-dict": {
+    "code": 0,
+    "stdout": "{\n  \"root\": \"<TMP>/proj\",\n  \"manifest\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n  \"planning_root\": \"<TMP>/proj\",\n  \"topology\": {\n    \"resolved\": \"standalone\",\n    \"configured\": \"auto\",\n    \"via\": \"auto\",\n    \"source\": \"default\"\n  },\n  \"declared_only\": true,\n  \"fanout_targets\": [],\n  \"worktrees_dir\": \"{'a': 1, 'b': 'two'}\",\n  \"gitmodules\": {\n    \"path\": \"<TMP>/proj/.gitmodules\",\n    \"mode\": \"advisory-only\",\n    \"present\": false\n  },\n  \"targets\": [\n    {\n      \"name\": \"root\",\n      \"kind\": \"root\",\n      \"path\": \"<TMP>/proj\",\n      \"rel\": \".\",\n      \"planning_root\": \"<TMP>/proj\",\n      \"derived_ai_specs\": \"<TMP>/proj/ai-specs\",\n      \"manifest_source\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  "worktrees-falsy": {
+    "code": 0,
+    "stdout": "{\n  \"root\": \"<TMP>/proj\",\n  \"manifest\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n  \"planning_root\": \"<TMP>/proj\",\n  \"topology\": {\n    \"resolved\": \"standalone\",\n    \"configured\": \"auto\",\n    \"via\": \"auto\",\n    \"source\": \"default\"\n  },\n  \"declared_only\": true,\n  \"fanout_targets\": [],\n  \"worktrees_dir\": \".worktrees\",\n  \"gitmodules\": {\n    \"path\": \"<TMP>/proj/.gitmodules\",\n    \"mode\": \"advisory-only\",\n    \"present\": false\n  },\n  \"targets\": [\n    {\n      \"name\": \"root\",\n      \"kind\": \"root\",\n      \"path\": \"<TMP>/proj\",\n      \"rel\": \".\",\n      \"planning_root\": \"<TMP>/proj\",\n      \"derived_ai_specs\": \"<TMP>/proj/ai-specs\",\n      \"manifest_source\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  "worktrees-flat-style": {
+    "code": 0,
+    "stdout": "{\n  \"root\": \"<TMP>/proj\",\n  \"manifest\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n  \"planning_root\": \"<TMP>/proj\",\n  \"topology\": {\n    \"resolved\": \"standalone\",\n    \"configured\": \"auto\",\n    \"via\": \"auto\",\n    \"source\": \"default\"\n  },\n  \"declared_only\": true,\n  \"fanout_targets\": [],\n  \"worktrees_dir\": \"flat-wt\",\n  \"gitmodules\": {\n    \"path\": \"<TMP>/proj/.gitmodules\",\n    \"mode\": \"advisory-only\",\n    \"present\": false\n  },\n  \"targets\": [\n    {\n      \"name\": \"root\",\n      \"kind\": \"root\",\n      \"path\": \"<TMP>/proj\",\n      \"rel\": \".\",\n      \"planning_root\": \"<TMP>/proj\",\n      \"derived_ai_specs\": \"<TMP>/proj/ai-specs\",\n      \"manifest_source\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  "worktrees-int": {
+    "code": 0,
+    "stdout": "{\n  \"root\": \"<TMP>/proj\",\n  \"manifest\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n  \"planning_root\": \"<TMP>/proj\",\n  \"topology\": {\n    \"resolved\": \"standalone\",\n    \"configured\": \"auto\",\n    \"via\": \"auto\",\n    \"source\": \"default\"\n  },\n  \"declared_only\": true,\n  \"fanout_targets\": [],\n  \"worktrees_dir\": \"3\",\n  \"gitmodules\": {\n    \"path\": \"<TMP>/proj/.gitmodules\",\n    \"mode\": \"advisory-only\",\n    \"present\": false\n  },\n  \"targets\": [\n    {\n      \"name\": \"root\",\n      \"kind\": \"root\",\n      \"path\": \"<TMP>/proj\",\n      \"rel\": \".\",\n      \"planning_root\": \"<TMP>/proj\",\n      \"derived_ai_specs\": \"<TMP>/proj/ai-specs\",\n      \"manifest_source\": \"<TMP>/proj/ai-specs/ai-specs.toml\",\n      \"derived_artifacts\": [\n        \"AGENTS.md\",\n        \"ai-specs/.gitignore\",\n        \"ai-specs/skills/**\",\n        \"ai-specs/commands/**\",\n        \"agent-configs\"\n      ],\n      \"version_policy\": \"derived-only: overwrite from the root manifest on every root sync; subrepo copies are advisory outputs and must not be hand-edited\"\n    }\n  ]\n}\n",
+    "stderr": ""
+  }
+}
