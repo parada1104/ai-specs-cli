@@ -949,22 +949,26 @@ func pcFilesMatch(want map[string]string, got map[string]string, env pcHostEnv) 
 	return true
 }
 
-// pcModesMatch compares mode bits per path-valued key.
+// pcModesMatch compares mode bits per path-valued key, one to one: a Go key
+// already consumed by another frozen entry cannot be reused, so a size
+// coincidence can never hide a missing path.
 func pcModesMatch(want map[string]int, got map[string]int, env pcHostEnv) bool {
 	if len(want) != len(got) {
 		return false
 	}
+	matched := map[string]bool{}
 	for kF, vF := range want {
-		found := false
+		found := ""
 		for _, cand := range pcExpandExpectation(kF, env) {
-			if v, ok := got[cand]; ok && v == vF {
-				found = true
+			if v, ok := got[cand]; ok && v == vF && !matched[cand] {
+				found = cand
 				break
 			}
 		}
-		if !found {
+		if found == "" {
 			return false
 		}
+		matched[found] = true
 	}
 	return true
 }
@@ -983,16 +987,18 @@ func pcDirsMatch(want []string, got []string, env pcHostEnv) bool {
 	return true
 }
 
-// pcLinksMatch compares symlink maps: keys (the link path) and values (the
-// symlink target) are both path-valued.
+// pcLinksMatch compares symlink maps one to one: keys (the link path) and
+// values (the symlink target) are both path-valued, and a Go key already
+// consumed by another frozen entry cannot be reused.
 func pcLinksMatch(want map[string]string, got map[string]string, env pcHostEnv) bool {
 	if len(want) != len(got) {
 		return false
 	}
+	matched := map[string]bool{}
 	for kF, vF := range want {
 		found := ""
 		for _, cand := range pcExpandExpectation(kF, env) {
-			if _, ok := got[cand]; ok {
+			if _, ok := got[cand]; ok && !matched[cand] {
 				found = cand
 				break
 			}
@@ -1000,67 +1006,77 @@ func pcLinksMatch(want map[string]string, got map[string]string, env pcHostEnv) 
 		if found == "" || !pcExpectEqual(vF, got[found], env) {
 			return false
 		}
+		matched[found] = true
 	}
 	return true
 }
 
-// pcResultMatch compares the frozen result with the Go result. The only
-// tokenized result in the bundle is the gate-backup path (a JSON string whose
-// contract is the backup location); any other result must be token-free JSON
-// and is compared structurally, as before.
-func pcResultMatch(want json.RawMessage, got []byte, env pcHostEnv) bool {
+// pcTokenedResultCases records the inventoried case whose result contract is
+// a host path (the gate-backup location). A placeholder in any other case's
+// result is an inventory violation and fails loudly instead of being
+// normalized.
+var pcTokenedResultCases = map[string]bool{
+	"gate backup path": true,
+}
+
+// pcResultMatch compares the frozen result with the Go result. Only the
+// inventoried case's path result expands to its host candidates; every other
+// result must be token-free and is compared structurally, as before.
+func pcResultMatch(caseName string, want json.RawMessage, got []byte, env pcHostEnv) (bool, string) {
 	if len(want) == 0 && len(got) == 0 {
-		return true
+		return true, ""
 	}
 	if len(want) == 0 || len(got) == 0 {
-		return false
+		return false, "one side is empty"
 	}
 	var wAny, gAny any
 	if json.Unmarshal(want, &wAny) != nil || json.Unmarshal(got, &gAny) != nil {
-		return false
+		return false, "result is not valid JSON"
 	}
-	return pcValueMatch(wAny, gAny, env)
+	if wStr, ok := wAny.(string); ok {
+		gStr, ok := gAny.(string)
+		if !ok {
+			return false, "result kind differs"
+		}
+		if pcHasTokens(wStr) {
+			if !pcTokenedResultCases[caseName] {
+				return false, "result inventory violation: placeholder outside the inventoried path results"
+			}
+			if !pcExpectEqual(wStr, gStr, env) {
+				return false, "result path differs under every host spelling"
+			}
+			return true, ""
+		}
+		return wStr == gStr, ""
+	}
+	if !pcNoTokensDeep(wAny) {
+		return false, "result inventory violation: placeholder outside the inventoried path results"
+	}
+	return reflect.DeepEqual(wAny, gAny), ""
 }
 
-// pcValueMatch is the recursive form of pcResultMatch: strings go through the
-// scoped expansion, everything else compares structurally.
-func pcValueMatch(want, got any, env pcHostEnv) bool {
-	switch w := want.(type) {
+// pcNoTokensDeep walks a parsed JSON value and reports whether any string
+// inside it carries a placeholder.
+func pcNoTokensDeep(v any) bool {
+	switch x := v.(type) {
 	case string:
-		g, ok := got.(string)
-		if !ok {
-			return false
-		}
-		if pcHasTokens(w) {
-			return pcExpectEqual(w, g, env)
-		}
-		return w == g
+		return !pcHasTokens(x)
 	case map[string]any:
-		g, ok := got.(map[string]any)
-		if !ok || len(w) != len(g) {
-			return false
-		}
-		for k, v := range w {
-			gv, ok := g[k]
-			if !ok || !pcValueMatch(v, gv, env) {
+		for _, vv := range x {
+			if !pcNoTokensDeep(vv) {
 				return false
 			}
 		}
 		return true
 	case []any:
-		g, ok := got.([]any)
-		if !ok || len(w) != len(g) {
-			return false
-		}
-		for i := range w {
-			if !pcValueMatch(w[i], g[i], env) {
+		for _, vv := range x {
+			if !pcNoTokensDeep(vv) {
 				return false
 			}
 		}
 		return true
-	default:
-		return reflect.DeepEqual(want, got)
 	}
+	return true
 }
 
 func TestProjectCacheDifferential(t *testing.T) {
@@ -1146,8 +1162,8 @@ func TestProjectCacheDifferential(t *testing.T) {
 				t.Errorf("links differ:\n  go:  %v\n  ref: %v", goLinks, rec.Ref.Links)
 			}
 
-			if !pcResultMatch(rec.Ref.Result, goResult, env) {
-				t.Errorf("result differs: go=%s ref=%s", goResult, rec.Ref.Result)
+			if ok, detail := pcResultMatch(tc.name, rec.Ref.Result, goResult, env); !ok {
+				t.Errorf("result differs (%s): go=%s ref=%s", detail, goResult, rec.Ref.Result)
 			}
 
 			if tc.tracebackStderr {
@@ -1176,6 +1192,70 @@ func TestProjectCacheDifferential(t *testing.T) {
 				t.Errorf("stderr differs\n--- go ---\n%q\n--- ref ---\n%q", goErr, ref.Stderr)
 			}
 		})
+	}
+}
+
+// TestGoldenMapMatchingIsOneToOne pins the matched-set semantics of
+// pcModesMatch and pcLinksMatch: two frozen entries may never consume the
+// same Go key, so a size coincidence cannot hide a missing path. The first
+// pair (a tokenized key and its literal expansion) would double-consume the
+// single Go key "K-a" without the matched set, and "other" would go
+// unclaimed while both sizes agree.
+func TestGoldenMapMatchingIsOneToOne(t *testing.T) {
+	T := t.TempDir()
+	root := filepath.Join(T, "project")
+	key := pcCacheKeyPrefix(root)
+	env := pcNewHostEnv(T, key)
+
+	wantModes := map[string]int{
+		"home/cache/projects/<KEY>-project/a":       0o644,
+		"home/cache/projects/" + key + "-project/b": 0o755,
+	}
+	gotModes := map[string]int{
+		"home/cache/projects/" + key + "-project/a": 0o644,
+		"home/cache/projects/" + key + "-project/c": 0o755,
+	}
+	if pcModesMatch(wantModes, gotModes, env) {
+		t.Fatalf("modes: the missing path b was masked by double-consuming a (b frozen entry expands only to b)")
+	}
+
+	wantLinks := map[string]string{
+		"project/<KEY>-link":        T + "/realdest",
+		"project/" + key + "-link2": T + "/realdest2",
+	}
+	gotLinks := map[string]string{
+		"project/" + key + "-link": T + "/realdest",
+		"project/other":            T + "/realdest2",
+	}
+	if pcLinksMatch(wantLinks, gotLinks, env) {
+		t.Fatalf("links: the missing link2 was masked by double-consuming link")
+	}
+
+	// Positive counterparts: the correct one-to-one pairings compare equal.
+	goodModes := map[string]int{
+		"home/cache/projects/" + key + "-project/a": 0o644,
+		"home/cache/projects/" + key + "-project/b": 0o755,
+	}
+	if !pcModesMatch(goodModes, map[string]int{
+		"home/cache/projects/" + key + "-project/a": 0o644,
+		"home/cache/projects/" + key + "-project/b": 0o755,
+	}, env) {
+		t.Fatalf("modes: the correct one-to-one pairing must compare equal")
+	}
+	if !pcLinksMatch(map[string]string{"project/<KEY>-link": T + "/realdest"}, map[string]string{"project/" + key + "-link": T + "/realdest"}, env) {
+		t.Fatalf("links: the correct one-to-one pairing must compare equal")
+	}
+
+	// Result inventory: a tokened result outside the inventoried case is
+	// rejected, and the inventoried case expands.
+	if ok, detail := pcResultMatch("gate backup path", json.RawMessage(`"<TMP>/home/cache/projects/<KEY>-project/backups/x/deadbeef.sh"`), []byte(`"`+T+`/home/cache/projects/`+key+`-project/backups/x/deadbeef.sh"`), env); !ok {
+		t.Fatalf("result: the inventoried gate-backup path must expand: %s", detail)
+	}
+	if ok, _ := pcResultMatch("some other case", json.RawMessage(`"<TMP>/whatever"`), []byte(`"`+T+`/whatever"`), env); ok {
+		t.Fatalf("result: a tokened result outside the inventory must be rejected")
+	}
+	if ok, _ := pcResultMatch("some other case", json.RawMessage(`"plain value"`), []byte(`"plain value"`), env); !ok {
+		t.Fatalf("result: a token-free result must compare literally")
 	}
 }
 
