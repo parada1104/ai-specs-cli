@@ -796,52 +796,67 @@ func mustReadDir(t *testing.T, dir string) []os.DirEntry {
 	return entries
 }
 
-// TestInitBriefFallbackWritesThePlaceholder pins the render-failure branch of
-// init (init.sh's placeholder fallback, GO-20 U2e T5 PR3): with no AGENTS.md the
-// one-line placeholder is written, the warning is printed and init exits 0; an
-// existing AGENTS.md is kept byte for byte, with the same warning. The Python
-// row test_native_chain_failure_writes_the_placeholder (bash seam) is retired on
-// the strength of this test.
-func TestInitBriefFallbackWritesThePlaceholder(t *testing.T) {
-	const want = "  ! render skipped — fallback placeholder written\n"
+// TestInitRenderFailureWritesThePlaceholder drives the native init verb into a
+// real baseline-render failure, nothing injected: the isolated home has no recipe
+// catalog, so the template's enabled recipe cannot be materialized and
+// RenderBaselineBrief returns non-zero inside renderInitBrief. The fallback
+// contract is then observed end to end: exit 0, the warning, the placeholder when
+// AGENTS.md was missing, and the user's bytes when it was present. The Python
+// row test_native_chain_failure_writes_the_placeholder (bash seam) is retired
+// only with lib/ in PR4b; this test is its native route equivalent.
+func TestInitRenderFailureWritesThePlaceholder(t *testing.T) {
+	const warning = "  ! render skipped — fallback placeholder written\n"
+	const placeholder = "# AGENTS.md - Runtime context\n"
 
-	t.Run("no AGENTS.md", func(t *testing.T) {
-		agents := filepath.Join(t.TempDir(), "AGENTS.md")
-		var errW bytes.Buffer
-		if rc := briefFallback(agents, &errW); rc != 0 {
-			t.Fatalf("rc = %d, want 0", rc)
+	run := func(t *testing.T, preexisting []byte) (dir string, stdout, stderr string) {
+		t.Helper()
+		base := t.TempDir()
+		home := wizardTestHome(t)
+		dir = filepath.Join(base, "app")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
 		}
-		got, err := os.ReadFile(agents)
+		if preexisting != nil {
+			if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), preexisting, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var out, errW bytes.Buffer
+		if rc := runInit([]string{"init", dir}, home, strings.NewReader(""), &out, &errW, ""); rc != 0 {
+			t.Fatalf("exit = %d, want 0; stderr=%q", rc, errW.String())
+		}
+		if strings.Contains(out.String(), "render AGENTS.md (baseline brief)") {
+			t.Fatalf("the render succeeded; the fallback path was not exercised:\n%s", out.String())
+		}
+		return dir, out.String(), errW.String()
+	}
+
+	t.Run("no AGENTS.md writes the placeholder", func(t *testing.T) {
+		dir, _, stderr := run(t, nil)
+		if !strings.Contains(stderr, warning) {
+			t.Errorf("stderr lacks the warning:\n%q", stderr)
+		}
+		got, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(got) != "# AGENTS.md - Runtime context\n" {
-			t.Errorf("AGENTS.md = %q, want the placeholder", got)
-		}
-		if errW.String() != want {
-			t.Errorf("stderr = %q, want %q", errW.String(), want)
+		if string(got) != placeholder {
+			t.Errorf("AGENTS.md = %q, want the placeholder %q", got, placeholder)
 		}
 	})
 
-	t.Run("existing AGENTS.md is kept", func(t *testing.T) {
-		agents := filepath.Join(t.TempDir(), "AGENTS.md")
+	t.Run("a user AGENTS.md is kept byte for byte", func(t *testing.T) {
 		user := []byte("# hand-written brief\n")
-		if err := os.WriteFile(agents, user, 0o644); err != nil {
-			t.Fatal(err)
+		dir, _, stderr := run(t, user)
+		if !strings.Contains(stderr, warning) {
+			t.Errorf("stderr lacks the warning:\n%q", stderr)
 		}
-		var errW bytes.Buffer
-		if rc := briefFallback(agents, &errW); rc != 0 {
-			t.Fatalf("rc = %d, want 0", rc)
-		}
-		got, err := os.ReadFile(agents)
+		got, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !bytes.Equal(got, user) {
 			t.Errorf("AGENTS.md was overwritten: %q", got)
-		}
-		if errW.String() != want {
-			t.Errorf("stderr = %q, want %q", errW.String(), want)
 		}
 	})
 }
