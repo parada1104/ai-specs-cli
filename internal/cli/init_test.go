@@ -795,3 +795,53 @@ func mustReadDir(t *testing.T, dir string) []os.DirEntry {
 	}
 	return entries
 }
+
+// TestInitBriefFallbackWritesThePlaceholder pins the render-failure branch of
+// init (init.sh's placeholder fallback, GO-20 U2e T5 PR3): with no AGENTS.md the
+// one-line placeholder is written, the warning is printed and init exits 0; an
+// existing AGENTS.md is kept byte for byte, with the same warning. The Python
+// row test_native_chain_failure_writes_the_placeholder (bash seam) is retired on
+// the strength of this test.
+func TestInitBriefFallbackWritesThePlaceholder(t *testing.T) {
+	const want = "  ! render skipped — fallback placeholder written\n"
+
+	t.Run("no AGENTS.md", func(t *testing.T) {
+		agents := filepath.Join(t.TempDir(), "AGENTS.md")
+		var errW bytes.Buffer
+		if rc := briefFallback(agents, &errW); rc != 0 {
+			t.Fatalf("rc = %d, want 0", rc)
+		}
+		got, err := os.ReadFile(agents)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != "# AGENTS.md - Runtime context\n" {
+			t.Errorf("AGENTS.md = %q, want the placeholder", got)
+		}
+		if errW.String() != want {
+			t.Errorf("stderr = %q, want %q", errW.String(), want)
+		}
+	})
+
+	t.Run("existing AGENTS.md is kept", func(t *testing.T) {
+		agents := filepath.Join(t.TempDir(), "AGENTS.md")
+		user := []byte("# hand-written brief\n")
+		if err := os.WriteFile(agents, user, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var errW bytes.Buffer
+		if rc := briefFallback(agents, &errW); rc != 0 {
+			t.Fatalf("rc = %d, want 0", rc)
+		}
+		got, err := os.ReadFile(agents)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, user) {
+			t.Errorf("AGENTS.md was overwritten: %q", got)
+		}
+		if errW.String() != want {
+			t.Errorf("stderr = %q, want %q", errW.String(), want)
+		}
+	})
+}
