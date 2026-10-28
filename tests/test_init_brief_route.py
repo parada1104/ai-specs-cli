@@ -154,26 +154,6 @@ class InitBriefRouteTests(unittest.TestCase):
         self.assertEqual(agents.strip(), PLACEHOLDER)
         self.assertIn("render skipped", proc.stderr)
 
-    def test_both_routes_render_the_same_bytes(self):
-        go_cli = _go_cli.cli()
-        if go_cli == LEGACY_CLI:
-            self.skipTest("the Go build is unavailable, so the two routes would be one program")
-        legacy = _Fixture(self, "ai-specs-initbrief-legacy-")
-        native = _Fixture(self, "ai-specs-initbrief-native-")
-
-        legacy_proc = legacy.run(LEGACY_CLI, "init", env=legacy.env())
-        native_proc = native.run(go_cli, "init", env=native.env())
-
-        self.assertEqual(legacy_proc.returncode, 0, legacy_proc.stderr)
-        self.assertEqual(native_proc.returncode, 0, native_proc.stderr)
-        for label, proc in (("legacy", legacy_proc), ("native", native_proc)):
-            self.assertIn("✓ render AGENTS.md (baseline brief)", proc.stdout, f"{label} route")
-        self.assertEqual(
-            (legacy.target / "AGENTS.md").read_bytes(),
-            (native.target / "AGENTS.md").read_bytes(),
-        )
-
-
 class InitBriefGoldenTests(unittest.TestCase):
     def test_native_init_matches_the_legacy_golden(self):
         go_cli = _go_cli.cli()

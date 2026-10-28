@@ -795,3 +795,68 @@ func mustReadDir(t *testing.T, dir string) []os.DirEntry {
 	}
 	return entries
 }
+
+// TestInitRenderFailureWritesThePlaceholder drives the native init verb into a
+// real baseline-render failure, nothing injected: the isolated home has no recipe
+// catalog, so the template's enabled recipe cannot be materialized and
+// RenderBaselineBrief returns non-zero inside renderInitBrief. The fallback
+// contract is then observed end to end: exit 0, the warning, the placeholder when
+// AGENTS.md was missing, and the user's bytes when it was present. The Python
+// row test_native_chain_failure_writes_the_placeholder (bash seam) is retired
+// only with lib/ in PR4b; this test is its native route equivalent.
+func TestInitRenderFailureWritesThePlaceholder(t *testing.T) {
+	const warning = "  ! render skipped — fallback placeholder written\n"
+	const placeholder = "# AGENTS.md - Runtime context\n"
+
+	run := func(t *testing.T, preexisting []byte) (dir string, stdout, stderr string) {
+		t.Helper()
+		base := t.TempDir()
+		home := wizardTestHome(t)
+		dir = filepath.Join(base, "app")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if preexisting != nil {
+			if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), preexisting, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var out, errW bytes.Buffer
+		if rc := runInit([]string{"init", dir}, home, strings.NewReader(""), &out, &errW, ""); rc != 0 {
+			t.Fatalf("exit = %d, want 0; stderr=%q", rc, errW.String())
+		}
+		if strings.Contains(out.String(), "render AGENTS.md (baseline brief)") {
+			t.Fatalf("the render succeeded; the fallback path was not exercised:\n%s", out.String())
+		}
+		return dir, out.String(), errW.String()
+	}
+
+	t.Run("no AGENTS.md writes the placeholder", func(t *testing.T) {
+		dir, _, stderr := run(t, nil)
+		if !strings.Contains(stderr, warning) {
+			t.Errorf("stderr lacks the warning:\n%q", stderr)
+		}
+		got, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != placeholder {
+			t.Errorf("AGENTS.md = %q, want the placeholder %q", got, placeholder)
+		}
+	})
+
+	t.Run("a user AGENTS.md is kept byte for byte", func(t *testing.T) {
+		user := []byte("# hand-written brief\n")
+		dir, _, stderr := run(t, user)
+		if !strings.Contains(stderr, warning) {
+			t.Errorf("stderr lacks the warning:\n%q", stderr)
+		}
+		got, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, user) {
+			t.Errorf("AGENTS.md was overwritten: %q", got)
+		}
+	})
+}

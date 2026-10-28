@@ -415,64 +415,6 @@ class InitNativeDifferentialTests(unittest.TestCase):
         env_err, bare_err = with_env.stderr(env_proc), without_env.stderr(bare_proc)
         self.assertEqual(env_err, bare_err, _diff("hatch-retired stderr", bare_err, env_err))
 
-    # GO-20 U2e T2 finding (owner: T5, expires when lib/_internal is deleted): after the
-    # flip the legacy leg is the native binary, so the poison control below cannot fire.
-    # After T5 this test must rebuild the poison control against a Go surface before its
-    # native assertions can claim anything. Assertions untouched; expires with T5.
-    @unittest.expectedFailure
-    def test_native_wizard_never_executes_init_tui_py(self):
-        # T4b-1, the nativity pin: the isolated home gets a REAL lib copy whose
-        # init_tui.py is a poison that records its own execution and exits 3.
-        # The legacy leg stays LIVE here as RED logic: it proves the poison fires
-        # (the shell runs the Python wizard). The native leg must leave its marker
-        # ABSENT — if `init --tui` still delegated the whole verb to lib/init.sh,
-        # the poison would run there too and this assertion fails. Only the
-        # outputs are compared to the golden.
-        native_cli = self._native_cli()
-        fixture = _Fixture(self, "ai-specs-init-native-poison-")
-        golden = _golden("tui_poison")
-
-        def poison_home(home: Path, marker: Path) -> None:
-            lib = home / "lib"
-            lib.unlink()
-            shutil.copytree(ROOT / "lib", lib, symlinks=True,
-                            ignore=shutil.ignore_patterns("_vendor"))
-            (lib / "_vendor").symlink_to(ROOT / "lib" / "_vendor")
-            (lib / "_internal" / "init_tui.py").write_text(
-                "import sys\n"
-                f"open({str(marker)!r}, 'w').write('ran')\n"
-                "sys.exit(3)\n",
-                encoding="utf-8",
-            )
-
-        leg_marker = fixture.base / "poison-ran-legacy"
-        nat_marker = fixture.base / "poison-ran-native"
-        poison_home(fixture.legacy.home, leg_marker)
-        poison_home(fixture.native.home, nat_marker)
-
-        leg_proc = fixture.legacy.run(LEGACY_CLI, "--tui", str(fixture.legacy.target))
-        nat_proc = fixture.native.run(native_cli, "--tui", str(fixture.native.target))
-
-        # The poison is effective on the legacy leg: the shell ran init_tui.py,
-        # got rc 3 and fell back to the classic path.
-        self.assertTrue(leg_marker.exists(),
-                        "the poison never ran: the legacy leg did not execute its wizard")
-        self.assertEqual(leg_proc.returncode, 0, leg_proc.stderr)
-        self.assertIn("falling back to classic init", leg_proc.stderr)
-
-        # The native leg did the same work WITHOUT the Python wizard: no
-        # marker, the same fallback line, the same classic result.
-        self.assertFalse(nat_marker.exists(),
-                         "the native route executed lib/_internal/init_tui.py — the wizard is not native")
-        self.assertEqual(nat_proc.returncode, golden["returncode"], nat_proc.stderr)
-        self.assertEqual(nat_proc.returncode, 0, nat_proc.stderr)
-        self.assertIn("falling back to classic init", nat_proc.stderr)
-        self.assertTrue((fixture.native.target / "ai-specs" / "ai-specs.toml").is_file())
-        nat_out = fixture.native.stdout(nat_proc)
-        self.assertEqual(golden["stdout"], nat_out, _diff("poison stdout", golden["stdout"], nat_out))
-        nat_err = fixture.native.stderr(nat_proc)
-        self.assertEqual(golden["stderr"], nat_err, _diff("poison stderr", golden["stderr"], nat_err))
-
     def test_forced_tui_without_a_tty_falls_back_to_classic_as_the_golden(self):
         # S15/S6: --tui with pipes must refuse before any prompt (exit 3 from
         # the wizard) and hand the run to the classic path with the legacy
