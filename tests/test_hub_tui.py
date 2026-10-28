@@ -103,7 +103,8 @@ def _cli_env(home: Path, base: Path) -> dict:
 
 def _spawn_pty(target: Path, home: Path, feed: bytes = b"",
                timeout: float = 30,
-               stages: list[tuple[bytes, bytes]] | None = None) -> bytes:
+               stages: list[tuple[bytes, bytes]] | None = None,
+               exit_status: list[int] | None = None) -> bytes:
     """Spawn ``ai-specs hub <target>`` under a PTY and drive it.
 
     ``stages`` is a list of (needle, payload): each payload is written once
@@ -112,7 +113,8 @@ def _spawn_pty(target: Path, home: Path, feed: bytes = b"",
     questionary prompt; Ctrl-D (\\x04) sends EOF to a pause(); \\x1b[B is
     ArrowDown and \\n accepts the highlighted choice.
 
-    The pty master is always closed and the child reaped in finally.
+    The pty master is always closed and the child reaped in finally. When
+    ``exit_status`` is given, the child's return code is appended to it.
     """
     master, slave = os.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
@@ -183,6 +185,8 @@ def _spawn_pty(target: Path, home: Path, feed: bytes = b"",
         except Exception:
             proc.kill()
 
+    if exit_status is not None:
+        exit_status.append(proc.returncode)
     return output
 
 
@@ -234,12 +238,18 @@ class TestCommandMenu(unittest.TestCase):
         self.assertIn(b"Print the CLI version", out)
 
     def test_none_maps_to_quit(self):
-        # Ctrl-C on the menu prompt: questionary .ask() yields None → QUIT.
-        out = _spawn_pty(self.root, self.home, timeout=30, stages=[
+        # Ctrl-C on the menu prompt: questionary .ask() yields None → QUIT, which
+        # exits 0 (hub.py: `answer if answer is not None else Action.QUIT`). The
+        # prompt must be drawn and answered: without it the child could exit
+        # early, and the absence of a traceback would prove nothing.
+        status: list[int] = []
+        out = _spawn_pty(self.root, self.home, timeout=30, exit_status=status, stages=[
             (b"What do you want to do?", b"\x03"),
         ])
+        self.assertIn(b"What do you want to do?", out)
         self.assertNotIn(b"Traceback", out)
         self.assertNotIn(b"exited", _strip_ansi(out))
+        self.assertEqual(status, [0])
 
     def test_menu_has_exact_twelve_entries(self):
         out = _spawn_pty(self.root, self.home, timeout=30, stages=[
