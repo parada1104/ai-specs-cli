@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -99,7 +100,8 @@ func TestRenderProjectCacheMissingHome(t *testing.T) {
 }
 
 // TestCacheKeyFrozen pins the FROZEN derivation against a value computed by the
-// real Python module (python3 -c "import project-cache; cache_key(Path('/'))").
+// real Python module (python3 -c "import project-cache; cache_key(Path('/'))")
+// and frozen in testdata/projectcache_golden.json.
 func TestCacheKeyFrozen(t *testing.T) {
 	if got := CacheKey("/"); got != "8a5edab28263-project" {
 		t.Errorf("CacheKey(\"/\") = %q, want %q", got, "8a5edab28263-project")
@@ -232,39 +234,11 @@ func readFile(t *testing.T, path string) string {
 	return string(data)
 }
 
-// pyRealpaths returns os.path.realpath(p) for each path, computed by the real
-// Python interpreter (the oracle for Path.resolve()/realpath semantics).
-func pyRealpaths(t *testing.T, paths []string) []string {
+// pcRealpathCandidates seeds the realpath fixture under dir and returns the
+// pinned candidate list. Capture and test share it, so the frozen oracle leg
+// and the Go leg run against the very same shapes.
+func pcRealpathCandidates(t *testing.T, dir string) []string {
 	t.Helper()
-	payload, err := json.Marshal(paths)
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := "import json,os,sys;print(json.dumps([os.path.realpath(p) for p in json.load(sys.stdin)]))"
-	cmd := exec.Command("python3", "-c", script)
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	cmd.Stdin = bytes.NewReader(payload)
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("python realpath: %v", err)
-	}
-	var got []string
-	if err := json.Unmarshal(out, &got); err != nil {
-		t.Fatalf("parse realpath output: %v\n%s", err, out)
-	}
-	return got
-}
-
-// TestResolvePathMatchesPythonRealpath pins the posixpath.realpath(strict=False)
-// algorithm: each component's symlinks resolve BEFORE `..` pops against the
-// resolved prefix; a dangling component leaves the tail unresolved; a symlink
-// loop returns the looping link unresolved. Clean-first (filepath.Abs/Clean)
-// collapses `..` before symlink resolution and diverges on every case below.
-func TestResolvePathMatchesPythonRealpath(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	dir := t.TempDir()
 	deep := filepath.Join(dir, "deep", "a", "b", "c")
 	if err := os.MkdirAll(deep, 0o755); err != nil {
 		t.Fatal(err)
@@ -313,10 +287,31 @@ func TestResolvePathMatchesPythonRealpath(t *testing.T) {
 		dir + "/loop_a/x",
 		dir + "/loop_a/../x",
 	}
-	want := pyRealpaths(t, candidates)
+	return candidates
+}
+
+// TestResolvePathMatchesPythonRealpath pins the posixpath.realpath(strict=False)
+// algorithm against the frozen bundle: each component's symlinks resolve BEFORE
+// `..` pops against the resolved prefix; a dangling component leaves the tail
+// unresolved; a symlink loop returns the looping link unresolved. Clean-first
+// (filepath.Abs/Clean) collapses `..` before symlink resolution and diverges on
+// every case below.
+func TestResolvePathMatchesPythonRealpath(t *testing.T) {
+	golden := pcLoadGolden(t)
+	dir := t.TempDir()
+	candidates := pcRealpathCandidates(t, dir)
+	if len(golden.Realpath.Inputs) != len(candidates) || len(golden.Realpath.Python) != len(candidates) {
+		t.Fatalf("frozen realpath record has %d inputs / %d outputs, want %d",
+			len(golden.Realpath.Inputs), len(golden.Realpath.Python), len(candidates))
+	}
+	env := pcNewHostEnv(dir)
 	for i, p := range candidates {
-		if got := ResolvePath(p); got != want[i] {
-			t.Errorf("ResolvePath(%q) = %q, want python %q", p, got, want[i])
+		if !pcExpectEqual(golden.Realpath.Inputs[i], p, env) {
+			t.Fatalf("realpath candidate drift at %d: frozen %q, built %q", i, golden.Realpath.Inputs[i], p)
+		}
+		got := ResolvePath(p)
+		if !pcExpectEqual(golden.Realpath.Python[i], got, env) {
+			t.Errorf("ResolvePath(%q) = %q, want frozen python %q", p, got, golden.Realpath.Python[i])
 		}
 	}
 }
@@ -554,22 +549,547 @@ type pcCase struct {
 	refDivergence *refDivergence
 }
 
-func TestProjectCacheDifferential(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	refScript := filepath.Join(repoRoot, "internal", "projectcache", "testdata", "projectcache_ref.py")
+// pcGolden is the frozen bundle captured once from the real Python driver
+// testdata/projectcache_ref.py. The bundle IS the oracle: a missing or
+// incomplete bundle fails, never skips. Every host-bound value (the sandbox
+// root, the repository path inside an uncaught traceback) is stored as a
+// placeholder in the exact fields that carry it; every other field is compared
+// as written.
+type pcGolden struct {
+	Oracle struct {
+		Driver        string `json:"driver"`
+		Python        string `json:"python"`
+		PythonVersion []int  `json:"python_version"`
+	} `json:"oracle"`
+	Cases    []pcGoldenCase `json:"cases"`
+	Realpath struct {
+		Inputs []string `json:"inputs"`
+		Python []string `json:"python"`
+	} `json:"realpath"`
+}
 
-	for _, tc := range pcCases(t) {
+type pcGoldenCase struct {
+	Name string `json:"name"`
+	Spec pcSpec `json:"spec"`
+	Ref  pcRef  `json:"ref"`
+}
+
+func pcLoadGolden(t *testing.T) *pcGolden {
+	t.Helper()
+	path := filepath.Join("testdata", "projectcache_golden.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read frozen oracle: %v", err)
+	}
+	var golden pcGolden
+	if err := json.Unmarshal(data, &golden); err != nil {
+		t.Fatalf("parse frozen oracle %s: %v", path, err)
+	}
+	if golden.Oracle.Driver == "" || golden.Oracle.Python == "" || len(golden.Cases) == 0 {
+		t.Fatalf("frozen oracle %s carries no oracle identity or no cases", path)
+	}
+	return &golden
+}
+
+// pcHostEnv carries the host values the frozen placeholders stand for during
+// one comparison: the sandbox root in both spellings (EvalSymlinks-resolved
+// first, then the raw t.TempDir form) and the cache-key prefixes derived from
+// the case's spec.
+type pcHostEnv struct {
+	tmp  []string
+	keys []string
+}
+
+func pcNewHostEnv(dir string, keys ...string) pcHostEnv {
+	env := pcHostEnv{keys: keys}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		env.tmp = append(env.tmp, resolved)
+	}
+	env.tmp = append(env.tmp, dir)
+	return env
+}
+
+// pcHasTokens reports whether a frozen value carries any placeholder.
+func pcHasTokens(s string) bool {
+	return strings.Contains(s, "<TMP>") || strings.Contains(s, "<KEY>") || strings.Contains(s, "<TIME>")
+}
+
+// pcExpandExpectation returns the candidate host spellings of one frozen
+// PATH-VALUED field value: every <TMP> expands to the same root spelling and
+// every <KEY> to the same cache key within one candidate, so the whole field
+// must equal one full expansion byte for byte. Values without placeholders
+// come back as a single literal candidate: free text is never rewritten.
+func pcExpandExpectation(frozen string, env pcHostEnv) []string {
+	tmps := env.tmp
+	if !strings.Contains(frozen, "<TMP>") {
+		tmps = []string{""}
+	}
+	keys := env.keys
+	if !strings.Contains(frozen, "<KEY>") {
+		keys = []string{""}
+	}
+	var out []string
+	for _, tmp := range tmps {
+		s := strings.ReplaceAll(frozen, "<TMP>", tmp)
+		for _, key := range keys {
+			out = append(out, strings.ReplaceAll(s, "<KEY>", key))
+		}
+	}
+	return out
+}
+
+// pcExpectEqual compares a frozen expectation with the actual bytes as
+// written: true only when the actual equals one full expansion of the frozen
+// value. The actual side is never rewritten.
+func pcExpectEqual(frozen, actual string, env pcHostEnv) bool {
+	for _, cand := range pcExpandExpectation(frozen, env) {
+		if cand == actual {
+			return true
+		}
+	}
+	return false
+}
+
+// pcRequireNoTokens pins the inventory: a frozen field that is compared
+// literally must not carry placeholders. A new one means the oracle started
+// emitting host values in a free-text field; the inventory in
+// odd/tasks/go-20-u2e-t5-pr2b.md must be extended deliberately, never
+// silently.
+func pcRequireNoTokens(t *testing.T, where, frozen string) {
+	t.Helper()
+	if pcHasTokens(frozen) {
+		t.Fatalf("frozen %s carries a placeholder outside the inventoried path fields: %q", where, frozen)
+	}
+}
+
+// pcCacheKeyPrefix is the FROZEN cache-key prefix (sha256 of realpath, 12 hex
+// digits) for a project root. It is derived from the sandbox path, so the
+// frozen bundle carries it as <KEY>.
+func pcCacheKeyPrefix(root string) string {
+	sum := sha256.Sum256([]byte(ResolvePath(root)))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// pcSpecMatches compares the frozen spec with the built one. The five
+// path-valued fields expand to their host candidates; Args and the command
+// fields are free text and are compared literally -- the inventory shows no
+// placeholder ever reached them, and pcRequireNoTokens keeps it that way.
+func pcSpecMatches(t *testing.T, want, got pcSpec, env pcHostEnv) {
+	t.Helper()
+	fields := []struct {
+		name, w, g string
+	}{
+		{"ai_specs_home", want.AISpecsHome, got.AISpecsHome},
+		{"cli_home", want.CLIHome, got.CLIHome},
+		{"root", want.Root, got.Root},
+		{"home", want.Home, got.Home},
+		{"sandbox", want.Sandbox, got.Sandbox},
+	}
+	for _, f := range fields {
+		if !pcExpectEqual(f.w, f.g, env) {
+			t.Errorf("spec.%s: frozen %q does not match built %q under any host spelling", f.name, f.w, f.g)
+		}
+	}
+	if want.Mode != got.Mode {
+		t.Errorf("spec.mode: frozen %q, built %q", want.Mode, got.Mode)
+	}
+	if want.FN != got.FN {
+		t.Errorf("spec.fn: frozen %q, built %q", want.FN, got.FN)
+	}
+	if want.CLIAction != got.CLIAction {
+		t.Errorf("spec.cli_action: frozen %q, built %q", want.CLIAction, got.CLIAction)
+	}
+	if want.CLIKind != got.CLIKind {
+		t.Errorf("spec.cli_kind: frozen %q, built %q", want.CLIKind, got.CLIKind)
+	}
+	if want.CLIDest != got.CLIDest {
+		t.Errorf("spec.cli_dest: frozen %q, built %q", want.CLIDest, got.CLIDest)
+	}
+	if !reflect.DeepEqual(want.Args, got.Args) {
+		t.Errorf("spec.args: frozen %+v, built %+v", want.Args, got.Args)
+	}
+	argsJSON, _ := json.Marshal(want.Args)
+	pcRequireNoTokens(t, "spec.args", string(argsJSON))
+}
+
+// pcBodyMatch compares one frozen file body with the actual bytes as
+// written. Only the two lines the program writes with host semantics are
+// special: the project_root value expands to its host candidates, and the
+// created_at line carries the frozen <TIME> literal on both sides (the scoped
+// pcCreatedAt normalization). Every other line is free text compared
+// literally.
+func pcBodyMatch(frozen, actual string, env pcHostEnv) (bool, string) {
+	frozenLines := strings.Split(frozen, "\n")
+	actualLines := strings.Split(actual, "\n")
+	if len(frozenLines) != len(actualLines) {
+		return false, "line count differs"
+	}
+	for i := range frozenLines {
+		switch {
+		case strings.HasPrefix(frozenLines[i], "project_root = "):
+			if !pcExpectEqual(frozenLines[i], actualLines[i], env) {
+				return false, fmt.Sprintf("project_root line %d differs: frozen %q, actual %q", i+1, frozenLines[i], actualLines[i])
+			}
+		case strings.HasPrefix(frozenLines[i], "created_at = "):
+			// Both sides carry the frozen <TIME> literal: the Go side applies
+			// the scoped pcCreatedAt normalization to exactly this line, and
+			// the timestamp itself is not compared.
+			if frozenLines[i] != actualLines[i] {
+				return false, fmt.Sprintf("created_at line %d differs: frozen %q, actual %q", i+1, frozenLines[i], actualLines[i])
+			}
+		default:
+			if pcHasTokens(frozenLines[i]) {
+				return false, fmt.Sprintf("free-text line %d carries a placeholder (inventory violation): %q", i+1, frozenLines[i])
+			}
+			if frozenLines[i] != actualLines[i] {
+				return false, fmt.Sprintf("line %d differs: frozen %q, actual %q", i+1, frozenLines[i], actualLines[i])
+			}
+		}
+	}
+	return true, ""
+}
+
+// pcGoldenCaseByName returns the frozen record for a case name and fails when
+// the bundle is missing it.
+func pcGoldenCaseByName(t *testing.T, golden *pcGolden, name string) pcGoldenCase {
+	t.Helper()
+	for _, rec := range golden.Cases {
+		if rec.Name == name {
+			return rec
+		}
+	}
+	t.Fatalf("frozen oracle is missing case %q", name)
+	return pcGoldenCase{}
+}
+
+// TestGoldenNegativeControlKeepsFreeTextLiteral is the fixture-level negative
+// control for the scoped expansion: a non-path value mutated with the real
+// sandbox root or the real cache key, inside the same frozen fixture, must
+// FAIL the comparison. Under the retired global normalizer the mutation was
+// rewritten into the token space before comparing, so this control is what
+// keeps the normalizer from ever growing back.
+func TestGoldenNegativeControlKeepsFreeTextLiteral(t *testing.T) {
+	golden := pcLoadGolden(t)
+	T := t.TempDir()
+	root := filepath.Join(T, "project")
+	key := pcCacheKeyPrefix(root)
+	env := pcNewHostEnv(T, key)
+
+	rec := pcGoldenCaseByName(t, golden, "cli path root")
+	bodyKey := "home/cache/projects/<KEY>-project/meta.toml"
+
+	// Good path: the expanded frozen stdout and body compare equal.
+	var actual string
+	for _, c := range pcExpandExpectation(rec.Ref.Stdout, env) {
+		if strings.Contains(c, T) {
+			actual = c
+		}
+	}
+	if actual == "" {
+		t.Fatalf("no expansion of %q contains the sandbox root %q", rec.Ref.Stdout, T)
+	}
+	if !pcOutputEqual(rec.Name, "stdout", rec.Ref.Stdout, actual, env) {
+		t.Fatalf("the correct expansion must compare equal")
+	}
+	bodyF, err := base64.StdEncoding.DecodeString(rec.Ref.Files[bodyKey])
+	if err != nil {
+		t.Fatalf("decode frozen body: %v", err)
+	}
+	goodBody := strings.ReplaceAll(string(bodyF), "<TMP>", T)
+	if ok, _ := pcBodyMatch(string(bodyF), goodBody, env); !ok {
+		t.Fatalf("the correct body expansion must compare equal")
+	}
+
+	// Evil 1: the real sandbox root injected into the created_at line (a
+	// non-path, time-valued line of the same body fixture) must fail.
+	evilBody := strings.Replace(goodBody, "created_at = \"<TIME>\"", "created_at = \""+T+"\"", 1)
+	if ok, detail := pcBodyMatch(string(bodyF), evilBody, env); ok {
+		t.Fatalf("a non-path body line carrying the real root was accepted: %s", detail)
+	}
+
+	// Evil 2: the real root injected into the free text of an output contract
+	// line must fail (the path position itself stays frozen).
+	merge := pcGoldenCaseByName(t, golden, "cli merge fresh dest")
+	var mergeGood string
+	for _, c := range pcExpandExpectation(merge.Ref.Stdout, env) {
+		if strings.Contains(c, T) {
+			mergeGood = c
+		}
+	}
+	if mergeGood == "" {
+		t.Fatalf("no expansion of %q contains the sandbox root", merge.Ref.Stdout)
+	}
+	evilStdout := strings.Replace(mergeGood, "merged 2 command file(s)", "merged 2 command file(s) (root "+T+")", 1)
+	if pcOutputEqual(merge.Name, "stdout", merge.Ref.Stdout, evilStdout, env) {
+		t.Fatalf("free text carrying the real root was accepted: %q", evilStdout)
+	}
+
+	// Evil 3: the real cache key injected into free text must fail.
+	evilKey := strings.Replace(mergeGood, "merged 2 command file(s)", "merged key "+key+" file(s)", 1)
+	if pcOutputEqual(merge.Name, "stdout", merge.Ref.Stdout, evilKey, env) {
+		t.Fatalf("free text carrying the real cache key was accepted: %q", evilKey)
+	}
+
+	// Evil 4: a literal placeholder in the ACTUAL is never consumed -- the
+	// actual side is compared as written, never rewritten. This is the case
+	// the retired global normalizer failed (recorded RED in L12).
+	if pcExpectEqual(rec.Ref.Stdout, rec.Ref.Stdout, env) {
+		t.Fatalf("the frozen token text was accepted from the actual side; the actual must never be rewritten")
+	}
+}
+
+// pcPathValuedStdout / pcPathValuedStderr are the inventoried cases whose
+// output contract carries host paths (the full inventory lives in
+// odd/tasks/go-20-u2e-t5-pr2b.md). A placeholder in any other case's output
+// is an inventory violation and fails loudly instead of being normalized.
+var pcPathValuedStdout = map[string]bool{
+	"cli path root":                       true,
+	"cli path recipe":                     true,
+	"cli path deps":                       true,
+	"cli path bundled":                    true,
+	"cli path commands":                   true,
+	"cli path resolved-skills":            true,
+	"cli ensure fresh":                    true,
+	"cli ensure refresh stale root":       true,
+	"cli merge fresh dest":                true,
+	"cli merge existing dest":             true,
+	"cli merge bundled managed duplicate": true,
+	"cli merge preserves source modes":    true,
+}
+
+var pcPathValuedStderr = map[string]bool{
+	"cli ensure blocked parent":                   true,
+	"cli merge symlink dest rmtree refuses":       true,
+	"cli merge regular-file dest rmtree refuses":  true,
+	"cli merge unreadable command aborts":         true,
+	"remove bundled skill oserror keeps dir":      true,
+	"remove bundled skill symlink dir kept":       true,
+	"remove legacy origin symlink dir kept":       true,
+	"remove legacy origin dangling symlink warns": true,
+	"remove legacy origin regular-file leftovers": true,
+}
+
+// pcOutputEqual compares one frozen output field with the actual bytes as
+// written. Tokenized expectations are accepted only for the inventoried
+// path-valued cases; every other case must be token-free and literal.
+func pcOutputEqual(caseName, field, frozen, actual string, env pcHostEnv) bool {
+	allow := pcPathValuedStderr
+	if field == "stdout" {
+		allow = pcPathValuedStdout
+	}
+	if pcHasTokens(frozen) && !allow[caseName] {
+		return false
+	}
+	return pcExpectEqual(frozen, actual, env)
+}
+
+// pcFilesMatch compares the frozen snapshot with the Go snapshot. Keys are
+// path-valued: each frozen key must match the Go key it names. Bodies are
+// content compared literally except the two program-written lines with host
+// semantics (pcBodyMatch).
+func pcFilesMatch(want map[string]string, got map[string]string, env pcHostEnv) bool {
+	if len(want) != len(got) {
+		return false
+	}
+	matched := map[string]bool{}
+	for kF, vF := range want {
+		found := ""
+		for _, cand := range pcExpandExpectation(kF, env) {
+			if _, ok := got[cand]; ok {
+				found = cand
+				break
+			}
+		}
+		if found == "" || matched[found] {
+			return false
+		}
+		matched[found] = true
+		if vF == "<unreadable>" {
+			if got[found] != "<unreadable>" {
+				return false
+			}
+			continue
+		}
+		bodyF, err := base64.StdEncoding.DecodeString(vF)
+		if err != nil {
+			return false
+		}
+		bodyG, err := base64.StdEncoding.DecodeString(got[found])
+		if err != nil {
+			return false
+		}
+		ok, _ := pcBodyMatch(string(bodyF), string(bodyG), env)
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// pcModesMatch compares mode bits per path-valued key, one to one: a Go key
+// already consumed by another frozen entry cannot be reused, so a size
+// coincidence can never hide a missing path.
+func pcModesMatch(want map[string]int, got map[string]int, env pcHostEnv) bool {
+	if len(want) != len(got) {
+		return false
+	}
+	matched := map[string]bool{}
+	for kF, vF := range want {
+		found := ""
+		for _, cand := range pcExpandExpectation(kF, env) {
+			if v, ok := got[cand]; ok && v == vF && !matched[cand] {
+				found = cand
+				break
+			}
+		}
+		if found == "" {
+			return false
+		}
+		matched[found] = true
+	}
+	return true
+}
+
+// pcDirsMatch compares the directory list element by element; each element
+// is a path.
+func pcDirsMatch(want []string, got []string, env pcHostEnv) bool {
+	if len(want) != len(got) {
+		return false
+	}
+	for i := range want {
+		if !pcExpectEqual(want[i], got[i], env) {
+			return false
+		}
+	}
+	return true
+}
+
+// pcLinksMatch compares symlink maps one to one: keys (the link path) and
+// values (the symlink target) are both path-valued, and a Go key already
+// consumed by another frozen entry cannot be reused.
+func pcLinksMatch(want map[string]string, got map[string]string, env pcHostEnv) bool {
+	if len(want) != len(got) {
+		return false
+	}
+	matched := map[string]bool{}
+	for kF, vF := range want {
+		found := ""
+		for _, cand := range pcExpandExpectation(kF, env) {
+			if _, ok := got[cand]; ok && !matched[cand] {
+				found = cand
+				break
+			}
+		}
+		if found == "" || !pcExpectEqual(vF, got[found], env) {
+			return false
+		}
+		matched[found] = true
+	}
+	return true
+}
+
+// pcTokenedResultCases records the inventoried case whose result contract is
+// a host path (the gate-backup location). A placeholder in any other case's
+// result is an inventory violation and fails loudly instead of being
+// normalized.
+var pcTokenedResultCases = map[string]bool{
+	"gate backup path": true,
+}
+
+// pcResultKeyProvenance maps the inventoried result cases to the root whose
+// cache key their path carries. The gate-backup path is keyed by the project
+// root the case passes to the gate (args.project_root), NOT by the spec root:
+// the two keys differ, and substituting one for the other must fail
+// (TestGoldenMapMatchingIsOneToOne pins this).
+var pcResultKeyProvenance = map[string]func(spec pcSpec) string{
+	"gate backup path": func(spec pcSpec) string {
+		rel, _ := spec.Args["project_root"].(string)
+		return filepath.Join(spec.Root, rel)
+	},
+}
+
+// pcResultMatch compares the frozen result with the Go result. Only the
+// inventoried case's path result expands to its host candidates; every other
+// result must be token-free and is compared structurally, as before.
+func pcResultMatch(caseName string, want json.RawMessage, got []byte, env pcHostEnv) (bool, string) {
+	if len(want) == 0 && len(got) == 0 {
+		return true, ""
+	}
+	if len(want) == 0 || len(got) == 0 {
+		return false, "one side is empty"
+	}
+	var wAny, gAny any
+	if json.Unmarshal(want, &wAny) != nil || json.Unmarshal(got, &gAny) != nil {
+		return false, "result is not valid JSON"
+	}
+	if wStr, ok := wAny.(string); ok {
+		gStr, ok := gAny.(string)
+		if !ok {
+			return false, "result kind differs"
+		}
+		if pcHasTokens(wStr) {
+			if !pcTokenedResultCases[caseName] {
+				return false, "result inventory violation: placeholder outside the inventoried path results"
+			}
+			if !pcExpectEqual(wStr, gStr, env) {
+				return false, "result path differs under every host spelling"
+			}
+			return true, ""
+		}
+		return wStr == gStr, ""
+	}
+	if !pcNoTokensDeep(wAny) {
+		return false, "result inventory violation: placeholder outside the inventoried path results"
+	}
+	return reflect.DeepEqual(wAny, gAny), ""
+}
+
+// pcNoTokensDeep walks a parsed JSON value and reports whether any string
+// inside it carries a placeholder.
+func pcNoTokensDeep(v any) bool {
+	switch x := v.(type) {
+	case string:
+		return !pcHasTokens(x)
+	case map[string]any:
+		for _, vv := range x {
+			if !pcNoTokensDeep(vv) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		for _, vv := range x {
+			if !pcNoTokensDeep(vv) {
+				return false
+			}
+		}
+		return true
+	}
+	return true
+}
+
+func TestProjectCacheDifferential(t *testing.T) {
+	golden := pcLoadGolden(t)
+	cases := pcCases()
+	if len(golden.Cases) != len(cases) {
+		t.Fatalf("frozen bundle has %d cases, want %d", len(golden.Cases), len(cases))
+	}
+	seen := make(map[string]bool, len(golden.Cases))
+	for _, rec := range golden.Cases {
+		if seen[rec.Name] {
+			t.Fatalf("frozen bundle has duplicate case %q", rec.Name)
+		}
+		seen[rec.Name] = true
+	}
+
+	for _, tc := range pcCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			T := t.TempDir()
 			t.Cleanup(func() { pcChmodWritable(T) })
 			root := filepath.Join(T, "project")
 			home := filepath.Join(T, "home")
+
+			rec := pcGoldenCaseByName(t, golden, tc.name)
 
 			spec := pcSpec{
 				Mode:        "lib",
@@ -590,53 +1110,53 @@ func TestProjectCacheDifferential(t *testing.T) {
 				}
 			}
 
-			// Leg 1: the real Python module (CLI subprocess or importlib call).
-			pcSeedLeg(t, T, root, home, tc)
-			ref := pcRunRef(t, refScript, spec)
+			env := pcNewHostEnv(T, pcCacheKeyPrefix(spec.Root))
+			pcSpecMatches(t, rec.Spec, spec, env)
 
-			// Leg 2: the Go port on an identical, freshly reset tree.
+			// The oracle leg is the frozen record; the Go port runs on a freshly
+			// seeded tree with the same inputs. The Go bytes are compared as
+			// written: only the frozen expectations expand, and only in the
+			// inventoried path-valued fields.
+			ref := rec.Ref
 			pcSeedLeg(t, T, root, home, tc)
-			goOut, goErr, goRC, goResult := pcRunGo(t, spec, root, home)
+			goOut, goErr, goRC, goResult := pcRunGo(t, spec, root)
 			goFiles, goModes, goDirs, goLinks := pcSnapshot(t, T)
 
 			if tc.safetyException {
-				pcAssertSafetyException(t, ref, goOut, goErr, goFiles, goModes, goDirs, goLinks)
+				pcAssertSafetyException(t, ref, goOut, goErr, goFiles, goModes, goDirs, goLinks, env)
 				return
 			}
 
 			if tc.refDivergence != nil {
-				pcAssertRefDivergence(t, tc, ref, goOut, goErr, goFiles, goModes, goDirs, goLinks, goResult)
+				pcAssertRefDivergence(t, tc, ref, goOut, goErr, goFiles, goModes, goDirs, goLinks, goResult, env)
 				return
 			}
 
-			if goOut != ref.Stdout {
+			if !pcOutputEqual(tc.name, "stdout", ref.Stdout, goOut, env) {
 				t.Errorf("stdout differs\n--- go ---\n%q\n--- ref ---\n%q", goOut, ref.Stdout)
 			}
 			if goRC != ref.RC {
 				t.Errorf("rc: go=%d ref=%d", goRC, ref.RC)
 			}
-			if !pcTreeEqual(goFiles, ref.Files) {
+			if !pcFilesMatch(rec.Ref.Files, goFiles, env) {
 				t.Errorf("files differ:\n%s", pcTreeDiff(goFiles, ref.Files))
 			}
-			if !pcModesEqual(goModes, ref.Modes) {
-				t.Errorf("modes differ:\n  go:  %v\n  ref: %v", goModes, ref.Modes)
+			if !pcModesMatch(rec.Ref.Modes, goModes, env) {
+				t.Errorf("modes differ:\n  go:  %v\n  ref: %v", goModes, rec.Ref.Modes)
 			}
-			if !pcStringsEqual(goDirs, ref.Dirs) {
-				t.Errorf("dirs differ:\n  go:  %v\n  ref: %v", goDirs, ref.Dirs)
+			if !pcDirsMatch(rec.Ref.Dirs, goDirs, env) {
+				t.Errorf("dirs differ:\n  go:  %v\n  ref: %v", goDirs, rec.Ref.Dirs)
 			}
-			if !pcTreeEqual(goLinks, ref.Links) {
-				t.Errorf("links differ:\n  go:  %v\n  ref: %v", goLinks, ref.Links)
+			if !pcLinksMatch(rec.Ref.Links, goLinks, env) {
+				t.Errorf("links differ:\n  go:  %v\n  ref: %v", goLinks, rec.Ref.Links)
 			}
 
-			var refRes, goRes any
-			if len(ref.Result) > 0 {
-				_ = json.Unmarshal(ref.Result, &refRes)
+			resultEnv := env
+			if prov, ok := pcResultKeyProvenance[tc.name]; ok {
+				resultEnv = pcNewHostEnv(T, pcCacheKeyPrefix(prov(spec)))
 			}
-			if len(goResult) > 0 {
-				_ = json.Unmarshal(goResult, &goRes)
-			}
-			if !reflect.DeepEqual(refRes, goRes) {
-				t.Errorf("result differs: go=%v ref=%v", goRes, refRes)
+			if ok, detail := pcResultMatch(tc.name, rec.Ref.Result, goResult, resultEnv); !ok {
+				t.Errorf("result differs (%s): go=%s ref=%s", detail, goResult, rec.Ref.Result)
 			}
 
 			if tc.tracebackStderr {
@@ -661,10 +1181,104 @@ func TestProjectCacheDifferential(t *testing.T) {
 				}
 				return
 			}
-			if goErr != ref.Stderr {
+			if !pcOutputEqual(tc.name, "stderr", ref.Stderr, goErr, env) {
 				t.Errorf("stderr differs\n--- go ---\n%q\n--- ref ---\n%q", goErr, ref.Stderr)
 			}
 		})
+	}
+}
+
+// TestGoldenMapMatchingIsOneToOne pins the matched-set semantics of
+// pcModesMatch and pcLinksMatch, and the key provenance of the result
+// comparator.
+//
+// Negative fixture (matched set): want carries two distinct spellings of the
+// SAME host path key -- the tokenized form and its literal expansion -- with
+// equal values, while got holds only that shared key plus an extraneous path
+// (same size). Without matched tracking both expected entries consumed the
+// one actual key and the comparison passed; with matched tracking it must
+// reject.
+//
+// Provenance: the gate-backup result is keyed by its owning project root
+// (args.project_root), not by the spec root; substituting the spec-root key
+// must fail, so the any-key expansion stays closed.
+func TestGoldenMapMatchingIsOneToOne(t *testing.T) {
+	T := t.TempDir()
+	root := filepath.Join(T, "project")
+	key := pcCacheKeyPrefix(root)
+	env := pcNewHostEnv(T, key)
+
+	sharedKey := "home/cache/projects/" + key + "-project/a"
+	wantModes := map[string]int{
+		"home/cache/projects/<KEY>-project/a":       0o644,
+		"home/cache/projects/" + key + "-project/a": 0o644,
+	}
+	gotModes := map[string]int{
+		sharedKey:            0o644,
+		"other/extraneous.c": 0o755,
+	}
+	if pcModesMatch(wantModes, gotModes, env) {
+		t.Fatalf("modes: two frozen spellings of one path both consumed the single Go key")
+	}
+	goodModes := map[string]int{sharedKey: 0o644}
+	if !pcModesMatch(goodModes, map[string]int{sharedKey: 0o644}, env) {
+		t.Fatalf("modes: the correct one-to-one pairing must compare equal")
+	}
+
+	wantLinks := map[string]string{
+		"project/<KEY>-link":       T + "/realdest",
+		"project/" + key + "-link": T + "/realdest",
+	}
+	gotLinks := map[string]string{
+		"project/" + key + "-link": T + "/realdest",
+		"other/extraneous":         T + "/elsewhere",
+	}
+	if pcLinksMatch(wantLinks, gotLinks, env) {
+		t.Fatalf("links: two frozen spellings of one path both consumed the single Go key")
+	}
+	goodLinks := map[string]string{"project/" + key + "-link": T + "/realdest"}
+	if !pcLinksMatch(goodLinks, map[string]string{"project/" + key + "-link": T + "/realdest"}, env) {
+		t.Fatalf("links: the correct one-to-one pairing must compare equal")
+	}
+
+	// Provenance: the gate-backup result is keyed by the args project root.
+	// The substitution of the spec-root key must fail; the owning key must
+	// expand.
+	golden := pcLoadGolden(t)
+	rec := pcGoldenCaseByName(t, golden, "gate backup path")
+	argRel, _ := rec.Spec.Args["project_root"].(string)
+	ownerKey := pcCacheKeyPrefix(filepath.Join(root, argRel))
+	if ownerKey == key {
+		t.Fatalf("provenance test is vacuous: the owner key equals the spec-root key")
+	}
+	ownerEnv := pcNewHostEnv(T, ownerKey)
+	rootEnv := pcNewHostEnv(T, key)
+
+	// The frozen bytes carry Go-escaped tokens (\u003cKEY\u003e): decode the
+	// JSON string first, expand the decoded value, and hand the expansion
+	// back as JSON.
+	var frozenResult string
+	if err := json.Unmarshal(rec.Ref.Result, &frozenResult); err != nil {
+		t.Fatalf("decode frozen result: %v", err)
+	}
+	var ownerExpansion string
+	for _, cand := range pcExpandExpectation(frozenResult, ownerEnv) {
+		if strings.Contains(cand, ownerKey) {
+			ownerExpansion = cand
+		}
+	}
+	if ownerExpansion == "" {
+		t.Fatalf("no expansion of the frozen result contains the owner key %q", ownerKey)
+	}
+	actualJSON, err := json.Marshal(ownerExpansion)
+	if err != nil {
+		t.Fatalf("marshal actual result: %v", err)
+	}
+	if ok, detail := pcResultMatch(rec.Name, rec.Ref.Result, actualJSON, ownerEnv); !ok {
+		t.Fatalf("result: the owning-root key must expand: %s", detail)
+	}
+	if ok, _ := pcResultMatch(rec.Name, rec.Ref.Result, actualJSON, rootEnv); ok {
+		t.Fatalf("result: a foreign valid key (the spec-root key) was accepted for the gate-backup path")
 	}
 }
 
@@ -739,30 +1353,8 @@ func pcGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-func pcRunRef(t *testing.T, refScript string, spec pcSpec) pcRef {
-	t.Helper()
-	payload, err := json.Marshal(spec)
-	if err != nil {
-		t.Fatalf("marshal spec: %v", err)
-	}
-	cmd := exec.Command("python3", refScript)
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	cmd.Stdin = bytes.NewReader(payload)
-	var out, errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("ref driver failed: %v\nstderr: %s", err, errBuf.String())
-	}
-	var ref pcRef
-	if err := json.Unmarshal(out.Bytes(), &ref); err != nil {
-		t.Fatalf("parse ref JSON: %v\nraw: %s", err, out.String())
-	}
-	return ref
-}
-
 // pcRunGo invokes the Go port with the same inputs the driver received.
-func pcRunGo(t *testing.T, spec pcSpec, root, home string) (string, string, int, []byte) {
+func pcRunGo(t *testing.T, spec pcSpec, root string) (string, string, int, []byte) {
 	t.Helper()
 	var out, errBuf bytes.Buffer
 	var result any
@@ -979,42 +1571,6 @@ func pcModeBits(m os.FileMode) int {
 	return b
 }
 
-func pcTreeEqual(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if b[k] != v {
-			return false
-		}
-	}
-	return true
-}
-
-func pcModesEqual(a, b map[string]int) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if b[k] != v {
-			return false
-		}
-	}
-	return true
-}
-
-func pcStringsEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func pcTreeDiff(a, b map[string]string) string {
 	var sb strings.Builder
 	keys := map[string]bool{}
@@ -1043,7 +1599,7 @@ func pcTreeDiff(a, b map[string]string) string {
 // entries a failed first run never copied; the Go port preserves .recipe/,
 // warns, and leaves the existing destination untouched. Everything outside
 // ai-specs/.recipe/ must still match the oracle byte-for-byte.
-func pcAssertSafetyException(t *testing.T, ref pcRef, goOut, goErr string, goFiles map[string]string, goModes map[string]int, goDirs []string, goLinks map[string]string) {
+func pcAssertSafetyException(t *testing.T, ref pcRef, goOut, goErr string, goFiles map[string]string, goModes map[string]int, goDirs []string, goLinks map[string]string, env pcHostEnv) {
 	t.Helper()
 	const legacy = "project/ai-specs/.recipe"
 	if !strings.Contains(ref.Stdout, "removed leftover ai-specs/.recipe/") {
@@ -1058,16 +1614,16 @@ func pcAssertSafetyException(t *testing.T, ref pcRef, goOut, goErr string, goFil
 	if !strings.Contains(goErr, "skipping removal of ai-specs/.recipe/") {
 		t.Errorf("Go did not warn about preserving ai-specs/.recipe/; stderr=%q", goErr)
 	}
-	if !pcTreeEqual(pcDropLegacy(goFiles), ref.Files) {
+	if !pcFilesMatch(ref.Files, pcDropLegacy(goFiles), env) {
 		t.Errorf("files outside ai-specs/.recipe/ differ from the oracle:\n%s", pcTreeDiff(pcDropLegacy(goFiles), ref.Files))
 	}
-	if !pcModesEqual(pcDropLegacy(goModes), ref.Modes) {
+	if !pcModesMatch(ref.Modes, pcDropLegacy(goModes), env) {
 		t.Errorf("modes outside ai-specs/.recipe/ differ:\n  go:  %v\n  ref: %v", pcDropLegacy(goModes), ref.Modes)
 	}
-	if !pcStringsEqual(pcDropLegacyDirs(goDirs), ref.Dirs) {
+	if !pcDirsMatch(ref.Dirs, pcDropLegacyDirs(goDirs), env) {
 		t.Errorf("dirs outside ai-specs/.recipe/ differ:\n  go:  %v\n  ref: %v", pcDropLegacyDirs(goDirs), ref.Dirs)
 	}
-	if !pcTreeEqual(pcDropLegacy(goLinks), ref.Links) {
+	if !pcLinksMatch(ref.Links, pcDropLegacy(goLinks), env) {
 		t.Errorf("links outside ai-specs/.recipe/ differ:\n  go:  %v\n  ref: %v", pcDropLegacy(goLinks), ref.Links)
 	}
 	if _, ok := goFiles[legacy+"/recipeB/overrides/ov.md"]; !ok {
@@ -1104,29 +1660,29 @@ func pcDropLegacyDirs(dirs []string) []string {
 // pcAssertRefDivergence pins the R3-001 reference gap. Both legs ran on the
 // same tree; only the leading-dot names in tc.refDivergence may differ. The
 // pin records (never branches on) the oracle interpreter version.
-func pcAssertRefDivergence(t *testing.T, tc pcCase, ref pcRef, goOut, goErr string, goFiles map[string]string, goModes map[string]int, goDirs []string, goLinks map[string]string, goResult []byte) {
+func pcAssertRefDivergence(t *testing.T, tc pcCase, ref pcRef, goOut, goErr string, goFiles map[string]string, goModes map[string]int, goDirs []string, goLinks map[string]string, goResult []byte, env pcHostEnv) {
 	t.Helper()
 	d := tc.refDivergence
 	t.Logf("reference-gap pin %q: compared against Python %v and the epic's <=3.13 reference", tc.name, ref.PythonVersion)
 
 	if d.goIDs != nil {
 		// ids surface: disk/streams are identical, only the reported stem differs.
-		if !pcTreeEqual(goFiles, ref.Files) {
+		if !pcFilesMatch(ref.Files, goFiles, env) {
 			t.Errorf("files differ outside the reference gap:\n%s", pcTreeDiff(goFiles, ref.Files))
 		}
-		if !pcModesEqual(goModes, ref.Modes) {
+		if !pcModesMatch(ref.Modes, goModes, env) {
 			t.Errorf("modes differ:\n  go:  %v\n  ref: %v", goModes, ref.Modes)
 		}
-		if !pcStringsEqual(goDirs, ref.Dirs) {
+		if !pcDirsMatch(ref.Dirs, goDirs, env) {
 			t.Errorf("dirs differ:\n  go:  %v\n  ref: %v", goDirs, ref.Dirs)
 		}
-		if !pcTreeEqual(goLinks, ref.Links) {
+		if !pcLinksMatch(ref.Links, goLinks, env) {
 			t.Errorf("links differ:\n  go:  %v\n  ref: %v", goLinks, ref.Links)
 		}
-		if goOut != ref.Stdout {
+		if !pcOutputEqual(tc.name, "stdout", ref.Stdout, goOut, env) {
 			t.Errorf("stdout differs\n--- go ---\n%q\n--- ref ---\n%q", goOut, ref.Stdout)
 		}
-		if goErr != ref.Stderr {
+		if !pcOutputEqual(tc.name, "stderr", ref.Stderr, goErr, env) {
 			t.Errorf("stderr differs\n--- go ---\n%q\n--- ref ---\n%q", goErr, ref.Stderr)
 		}
 		var goIDs, refIDs []string
@@ -1157,22 +1713,22 @@ func pcAssertRefDivergence(t *testing.T, tc pcCase, ref pcRef, goOut, goErr stri
 			t.Errorf("Python %v reported removing %s; the 3.14 oracle keeps it", ref.PythonVersion, p)
 		}
 	}
-	if !pcTreeEqual(goFiles, pcDropPaths(ref.Files, d.removed)) {
+	if !pcFilesMatch(pcDropPaths(ref.Files, d.removed), goFiles, env) {
 		t.Errorf("files outside the reference gap differ:\n%s", pcTreeDiff(goFiles, pcDropPaths(ref.Files, d.removed)))
 	}
-	if !pcModesEqual(goModes, pcDropPaths(ref.Modes, d.removed)) {
+	if !pcModesMatch(pcDropPaths(ref.Modes, d.removed), goModes, env) {
 		t.Errorf("modes outside the reference gap differ:\n  go:  %v\n  ref: %v", goModes, pcDropPaths(ref.Modes, d.removed))
 	}
-	if !pcStringsEqual(goDirs, ref.Dirs) {
+	if !pcDirsMatch(ref.Dirs, goDirs, env) {
 		t.Errorf("dirs differ:\n  go:  %v\n  ref: %v", goDirs, ref.Dirs)
 	}
-	if !pcTreeEqual(goLinks, ref.Links) {
+	if !pcLinksMatch(ref.Links, goLinks, env) {
 		t.Errorf("links differ:\n  go:  %v\n  ref: %v", goLinks, ref.Links)
 	}
-	if got, want := pcStripLinesWithBase(goOut, d.removed), pcStripLinesWithBase(ref.Stdout, d.removed); got != want {
+	if got, want := pcStripLinesWithBase(goOut, d.removed), pcStripLinesWithBase(ref.Stdout, d.removed); !pcExpectEqual(want, got, env) {
 		t.Errorf("stdout outside the reference gap differs\n--- go ---\n%q\n--- ref ---\n%q", got, want)
 	}
-	if goErr != ref.Stderr {
+	if !pcOutputEqual(tc.name, "stderr", ref.Stderr, goErr, env) {
 		t.Errorf("stderr differs\n--- go ---\n%q\n--- ref ---\n%q", goErr, ref.Stderr)
 	}
 }
@@ -1236,7 +1792,7 @@ func pcSeedBundled(t *testing.T, home string) {
 	pcWrite(t, filepath.Join(home, "bundled-commands", "cmd1.md"), "# cmd1\n", 0o644)
 }
 
-func pcCases(t *testing.T) []pcCase {
+func pcCases() []pcCase {
 	shaOld := sha256Hex([]byte("# old alpha\n"))
 
 	return []pcCase{

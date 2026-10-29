@@ -3,10 +3,10 @@ package lock
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -126,42 +126,59 @@ func TestSha256OfFile(t *testing.T) {
 	}
 }
 
-// --- differential write test (Go WriteLock vs Python _write_lock_python) ---
+// --- differential write test (Go WriteLock vs the frozen Python golden) ---
 
-const refDriver = "testdata/write_lock_ref.py"
-
-// runRefDriver runs the Python reference driver. It returns trimmed stdout;
-// the driver prints "OK" on success or "ERROR: <message>" on failure and
-// exits 1 for the failure case.
-func runRefDriver(t *testing.T, args ...string) string {
-	t.Helper()
-	py, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	cmd := exec.Command(py, append([]string{refDriver}, args...)...)
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	runErr := cmd.Run()
-	out := strings.TrimSpace(stdout.String())
-	if runErr != nil && !strings.HasPrefix(out, "ERROR:") {
-		t.Fatalf("reference driver failed: %v\nstdout: %s\nstderr: %s", runErr, out, stderr.String())
-	}
-	if out == "" {
-		t.Fatalf("reference driver produced no output (err %v, stderr %s)", runErr, stderr.String())
-	}
-	return out
+// frozenFile is a byte blob in a golden bundle: text when the Python output is
+// valid UTF-8, base64 otherwise.
+type frozenFile struct {
+	Encoding string `json:"encoding"`
+	Data     string `json:"data"`
 }
 
-func writeSpecFile(t *testing.T, dir, name, rawJSON string) string {
+func (f frozenFile) bytes(t *testing.T) []byte {
 	t.Helper()
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(rawJSON), 0o600); err != nil {
-		t.Fatalf("write spec: %v", err)
+	switch f.Encoding {
+	case "text":
+		return []byte(f.Data)
+	case "base64":
+		raw, err := base64.StdEncoding.DecodeString(f.Data)
+		if err != nil {
+			t.Fatalf("decode golden base64: %v", err)
+		}
+		return raw
+	default:
+		t.Fatalf("golden file has unknown encoding %q", f.Encoding)
+		return nil
 	}
-	return path
+}
+
+// frozenWriteCase is the Python oracle result of one write case: its exact
+// input spec, and either its refusal message or the bytes it wrote.
+type frozenWriteCase struct {
+	Index   int         `json:"index"`
+	Name    string      `json:"name"`
+	Spec    string      `json:"spec"`
+	Outcome string      `json:"outcome"`
+	Error   string      `json:"error"`
+	File    *frozenFile `json:"file"`
+}
+
+// loadFrozenWriteCases reads the frozen oracle bundle. A missing bundle is a
+// failure, never a skip: the bundle IS the oracle.
+func loadFrozenWriteCases(t *testing.T) []frozenWriteCase {
+	t.Helper()
+	path := filepath.Join("testdata", "write_lock_golden.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read frozen oracle: %v", err)
+	}
+	var bundle struct {
+		Cases []frozenWriteCase `json:"cases"`
+	}
+	if err := json.Unmarshal(data, &bundle); err != nil {
+		t.Fatalf("parse frozen oracle %s: %v", path, err)
+	}
+	return bundle.Cases
 }
 
 // lockFromSpec builds the Go *Lock from the same JSON spec the Python driver
@@ -261,9 +278,9 @@ func pyJSONValues(t *testing.T, v any) any {
 	}
 }
 
-// TestWriteLockDifferential runs the Python emission authority against copy A
-// and the Go WriteLock against copy B and byte-compares the results. Refusal
-// cases require BOTH sides to fail with the identical message.
+// TestWriteLockDifferential compares the Go WriteLock against the frozen
+// emission authority captured in testdata/write_lock_golden.json. Refusal
+// cases require Go to fail with the frozen message and write nothing.
 func TestWriteLockDifferential(t *testing.T) {
 	cases := []struct {
 		name string
@@ -296,42 +313,61 @@ func TestWriteLockDifferential(t *testing.T) {
 		{"managed sha256 falsy entries skipped", `{"managed": {"zero.md": {"sha256": 0, "recipe": "r"}, "false.md": {"sha256": false}, "empty.md": {"sha256": []}, "ok.md": {"sha256": "s"}}}`},
 		{"agents hash falsy stringified", `{"agents": {"c": {"z.md": 0, "a.md": false, "e.md": []}}}`},
 	}
-	for _, tc := range cases {
+	frozen := loadFrozenWriteCases(t)
+	if len(frozen) != len(cases) {
+		t.Fatalf("frozen oracle holds %d records for %d cases", len(frozen), len(cases))
+	}
+	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			rec := frozen[i]
+			if rec.Index != i {
+				t.Fatalf("frozen record %d has index %d", i, rec.Index)
+			}
+			if rec.Name != tc.name {
+				t.Fatalf("case %d name drift: frozen %q, built %q", i, rec.Name, tc.name)
+			}
+			if rec.Spec != tc.spec {
+				t.Fatalf("case %d spec drift:\n  frozen: %s\n  built:  %s", i, rec.Spec, tc.spec)
+			}
 			dir := t.TempDir()
 			pathA := filepath.Join(dir, "a", ".ai-specs.lock")
 			pathB := filepath.Join(dir, "b", ".ai-specs.lock")
-			specPath := writeSpecFile(t, dir, "spec.json", tc.spec)
-			pyOut := runRefDriver(t, "write", specPath, pathA)
 
-			if strings.HasPrefix(pyOut, "ERROR: ") {
-				pyMsg := strings.TrimPrefix(pyOut, "ERROR: ")
+			if rec.Outcome == "error" {
 				goErr := WriteLock(pathB, lockFromSpec(t, tc.spec))
 				if goErr == nil {
-					t.Fatalf("python refused (%q) but Go wrote the lock", pyMsg)
+					t.Fatalf("frozen oracle refused (%q) but Go wrote the lock", rec.Error)
 				}
-				if goErr.Error() != pyMsg {
-					t.Fatalf("refusal message mismatch\npython: %q\ngo:     %q", pyMsg, goErr.Error())
+				if goErr.Error() != rec.Error {
+					t.Fatalf("refusal message mismatch\nfrozen: %q\ngo:     %q", rec.Error, goErr.Error())
+				}
+				if rec.File != nil {
+					t.Errorf("frozen refusal record carries written bytes")
 				}
 				if _, err := os.Stat(pathA); err == nil {
-					t.Errorf("python refusal wrote a file at %s", pathA)
+					t.Errorf("frozen refusal wrote a file at %s", pathA)
 				}
 				if _, err := os.Stat(pathB); err == nil {
 					t.Errorf("go refusal wrote a file at %s", pathB)
 				}
 				return
 			}
+			if rec.Outcome != "ok" {
+				t.Fatalf("unknown frozen outcome %q", rec.Outcome)
+			}
+			if rec.File == nil {
+				t.Fatalf("frozen success record carries no written bytes")
+			}
 
 			if err := WriteLock(pathB, lockFromSpec(t, tc.spec)); err != nil {
-				t.Fatalf("go write failed: %v (python succeeded)", err)
+				t.Fatalf("go write failed: %v (frozen oracle succeeded)", err)
 			}
-			gotA, errA := os.ReadFile(pathA)
-			gotB, errB := os.ReadFile(pathB)
-			if errA != nil || errB != nil {
-				t.Fatalf("read back: errA=%v errB=%v", errA, errB)
+			gotB, err := os.ReadFile(pathB)
+			if err != nil {
+				t.Fatalf("read back: %v", err)
 			}
-			if !bytes.Equal(gotA, gotB) {
-				t.Fatalf("byte mismatch\npython:\n%q\ngo:\n%q", gotA, gotB)
+			if want := rec.File.bytes(t); !bytes.Equal(gotB, want) {
+				t.Fatalf("byte mismatch\nfrozen:\n%q\ngo:\n%q", want, gotB)
 			}
 		})
 	}
@@ -437,7 +473,8 @@ func TestLoadLockInvalidTOML(t *testing.T) {
 }
 
 // TestLoadLockWriteRoundTripDifferential: WriteLock(LoadLock(f)) on the Go
-// side vs load_lock+_write_lock_python on the Python side. The [recipes] and
+// side vs the frozen load_lock+_write_lock_python output in
+// testdata/roundtrip_golden.json. The [recipes] and
 // [skills] sections are DROPPED by the writer on BOTH sides — that IS the
 // parity (recorded-defect behavior, do not fix).
 func TestLoadLockWriteRoundTripDifferential(t *testing.T) {
@@ -450,6 +487,22 @@ func TestLoadLockWriteRoundTripDifferential(t *testing.T) {
 	if err := os.WriteFile(src, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	frozenPath := filepath.Join("testdata", "roundtrip_golden.json")
+	frozenData, err := os.ReadFile(frozenPath)
+	if err != nil {
+		t.Fatalf("read frozen oracle: %v", err)
+	}
+	var frozen struct {
+		Src frozenFile `json:"src"`
+		Dst frozenFile `json:"dst"`
+	}
+	if err := json.Unmarshal(frozenData, &frozen); err != nil {
+		t.Fatalf("parse frozen oracle %s: %v", frozenPath, err)
+	}
+	if !bytes.Equal(raw, frozen.Src.bytes(t)) {
+		t.Fatalf("round-trip source drift from the frozen golden")
+	}
+
 	goOut := filepath.Join(dir, "go.lock")
 	lk, err := LoadLock(src)
 	if err != nil {
@@ -458,18 +511,12 @@ func TestLoadLockWriteRoundTripDifferential(t *testing.T) {
 	if err := WriteLock(goOut, lk); err != nil {
 		t.Fatalf("WriteLock: %v", err)
 	}
-	pyOut := filepath.Join(dir, "py.lock")
-	runRefDriver(t, "roundtrip", src, pyOut)
 	gotGo, err := os.ReadFile(goOut)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotPy, err := os.ReadFile(pyOut)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(gotGo, gotPy) {
-		t.Fatalf("round-trip byte mismatch\ngo:\n%q\npython:\n%q", gotGo, gotPy)
+	if want := frozen.Dst.bytes(t); !bytes.Equal(gotGo, want) {
+		t.Fatalf("round-trip byte mismatch\nfrozen:\n%q\ngo:\n%q", want, gotGo)
 	}
 	if strings.Contains(string(gotGo), "[recipes.") || strings.Contains(string(gotGo), "[skills.") {
 		t.Errorf("writer must drop recipes/skills sections, got:\n%s", gotGo)

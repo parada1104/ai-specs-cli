@@ -1,13 +1,11 @@
 package provider
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -136,12 +134,12 @@ func TestVersionTuple(t *testing.T) {
 }
 
 // TestVersionTupleParityAgainstPython pins provider_install._version_tuple
-// through the real authority: a component past the int64 range keeps its full
-// value (Python ints are unbounded) and Unicode Nd digits are accepted and
-// mapped to their numeric value. Both were recorded divergences until S14-Δ.
+// through the frozen authority in testdata/provider_golden.json: a component
+// past the int64 range keeps its full value (Python ints are unbounded) and
+// Unicode Nd digits are accepted and mapped to their numeric value. Both were
+// recorded divergences until S14-Δ.
 func TestVersionTupleParityAgainstPython(t *testing.T) {
-	python, authority := providerPythonAuthority(t)
-	driver := providerRefPath(t)
+	oracle := loadFrozenOracle(t)
 
 	cases := []struct{ name, text string }{
 		{"ascii", "jinna 1.2.3"},
@@ -155,33 +153,26 @@ func TestVersionTupleParityAgainstPython(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			bin := filepath.Join(t.TempDir(), "jinna")
-			writeVersionPrinter(t, bin, tc.text)
-
-			raw := runProviderRef(t, python, driver, "runversion", authority, bin, "5")
+			rec := oracle.record(t, "version-parity/"+tc.name, "runversion")
+			if got := rec.inputText(t); got != tc.text {
+				t.Fatalf("case input drift: frozen %q, built %q", got, tc.text)
+			}
 			var ref providerRefVersion
-			if err := json.Unmarshal(raw, &ref); err != nil {
-				t.Fatalf("decode ref %s: %v", raw, err)
+			if err := json.Unmarshal([]byte(rec.Python), &ref); err != nil {
+				t.Fatalf("decode frozen ref %s: %v", rec.Python, err)
 			}
 			got := joinVersion(VersionTuple(tc.text))
 			if ref.Error != "" {
 				if len(VersionTuple(tc.text)) != 0 {
-					t.Fatalf("VersionTuple(%q) = %q, want no version (python: %q)", tc.text, got, ref.Error)
+					t.Fatalf("VersionTuple(%q) = %q, want no version (frozen: %q)", tc.text, got, ref.Error)
 				}
 				return
 			}
 			if got != ref.Version {
-				t.Fatalf("VersionTuple(%q) = %q, python = %q", tc.text, got, ref.Version)
+				t.Fatalf("VersionTuple(%q) = %q, frozen = %q", tc.text, got, ref.Version)
 			}
 		})
 	}
-}
-
-// writeVersionPrinter writes an executable that prints text (plus a newline)
-// regardless of the shell metacharacters in it.
-func writeVersionPrinter(t *testing.T, path, text string) {
-	t.Helper()
-	writeExecutable(t, path, "#!/bin/sh\nprintf '%s\\n' '"+text+"'\n")
 }
 
 // TestVersionTupleUnicode16NdResidual pins a DELIBERATE, enumerated residual,
@@ -201,30 +192,29 @@ func writeVersionPrinter(t *testing.T, path, text string) {
 // 16D70-16D79, 1CCF0-1CCF9, 1E5F1-1E5FA. The numeric values are driven by the
 // real authority, never hard-coded.
 func TestVersionTupleUnicode16NdResidual(t *testing.T) {
-	python, authority := providerPythonAuthority(t)
-	driver := providerRefPath(t)
+	oracle := loadFrozenOracle(t)
 
 	missing := []rune{0x10D40, 0x116D0, 0x11BF0, 0x16130, 0x16D70, 0x1CCF0, 0x1E5F1}
 	for _, cp := range missing {
 		t.Run(fmt.Sprintf("U+%05X", cp), func(t *testing.T) {
 			text := "jinna " + string(cp) + "." + string(cp+1)
-			bin := filepath.Join(t.TempDir(), "jinna")
-			writeVersionPrinter(t, bin, text)
-
-			raw := runProviderRef(t, python, driver, "runversion", authority, bin, "5")
-			var ref providerRefVersion
-			if err := json.Unmarshal(raw, &ref); err != nil {
-				t.Fatalf("decode ref %s: %v", raw, err)
+			rec := oracle.record(t, fmt.Sprintf("unicode16-residual/U+%05X", cp), "runversion")
+			if got := rec.inputText(t); got != text {
+				t.Fatalf("case input drift: frozen %q, built %q", got, text)
 			}
-			// Python authority (Unicode 16.0 `\d`) accepts the code points and
-			// returns the numeric tuple; the block's first two digits are 0 and
+			var ref providerRefVersion
+			if err := json.Unmarshal([]byte(rec.Python), &ref); err != nil {
+				t.Fatalf("decode frozen ref %s: %v", rec.Python, err)
+			}
+			// Frozen Python authority (Unicode 16.0 `\d`) accepts the code points
+			// and returns the numeric tuple; the block's first two digits are 0 and
 			// 1, so the version is "0.1".
 			if ref.Error != "" || ref.Version != "0.1" {
-				t.Fatalf("python authority for U+%05X = %+v, want version 0.1: the deliberate residual assumes the authority accepts this digit", cp, ref)
+				t.Fatalf("frozen authority for U+%05X = %+v, want version 0.1: the deliberate residual assumes the authority accepts this digit", cp, ref)
 			}
 			// Native port (Go 1.24.13 Unicode 15.0 `\p{Nd}`) still rejects it.
 			if got := VersionTuple(text); got != nil {
-				t.Fatalf("native VersionTuple(%q) = %q, want nil: this residual is DELIBERATE -- Go 1.24.13 carries Unicode 15.0, so U+%05X sits outside unicode.Nd while CPython 3.14.7 accepts it. Passing here means the toolchain gained the Unicode 16 table; remove this pin on purpose rather than deleting the assertion.", text, joinVersion(got), cp)
+				t.Fatalf("native VersionTuple(%q) = %q, want nil: this residual is DELIBERATE -- Go 1.24.13 carries Unicode 15.0, so U+%05X sits outside unicode.Nd while the frozen CPython authority accepts it. Passing here means the toolchain gained the Unicode 16 table; remove this pin on purpose rather than deleting the assertion.", text, joinVersion(got), cp)
 			}
 		})
 	}
@@ -356,12 +346,28 @@ func TestCacheRoot(t *testing.T) {
 // a non-sorted listing, and is skipped with a log otherwise.
 func TestManagedCandidatesNoOrdering(t *testing.T) {
 	goos, goarch := requireTarget(t)
+	oracle := loadFrozenOracle(t)
+	rec := oracle.record(t, "managed-candidates/no-ordering", "candidates")
+	var inputs struct {
+		RootDirs  []string `json:"root_dirs"`
+		EmptyDirs []string `json:"empty_dirs"`
+		Goos      string   `json:"goos"`
+		Goarch    string   `json:"goarch"`
+	}
+	if err := json.Unmarshal(rec.Inputs, &inputs); err != nil {
+		t.Fatalf("decode frozen inputs: %v", err)
+	}
+	if inputs.Goos != "<GOOS>" || inputs.Goarch != "<GOARCH>" {
+		t.Fatalf("case input host drift: frozen %s/%s, want the <GOOS>/<GOARCH> tokens", inputs.Goos, inputs.Goarch)
+	}
 	root := t.TempDir()
-	for _, name := range []string{"0.0.1", "10.0.0", "0.1.0", "2.0.0", "1.2.3", "zzz"} {
+	for _, name := range inputs.RootDirs {
 		writeExecutable(t, ManagedBinaryPath(root, name, goos, goarch), "#!/bin/sh\necho jinna 1.0.0\n")
 	}
-	if err := os.MkdirAll(filepath.Join(root, "0.9.9"), 0o755); err != nil {
-		t.Fatal(err)
+	for _, name := range inputs.EmptyDirs {
+		if err := os.MkdirAll(filepath.Join(root, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	got := managedCandidates(root, goos, goarch)
@@ -370,19 +376,19 @@ func TestManagedCandidatesNoOrdering(t *testing.T) {
 		t.Fatalf("managedCandidates reordered the directory\n go  = %q\n raw = %q", got, expected)
 	}
 
-	// Direct oracle parity: the real _managed_candidates walks the same
-	// directory, so both legs must agree entry for entry.
-	python, authority := providerPythonAuthority(t)
-	driver := providerRefPath(t)
-	raw := runProviderRef(t, python, driver, "candidates", authority, root, goos, goarch)
+	// Direct frozen-oracle parity: the authority walked this same directory,
+	// so both legs must agree entry for entry.
 	var ref struct {
 		Candidates []string `json:"candidates"`
 	}
-	if err := json.Unmarshal(raw, &ref); err != nil {
-		t.Fatalf("decode ref %s: %v", raw, err)
+	if err := json.Unmarshal([]byte(strings.ReplaceAll(rec.Python, "<TMP>", root)), &ref); err != nil {
+		t.Fatalf("decode frozen ref %s: %v", rec.Python, err)
+	}
+	for i := range ref.Candidates {
+		ref.Candidates[i] = replaceHostTokens(ref.Candidates[i], goos, goarch)
 	}
 	if !reflect.DeepEqual(got, ref.Candidates) {
-		t.Fatalf("candidate order diverges from Python\n go = %q\n py = %q", got, ref.Candidates)
+		t.Fatalf("candidate order diverges from the frozen oracle\n go = %q\n frozen = %q", got, ref.Candidates)
 	}
 
 	sorted := append([]string(nil), expected...)
@@ -540,8 +546,20 @@ func TestResolveWinnerRecheckFailure(t *testing.T) {
 // "1.2.3" and "01.2.3" share the tuple (1,2,3) because int("01") == 1.
 func TestResolveTieKeepsFirstCandidate(t *testing.T) {
 	goos, goarch := requireTarget(t)
-	python, authority := providerPythonAuthority(t)
-	driver := providerRefPath(t)
+	oracle := loadFrozenOracle(t)
+	rec := oracle.record(t, "resolve-tie/keeps-first", "resolve")
+	var inputs struct {
+		Binary      string               `json:"binary"`
+		MinVersion  string               `json:"min_version"`
+		PathVersion string               `json:"path_version"`
+		Managed     []frozenManagedInput `json:"managed"`
+	}
+	if err := json.Unmarshal(rec.Inputs, &inputs); err != nil {
+		t.Fatalf("decode frozen inputs: %v", err)
+	}
+	if inputs.Binary != "jinna" || inputs.MinVersion != "" || inputs.PathVersion != "" || len(inputs.Managed) != 2 {
+		t.Fatalf("frozen resolve-tie inputs drifted: %+v", inputs)
+	}
 
 	home := t.TempDir()
 	writeManaged(t, home, "1.2.3", "1.2.3", receiptOverrides{})
@@ -557,11 +575,12 @@ func TestResolveTieKeepsFirstCandidate(t *testing.T) {
 		t.Fatalf("fixture is not a tie: 1.2.3 and 01.2.3 must share a tuple")
 	}
 
-	raw := runProviderRef(t, python, driver, "resolve", authority, "jinna", "", home)
+	raw := strings.ReplaceAll(rec.Python, "<HOME>", home)
 	var ref providerRefResult
-	if err := json.Unmarshal(raw, &ref); err != nil {
-		t.Fatalf("decode ref %s: %v", raw, err)
+	if err := json.Unmarshal([]byte(raw), &ref); err != nil {
+		t.Fatalf("decode frozen ref %s: %v", raw, err)
 	}
+	normalizeProviderRefHost(&ref, goos, goarch)
 	got, err := Resolve(&schema.CliDep{Binary: "jinna"}, &home)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
@@ -613,48 +632,131 @@ func TestRunVersionMessages(t *testing.T) {
 	}
 }
 
-// --- Python differential ----------------------------------------------------
+// --- frozen Python oracle ---------------------------------------------------
 
-func providerRefPath(t *testing.T) string {
-	t.Helper()
-	path, err := filepath.Abs(filepath.Join("testdata", "provider_ref.py"))
-	if err != nil {
-		t.Fatalf("resolve ref driver: %v", err)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("ref driver %s: %v", path, err)
-	}
-	return path
+// frozenCase is one captured provider_ref.py run: its mode, the exact inputs
+// that produced it, and the raw stdout JSON.
+type frozenCase struct {
+	Mode   string          `json:"mode"`
+	Inputs json.RawMessage `json:"inputs"`
+	Python string          `json:"python"`
 }
 
-func providerPythonAuthority(t *testing.T) (python, authority string) {
+func (c frozenCase) inputText(t *testing.T) string {
 	t.Helper()
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skipf("python3 not available: %v", err)
+	var in struct {
+		Text string `json:"text"`
 	}
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatalf("repo root: %v", err)
+	if err := json.Unmarshal(c.Inputs, &in); err != nil {
+		t.Fatalf("decode frozen inputs: %v", err)
 	}
-	authority = filepath.Join(root, "lib", "_internal", "provider_install.py")
-	if _, err := os.Stat(authority); err != nil {
-		t.Skipf("provider_install.py not available under %s: %v", root, err)
-	}
-	return python, authority
+	return in.Text
 }
 
-func runProviderRef(t *testing.T, python, driver string, args ...string) []byte {
+type frozenOracle struct {
+	Oracle struct {
+		Python string `json:"python"`
+	} `json:"oracle"`
+	Cases map[string]frozenCase `json:"cases"`
+}
+
+// loadFrozenOracle reads the frozen authority bundle. A missing bundle is a
+// failure, never a skip: the bundle IS the oracle.
+func loadFrozenOracle(t *testing.T) *frozenOracle {
 	t.Helper()
-	cmd := exec.Command(python, append([]string{driver}, args...)...)
-	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("python oracle failed: %v\nstderr: %s", err, stderr.String())
+	path := filepath.Join("testdata", "provider_golden.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read frozen oracle: %v", err)
 	}
-	return stdout.Bytes()
+	var oracle frozenOracle
+	if err := json.Unmarshal(data, &oracle); err != nil {
+		t.Fatalf("parse frozen oracle %s: %v", path, err)
+	}
+	if oracle.Oracle.Python == "" || len(oracle.Cases) == 0 {
+		t.Fatalf("frozen oracle %s carries no oracle identity or no cases", path)
+	}
+	return &oracle
+}
+
+// record returns the frozen case, failing when it is absent or captured in a
+// different mode.
+func (o *frozenOracle) record(t *testing.T, name, mode string) frozenCase {
+	t.Helper()
+	rec, ok := o.Cases[name]
+	if !ok {
+		t.Fatalf("frozen oracle is missing case %q", name)
+	}
+	if rec.Mode != mode {
+		t.Fatalf("frozen case %q has mode %q, want %q", name, rec.Mode, mode)
+	}
+	return rec
+}
+
+// replaceHostTokens maps the frozen host placeholders to the runtime target.
+// Callers apply it only to the exact fields that carry the host.
+func replaceHostTokens(s, goos, goarch string) string {
+	s = strings.ReplaceAll(s, "<GOOS>-<GOARCH>", goos+"-"+goarch)
+	s = strings.ReplaceAll(s, "<GOOS>", goos)
+	s = strings.ReplaceAll(s, "<GOARCH>", goarch)
+	return s
+}
+
+// normalizeProviderRefHost maps the host placeholders in the target and the
+// host-carrying command/path fields, leaving every other field as written.
+func normalizeProviderRefHost(ref *providerRefResult, goos, goarch string) {
+	if len(ref.Target) == 2 {
+		ref.Target[0] = replaceHostTokens(ref.Target[0], goos, goarch)
+		ref.Target[1] = replaceHostTokens(ref.Target[1], goos, goarch)
+	}
+	ref.Command = replaceHostTokens(ref.Command, goos, goarch)
+	if ref.Path != nil {
+		path := replaceHostTokens(*ref.Path, goos, goarch)
+		ref.Path = &path
+	}
+}
+
+// TestProviderHostNormalizeLeavesOtherFieldsAlone is the negative control for
+// the scoped tokenizer: a host-looking placeholder in a non-host field is
+// compared as written and is not mapped to the runtime target.
+func TestProviderHostNormalizeLeavesOtherFieldsAlone(t *testing.T) {
+	path := "<TMP>/x/<GOOS>-<GOARCH>/jinna"
+	ref := providerRefResult{
+		Command:    path,
+		Path:       &path,
+		Repository: "<GOOS>-<GOARCH>",
+		ReleaseTag: "<GOOS>",
+		Target:     []string{"<GOOS>", "<GOARCH>"},
+	}
+	normalizeProviderRefHost(&ref, "linux", "amd64")
+	if ref.Repository != "<GOOS>-<GOARCH>" {
+		t.Fatalf("repository was normalized: %q", ref.Repository)
+	}
+	if ref.ReleaseTag != "<GOOS>" {
+		t.Fatalf("release_tag was normalized: %q", ref.ReleaseTag)
+	}
+	if ref.Target[0] != "linux" || ref.Target[1] != "amd64" {
+		t.Fatalf("target was not normalized: %q", ref.Target)
+	}
+	if ref.Command != "<TMP>/x/linux-amd64/jinna" {
+		t.Fatalf("command was not normalized only on the target segment: %q", ref.Command)
+	}
+	if ref.Path == nil || *ref.Path != "<TMP>/x/linux-amd64/jinna" {
+		t.Fatalf("path was not normalized only on the target segment: %v", ref.Path)
+	}
+}
+
+type frozenManagedInput struct {
+	VersionDir string            `json:"version_dir"`
+	Printed    string            `json:"printed"`
+	Overrides  map[string]string `json:"overrides"`
+}
+
+type frozenResolveInputs struct {
+	Binary      string              `json:"binary"`
+	MinVersion  string              `json:"min_version"`
+	PathVersion string              `json:"path_version"`
+	Managed     *frozenManagedInput `json:"managed"`
 }
 
 type providerRefResult struct {
@@ -690,13 +792,13 @@ func assertResolutionMatchesRef(t *testing.T, got Resolution, ref providerRefRes
 	}
 }
 
-// TestProviderResolveDifferentialAgainstPython pins Resolve against the real
-// provider_install.resolve_provider on every shared fixture: the PATH source,
-// the managed source with a verified receipt, each receipt rejection, the
-// min_version gate, and the set-but-empty binary.
+// TestProviderResolveDifferentialAgainstPython pins Resolve against the frozen
+// provider_install.resolve_provider bundle on every shared fixture: the PATH
+// source, the managed source with a verified receipt, each receipt rejection,
+// the min_version gate, and the set-but-empty binary.
 func TestProviderResolveDifferentialAgainstPython(t *testing.T) {
-	python, authority := providerPythonAuthority(t)
-	driver := providerRefPath(t)
+	goos, goarch := requireTarget(t)
+	oracle := loadFrozenOracle(t)
 
 	type managedCase struct {
 		versionDir string
@@ -728,6 +830,25 @@ func TestProviderResolveDifferentialAgainstPython(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			rec := oracle.record(t, "resolve-differential/"+tc.name, "resolve")
+			var inputs frozenResolveInputs
+			if err := json.Unmarshal(rec.Inputs, &inputs); err != nil {
+				t.Fatalf("decode frozen inputs: %v", err)
+			}
+			wantManaged := tc.managed == nil
+			if inputs.Binary != tc.binary || inputs.MinVersion != tc.minVersion || inputs.PathVersion != tc.pathVersion || (inputs.Managed == nil) != wantManaged {
+				t.Fatalf("case input drift: frozen %+v, built %+v", inputs, tc)
+			}
+			if tc.managed != nil {
+				if inputs.Managed.VersionDir != tc.managed.versionDir || inputs.Managed.Printed != tc.managed.printed {
+					t.Fatalf("case managed input drift: frozen %+v, built %+v", inputs.Managed, tc.managed)
+				}
+				wantOverrides := receiptOverridesMap(tc.managed.ov)
+				if !reflect.DeepEqual(inputs.Managed.Overrides, wantOverrides) {
+					t.Fatalf("case managed overrides drift: frozen %+v, built %+v", inputs.Managed.Overrides, wantOverrides)
+				}
+			}
+
 			home := t.TempDir()
 			pathDir := t.TempDir()
 			if tc.pathVersion != "" {
@@ -738,32 +859,55 @@ func TestProviderResolveDifferentialAgainstPython(t *testing.T) {
 				writeManaged(t, home, tc.managed.versionDir, tc.managed.printed, tc.managed.ov)
 			}
 
-			raw := runProviderRef(t, python, driver, "resolve", authority, tc.binary, tc.minVersion, home)
+			raw := strings.ReplaceAll(rec.Python, "<PATH>", pathDir)
+			raw = strings.ReplaceAll(raw, "<HOME>", home)
 			var ref providerRefResult
-			if err := json.Unmarshal(raw, &ref); err != nil {
-				t.Fatalf("decode ref %s: %v", raw, err)
+			if err := json.Unmarshal([]byte(raw), &ref); err != nil {
+				t.Fatalf("decode frozen ref %s: %v", raw, err)
 			}
+			normalizeProviderRefHost(&ref, goos, goarch)
 			got, err := Resolve(&schema.CliDep{Binary: tc.binary, MinVersion: tc.minVersion}, &home)
 			if ref.Error != "" {
 				if err == nil || err.Error() != ref.Error {
-					t.Fatalf("error diverges: go=%v python=%q", err, ref.Error)
+					t.Fatalf("error diverges: go=%v frozen=%q", err, ref.Error)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("unexpected go error: %v (python %+v)", err, ref)
+				t.Fatalf("unexpected go error: %v (frozen %+v)", err, ref)
 			}
 			assertResolutionMatchesRef(t, got, ref)
 		})
 	}
 }
 
+// receiptOverridesMap renders the overrides a case applies to the base receipt,
+// matching the shape captured in provider_golden.json.
+func receiptOverridesMap(ov receiptOverrides) map[string]string {
+	out := map[string]string{}
+	if ov.status != nil {
+		out["status"] = *ov.status
+	}
+	if ov.repository != nil {
+		out["repository"] = *ov.repository
+	}
+	if ov.target != nil {
+		out["target"] = *ov.target
+	}
+	if ov.releaseTag != nil {
+		out["release_tag"] = *ov.releaseTag
+	}
+	if ov.digest != nil {
+		out["binary_sha256"] = *ov.digest
+	}
+	return out
+}
+
 // TestRunVersionDifferentialAgainstPython pins the error strings of the
 // reproduced cases (missing path, permission, no version, non-zero exit,
-// timeout) to the real provider_install._run_version.
+// timeout) to the frozen provider_install._run_version bundle.
 func TestRunVersionDifferentialAgainstPython(t *testing.T) {
-	python, authority := providerPythonAuthority(t)
-	driver := providerRefPath(t)
+	oracle := loadFrozenOracle(t)
 
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "absent")
@@ -785,10 +929,21 @@ func TestRunVersionDifferentialAgainstPython(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			raw := runProviderRef(t, python, driver, "runversion", authority, tc.path, tc.timeout)
+			rec := oracle.record(t, "runversion-differential/"+tc.name, "runversion")
+			var inputs struct {
+				Fixture string `json:"fixture"`
+				Timeout string `json:"timeout"`
+			}
+			if err := json.Unmarshal(rec.Inputs, &inputs); err != nil {
+				t.Fatalf("decode frozen inputs: %v", err)
+			}
+			if inputs.Fixture != tc.name || inputs.Timeout != tc.timeout {
+				t.Fatalf("case input drift: frozen %+v, built %+v", inputs, tc)
+			}
+			raw := strings.ReplaceAll(rec.Python, "<TMP>", dir)
 			var ref providerRefVersion
-			if err := json.Unmarshal(raw, &ref); err != nil {
-				t.Fatalf("decode ref %s: %v", raw, err)
+			if err := json.Unmarshal([]byte(raw), &ref); err != nil {
+				t.Fatalf("decode frozen ref %s: %v", raw, err)
 			}
 			timeout, err := time.ParseDuration(tc.timeout + "s")
 			if err != nil {
@@ -797,12 +952,12 @@ func TestRunVersionDifferentialAgainstPython(t *testing.T) {
 			got, err := runVersion(tc.path, timeout)
 			if ref.Error != "" {
 				if err == nil || err.Error() != ref.Error {
-					t.Fatalf("error diverges: go=%v python=%q", err, ref.Error)
+					t.Fatalf("error diverges: go=%v frozen=%q", err, ref.Error)
 				}
 				return
 			}
 			if err != nil || got != ref.Version {
-				t.Fatalf("version diverges: go=%q err=%v python=%q", got, err, ref.Version)
+				t.Fatalf("version diverges: go=%q err=%v frozen=%q", got, err, ref.Version)
 			}
 		})
 	}

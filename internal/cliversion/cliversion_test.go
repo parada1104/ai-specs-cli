@@ -1,11 +1,9 @@
 package cliversion
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -215,15 +213,20 @@ func goResult(c corpusCase) string {
 	return "unknown"
 }
 
-func TestDifferentialReference(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "lib", "_internal", "cli_version.py")); err != nil {
-		t.Fatalf("python reference missing: %v", err)
-	}
+type frozenRecord struct {
+	Index  int        `json:"index"`
+	Case   corpusCase `json:"case"`
+	Python string     `json:"python"`
+}
 
+// normalizeCase replaces the scratch temp dir with the frozen <TMP> placeholder in the path-valued inputs.
+func normalizeCase(c corpusCase, tmp string) corpusCase {
+	c.Home = strings.ReplaceAll(c.Home, tmp, "<TMP>")
+	c.Lock = strings.ReplaceAll(c.Lock, tmp, "<TMP>")
+	return c
+}
+
+func TestDifferentialReference(t *testing.T) {
 	tmp := t.TempDir()
 	homeA := filepath.Join(tmp, "home-a")
 	if err := os.MkdirAll(homeA, 0o755); err != nil {
@@ -300,31 +303,33 @@ func TestDifferentialReference(t *testing.T) {
 	add(corpusCase{Kind: "lockmeta", Lock: lockB})
 	add(corpusCase{Kind: "lockmeta", Lock: filepath.Join(tmp, "absent.lock")})
 
-	data, err := json.Marshal(corpus)
+	frozenPath := filepath.Join("testdata", "version_golden.json")
+	frozenData, err := os.ReadFile(frozenPath)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("read frozen oracle: %v", err)
 	}
-	corpusPath := filepath.Join(tmp, "corpus.json")
-	if err := os.WriteFile(corpusPath, data, 0o644); err != nil {
-		t.Fatal(err)
+	var frozen struct {
+		Cases []frozenRecord `json:"cases"`
 	}
-
-	cmd := exec.Command("python3", filepath.Join(root, "internal", "cliversion", "testdata", "version_ref.py"), corpusPath)
-	cmd.Dir = root
-	var out, errBuf bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errBuf
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("python driver failed: %v\n%s", err, errBuf.String())
+	if err := json.Unmarshal(frozenData, &frozen); err != nil {
+		t.Fatalf("parse frozen oracle %s: %v", frozenPath, err)
 	}
-	pyLines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
-	if len(pyLines) != len(corpus) {
-		t.Fatalf("driver produced %d lines for %d cases", len(pyLines), len(corpus))
+	if len(frozen.Cases) != len(corpus) {
+		t.Fatalf("frozen oracle holds %d records for %d cases", len(frozen.Cases), len(corpus))
 	}
 	compared := 0
 	for i, c := range corpus {
-		got := fmt.Sprintf("%d\t%s", i, goResult(c))
-		if got != pyLines[i] {
-			t.Errorf("case %d %+v:\n  go:     %q\n  python: %q", i, c, got, pyLines[i])
+		rec := frozen.Cases[i]
+		if rec.Index != i {
+			t.Errorf("frozen record %d has index %d", i, rec.Index)
+			continue
+		}
+		if want := normalizeCase(c, tmp); rec.Case != want {
+			t.Errorf("case %d input drift:\n  frozen: %+v\n  built:  %+v", i, rec.Case, want)
+			continue
+		}
+		if got := goResult(c); got != rec.Python {
+			t.Errorf("case %d %+v:\n  go:     %q\n  frozen: %q", i, c, got, rec.Python)
 			continue
 		}
 		compared++
