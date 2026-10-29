@@ -6,7 +6,7 @@
       "write_manifest": true,
       "manifest": "[project]\nname = \"x\"\nrepo_topology = \"standalone\"\n\n[recipes.flat-recipe]\nenabled = true\nversion = \"1.0.0\"\nflat_setting = \"on\"\nanother = 7\n\n[recipes.config-recipe]\nenabled = false\nversion = \"2.0.0\"\n\n[recipes.config-recipe.config]\nnested_setting = \"yes\"\ncount = 3\n\n[[bindings]]\ncapability = \"tracker\"\nrecipe = \"flat-recipe\"\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{\"tracker\":\"flat-recipe\"},\"recipes\":{\"flat-recipe\":{\"flat_setting\":\"on\",\"another\":7},\"config-recipe\":{\"nested_setting\":\"yes\",\"count\":3}},\"enabled\":[\"flat-recipe\"],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"standalone\",\"configured\":\"standalone\",\"via\":\"config\",\"source\":\"project\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -15,7 +15,7 @@
       "write_manifest": true,
       "manifest": "[[bindings]]\ncapability = \"tracker\"\nrecipe = \"recipe-a\"\n\n[[bindings]]\ncapability = \"vcs\"\nrecipe = \"recipe-b\"\n\n[[bindings]]\ncapability = \"\"\nrecipe = \"recipe-c\"\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{\"tracker\":\"recipe-a\",\"vcs\":\"recipe-b\"},\"recipes\":{},\"enabled\":[],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"standalone\",\"configured\":\"auto\",\"via\":\"auto\",\"source\":\"default\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -24,7 +24,7 @@
       "write_manifest": true,
       "manifest": "[project]\nrepo_topology = \"standalone\"\n\n[recipes.a]\nenabled = true\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{},\"recipes\":{\"a\":{}},\"enabled\":[\"a\"],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"standalone\",\"configured\":\"standalone\",\"via\":\"config\",\"source\":\"project\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -33,7 +33,7 @@
       "write_manifest": true,
       "manifest": "[recipes.worktree-flow]\nenabled = true\n\n[recipes.worktree-flow.config]\nrepo_topology = \"monorepo-apps\"\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{},\"recipes\":{\"worktree-flow\":{\"repo_topology\":\"monorepo-apps\"}},\"enabled\":[\"worktree-flow\"],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"monorepo-apps\",\"configured\":\"monorepo-apps\",\"via\":\"config\",\"source\":\"legacy-recipe\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -42,7 +42,7 @@
       "write_manifest": true,
       "manifest": "[recipes.worktree-flow]\nenabled = true\nrepo_topology = \"monorepo-apps\"\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{},\"recipes\":{\"worktree-flow\":{\"repo_topology\":\"monorepo-apps\"}},\"enabled\":[\"worktree-flow\"],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"monorepo-apps\",\"configured\":\"monorepo-apps\",\"via\":\"config\",\"source\":\"legacy-recipe\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -51,7 +51,7 @@
       "write_manifest": true,
       "manifest": "[project]\nrepo_topology = \"   \"\n\n[recipes.worktree-flow]\nenabled = true\n\n[recipes.worktree-flow.config]\nrepo_topology = \"monorepo-apps\"\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{},\"recipes\":{\"worktree-flow\":{\"repo_topology\":\"monorepo-apps\"}},\"enabled\":[\"worktree-flow\"],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"monorepo-apps\",\"configured\":\"monorepo-apps\",\"via\":\"config\",\"source\":\"legacy-recipe\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -60,7 +60,7 @@
       "write_manifest": true,
       "manifest": "[project]\nrepo_topology = 5\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{},\"recipes\":{},\"enabled\":[],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"standalone\",\"configured\":\"auto\",\"via\":\"auto\",\"source\":\"default\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -69,7 +69,7 @@
       "write_manifest": true,
       "manifest": "[project]\nrepo_topology = \"weird\"\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{},\"recipes\":{},\"enabled\":[],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"standalone\",\"configured\":\"auto\",\"via\":\"auto\",\"source\":\"project\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -78,7 +78,7 @@
       "write_manifest": true,
       "manifest": "# no recipes table\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{},\"recipes\":{},\"enabled\":[],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"standalone\",\"configured\":\"auto\",\"via\":\"auto\",\"source\":\"default\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -87,7 +87,7 @@
       "write_manifest": true,
       "manifest": "bindings = [{capability = \"tracker\", recipe = \"a\"}, {capability = \"vcs\", recipe = \"b\"}]\n\n[recipes.a]\nenabled = true\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{\"tracker\":\"a\",\"vcs\":\"b\"},\"recipes\":{\"a\":{}},\"enabled\":[\"a\"],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"standalone\",\"configured\":\"auto\",\"via\":\"auto\",\"source\":\"default\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -96,7 +96,7 @@
       "write_manifest": true,
       "manifest": "bindings = [{capability = \"tracker\", recipe = \"a\"}, 5, \"x\", {capability = \"vcs\", recipe = \"b\"}]\n\n[recipes.a]\nenabled = true\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{\"tracker\":\"a\",\"vcs\":\"b\"},\"recipes\":{\"a\":{}},\"enabled\":[\"a\"],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"standalone\",\"configured\":\"auto\",\"via\":\"auto\",\"source\":\"default\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -105,7 +105,7 @@
       "write_manifest": true,
       "manifest": "bindings = [{recipe = \"a\"}]\n\n[recipes.a]\nenabled = true\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{},\"recipes\":{\"a\":{}},\"enabled\":[\"a\"],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"standalone\",\"configured\":\"auto\",\"via\":\"auto\",\"source\":\"default\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -114,7 +114,7 @@
       "write_manifest": true,
       "manifest": "bindings = [{capability = \"tracker\"}]\n\n[recipes.a]\nenabled = true\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{},\"recipes\":{\"a\":{}},\"enabled\":[\"a\"],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"standalone\",\"configured\":\"auto\",\"via\":\"auto\",\"source\":\"default\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -123,7 +123,7 @@
       "write_manifest": false,
       "manifest": "",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"message": 1},
       "python": "{\"ok\":false,\"exc_type\":\"FileNotFoundError\",\"message\":\"\u003cPROJECT_ROOT\u003e/ai-specs/ai-specs.toml not found\"}"
     },
     {
@@ -132,7 +132,7 @@
       "write_manifest": true,
       "manifest": "not = [valid\n",
       "build_submodules": false,
-      "path_count": 0,
+      "path_fields": {},
       "python": "{\"ok\":false,\"exc_type\":\"TOMLDecodeError\",\"message\":\"Invalid value (at line 1, column 8)\"}"
     },
     {
@@ -141,7 +141,7 @@
       "write_manifest": true,
       "manifest": "",
       "build_submodules": true,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{},\"recipes\":{},\"enabled\":[],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"monorepo-submodules\",\"configured\":\"auto\",\"via\":\"auto\",\"source\":\"default\",\"submodules\":[\"alpha\",\"zeta\"],\"gitmodules_present\":true}}}"
     },
     {
@@ -151,7 +151,7 @@
       "manifest": "[project]\nrepo_topology = \"monorepo-submodules\"\n",
       "gitmodules": "[submodule \"apps/api\"]\n\tpath = apps/api\n\turl = https://example.invalid/api.git\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{},\"recipes\":{},\"enabled\":[],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"monorepo-submodules\",\"configured\":\"monorepo-submodules\",\"via\":\"config\",\"source\":\"project\",\"submodules\":[],\"gitmodules_present\":true}}}"
     },
     {
@@ -160,7 +160,7 @@
       "write_manifest": true,
       "manifest": "[recipes.a]\nenabled = true\n\n[[bindings]]\ncapability = 5\nrecipe = \"a\"\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{\"5\":\"a\"},\"recipes\":{\"a\":{}},\"enabled\":[\"a\"],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"standalone\",\"configured\":\"auto\",\"via\":\"auto\",\"source\":\"default\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -169,7 +169,7 @@
       "write_manifest": true,
       "manifest": "[recipes.a]\nenabled = true\n\n[[bindings]]\ncapability = true\nrecipe = \"a\"\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{\"true\":\"a\"},\"recipes\":{\"a\":{}},\"enabled\":[\"a\"],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"standalone\",\"configured\":\"auto\",\"via\":\"auto\",\"source\":\"default\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -178,7 +178,7 @@
       "write_manifest": true,
       "manifest": "[recipes.a]\nenabled = true\n\n[[bindings]]\ncapability = \"tracker\"\nrecipe = 5\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{\"tracker\":5},\"recipes\":{\"a\":{}},\"enabled\":[\"a\"],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"standalone\",\"configured\":\"auto\",\"via\":\"auto\",\"source\":\"default\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -187,7 +187,7 @@
       "write_manifest": true,
       "manifest": "[recipes.foo]\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{},\"recipes\":{\"foo\":{}},\"enabled\":[],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"standalone\",\"configured\":\"auto\",\"via\":\"auto\",\"source\":\"default\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -196,7 +196,7 @@
       "write_manifest": true,
       "manifest": "[recipes.a]\nfoo = 1\n\n[recipes.a.config]\nfoo = 2\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{},\"recipes\":{\"a\":{\"foo\":2}},\"enabled\":[],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"standalone\",\"configured\":\"auto\",\"via\":\"auto\",\"source\":\"default\",\"submodules\":[],\"gitmodules_present\":false}}}"
     },
     {
@@ -205,7 +205,7 @@
       "write_manifest": true,
       "manifest": "[recipes.a]\nconfig = { foo = 2 }\nfoo = 1\n",
       "build_submodules": false,
-      "path_count": 1,
+      "path_fields": {"result.project_root": 1},
       "python": "{\"ok\":true,\"result\":{\"bindings\":{},\"recipes\":{\"a\":{\"foo\":1}},\"enabled\":[],\"project_root\":\"\u003cPROJECT_ROOT\u003e\",\"topology\":{\"resolved\":\"standalone\",\"configured\":\"auto\",\"via\":\"auto\",\"source\":\"default\",\"submodules\":[],\"gitmodules_present\":false}}}"
     }
   ],

@@ -19,6 +19,7 @@ package sync
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,14 +32,14 @@ import (
 // produced it and the captured {rc, stdout, stderr, document}, with the
 // per-stream <PROJECT_ROOT> occurrence inventory.
 type resolvedConfigOnlyGoldenCase struct {
-	Name             string            `json:"name"`
-	Recipes          map[string]string `json:"recipes"`
-	Manifest         string            `json:"manifest"`
-	RC               int               `json:"rc"`
-	Stdout           string            `json:"stdout"`
-	Stderr           string            `json:"stderr"`
-	Document         string            `json:"document"`
-	ProjectPathCount map[string]int    `json:"project_path_count"`
+	Name              string            `json:"name"`
+	Recipes           map[string]string `json:"recipes"`
+	Manifest          string            `json:"manifest"`
+	RC                int               `json:"rc"`
+	Stdout            string            `json:"stdout"`
+	Stderr            string            `json:"stderr"`
+	Document          string            `json:"document"`
+	ProjectPathFields map[string]int    `json:"project_path_fields"`
 }
 
 type resolvedConfigOnlyGolden struct {
@@ -65,25 +66,40 @@ func loadResolvedConfigOnlyGolden(t *testing.T) []resolvedConfigOnlyGoldenCase {
 	return golden.Cases
 }
 
-// expandResolvedConfigOnlyRoot restores the tokenized host path in the three
-// captured surfaces. The recorded per-stream occurrence inventory must hold
-// exactly (no token may appear where none was captured and none may be
-// missing).
-func expandResolvedConfigOnlyRoot(t *testing.T, tc resolvedConfigOnlyGoldenCase, root string) (stdout, stderr, document string) {
-	t.Helper()
+const resolvedConfigOnlyRootToken = "<PROJECT_ROOT>"
+
+const resolvedConfigOnlyRootSlot = "\"project_root\": \"" + resolvedConfigOnlyRootToken + "\""
+
+// expandResolvedConfigOnlyRoot restores the tokenized host path in the captured
+// surfaces, but only where the inventory records it: the streams must carry the
+// token exactly per inventory (normally none), and in the document it may occur
+// only inside the exact project_root slot. No global replace.
+func expandResolvedConfigOnlyRoot(tc resolvedConfigOnlyGoldenCase, root string) (stdout, stderr, document string, err error) {
 	resolved := shared.RealPath(root)
-	surfaces := map[string]*string{
-		"stdout":   &tc.Stdout,
-		"stderr":   &tc.Stderr,
-		"document": &tc.Document,
-	}
-	for label, surface := range surfaces {
-		if got := strings.Count(*surface, "<PROJECT_ROOT>"); got != tc.ProjectPathCount[label] {
-			t.Fatalf("scenario %q: %d <PROJECT_ROOT> tokens in %s, inventory says %d", tc.Name, got, label, tc.ProjectPathCount[label])
+	for field := range tc.ProjectPathFields {
+		if field != "document.project_root" && field != "stdout" && field != "stderr" {
+			return "", "", "", fmt.Errorf("scenario %q: inventory names non-owner field %q", tc.Name, field)
 		}
-		*surface = strings.ReplaceAll(*surface, "<PROJECT_ROOT>", resolved)
 	}
-	return tc.Stdout, tc.Stderr, tc.Document
+	for _, surface := range []struct{ label, text string }{{"stdout", tc.Stdout}, {"stderr", tc.Stderr}} {
+		if got := strings.Count(surface.text, resolvedConfigOnlyRootToken); got != tc.ProjectPathFields[surface.label] {
+			return "", "", "", fmt.Errorf("scenario %q: %d %s tokens in %s, inventory says %d", tc.Name, got, resolvedConfigOnlyRootToken, surface.label, tc.ProjectPathFields[surface.label])
+		}
+	}
+	stdout, stderr, document = tc.Stdout, tc.Stderr, tc.Document
+
+	slots := strings.Count(document, resolvedConfigOnlyRootSlot)
+	tokens := strings.Count(document, resolvedConfigOnlyRootToken)
+	if slots != tokens {
+		return "", "", "", fmt.Errorf("scenario %q: %s occurs outside the exact document slot %s", tc.Name, resolvedConfigOnlyRootToken, resolvedConfigOnlyRootSlot)
+	}
+	if want := tc.ProjectPathFields["document.project_root"]; tokens != want {
+		return "", "", "", fmt.Errorf("scenario %q: %d %s tokens in document, inventory says %d", tc.Name, tokens, resolvedConfigOnlyRootToken, want)
+	}
+	if tokens > 0 {
+		document = strings.Replace(document, resolvedConfigOnlyRootSlot, "\"project_root\": \""+resolved+"\"", slots)
+	}
+	return stdout, stderr, document, nil
 }
 
 func readIfExists(t *testing.T, path string) string {
@@ -115,7 +131,10 @@ func TestResolvedConfigOnlyDifferential(t *testing.T) {
 				goRC = 1
 			}
 
-			wantStdout, wantStderr, wantDocument := expandResolvedConfigOnlyRoot(t, scenario, fixture.project)
+			wantStdout, wantStderr, wantDocument, err := expandResolvedConfigOnlyRoot(scenario, fixture.project)
+			if err != nil {
+				t.Fatalf("expand frozen scenario %q: %v", scenario.Name, err)
+			}
 
 			if goRC != scenario.RC {
 				t.Fatalf("rc: go=%d frozen python=%d\n--- go stderr ---\n%s\n--- frozen python stderr ---\n%s", goRC, scenario.RC, stderr.String(), scenario.Stderr)
@@ -130,5 +149,33 @@ func TestResolvedConfigOnlyDifferential(t *testing.T) {
 			goDoc := readIfExists(t, goOut)
 			assertDocumentEqual(t, "resolved-config", goDoc, wantDocument)
 		})
+	}
+}
+
+// TestResolvedConfigOnlyFrozenExpansionIsSlotScoped is a negative control: the
+// token is restored only in the exact project_root slot, so a literal token
+// injected into a non-path value must fail instead of being normalized away.
+func TestResolvedConfigOnlyFrozenExpansionIsSlotScoped(t *testing.T) {
+	scenario := loadResolvedConfigOnlyGolden(t)[0]
+	fixture := writeMaterializeFixture(t, scenario.Recipes, scenario.Manifest)
+
+	mutated := scenario
+	mutated.Document = strings.Replace(scenario.Document, "\"Rule one\"", "\"<PROJECT_ROOT>\"", 1)
+	if mutated.Document == scenario.Document {
+		t.Fatalf("injection did not land in the frozen document")
+	}
+	if _, _, _, err := expandResolvedConfigOnlyRoot(mutated, fixture.project); err == nil {
+		t.Fatalf("expanded a <PROJECT_ROOT> token injected outside the project_root slot")
+	} else if !strings.Contains(err.Error(), "exact document slot") {
+		t.Fatalf("error does not name the non-slot position: %v", err)
+	}
+
+	_, _, document, err := expandResolvedConfigOnlyRoot(scenario, fixture.project)
+	if err != nil {
+		t.Fatalf("expand the unmodified frozen scenario: %v", err)
+	}
+	want := strings.Replace(scenario.Document, resolvedConfigOnlyRootSlot, "\"project_root\": \""+shared.RealPath(fixture.project)+"\"", 1)
+	if document != want {
+		t.Fatalf("unmodified document expanded beyond its project_root slot:\n got: %q\nwant: %q", document, want)
 	}
 }

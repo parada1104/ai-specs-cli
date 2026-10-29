@@ -21,6 +21,7 @@ package sync
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,14 +36,14 @@ import (
 // produced it, the inventory of host-path occurrences, and the oracle's
 // project-mode envelope with <PROJECT_ROOT> tokens.
 type resolvedConfigGoldenCase struct {
-	Name            string `json:"name"`
-	Kind            string `json:"kind"`
-	WriteManifest   bool   `json:"write_manifest"`
-	Manifest        string `json:"manifest"`
-	Gitmodules      string `json:"gitmodules,omitempty"`
-	BuildSubmodules bool   `json:"build_submodules"`
-	PathCount       int    `json:"path_count"`
-	Python          string `json:"python"`
+	Name            string         `json:"name"`
+	Kind            string         `json:"kind"`
+	WriteManifest   bool           `json:"write_manifest"`
+	Manifest        string         `json:"manifest"`
+	Gitmodules      string         `json:"gitmodules,omitempty"`
+	BuildSubmodules bool           `json:"build_submodules"`
+	PathFields      map[string]int `json:"path_fields"`
+	Python          string         `json:"python"`
 }
 
 type resolvedConfigGolden struct {
@@ -82,27 +83,81 @@ func findResolvedConfigCase(t *testing.T, name string) resolvedConfigGoldenCase 
 	return resolvedConfigGoldenCase{}
 }
 
-// resolvedConfigRefResult is the canonical JSON the oracle emits in project
-// mode. Result is the Python envelope; ExcType/Message carry a raised failure.
-type resolvedConfigRefResult struct {
-	OK      bool            `json:"ok"`
-	Result  json.RawMessage `json:"result"`
-	ExcType string          `json:"exc_type"`
-	Message string          `json:"message"`
+// resolvedConfigRootToken is the tokenized host path in the frozen bundle.
+const resolvedConfigRootToken = "<PROJECT_ROOT>"
+
+// resolvedConfigRootOwners is the closed set of fields allowed to carry the
+// token. Anything else is a bundle mutation, not a host-path occurrence.
+var resolvedConfigRootOwners = map[string]struct{}{
+	"result.project_root": {},
+	"message":             {},
 }
 
-// expandResolvedConfigRoot restores the single tokenized host path with the
-// fixture's real root. The recorded occurrence inventory must hold exactly
-// (no token may appear where none was captured and none may be missing).
-func expandResolvedConfigRoot(t *testing.T, tc resolvedConfigGoldenCase, root string) []byte {
-	t.Helper()
-	if got := strings.Count(tc.Python, "<PROJECT_ROOT>"); got != tc.PathCount {
-		t.Fatalf("case %q: %d <PROJECT_ROOT> tokens in the frozen record, inventory says %d", tc.Name, got, tc.PathCount)
+// collectResolvedConfigTokenPaths records, for every string value that carries
+// the host-path token, its dotted JSON path and token occurrence count.
+func collectResolvedConfigTokenPaths(value any, path []string, counts map[string]int) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			collectResolvedConfigTokenPaths(child, append(append([]string{}, path...), key), counts)
+		}
+	case []any:
+		for i, child := range typed {
+			collectResolvedConfigTokenPaths(child, append(append([]string{}, path...), fmt.Sprintf("%d", i)), counts)
+		}
+	case string:
+		if n := strings.Count(typed, resolvedConfigRootToken); n > 0 {
+			counts[strings.Join(path, ".")] += n
+		}
 	}
-	if tc.PathCount == 0 {
-		return []byte(tc.Python)
+}
+
+// expandResolvedConfigRoot restores the tokenized host path in the frozen
+// envelope, but only in the inventoried owner fields. The recorded occurrence
+// inventory must hold exactly: every token must sit at an inventoried position and
+// every inventoried position must carry its recorded count. No global replace.
+func expandResolvedConfigRoot(tc resolvedConfigGoldenCase, root string) (map[string]any, error) {
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(tc.Python), &envelope); err != nil {
+		return nil, fmt.Errorf("case %q: decode frozen record: %w", tc.Name, err)
 	}
-	return []byte(strings.ReplaceAll(tc.Python, "<PROJECT_ROOT>", shared.RealPath(root)))
+	for field := range tc.PathFields {
+		if _, ok := resolvedConfigRootOwners[field]; !ok {
+			return nil, fmt.Errorf("case %q: inventory names non-owner field %q", tc.Name, field)
+		}
+	}
+	seen := map[string]int{}
+	collectResolvedConfigTokenPaths(envelope, nil, seen)
+	for field, n := range seen {
+		if _, ok := tc.PathFields[field]; !ok {
+			return nil, fmt.Errorf("case %q: %d %s tokens at non-inventoried position %q", tc.Name, n, resolvedConfigRootToken, field)
+		}
+	}
+	for field, want := range tc.PathFields {
+		if got := seen[field]; got != want {
+			return nil, fmt.Errorf("case %q: inventory says %d %s tokens at %q, record has %d", tc.Name, want, resolvedConfigRootToken, field, got)
+		}
+	}
+
+	resolved := shared.RealPath(root)
+	if n, ok := tc.PathFields["result.project_root"]; ok {
+		if n != 1 {
+			return nil, fmt.Errorf("case %q: result.project_root inventory %d is not supported", tc.Name, n)
+		}
+		result, ok := envelope["result"].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("case %q: result is not an object", tc.Name)
+		}
+		result["project_root"] = resolved
+	}
+	if n, ok := tc.PathFields["message"]; ok {
+		message, ok := envelope["message"].(string)
+		if !ok {
+			return nil, fmt.Errorf("case %q: message is not a string", tc.Name)
+		}
+		envelope["message"] = strings.Replace(message, resolvedConfigRootToken, resolved, n)
+	}
+	return envelope, nil
 }
 
 // writeResolvedConfigManifest writes <root>/ai-specs/ai-specs.toml.
@@ -155,16 +210,16 @@ func buildResolvedConfigFrozenFixture(t *testing.T, tc resolvedConfigGoldenCase)
 // frozen authority raised, the Go authority must return a Go error.
 func assertResolvedConfigFrozenParity(t *testing.T, tc resolvedConfigGoldenCase, root string) shared.ResolvedConfig {
 	t.Helper()
-	raw := expandResolvedConfigRoot(t, tc, root)
-	var ref resolvedConfigRefResult
-	if err := json.Unmarshal(raw, &ref); err != nil {
-		t.Fatalf("decode frozen ref for %q: %v", tc.Name, err)
+	envelope, err := expandResolvedConfigRoot(tc, root)
+	if err != nil {
+		t.Fatalf("expand frozen ref for %q: %v", tc.Name, err)
 	}
+	refOK, _ := envelope["ok"].(bool)
 
 	got, err := BuildResolvedConfig(ResolvedConfigRequest{ProjectRoot: root})
-	if !ref.OK {
+	if !refOK {
 		if err == nil {
-			t.Fatalf("go accepted the manifest python rejected (%s: %s)", ref.ExcType, ref.Message)
+			t.Fatalf("go accepted the manifest python rejected (%v: %v)", envelope["exc_type"], envelope["message"])
 		}
 		return shared.ResolvedConfig{}
 	}
@@ -175,8 +230,8 @@ func assertResolvedConfigFrozenParity(t *testing.T, tc resolvedConfigGoldenCase,
 	if err != nil {
 		t.Fatalf("marshal go result: %v", err)
 	}
-	if !reflect.DeepEqual(decodeGeneric(t, goRaw), decodeGeneric(t, ref.Result)) {
-		t.Fatalf("resolved config mismatch:\n go: %s\n py: %s", goRaw, ref.Result)
+	if !reflect.DeepEqual(decodeGeneric(t, goRaw), envelope["result"]) {
+		t.Fatalf("resolved config mismatch:\n go: %s\n py: %#v", goRaw, envelope["result"])
 	}
 	return got
 }
@@ -338,17 +393,17 @@ func TestNativeResolvedConfigNonStringBindingCoercion(t *testing.T) {
 	})
 
 	t.Run("integer recipe is kept and str-coerced", func(t *testing.T) {
-		tc := findResolvedConfigCase(t, "integer recipe is kept and str-coerced")
-		root := buildResolvedConfigFrozenFixture(t, tc)
-		raw := expandResolvedConfigRoot(t, tc, root)
-		var ref resolvedConfigRefResult
-		if err := json.Unmarshal(raw, &ref); err != nil {
-			t.Fatalf("decode frozen ref: %v", err)
+		r := findResolvedConfigCase(t, "integer recipe is kept and str-coerced")
+		root := buildResolvedConfigFrozenFixture(t, r)
+		envelope, err := expandResolvedConfigRoot(r, root)
+		if err != nil {
+			t.Fatalf("expand frozen ref: %v", err)
 		}
-		if !ref.OK {
-			t.Fatalf("frozen python authority raised: %s: %s", ref.ExcType, ref.Message)
+		if ok, _ := envelope["ok"].(bool); !ok {
+			t.Fatalf("frozen python authority raised: %v: %v", envelope["exc_type"], envelope["message"])
 		}
-		pyBindings, _ := decodeGeneric(t, ref.Result)["bindings"].(map[string]any)
+		result, _ := envelope["result"].(map[string]any)
+		pyBindings, _ := result["bindings"].(map[string]any)
 		if pyBindings["tracker"] != float64(5) {
 			t.Fatalf("frozen python bindings = %#v, want the recorded raw integer recipe 5", pyBindings)
 		}
@@ -433,15 +488,15 @@ func TestNativeResolvedConfigInlineConfigBeforeFlatKeyDivergence(t *testing.T) {
 	root := buildResolvedConfigFrozenFixture(t, tc)
 
 	// Frozen Python authority: document order, so the later flat foo = 1 wins.
-	raw := expandResolvedConfigRoot(t, tc, root)
-	var ref resolvedConfigRefResult
-	if err := json.Unmarshal(raw, &ref); err != nil {
-		t.Fatalf("decode frozen ref: %v", err)
+	envelope, err := expandResolvedConfigRoot(tc, root)
+	if err != nil {
+		t.Fatalf("expand frozen ref: %v", err)
 	}
-	if !ref.OK {
-		t.Fatalf("frozen python authority raised: %s: %s", ref.ExcType, ref.Message)
+	if ok, _ := envelope["ok"].(bool); !ok {
+		t.Fatalf("frozen python authority raised: %v: %v", envelope["exc_type"], envelope["message"])
 	}
-	pyRecipes, _ := decodeGeneric(t, ref.Result)["recipes"].(map[string]any)
+	result, _ := envelope["result"].(map[string]any)
+	pyRecipes, _ := result["recipes"].(map[string]any)
 	pyRecipe, _ := pyRecipes["a"].(map[string]any)
 	if pyRecipe["foo"] != float64(1) {
 		t.Fatalf("frozen python recipes.a.foo = %#v, want the recorded document-ordered 1; the mixed inline-config-before-flat-key divergence is deliberate and pinned, update this assertion only if the Python authority changes", pyRecipe["foo"])
@@ -457,4 +512,32 @@ func TestNativeResolvedConfigInlineConfigBeforeFlatKeyDivergence(t *testing.T) {
 		t.Fatalf("native recipes.a.foo = %#v, want the two-pass 2; the mixed inline-config-before-flat-key divergence is deliberate and pinned, update this assertion only if the native resolution changes", got.Recipes["a"]["foo"])
 	}
 	t.Logf("native authority recipes.a.foo = %#v (two-pass)", got.Recipes["a"]["foo"])
+}
+
+// TestResolvedConfigFrozenRootExpansionIsFieldScoped is a negative control: the
+// token is restored only in inventoried owner fields, so a literal token injected
+// into a non-path value must fail instead of being silently normalized away.
+func TestResolvedConfigFrozenRootExpansionIsFieldScoped(t *testing.T) {
+	tc := findResolvedConfigCase(t, "flat config collision is deterministic")
+	root := buildResolvedConfigFrozenFixture(t, tc)
+
+	mutated := tc
+	mutated.Python = strings.Replace(tc.Python, "\"foo\":2", "\"foo\":\"<PROJECT_ROOT>\"", 1)
+	if mutated.Python == tc.Python {
+		t.Fatalf("injection did not land in the frozen record")
+	}
+	if _, err := expandResolvedConfigRoot(mutated, root); err == nil {
+		t.Fatalf("expanded a <PROJECT_ROOT> token injected outside the inventoried fields")
+	} else if !strings.Contains(err.Error(), "result.recipes.a.foo") {
+		t.Fatalf("error does not name the non-inventoried position: %v", err)
+	}
+
+	envelope, err := expandResolvedConfigRoot(tc, root)
+	if err != nil {
+		t.Fatalf("expand the unmodified frozen record: %v", err)
+	}
+	result, _ := envelope["result"].(map[string]any)
+	if result["project_root"] != shared.RealPath(root) {
+		t.Fatalf("expanded project_root = %#v, want %q", result["project_root"], shared.RealPath(root))
+	}
 }
