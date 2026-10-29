@@ -1,14 +1,11 @@
 package sync
 
-// T4 differential for the native root merge-config authority (GO-07 S13 PR2b).
-//
-// PlanMergeConfig acquires the recipe schema and the manifest overrides natively
-// and routes them into the shared decision core
-// (ai-specs.dev/worktree-gate/shared.PlanMergeConfig) the gate binary's
-// --plan-merge-config surface also runs, so the root single binary and the gate
-// share one merge decision — never a second port. This file pins the adapter it
-// adds against the real Python bodies in lib/_internal/recipe-materialize.py via
-// testdata/mergeconfig_ref.py:
+// T4 differential for the native root merge-config authority (GO-07 S13 PR2b),
+// FROZEN (PR2-B S2): the Python leg is no longer executed. Its behavior is
+// captured once in testdata/mergeconfig_golden.json — the exact plan and
+// envelope outputs of testdata/mergeconfig_ref.py (which drives the real bodies
+// in lib/_internal/recipe-materialize.py) over the unchanged case matrix — and
+// the Go authority is required to equal it:
 //
 //   - the request envelope matches _merge_config_request_envelope (:2842),
 //     key order and shape order included;
@@ -17,6 +14,11 @@ package sync
 //   - a semantic error is data (error string, no Go error), exactly as the gate
 //     envelope reports it, while a non-JSON value (TOML datetime, non-finite
 //     float) is a transport failure on both sides.
+//
+// The oracle outputs are path-free (no host path crosses this surface), so the
+// bundle needs no tokenization. A missing or mutated bundle is a failure, never
+// a skip. The .py driver file itself stays on disk until T5 PR4b (no Python is
+// retired in this feature).
 
 import (
 	"encoding/json"
@@ -28,30 +30,47 @@ import (
 	"ai-specs.dev/worktree-gate/shared"
 )
 
-// mergeConfigRefPath resolves the reference driver under this package (go test
-// cwd is internal/sync).
-func mergeConfigRefPath(t *testing.T) string {
+// mergeConfigGoldenCase is one frozen record: the exact fixture inputs that
+// produced it and the canonical JSON the Python oracle emitted (plan mode
+// and/or envelope mode, exactly what the live differential ran).
+type mergeConfigGoldenCase struct {
+	Name     string          `json:"name"`
+	Kind     string          `json:"kind"` // differential | order | nonfinite | datetime
+	Literal  string          `json:"literal,omitempty"`
+	TypeName string          `json:"type_name,omitempty"`
+	Recipe   string          `json:"recipe"`
+	Manifest string          `json:"manifest"`
+	Plan     json.RawMessage `json:"plan"`
+	Envelope json.RawMessage `json:"envelope"`
+}
+
+type mergeConfigGolden struct {
+	Comment string                  `json:"comment"`
+	Cases   []mergeConfigGoldenCase `json:"cases"`
+}
+
+// loadMergeConfigGolden reads the frozen authority bundle. A missing bundle is
+// a failure, never a skip: the bundle IS the oracle.
+func loadMergeConfigGolden(t *testing.T) []mergeConfigGoldenCase {
 	t.Helper()
-	path, err := filepath.Abs(filepath.Join("testdata", "mergeconfig_ref.py"))
+	path := filepath.Join("testdata", "mergeconfig_golden.json")
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("resolve ref driver: %v", err)
+		t.Fatalf("read frozen merge-config oracle: %v", err)
 	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("ref driver %s: %v", path, err)
+	var golden mergeConfigGolden
+	if err := json.Unmarshal(data, &golden); err != nil {
+		t.Fatalf("parse frozen merge-config oracle %s: %v", path, err)
 	}
-	return path
+	if len(golden.Cases) == 0 {
+		t.Fatalf("frozen merge-config oracle %s carries no cases", path)
+	}
+	return golden.Cases
 }
 
-// runMergeConfigRef runs the driver in one mode (reusing the bindings harness's
-// subprocess runner) and returns its raw stdout bytes.
-func runMergeConfigRef(t *testing.T, python, driver, mode, authority, catalog, rid, projectRoot string) []byte {
-	t.Helper()
-	return runBindingsRefRaw(t, python, driver, mode, authority, catalog, rid, projectRoot)
-}
-
-// mergeConfigRefResult is the canonical JSON testdata/mergeconfig_ref.py emits
-// in plan mode. Error is nil for a successful merge; Config is null when a
-// semantic failure raised.
+// mergeConfigRefResult is the canonical JSON the oracle emits in plan mode.
+// Error is nil for a successful merge; Config is null when a semantic failure
+// raised.
 type mergeConfigRefResult struct {
 	Config   json.RawMessage `json:"config"`
 	Warnings []string        `json:"warnings"`
@@ -85,9 +104,9 @@ func mergeConfigFixture(t *testing.T, rid, recipeBody, manifestBody string) (cat
 	return catalog, projectRoot, recipePath, manifestPath
 }
 
-// assertMergeConfigParity requires the Go result to equal the Python authority
-// on warnings, the error string, and (when there is no error) the merged config
-// including key order and int/float identity.
+// assertMergeConfigParity requires the Go result to equal the frozen Python
+// authority on warnings, the error string, and (when there is no error) the
+// merged config including key order and int/float identity.
 func assertMergeConfigParity(t *testing.T, goResult shared.MergeConfigResult, ref mergeConfigRefResult) {
 	t.Helper()
 	if !reflect.DeepEqual(goResult.Warnings, ref.Warnings) {
@@ -113,8 +132,8 @@ func assertMergeConfigParity(t *testing.T, goResult shared.MergeConfigResult, re
 	}
 }
 
-// assertMergeConfigRequestParity requires the Go-built request to equal the real
-// Python envelope, order included.
+// assertMergeConfigRequestParity requires the Go-built request to equal the
+// frozen Python envelope, order included.
 func assertMergeConfigRequestParity(t *testing.T, goReq shared.MergeConfigRequest, ref mergeConfigEnvelopeRef) {
 	t.Helper()
 	if !ref.OK {
@@ -178,28 +197,29 @@ func orderedEqual(a, b any) bool {
 	}
 }
 
-// assertMergeConfigCase runs one fixture end to end: the Go authority's result
-// and request must both match the real Python bodies.
-func assertMergeConfigCase(t *testing.T, python, driver, authority, catalog, rid, projectRoot, recipePath, manifestPath string) shared.MergeConfigResult {
+// assertMergeConfigFrozenCase builds the fixture from the frozen inputs and
+// requires the Go authority's result and request to both match the frozen
+// Python records.
+func assertMergeConfigFrozenCase(t *testing.T, tc mergeConfigGoldenCase) shared.MergeConfigResult {
 	t.Helper()
-	goResult, err := PlanMergeConfig(MergeConfigRequest{RecipePath: recipePath, ManifestPath: manifestPath, RecipeID: rid})
+	_, _, recipePath, manifestPath := mergeConfigFixture(t, "alpha", tc.Recipe, tc.Manifest)
+
+	goResult, err := PlanMergeConfig(MergeConfigRequest{RecipePath: recipePath, ManifestPath: manifestPath, RecipeID: "alpha"})
 	if err != nil {
 		t.Fatalf("PlanMergeConfig: %v", err)
 	}
 
-	planRaw := runMergeConfigRef(t, python, driver, "plan", authority, catalog, rid, projectRoot)
 	var planRef mergeConfigRefResult
-	if err := json.Unmarshal(planRaw, &planRef); err != nil {
-		t.Fatalf("decode plan ref %s: %v", planRaw, err)
+	if err := json.Unmarshal(tc.Plan, &planRef); err != nil {
+		t.Fatalf("decode frozen plan record for %q: %v", tc.Name, err)
 	}
 	assertMergeConfigParity(t, goResult, planRef)
 
-	envRaw := runMergeConfigRef(t, python, driver, "envelope", authority, catalog, rid, projectRoot)
 	var envRef mergeConfigEnvelopeRef
-	if err := json.Unmarshal(envRaw, &envRef); err != nil {
-		t.Fatalf("decode envelope ref %s: %v", envRaw, err)
+	if err := json.Unmarshal(tc.Envelope, &envRef); err != nil {
+		t.Fatalf("decode frozen envelope record for %q: %v", tc.Name, err)
 	}
-	goReq, err := acquireMergeConfigRequest(MergeConfigRequest{RecipePath: recipePath, ManifestPath: manifestPath, RecipeID: rid})
+	goReq, err := acquireMergeConfigRequest(MergeConfigRequest{RecipePath: recipePath, ManifestPath: manifestPath, RecipeID: "alpha"})
 	if err != nil {
 		t.Fatalf("acquireMergeConfigRequest: %v", err)
 	}
@@ -207,161 +227,39 @@ func assertMergeConfigCase(t *testing.T, python, driver, authority, catalog, rid
 	return goResult
 }
 
-// mergeRecipeBody declares a deliberate field order (ratio, count, mode, label,
-// gate_scope, board_id) plus one structured section. The int/float pair pins the
-// 1/1.0 boundary and the structured section pins shape order.
-const mergeRecipeBody = `[recipe]
-id = "alpha"
-name = "Alpha"
-description = "d"
-version = "1.0.0"
-
-[config.ratio]
-required = false
-type = "float"
-default = 1.0
-
-[config.count]
-required = false
-type = "integer"
-default = 1
-
-[config.mode]
-required = false
-type = "string"
-enum = ["a", "b"]
-default = "a"
-
-[config.label]
-required = false
-type = "string"
-default = "café"
-
-[config.gate_scope]
-required = false
-type = "string"
-default = "auto"
-
-[config.board_id]
-required = true
-type = "string"
-
-[config.reconcile]
-scope_field = "x"
-max_age_seconds = 5
-`
-
 // TestNativeMergeConfigDifferentialAgainstPython pins the adapter and the shared
-// core against the real Python envelope builder and the temporary Python
+// core against the FROZEN Python envelope builder and temporary Python
 // authority for the ordering, float, semantic-error and gate_scope boundaries,
 // including the empty-key cases the core used to reject as malformed: an empty
 // manifest key is an ordinary unknown key (Python warns and ignores it) and an
 // empty recipe field key is an ordinary field (Python keeps its default).
 func TestNativeMergeConfigDifferentialAgainstPython(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := mergeConfigRefPath(t)
-
-	cases := []struct {
-		name     string
-		manifest string
-		body     string // empty means mergeRecipeBody
-	}{
-		{
-			"defaults in field order with a manifest override",
-			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\n",
-			"",
-		},
-		{
-			"override keeps position, unknown warns, table appends",
-			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nmode = \"b\"\nmystery = 1\nreconcile = { scope_field = \"y\", max_age_seconds = 9 }\n",
-			"",
-		},
-		{
-			"manifest int stays int and float stays float",
-			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nratio = 2\ncount = 2.0\n",
-			"",
-		},
-		{
-			"blank gate_scope resolves to auto",
-			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\ngate_scope = \"   \"\n",
-			"",
-		},
-		{
-			"enum violation is a semantic error",
-			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nmode = \"z\"\n",
-			"",
-		},
-		{
-			"missing required field is a semantic error",
-			"[recipes.alpha]\nenabled = true\n",
-			"",
-		},
-		{
-			"nested structured shape order drives the error",
-			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nreconcile = { expectations = [{ property = 1, event = 2 }] }\n",
-			"",
-		},
-		{
-			"structured scalar type error after unknown-key check",
-			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nreconcile = { max_age_seconds = 1.5 }\n",
-			"",
-		},
-		{
-			"empty manifest key warns and is ignored",
-			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\n\"\" = \"x\"\nboard_id = \"b1\"\n",
-			mergeRecipeBody,
-		},
-		{
-			"empty recipe field key keeps its default",
-			"[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\n",
-			mergeRecipeBody + "\n[config.\"\"]\nrequired = false\ntype = \"string\"\ndefault = \"empty-key-default\"\n",
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			body := tc.body
-			if body == "" {
-				body = mergeRecipeBody
-			}
-			catalog, projectRoot, recipePath, manifestPath := mergeConfigFixture(t, "alpha", body, tc.manifest)
-			assertMergeConfigCase(t, python, driver, authority, catalog, "alpha", projectRoot, recipePath, manifestPath)
+	for _, tc := range loadMergeConfigGolden(t) {
+		if tc.Kind != "differential" {
+			continue
+		}
+		t.Run(tc.Name, func(t *testing.T) {
+			assertMergeConfigFrozenCase(t, tc)
 		})
 	}
 }
 
 // TestNativeMergeConfigFieldOrderIsRecipeDeclarationOrder proves the map-order
 // blocker is solved by re-parsing: reversing the declaration order reverses the
-// Go result and the Python authority in lockstep, and the request envelope
-// matches Python's preserved order.
+// Go result exactly as the frozen Python authority recorded, and the request
+// envelope matches Python's preserved order.
 func TestNativeMergeConfigFieldOrderIsRecipeDeclarationOrder(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := mergeConfigRefPath(t)
-
-	body := `[recipe]
-id = "alpha"
-name = "Alpha"
-description = "d"
-version = "1.0.0"
-
-[config.zeta]
-required = false
-type = "string"
-default = "z"
-
-[config.alpha]
-required = false
-type = "string"
-default = "a"
-
-[config.mu]
-required = false
-type = "string"
-default = "m"
-`
-	manifest := "[recipes.alpha]\nenabled = true\n"
-	catalog, projectRoot, recipePath, manifestPath := mergeConfigFixture(t, "alpha", body, manifest)
-	got := assertMergeConfigCase(t, python, driver, authority, catalog, "alpha", projectRoot, recipePath, manifestPath)
+	cases := loadMergeConfigGolden(t)
+	var orderCase *mergeConfigGoldenCase
+	for i, tc := range cases {
+		if tc.Kind == "order" {
+			orderCase = &cases[i]
+		}
+	}
+	if orderCase == nil {
+		t.Fatal("frozen oracle has no field-order case")
+	}
+	got := assertMergeConfigFrozenCase(t, *orderCase)
 
 	want := []string{"zeta", "alpha", "mu"}
 	if !reflect.DeepEqual(got.Config.Keys(), want) {
@@ -370,25 +268,21 @@ default = "m"
 }
 
 // TestNativeMergeConfigNonFiniteFloatIsRejected pins the allow_nan=False
-// boundary: Python's envelope serialization raises ValueError, and the native
-// adapter rejects the same value instead of emitting a bare NaN token that
-// encoding/json would otherwise refuse (or worse, emit differently).
+// boundary: Python's envelope serialization raises ValueError (frozen), and the
+// native adapter rejects the same value instead of emitting a bare NaN token
+// that encoding/json would otherwise refuse (or worse, emit differently).
 func TestNativeMergeConfigNonFiniteFloatIsRejected(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := mergeConfigRefPath(t)
-
-	for _, literal := range []string{"nan", "inf", "-inf"} {
-		t.Run(literal, func(t *testing.T) {
-			manifest := "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nratio = " + literal + "\n"
-			catalog, projectRoot, recipePath, manifestPath := mergeConfigFixture(t, "alpha", mergeRecipeBody, manifest)
-
-			envRaw := runMergeConfigRef(t, python, driver, "envelope", authority, catalog, "alpha", projectRoot)
+	for _, tc := range loadMergeConfigGolden(t) {
+		if tc.Kind != "nonfinite" {
+			continue
+		}
+		t.Run(tc.Literal, func(t *testing.T) {
 			var envRef mergeConfigEnvelopeRef
-			if err := json.Unmarshal(envRaw, &envRef); err != nil {
-				t.Fatalf("decode envelope ref %s: %v", envRaw, err)
+			if err := json.Unmarshal(tc.Envelope, &envRef); err != nil {
+				t.Fatalf("decode frozen envelope record: %v", err)
 			}
 			if envRef.OK || envRef.ExcType != "ValueError" {
-				t.Fatalf("python envelope = %+v, want a ValueError for %s", envRef, literal)
+				t.Fatalf("frozen python envelope = %+v, want a ValueError for %s", envRef, tc.Literal)
 			}
 			// The two non-finite texts are NOT byte-comparable, so this pins
 			// BOTH live texts instead of matching one against a hardcoded copy.
@@ -398,13 +292,14 @@ func TestNativeMergeConfigNonFiniteFloatIsRejected(t *testing.T) {
 			// value; the native text is the adapter's own acquisition-time
 			// rejection, which wraps Python's prefix in the manifest-key
 			// context and has no value suffix.
-			if want := "Out of range float values are not JSON compliant: " + literal; envRef.Message != want {
-				t.Fatalf("python message = %q, want the live ValueError text %q", envRef.Message, want)
+			if want := "Out of range float values are not JSON compliant: " + tc.Literal; envRef.Message != want {
+				t.Fatalf("frozen python message = %q, want the recorded ValueError text %q", envRef.Message, want)
 			}
 
+			_, _, recipePath, manifestPath := mergeConfigFixture(t, "alpha", tc.Recipe, tc.Manifest)
 			_, err := PlanMergeConfig(MergeConfigRequest{RecipePath: recipePath, ManifestPath: manifestPath, RecipeID: "alpha"})
 			if err == nil {
-				t.Fatalf("PlanMergeConfig accepted %s", literal)
+				t.Fatalf("PlanMergeConfig accepted %s", tc.Literal)
 			}
 			const nativeText = `manifest "ratio" value: Out of range float values are not JSON compliant`
 			if err.Error() != nativeText {
@@ -420,39 +315,29 @@ func TestNativeMergeConfigNonFiniteFloatIsRejected(t *testing.T) {
 // TestNativeMergeConfigDatetimeIsABoundary pins the widened internal/toml value
 // subset at the envelope boundary: tomllib and internal/toml both read the
 // datetime/date, and the envelope serialization then fails on both sides with
-// Python's TypeError. Python's json.dumps(allow_nan=False) raises it; the Go
-// acquisition rejects the same value with the same message, wrapped in the
-// manifest-key context (the same wrapper shape the non-finite float boundary
-// uses).
+// Python's TypeError (frozen). Python's json.dumps(allow_nan=False) raises it;
+// the Go acquisition rejects the same value with the same message, wrapped in
+// the manifest-key context (the same wrapper shape the non-finite float
+// boundary uses).
 func TestNativeMergeConfigDatetimeIsABoundary(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := mergeConfigRefPath(t)
-
-	cases := []struct {
-		literal  string
-		typeName string
-	}{
-		{"2024-01-02T03:04:05", "datetime"},
-		{"2024-01-02", "date"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.literal, func(t *testing.T) {
-			manifest := "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nstarts = " + tc.literal + "\n"
-			catalog, projectRoot, recipePath, manifestPath := mergeConfigFixture(t, "alpha", mergeRecipeBody, manifest)
-
-			envRaw := runMergeConfigRef(t, python, driver, "envelope", authority, catalog, "alpha", projectRoot)
+	for _, tc := range loadMergeConfigGolden(t) {
+		if tc.Kind != "datetime" {
+			continue
+		}
+		t.Run(tc.Literal, func(t *testing.T) {
 			var envRef mergeConfigEnvelopeRef
-			if err := json.Unmarshal(envRaw, &envRef); err != nil {
-				t.Fatalf("decode envelope ref %s: %v", envRaw, err)
+			if err := json.Unmarshal(tc.Envelope, &envRef); err != nil {
+				t.Fatalf("decode frozen envelope record: %v", err)
 			}
-			wantMsg := "Object of type " + tc.typeName + " is not JSON serializable"
+			wantMsg := "Object of type " + tc.TypeName + " is not JSON serializable"
 			if envRef.OK || envRef.ExcType != "TypeError" || envRef.Message != wantMsg {
-				t.Fatalf("python envelope = %+v, want a TypeError %q", envRef, wantMsg)
+				t.Fatalf("frozen python envelope = %+v, want a TypeError %q", envRef, wantMsg)
 			}
 
+			_, _, recipePath, manifestPath := mergeConfigFixture(t, "alpha", tc.Recipe, tc.Manifest)
 			_, err := PlanMergeConfig(MergeConfigRequest{RecipePath: recipePath, ManifestPath: manifestPath, RecipeID: "alpha"})
 			if err == nil {
-				t.Fatalf("PlanMergeConfig accepted the datetime %s", tc.literal)
+				t.Fatalf("PlanMergeConfig accepted the datetime %s", tc.Literal)
 			}
 			wantErr := `manifest "starts" value: ` + wantMsg
 			if err.Error() != wantErr {
