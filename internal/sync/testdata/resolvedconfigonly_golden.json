@@ -1,0 +1,67 @@
+{
+  "cases": [
+    {
+      "name": "auto-bound capability with catalog defaults and brief fragments",
+      "recipes": {
+        "alpha": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.base_branch]\nrequired = false\ntype = \"string\"\ndefault = \"development\"\n\n[provides.brief]\nworkflow_rules = [\"Rule one\"]\n\n[[capabilities]]\nid = \"tracker\"\n"
+      },
+      "manifest": "[recipes.alpha]\nenabled = true\n",
+      "rc": 0,
+      "stdout": "",
+      "stderr": "",
+      "document": "{\n  \"bindings\": {\n    \"tracker\": \"alpha\"\n  },\n  \"enabled\": [\n    \"alpha\"\n  ],\n  \"project_root\": \"\u003cPROJECT_ROOT\u003e\",\n  \"recipes\": {\n    \"alpha\": {\n      \"base_branch\": \"development\",\n      \"brief_fragments\": {\n        \"workflow_rules\": [\n          {\n            \"key\": null,\n            \"text\": \"Rule one\"\n          }\n        ]\n      }\n    }\n  },\n  \"topology\": {\n    \"configured\": \"auto\",\n    \"gitmodules_present\": false,\n    \"resolved\": \"standalone\",\n    \"source\": \"default\",\n    \"submodules\": [],\n    \"via\": \"auto\"\n  }\n}\n",
+      "project_path_count": {
+        "document": 1,
+        "stderr": 0,
+        "stdout": 0
+      }
+    },
+    {
+      "name": "malformed explicit binding is fatal",
+      "recipes": {
+        "alpha": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.base_branch]\nrequired = false\ntype = \"string\"\ndefault = \"development\"\n\n[provides.brief]\nworkflow_rules = [\"Rule one\"]\n"
+      },
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[[bindings]]\ncapability = \"tracker\"\nrecipe = \"ghost\"\n",
+      "rc": 1,
+      "stdout": "",
+      "stderr": "ERROR: binding validation failed: explicit binding for capability 'tracker' references disabled/unknown recipe 'ghost'\n",
+      "document": "",
+      "project_path_count": {
+        "document": 0,
+        "stderr": 0,
+        "stdout": 0
+      }
+    },
+    {
+      "name": "no enabled recipes keeps the explicit bindings",
+      "recipes": {
+        "alpha": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.base_branch]\nrequired = false\ntype = \"string\"\ndefault = \"development\"\n\n[provides.brief]\nworkflow_rules = [\"Rule one\"]\n\n[[capabilities]]\nid = \"tracker\"\n"
+      },
+      "manifest": "[recipes.alpha]\nenabled = false\n\n[[bindings]]\ncapability = \"tracker\"\nrecipe = \"alpha\"\n",
+      "rc": 0,
+      "stdout": "",
+      "stderr": "",
+      "document": "{\n  \"bindings\": {\n    \"tracker\": \"alpha\"\n  },\n  \"enabled\": [],\n  \"project_root\": \"\u003cPROJECT_ROOT\u003e\",\n  \"recipes\": {\n    \"alpha\": {}\n  },\n  \"topology\": {\n    \"configured\": \"auto\",\n    \"gitmodules_present\": false,\n    \"resolved\": \"standalone\",\n    \"source\": \"default\",\n    \"submodules\": [],\n    \"via\": \"auto\"\n  }\n}\n",
+      "project_path_count": {
+        "document": 1,
+        "stderr": 0,
+        "stdout": 0
+      }
+    },
+    {
+      "name": "absent catalog degrades to the explicit bindings",
+      "recipes": {},
+      "manifest": "[recipes.alpha]\nenabled = true\n",
+      "rc": 0,
+      "stdout": "",
+      "stderr": "",
+      "document": "{\n  \"bindings\": {},\n  \"enabled\": [\n    \"alpha\"\n  ],\n  \"project_root\": \"\u003cPROJECT_ROOT\u003e\",\n  \"recipes\": {\n    \"alpha\": {}\n  },\n  \"topology\": {\n    \"configured\": \"auto\",\n    \"gitmodules_present\": false,\n    \"resolved\": \"standalone\",\n    \"source\": \"default\",\n    \"submodules\": [],\n    \"via\": \"auto\"\n  }\n}\n",
+      "project_path_count": {
+        "document": 1,
+        "stderr": 0,
+        "stdout": 0
+      }
+    }
+  ],
+  "comment": "Frozen output of lib/_internal/recipe-materialize.py build_resolved_config_only via testdata/resolvedconfigonly_ref.py (driven with the built worktree-gate binary, as the live leg ran) for the TestResolvedConfigOnlyDifferential scenario matrix. Captured once (python 3.14.7, 2026-10-29); regenerating it is a human decision, not a test side effect. Every occurrence of the resolved project root is tokenized as \u003cPROJECT_ROOT\u003e with a recorded per-stream inventory; the ai-specs home path never appears; every other byte is recorded verbatim (slice doc S4)."
+}
