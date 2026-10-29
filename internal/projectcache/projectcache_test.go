@@ -762,29 +762,6 @@ func pcGoldenCaseByName(t *testing.T, golden *pcGolden, name string) pcGoldenCas
 	return pcGoldenCase{}
 }
 
-// pcSpecCacheKeys returns the cache-key prefixes the case can surface: the
-// spec root and, for lib functions that take a project-relative root, the
-// roots their arguments resolve to. Each is derived from the sandbox path, so
-// the frozen bundle carries them as <KEY>.
-func pcSpecCacheKeys(spec pcSpec) []string {
-	roots := []string{spec.Root}
-	for _, arg := range []string{"project_root", "ai_specs"} {
-		if rel, ok := spec.Args[arg].(string); ok {
-			roots = append(roots, filepath.Join(spec.Root, rel))
-		}
-	}
-	seen := map[string]bool{}
-	keys := make([]string, 0, len(roots))
-	for _, root := range roots {
-		key := pcCacheKeyPrefix(root)
-		if !seen[key] {
-			seen[key] = true
-			keys = append(keys, key)
-		}
-	}
-	return keys
-}
-
 // TestGoldenNegativeControlKeepsFreeTextLiteral is the fixture-level negative
 // control for the scoped expansion: a non-path value mutated with the real
 // sandbox root or the real cache key, inside the same frozen fixture, must
@@ -1019,6 +996,18 @@ var pcTokenedResultCases = map[string]bool{
 	"gate backup path": true,
 }
 
+// pcResultKeyProvenance maps the inventoried result cases to the root whose
+// cache key their path carries. The gate-backup path is keyed by the project
+// root the case passes to the gate (args.project_root), NOT by the spec root:
+// the two keys differ, and substituting one for the other must fail
+// (TestGoldenMapMatchingIsOneToOne pins this).
+var pcResultKeyProvenance = map[string]func(spec pcSpec) string{
+	"gate backup path": func(spec pcSpec) string {
+		rel, _ := spec.Args["project_root"].(string)
+		return filepath.Join(spec.Root, rel)
+	},
+}
+
 // pcResultMatch compares the frozen result with the Go result. Only the
 // inventoried case's path result expands to its host candidates; every other
 // result must be token-free and is compared structurally, as before.
@@ -1121,7 +1110,7 @@ func TestProjectCacheDifferential(t *testing.T) {
 				}
 			}
 
-			env := pcNewHostEnv(T, pcSpecCacheKeys(spec)...)
+			env := pcNewHostEnv(T, pcCacheKeyPrefix(spec.Root))
 			pcSpecMatches(t, rec.Spec, spec, env)
 
 			// The oracle leg is the frozen record; the Go port runs on a freshly
@@ -1162,7 +1151,11 @@ func TestProjectCacheDifferential(t *testing.T) {
 				t.Errorf("links differ:\n  go:  %v\n  ref: %v", goLinks, rec.Ref.Links)
 			}
 
-			if ok, detail := pcResultMatch(tc.name, rec.Ref.Result, goResult, env); !ok {
+			resultEnv := env
+			if prov, ok := pcResultKeyProvenance[tc.name]; ok {
+				resultEnv = pcNewHostEnv(T, pcCacheKeyPrefix(prov(spec)))
+			}
+			if ok, detail := pcResultMatch(tc.name, rec.Ref.Result, goResult, resultEnv); !ok {
 				t.Errorf("result differs (%s): go=%s ref=%s", detail, goResult, rec.Ref.Result)
 			}
 
@@ -1196,66 +1189,96 @@ func TestProjectCacheDifferential(t *testing.T) {
 }
 
 // TestGoldenMapMatchingIsOneToOne pins the matched-set semantics of
-// pcModesMatch and pcLinksMatch: two frozen entries may never consume the
-// same Go key, so a size coincidence cannot hide a missing path. The first
-// pair (a tokenized key and its literal expansion) would double-consume the
-// single Go key "K-a" without the matched set, and "other" would go
-// unclaimed while both sizes agree.
+// pcModesMatch and pcLinksMatch, and the key provenance of the result
+// comparator.
+//
+// Negative fixture (matched set): want carries two distinct spellings of the
+// SAME host path key -- the tokenized form and its literal expansion -- with
+// equal values, while got holds only that shared key plus an extraneous path
+// (same size). Without matched tracking both expected entries consumed the
+// one actual key and the comparison passed; with matched tracking it must
+// reject.
+//
+// Provenance: the gate-backup result is keyed by its owning project root
+// (args.project_root), not by the spec root; substituting the spec-root key
+// must fail, so the any-key expansion stays closed.
 func TestGoldenMapMatchingIsOneToOne(t *testing.T) {
 	T := t.TempDir()
 	root := filepath.Join(T, "project")
 	key := pcCacheKeyPrefix(root)
 	env := pcNewHostEnv(T, key)
 
+	sharedKey := "home/cache/projects/" + key + "-project/a"
 	wantModes := map[string]int{
 		"home/cache/projects/<KEY>-project/a":       0o644,
-		"home/cache/projects/" + key + "-project/b": 0o755,
+		"home/cache/projects/" + key + "-project/a": 0o644,
 	}
 	gotModes := map[string]int{
-		"home/cache/projects/" + key + "-project/a": 0o644,
-		"home/cache/projects/" + key + "-project/c": 0o755,
+		sharedKey:            0o644,
+		"other/extraneous.c": 0o755,
 	}
 	if pcModesMatch(wantModes, gotModes, env) {
-		t.Fatalf("modes: the missing path b was masked by double-consuming a (b frozen entry expands only to b)")
+		t.Fatalf("modes: two frozen spellings of one path both consumed the single Go key")
+	}
+	goodModes := map[string]int{sharedKey: 0o644}
+	if !pcModesMatch(goodModes, map[string]int{sharedKey: 0o644}, env) {
+		t.Fatalf("modes: the correct one-to-one pairing must compare equal")
 	}
 
 	wantLinks := map[string]string{
-		"project/<KEY>-link":        T + "/realdest",
-		"project/" + key + "-link2": T + "/realdest2",
+		"project/<KEY>-link":       T + "/realdest",
+		"project/" + key + "-link": T + "/realdest",
 	}
 	gotLinks := map[string]string{
 		"project/" + key + "-link": T + "/realdest",
-		"project/other":            T + "/realdest2",
+		"other/extraneous":         T + "/elsewhere",
 	}
 	if pcLinksMatch(wantLinks, gotLinks, env) {
-		t.Fatalf("links: the missing link2 was masked by double-consuming link")
+		t.Fatalf("links: two frozen spellings of one path both consumed the single Go key")
 	}
-
-	// Positive counterparts: the correct one-to-one pairings compare equal.
-	goodModes := map[string]int{
-		"home/cache/projects/" + key + "-project/a": 0o644,
-		"home/cache/projects/" + key + "-project/b": 0o755,
-	}
-	if !pcModesMatch(goodModes, map[string]int{
-		"home/cache/projects/" + key + "-project/a": 0o644,
-		"home/cache/projects/" + key + "-project/b": 0o755,
-	}, env) {
-		t.Fatalf("modes: the correct one-to-one pairing must compare equal")
-	}
-	if !pcLinksMatch(map[string]string{"project/<KEY>-link": T + "/realdest"}, map[string]string{"project/" + key + "-link": T + "/realdest"}, env) {
+	goodLinks := map[string]string{"project/" + key + "-link": T + "/realdest"}
+	if !pcLinksMatch(goodLinks, map[string]string{"project/" + key + "-link": T + "/realdest"}, env) {
 		t.Fatalf("links: the correct one-to-one pairing must compare equal")
 	}
 
-	// Result inventory: a tokened result outside the inventoried case is
-	// rejected, and the inventoried case expands.
-	if ok, detail := pcResultMatch("gate backup path", json.RawMessage(`"<TMP>/home/cache/projects/<KEY>-project/backups/x/deadbeef.sh"`), []byte(`"`+T+`/home/cache/projects/`+key+`-project/backups/x/deadbeef.sh"`), env); !ok {
-		t.Fatalf("result: the inventoried gate-backup path must expand: %s", detail)
+	// Provenance: the gate-backup result is keyed by the args project root.
+	// The substitution of the spec-root key must fail; the owning key must
+	// expand.
+	golden := pcLoadGolden(t)
+	rec := pcGoldenCaseByName(t, golden, "gate backup path")
+	argRel, _ := rec.Spec.Args["project_root"].(string)
+	ownerKey := pcCacheKeyPrefix(filepath.Join(root, argRel))
+	if ownerKey == key {
+		t.Fatalf("provenance test is vacuous: the owner key equals the spec-root key")
 	}
-	if ok, _ := pcResultMatch("some other case", json.RawMessage(`"<TMP>/whatever"`), []byte(`"`+T+`/whatever"`), env); ok {
-		t.Fatalf("result: a tokened result outside the inventory must be rejected")
+	ownerEnv := pcNewHostEnv(T, ownerKey)
+	rootEnv := pcNewHostEnv(T, key)
+
+	// The frozen bytes carry Go-escaped tokens (\u003cKEY\u003e): decode the
+	// JSON string first, expand the decoded value, and hand the expansion
+	// back as JSON.
+	var frozenResult string
+	if err := json.Unmarshal(rec.Ref.Result, &frozenResult); err != nil {
+		t.Fatalf("decode frozen result: %v", err)
 	}
-	if ok, _ := pcResultMatch("some other case", json.RawMessage(`"plain value"`), []byte(`"plain value"`), env); !ok {
-		t.Fatalf("result: a token-free result must compare literally")
+	var ownerExpansion string
+	for _, cand := range pcExpandExpectation(frozenResult, ownerEnv) {
+		if strings.Contains(cand, ownerKey) {
+			ownerExpansion = cand
+		}
+	}
+	if ownerExpansion == "" {
+		t.Fatalf("no expansion of the frozen result contains the owner key %q", ownerKey)
+	}
+	actualJSON, err := json.Marshal(ownerExpansion)
+	if err != nil {
+		t.Fatalf("marshal actual result: %v", err)
+	}
+	if ok, detail := pcResultMatch(rec.Name, rec.Ref.Result, actualJSON, ownerEnv); !ok {
+		t.Fatalf("result: the owning-root key must expand: %s", detail)
+	}
+	if ok, _ := pcResultMatch(rec.Name, rec.Ref.Result, actualJSON, rootEnv); ok {
+		t.Fatalf("result: a foreign valid key (the spec-root key) was accepted for the gate-backup path")
 	}
 }
 
