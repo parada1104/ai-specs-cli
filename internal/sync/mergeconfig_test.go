@@ -22,6 +22,7 @@ package sync
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -49,8 +50,55 @@ type mergeConfigGolden struct {
 	Cases   []mergeConfigGoldenCase `json:"cases"`
 }
 
+// mergeConfigExpectedInventory is the hard-coded identity inventory of the
+// frozen bundle, derived from the base test matrix — never generated from the
+// golden at runtime. The loader must find exactly these cases, in this order,
+// with no duplicates, so deleting one record (which would silently drop a
+// subtest) or removing all records of one Kind (which would let its loop pass
+// with zero cases) fails before any loop runs.
+var mergeConfigExpectedInventory = []struct{ Kind, Name string }{
+	{"differential", "defaults in field order with a manifest override"},
+	{"differential", "override keeps position, unknown warns, table appends"},
+	{"differential", "manifest int stays int and float stays float"},
+	{"differential", "blank gate_scope resolves to auto"},
+	{"differential", "enum violation is a semantic error"},
+	{"differential", "missing required field is a semantic error"},
+	{"differential", "nested structured shape order drives the error"},
+	{"differential", "structured scalar type error after unknown-key check"},
+	{"differential", "empty manifest key warns and is ignored"},
+	{"differential", "empty recipe field key keeps its default"},
+	{"order", "field order is recipe declaration order"},
+	{"nonfinite", "nonfinite nan"},
+	{"nonfinite", "nonfinite inf"},
+	{"nonfinite", "nonfinite -inf"},
+	{"datetime", "datetime 2024-01-02T03:04:05"},
+	{"datetime", "datetime 2024-01-02"},
+}
+
+// checkMergeConfigInventory validates one loaded bundle against the hard-coded
+// inventory. It is pure so the focused control can run it against a mutated
+// in-memory copy.
+func checkMergeConfigInventory(cases []mergeConfigGoldenCase) error {
+	if len(cases) != len(mergeConfigExpectedInventory) {
+		return fmt.Errorf("frozen oracle has %d cases, want %d", len(cases), len(mergeConfigExpectedInventory))
+	}
+	seen := map[string]bool{}
+	for i, tc := range cases {
+		if seen[tc.Name] {
+			return fmt.Errorf("frozen oracle duplicates case %q", tc.Name)
+		}
+		seen[tc.Name] = true
+		want := mergeConfigExpectedInventory[i]
+		if tc.Kind != want.Kind || tc.Name != want.Name {
+			return fmt.Errorf("frozen oracle case %d = (%s, %q), want (%s, %q)", i, tc.Kind, tc.Name, want.Kind, want.Name)
+		}
+	}
+	return nil
+}
+
 // loadMergeConfigGolden reads the frozen authority bundle. A missing bundle is
-// a failure, never a skip: the bundle IS the oracle.
+// a failure, never a skip: the bundle IS the oracle, and its case identities
+// must match the hard-coded inventory before any loop runs.
 func loadMergeConfigGolden(t *testing.T) []mergeConfigGoldenCase {
 	t.Helper()
 	path := filepath.Join("testdata", "mergeconfig_golden.json")
@@ -62,10 +110,28 @@ func loadMergeConfigGolden(t *testing.T) []mergeConfigGoldenCase {
 	if err := json.Unmarshal(data, &golden); err != nil {
 		t.Fatalf("parse frozen merge-config oracle %s: %v", path, err)
 	}
-	if len(golden.Cases) == 0 {
-		t.Fatalf("frozen merge-config oracle %s carries no cases", path)
+	if err := checkMergeConfigInventory(golden.Cases); err != nil {
+		t.Fatalf("frozen merge-config oracle %s: %v", path, err)
 	}
 	return golden.Cases
+}
+
+// TestMergeConfigFrozenInventoryControl proves the inventory validation bites:
+// the intact bundle validates, while removing one record or duplicating one
+// (both in memory, never on disk) fails loudly.
+func TestMergeConfigFrozenInventoryControl(t *testing.T) {
+	cases := loadMergeConfigGolden(t)
+	if err := checkMergeConfigInventory(cases); err != nil {
+		t.Fatalf("intact inventory must validate: %v", err)
+	}
+	missing := append(append([]mergeConfigGoldenCase{}, cases[:1]...), cases[2:]...)
+	if err := checkMergeConfigInventory(missing); err == nil {
+		t.Fatal("a removed record must fail the inventory validation")
+	}
+	duplicated := append(append([]mergeConfigGoldenCase{}, cases...), cases[0])
+	if err := checkMergeConfigInventory(duplicated); err == nil {
+		t.Fatal("a duplicated record must fail the inventory validation")
+	}
 }
 
 // mergeConfigRefResult is the canonical JSON the oracle emits in plan mode.

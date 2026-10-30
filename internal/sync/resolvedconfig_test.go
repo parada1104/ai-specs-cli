@@ -51,8 +51,62 @@ type resolvedConfigGolden struct {
 	Cases   []resolvedConfigGoldenCase `json:"cases"`
 }
 
+// resolvedConfigExpectedInventory is the hard-coded identity inventory of the
+// frozen bundle, derived from the base test matrix — never generated from the
+// golden at runtime. The loader must find exactly these cases, in this order,
+// with no duplicates, so deleting one record (which would silently drop a
+// subtest) or removing all records of one Kind (which would let its loop pass
+// with zero cases) fails before any loop runs.
+var resolvedConfigExpectedInventory = []struct{ Kind, Name string }{
+	{"differential", "flat and config recipes with enabled order and bindings"},
+	{"differential", "explicit bindings with an incomplete pair dropped"},
+	{"differential", "project topology is the project source label"},
+	{"differential", "legacy recipe config topology is the legacy-recipe label"},
+	{"differential", "legacy recipe flat topology is the legacy-recipe label"},
+	{"differential", "blank project topology falls back to the default label"},
+	{"differential", "non-string project topology falls back to the default label"},
+	{"differential", "unknown configured topology takes the auto branch"},
+	{"differential", "empty manifest is auto standalone at the default label"},
+	{"differential", "inline array of inline-table bindings is acquired in document order"},
+	{"differential", "inline array bindings skipping non-table items keep only the tables"},
+	{"differential", "inline array binding missing the capability string is dropped"},
+	{"differential", "inline array binding missing the recipe string is dropped"},
+	{"error", "missing manifest"},
+	{"error", "unparsable manifest"},
+	{"submodules", "submodule topology sorted under auto"},
+	{"gitmodules", "gitmodules present uninitialized"},
+	{"coercion", "integer capability keys as json.dumps renders 5"},
+	{"coercion", "boolean capability keys as json.dumps renders true"},
+	{"coercion-int-recipe", "integer recipe is kept and str-coerced"},
+	{"empty-table", "empty recipe table parity"},
+	{"collision", "flat config collision is deterministic"},
+	{"divergence", "inline config before flat key divergence"},
+}
+
+// checkResolvedConfigInventory validates one loaded bundle against the
+// hard-coded inventory. It is pure so the focused control can run it against a
+// mutated in-memory copy.
+func checkResolvedConfigInventory(cases []resolvedConfigGoldenCase) error {
+	if len(cases) != len(resolvedConfigExpectedInventory) {
+		return fmt.Errorf("frozen oracle has %d cases, want %d", len(cases), len(resolvedConfigExpectedInventory))
+	}
+	seen := map[string]bool{}
+	for i, tc := range cases {
+		if seen[tc.Name] {
+			return fmt.Errorf("frozen oracle duplicates case %q", tc.Name)
+		}
+		seen[tc.Name] = true
+		want := resolvedConfigExpectedInventory[i]
+		if tc.Kind != want.Kind || tc.Name != want.Name {
+			return fmt.Errorf("frozen oracle case %d = (%s, %q), want (%s, %q)", i, tc.Kind, tc.Name, want.Kind, want.Name)
+		}
+	}
+	return nil
+}
+
 // loadResolvedConfigGolden reads the frozen authority bundle. A missing bundle
-// is a failure, never a skip: the bundle IS the oracle.
+// is a failure, never a skip: the bundle IS the oracle, and its case identities
+// must match the hard-coded inventory before any loop runs.
 func loadResolvedConfigGolden(t *testing.T) []resolvedConfigGoldenCase {
 	t.Helper()
 	path := filepath.Join("testdata", "resolvedconfig_golden.json")
@@ -64,10 +118,28 @@ func loadResolvedConfigGolden(t *testing.T) []resolvedConfigGoldenCase {
 	if err := json.Unmarshal(data, &golden); err != nil {
 		t.Fatalf("parse frozen resolved-config oracle %s: %v", path, err)
 	}
-	if len(golden.Cases) == 0 {
-		t.Fatalf("frozen resolved-config oracle %s carries no cases", path)
+	if err := checkResolvedConfigInventory(golden.Cases); err != nil {
+		t.Fatalf("frozen resolved-config oracle %s: %v", path, err)
 	}
 	return golden.Cases
+}
+
+// TestResolvedConfigFrozenInventoryControl proves the inventory validation
+// bites: the intact bundle validates, while removing one record or duplicating
+// one (both in memory, never on disk) fails loudly.
+func TestResolvedConfigFrozenInventoryControl(t *testing.T) {
+	cases := loadResolvedConfigGolden(t)
+	if err := checkResolvedConfigInventory(cases); err != nil {
+		t.Fatalf("intact inventory must validate: %v", err)
+	}
+	missing := append(append([]resolvedConfigGoldenCase{}, cases[:1]...), cases[2:]...)
+	if err := checkResolvedConfigInventory(missing); err == nil {
+		t.Fatal("a removed record must fail the inventory validation")
+	}
+	duplicated := append(append([]resolvedConfigGoldenCase{}, cases...), cases[0])
+	if err := checkResolvedConfigInventory(duplicated); err == nil {
+		t.Fatal("a duplicated record must fail the inventory validation")
+	}
 }
 
 // findResolvedConfigCase returns the named frozen record, failing loudly when

@@ -47,8 +47,41 @@ type resolvedConfigOnlyGolden struct {
 	Cases   []resolvedConfigOnlyGoldenCase `json:"cases"`
 }
 
+// resolvedConfigOnlyExpectedInventory is the hard-coded identity inventory of
+// the frozen bundle, derived from the base scenario matrix — never generated
+// from the golden at runtime. The loader must find exactly these scenarios, in
+// this order, with no duplicates, so deleting or duplicating one fails before
+// any loop runs.
+var resolvedConfigOnlyExpectedInventory = []string{
+	"auto-bound capability with catalog defaults and brief fragments",
+	"malformed explicit binding is fatal",
+	"no enabled recipes keeps the explicit bindings",
+	"absent catalog degrades to the explicit bindings",
+}
+
+// checkResolvedConfigOnlyInventory validates one loaded bundle against the
+// hard-coded inventory. It is pure so the focused control can run it against a
+// mutated in-memory copy.
+func checkResolvedConfigOnlyInventory(cases []resolvedConfigOnlyGoldenCase) error {
+	if len(cases) != len(resolvedConfigOnlyExpectedInventory) {
+		return fmt.Errorf("frozen oracle has %d scenarios, want %d", len(cases), len(resolvedConfigOnlyExpectedInventory))
+	}
+	seen := map[string]bool{}
+	for i, tc := range cases {
+		if seen[tc.Name] {
+			return fmt.Errorf("frozen oracle duplicates scenario %q", tc.Name)
+		}
+		seen[tc.Name] = true
+		if want := resolvedConfigOnlyExpectedInventory[i]; tc.Name != want {
+			return fmt.Errorf("frozen oracle scenario %d = %q, want %q", i, tc.Name, want)
+		}
+	}
+	return nil
+}
+
 // loadResolvedConfigOnlyGolden reads the frozen authority bundle. A missing
-// bundle is a failure, never a skip: the bundle IS the oracle.
+// bundle is a failure, never a skip: the bundle IS the oracle, and its scenario
+// identities must match the hard-coded inventory before any loop runs.
 func loadResolvedConfigOnlyGolden(t *testing.T) []resolvedConfigOnlyGoldenCase {
 	t.Helper()
 	path := filepath.Join("testdata", "resolvedconfigonly_golden.json")
@@ -60,10 +93,28 @@ func loadResolvedConfigOnlyGolden(t *testing.T) []resolvedConfigOnlyGoldenCase {
 	if err := json.Unmarshal(data, &golden); err != nil {
 		t.Fatalf("parse frozen resolved-config-only oracle %s: %v", path, err)
 	}
-	if len(golden.Cases) == 0 {
-		t.Fatalf("frozen resolved-config-only oracle %s carries no cases", path)
+	if err := checkResolvedConfigOnlyInventory(golden.Cases); err != nil {
+		t.Fatalf("frozen resolved-config-only oracle %s: %v", path, err)
 	}
 	return golden.Cases
+}
+
+// TestResolvedConfigOnlyFrozenInventoryControl proves the inventory validation
+// bites: the intact bundle validates, while removing one scenario or
+// duplicating one (both in memory, never on disk) fails loudly.
+func TestResolvedConfigOnlyFrozenInventoryControl(t *testing.T) {
+	cases := loadResolvedConfigOnlyGolden(t)
+	if err := checkResolvedConfigOnlyInventory(cases); err != nil {
+		t.Fatalf("intact inventory must validate: %v", err)
+	}
+	missing := append(append([]resolvedConfigOnlyGoldenCase{}, cases[:1]...), cases[2:]...)
+	if err := checkResolvedConfigOnlyInventory(missing); err == nil {
+		t.Fatal("a removed scenario must fail the inventory validation")
+	}
+	duplicated := append(append([]resolvedConfigOnlyGoldenCase{}, cases...), cases[0])
+	if err := checkResolvedConfigOnlyInventory(duplicated); err == nil {
+		t.Fatal("a duplicated scenario must fail the inventory validation")
+	}
 }
 
 const resolvedConfigOnlyRootToken = "<PROJECT_ROOT>"
