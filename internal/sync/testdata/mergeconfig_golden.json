@@ -1,0 +1,292 @@
+{
+  "cases": [
+    {
+      "name": "defaults in field order with a manifest override",
+      "kind": "differential",
+      "recipe": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.ratio]\nrequired = false\ntype = \"float\"\ndefault = 1.0\n\n[config.count]\nrequired = false\ntype = \"integer\"\ndefault = 1\n\n[config.mode]\nrequired = false\ntype = \"string\"\nenum = [\"a\", \"b\"]\ndefault = \"a\"\n\n[config.label]\nrequired = false\ntype = \"string\"\ndefault = \"café\"\n\n[config.gate_scope]\nrequired = false\ntype = \"string\"\ndefault = \"auto\"\n\n[config.board_id]\nrequired = true\ntype = \"string\"\n\n[config.reconcile]\nscope_field = \"x\"\nmax_age_seconds = 5\n",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\n",
+      "plan": {
+        "config": {
+          "ratio": 1.0,
+          "count": 1,
+          "mode": "a",
+          "label": "café",
+          "gate_scope": "auto",
+          "board_id": "b1"
+        },
+        "warnings": [],
+        "error": null
+      },
+      "envelope": {
+        "ok": true,
+        "request": "{\"recipe_name\": \"Alpha\", \"fields\": [{\"key\": \"ratio\", \"required\": false, \"has_default\": true, \"default\": 1.0, \"enum\": []}, {\"key\": \"count\", \"required\": false, \"has_default\": true, \"default\": 1, \"enum\": []}, {\"key\": \"mode\", \"required\": false, \"has_default\": true, \"default\": \"a\", \"enum\": [\"a\", \"b\"]}, {\"key\": \"label\", \"required\": false, \"has_default\": true, \"default\": \"caf\\u00e9\", \"enum\": []}, {\"key\": \"gate_scope\", \"required\": false, \"has_default\": true, \"default\": \"auto\", \"enum\": []}, {\"key\": \"board_id\", \"required\": true, \"has_default\": false, \"default\": null, \"enum\": []}], \"tables\": [{\"key\": \"reconcile\", \"shape\": {\"scope_field\": \"string\", \"max_age_seconds\": \"integer\", \"expectations\": [{\"event\": \"string\", \"property\": \"string\", \"config_field\": \"string\", \"config_field_when_set\": \"string\"}]}}], \"manifest\": [{\"key\": \"board_id\", \"value\": \"b1\"}]}"
+      }
+    },
+    {
+      "name": "override keeps position, unknown warns, table appends",
+      "kind": "differential",
+      "recipe": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.ratio]\nrequired = false\ntype = \"float\"\ndefault = 1.0\n\n[config.count]\nrequired = false\ntype = \"integer\"\ndefault = 1\n\n[config.mode]\nrequired = false\ntype = \"string\"\nenum = [\"a\", \"b\"]\ndefault = \"a\"\n\n[config.label]\nrequired = false\ntype = \"string\"\ndefault = \"café\"\n\n[config.gate_scope]\nrequired = false\ntype = \"string\"\ndefault = \"auto\"\n\n[config.board_id]\nrequired = true\ntype = \"string\"\n\n[config.reconcile]\nscope_field = \"x\"\nmax_age_seconds = 5\n",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nmode = \"b\"\nmystery = 1\nreconcile = { scope_field = \"y\", max_age_seconds = 9 }\n",
+      "plan": {
+        "config": {
+          "ratio": 1.0,
+          "count": 1,
+          "mode": "b",
+          "label": "café",
+          "gate_scope": "auto",
+          "board_id": "b1",
+          "reconcile": {
+            "scope_field": "y",
+            "max_age_seconds": 9
+          }
+        },
+        "warnings": [
+          "recipe 'Alpha': unknown config key 'mystery' in manifest (ignored)"
+        ],
+        "error": null
+      },
+      "envelope": {
+        "ok": true,
+        "request": "{\"recipe_name\": \"Alpha\", \"fields\": [{\"key\": \"ratio\", \"required\": false, \"has_default\": true, \"default\": 1.0, \"enum\": []}, {\"key\": \"count\", \"required\": false, \"has_default\": true, \"default\": 1, \"enum\": []}, {\"key\": \"mode\", \"required\": false, \"has_default\": true, \"default\": \"a\", \"enum\": [\"a\", \"b\"]}, {\"key\": \"label\", \"required\": false, \"has_default\": true, \"default\": \"caf\\u00e9\", \"enum\": []}, {\"key\": \"gate_scope\", \"required\": false, \"has_default\": true, \"default\": \"auto\", \"enum\": []}, {\"key\": \"board_id\", \"required\": true, \"has_default\": false, \"default\": null, \"enum\": []}], \"tables\": [{\"key\": \"reconcile\", \"shape\": {\"scope_field\": \"string\", \"max_age_seconds\": \"integer\", \"expectations\": [{\"event\": \"string\", \"property\": \"string\", \"config_field\": \"string\", \"config_field_when_set\": \"string\"}]}}], \"manifest\": [{\"key\": \"board_id\", \"value\": \"b1\"}, {\"key\": \"mode\", \"value\": \"b\"}, {\"key\": \"mystery\", \"value\": 1}, {\"key\": \"reconcile\", \"value\": {\"scope_field\": \"y\", \"max_age_seconds\": 9}}]}"
+      }
+    },
+    {
+      "name": "manifest int stays int and float stays float",
+      "kind": "differential",
+      "recipe": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.ratio]\nrequired = false\ntype = \"float\"\ndefault = 1.0\n\n[config.count]\nrequired = false\ntype = \"integer\"\ndefault = 1\n\n[config.mode]\nrequired = false\ntype = \"string\"\nenum = [\"a\", \"b\"]\ndefault = \"a\"\n\n[config.label]\nrequired = false\ntype = \"string\"\ndefault = \"café\"\n\n[config.gate_scope]\nrequired = false\ntype = \"string\"\ndefault = \"auto\"\n\n[config.board_id]\nrequired = true\ntype = \"string\"\n\n[config.reconcile]\nscope_field = \"x\"\nmax_age_seconds = 5\n",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nratio = 2\ncount = 2.0\n",
+      "plan": {
+        "config": {
+          "ratio": 2,
+          "count": 2.0,
+          "mode": "a",
+          "label": "café",
+          "gate_scope": "auto",
+          "board_id": "b1"
+        },
+        "warnings": [],
+        "error": null
+      },
+      "envelope": {
+        "ok": true,
+        "request": "{\"recipe_name\": \"Alpha\", \"fields\": [{\"key\": \"ratio\", \"required\": false, \"has_default\": true, \"default\": 1.0, \"enum\": []}, {\"key\": \"count\", \"required\": false, \"has_default\": true, \"default\": 1, \"enum\": []}, {\"key\": \"mode\", \"required\": false, \"has_default\": true, \"default\": \"a\", \"enum\": [\"a\", \"b\"]}, {\"key\": \"label\", \"required\": false, \"has_default\": true, \"default\": \"caf\\u00e9\", \"enum\": []}, {\"key\": \"gate_scope\", \"required\": false, \"has_default\": true, \"default\": \"auto\", \"enum\": []}, {\"key\": \"board_id\", \"required\": true, \"has_default\": false, \"default\": null, \"enum\": []}], \"tables\": [{\"key\": \"reconcile\", \"shape\": {\"scope_field\": \"string\", \"max_age_seconds\": \"integer\", \"expectations\": [{\"event\": \"string\", \"property\": \"string\", \"config_field\": \"string\", \"config_field_when_set\": \"string\"}]}}], \"manifest\": [{\"key\": \"board_id\", \"value\": \"b1\"}, {\"key\": \"ratio\", \"value\": 2}, {\"key\": \"count\", \"value\": 2.0}]}"
+      }
+    },
+    {
+      "name": "blank gate_scope resolves to auto",
+      "kind": "differential",
+      "recipe": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.ratio]\nrequired = false\ntype = \"float\"\ndefault = 1.0\n\n[config.count]\nrequired = false\ntype = \"integer\"\ndefault = 1\n\n[config.mode]\nrequired = false\ntype = \"string\"\nenum = [\"a\", \"b\"]\ndefault = \"a\"\n\n[config.label]\nrequired = false\ntype = \"string\"\ndefault = \"café\"\n\n[config.gate_scope]\nrequired = false\ntype = \"string\"\ndefault = \"auto\"\n\n[config.board_id]\nrequired = true\ntype = \"string\"\n\n[config.reconcile]\nscope_field = \"x\"\nmax_age_seconds = 5\n",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\ngate_scope = \"   \"\n",
+      "plan": {
+        "config": {
+          "ratio": 1.0,
+          "count": 1,
+          "mode": "a",
+          "label": "café",
+          "gate_scope": "auto",
+          "board_id": "b1"
+        },
+        "warnings": [],
+        "error": null
+      },
+      "envelope": {
+        "ok": true,
+        "request": "{\"recipe_name\": \"Alpha\", \"fields\": [{\"key\": \"ratio\", \"required\": false, \"has_default\": true, \"default\": 1.0, \"enum\": []}, {\"key\": \"count\", \"required\": false, \"has_default\": true, \"default\": 1, \"enum\": []}, {\"key\": \"mode\", \"required\": false, \"has_default\": true, \"default\": \"a\", \"enum\": [\"a\", \"b\"]}, {\"key\": \"label\", \"required\": false, \"has_default\": true, \"default\": \"caf\\u00e9\", \"enum\": []}, {\"key\": \"gate_scope\", \"required\": false, \"has_default\": true, \"default\": \"auto\", \"enum\": []}, {\"key\": \"board_id\", \"required\": true, \"has_default\": false, \"default\": null, \"enum\": []}], \"tables\": [{\"key\": \"reconcile\", \"shape\": {\"scope_field\": \"string\", \"max_age_seconds\": \"integer\", \"expectations\": [{\"event\": \"string\", \"property\": \"string\", \"config_field\": \"string\", \"config_field_when_set\": \"string\"}]}}], \"manifest\": [{\"key\": \"board_id\", \"value\": \"b1\"}, {\"key\": \"gate_scope\", \"value\": \"   \"}]}"
+      }
+    },
+    {
+      "name": "enum violation is a semantic error",
+      "kind": "differential",
+      "recipe": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.ratio]\nrequired = false\ntype = \"float\"\ndefault = 1.0\n\n[config.count]\nrequired = false\ntype = \"integer\"\ndefault = 1\n\n[config.mode]\nrequired = false\ntype = \"string\"\nenum = [\"a\", \"b\"]\ndefault = \"a\"\n\n[config.label]\nrequired = false\ntype = \"string\"\ndefault = \"café\"\n\n[config.gate_scope]\nrequired = false\ntype = \"string\"\ndefault = \"auto\"\n\n[config.board_id]\nrequired = true\ntype = \"string\"\n\n[config.reconcile]\nscope_field = \"x\"\nmax_age_seconds = 5\n",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nmode = \"z\"\n",
+      "plan": {
+        "config": null,
+        "warnings": [],
+        "error": "recipe 'Alpha': config field 'mode' value 'z' is invalid; allowed: a | b"
+      },
+      "envelope": {
+        "ok": true,
+        "request": "{\"recipe_name\": \"Alpha\", \"fields\": [{\"key\": \"ratio\", \"required\": false, \"has_default\": true, \"default\": 1.0, \"enum\": []}, {\"key\": \"count\", \"required\": false, \"has_default\": true, \"default\": 1, \"enum\": []}, {\"key\": \"mode\", \"required\": false, \"has_default\": true, \"default\": \"a\", \"enum\": [\"a\", \"b\"]}, {\"key\": \"label\", \"required\": false, \"has_default\": true, \"default\": \"caf\\u00e9\", \"enum\": []}, {\"key\": \"gate_scope\", \"required\": false, \"has_default\": true, \"default\": \"auto\", \"enum\": []}, {\"key\": \"board_id\", \"required\": true, \"has_default\": false, \"default\": null, \"enum\": []}], \"tables\": [{\"key\": \"reconcile\", \"shape\": {\"scope_field\": \"string\", \"max_age_seconds\": \"integer\", \"expectations\": [{\"event\": \"string\", \"property\": \"string\", \"config_field\": \"string\", \"config_field_when_set\": \"string\"}]}}], \"manifest\": [{\"key\": \"board_id\", \"value\": \"b1\"}, {\"key\": \"mode\", \"value\": \"z\"}]}"
+      }
+    },
+    {
+      "name": "missing required field is a semantic error",
+      "kind": "differential",
+      "recipe": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.ratio]\nrequired = false\ntype = \"float\"\ndefault = 1.0\n\n[config.count]\nrequired = false\ntype = \"integer\"\ndefault = 1\n\n[config.mode]\nrequired = false\ntype = \"string\"\nenum = [\"a\", \"b\"]\ndefault = \"a\"\n\n[config.label]\nrequired = false\ntype = \"string\"\ndefault = \"café\"\n\n[config.gate_scope]\nrequired = false\ntype = \"string\"\ndefault = \"auto\"\n\n[config.board_id]\nrequired = true\ntype = \"string\"\n\n[config.reconcile]\nscope_field = \"x\"\nmax_age_seconds = 5\n",
+      "manifest": "[recipes.alpha]\nenabled = true\n",
+      "plan": {
+        "config": null,
+        "warnings": [],
+        "error": "recipe 'Alpha': missing required config field 'board_id'"
+      },
+      "envelope": {
+        "ok": true,
+        "request": "{\"recipe_name\": \"Alpha\", \"fields\": [{\"key\": \"ratio\", \"required\": false, \"has_default\": true, \"default\": 1.0, \"enum\": []}, {\"key\": \"count\", \"required\": false, \"has_default\": true, \"default\": 1, \"enum\": []}, {\"key\": \"mode\", \"required\": false, \"has_default\": true, \"default\": \"a\", \"enum\": [\"a\", \"b\"]}, {\"key\": \"label\", \"required\": false, \"has_default\": true, \"default\": \"caf\\u00e9\", \"enum\": []}, {\"key\": \"gate_scope\", \"required\": false, \"has_default\": true, \"default\": \"auto\", \"enum\": []}, {\"key\": \"board_id\", \"required\": true, \"has_default\": false, \"default\": null, \"enum\": []}], \"tables\": [{\"key\": \"reconcile\", \"shape\": {\"scope_field\": \"string\", \"max_age_seconds\": \"integer\", \"expectations\": [{\"event\": \"string\", \"property\": \"string\", \"config_field\": \"string\", \"config_field_when_set\": \"string\"}]}}], \"manifest\": []}"
+      }
+    },
+    {
+      "name": "nested structured shape order drives the error",
+      "kind": "differential",
+      "recipe": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.ratio]\nrequired = false\ntype = \"float\"\ndefault = 1.0\n\n[config.count]\nrequired = false\ntype = \"integer\"\ndefault = 1\n\n[config.mode]\nrequired = false\ntype = \"string\"\nenum = [\"a\", \"b\"]\ndefault = \"a\"\n\n[config.label]\nrequired = false\ntype = \"string\"\ndefault = \"café\"\n\n[config.gate_scope]\nrequired = false\ntype = \"string\"\ndefault = \"auto\"\n\n[config.board_id]\nrequired = true\ntype = \"string\"\n\n[config.reconcile]\nscope_field = \"x\"\nmax_age_seconds = 5\n",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nreconcile = { expectations = [{ property = 1, event = 2 }] }\n",
+      "plan": {
+        "config": null,
+        "warnings": [],
+        "error": "recipe 'Alpha': invalid config field 'reconcile': [config.reconcile].expectations[0].event: expected string, got int"
+      },
+      "envelope": {
+        "ok": true,
+        "request": "{\"recipe_name\": \"Alpha\", \"fields\": [{\"key\": \"ratio\", \"required\": false, \"has_default\": true, \"default\": 1.0, \"enum\": []}, {\"key\": \"count\", \"required\": false, \"has_default\": true, \"default\": 1, \"enum\": []}, {\"key\": \"mode\", \"required\": false, \"has_default\": true, \"default\": \"a\", \"enum\": [\"a\", \"b\"]}, {\"key\": \"label\", \"required\": false, \"has_default\": true, \"default\": \"caf\\u00e9\", \"enum\": []}, {\"key\": \"gate_scope\", \"required\": false, \"has_default\": true, \"default\": \"auto\", \"enum\": []}, {\"key\": \"board_id\", \"required\": true, \"has_default\": false, \"default\": null, \"enum\": []}], \"tables\": [{\"key\": \"reconcile\", \"shape\": {\"scope_field\": \"string\", \"max_age_seconds\": \"integer\", \"expectations\": [{\"event\": \"string\", \"property\": \"string\", \"config_field\": \"string\", \"config_field_when_set\": \"string\"}]}}], \"manifest\": [{\"key\": \"board_id\", \"value\": \"b1\"}, {\"key\": \"reconcile\", \"value\": {\"expectations\": [{\"property\": 1, \"event\": 2}]}}]}"
+      }
+    },
+    {
+      "name": "structured scalar type error after unknown-key check",
+      "kind": "differential",
+      "recipe": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.ratio]\nrequired = false\ntype = \"float\"\ndefault = 1.0\n\n[config.count]\nrequired = false\ntype = \"integer\"\ndefault = 1\n\n[config.mode]\nrequired = false\ntype = \"string\"\nenum = [\"a\", \"b\"]\ndefault = \"a\"\n\n[config.label]\nrequired = false\ntype = \"string\"\ndefault = \"café\"\n\n[config.gate_scope]\nrequired = false\ntype = \"string\"\ndefault = \"auto\"\n\n[config.board_id]\nrequired = true\ntype = \"string\"\n\n[config.reconcile]\nscope_field = \"x\"\nmax_age_seconds = 5\n",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nreconcile = { max_age_seconds = 1.5 }\n",
+      "plan": {
+        "config": null,
+        "warnings": [],
+        "error": "recipe 'Alpha': invalid config field 'reconcile': [config.reconcile].max_age_seconds: expected integer, got float"
+      },
+      "envelope": {
+        "ok": true,
+        "request": "{\"recipe_name\": \"Alpha\", \"fields\": [{\"key\": \"ratio\", \"required\": false, \"has_default\": true, \"default\": 1.0, \"enum\": []}, {\"key\": \"count\", \"required\": false, \"has_default\": true, \"default\": 1, \"enum\": []}, {\"key\": \"mode\", \"required\": false, \"has_default\": true, \"default\": \"a\", \"enum\": [\"a\", \"b\"]}, {\"key\": \"label\", \"required\": false, \"has_default\": true, \"default\": \"caf\\u00e9\", \"enum\": []}, {\"key\": \"gate_scope\", \"required\": false, \"has_default\": true, \"default\": \"auto\", \"enum\": []}, {\"key\": \"board_id\", \"required\": true, \"has_default\": false, \"default\": null, \"enum\": []}], \"tables\": [{\"key\": \"reconcile\", \"shape\": {\"scope_field\": \"string\", \"max_age_seconds\": \"integer\", \"expectations\": [{\"event\": \"string\", \"property\": \"string\", \"config_field\": \"string\", \"config_field_when_set\": \"string\"}]}}], \"manifest\": [{\"key\": \"board_id\", \"value\": \"b1\"}, {\"key\": \"reconcile\", \"value\": {\"max_age_seconds\": 1.5}}]}"
+      }
+    },
+    {
+      "name": "empty manifest key warns and is ignored",
+      "kind": "differential",
+      "recipe": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.ratio]\nrequired = false\ntype = \"float\"\ndefault = 1.0\n\n[config.count]\nrequired = false\ntype = \"integer\"\ndefault = 1\n\n[config.mode]\nrequired = false\ntype = \"string\"\nenum = [\"a\", \"b\"]\ndefault = \"a\"\n\n[config.label]\nrequired = false\ntype = \"string\"\ndefault = \"café\"\n\n[config.gate_scope]\nrequired = false\ntype = \"string\"\ndefault = \"auto\"\n\n[config.board_id]\nrequired = true\ntype = \"string\"\n\n[config.reconcile]\nscope_field = \"x\"\nmax_age_seconds = 5\n",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\n\"\" = \"x\"\nboard_id = \"b1\"\n",
+      "plan": {
+        "config": {
+          "ratio": 1.0,
+          "count": 1,
+          "mode": "a",
+          "label": "café",
+          "gate_scope": "auto",
+          "board_id": "b1"
+        },
+        "warnings": [
+          "recipe 'Alpha': unknown config key '' in manifest (ignored)"
+        ],
+        "error": null
+      },
+      "envelope": {
+        "ok": true,
+        "request": "{\"recipe_name\": \"Alpha\", \"fields\": [{\"key\": \"ratio\", \"required\": false, \"has_default\": true, \"default\": 1.0, \"enum\": []}, {\"key\": \"count\", \"required\": false, \"has_default\": true, \"default\": 1, \"enum\": []}, {\"key\": \"mode\", \"required\": false, \"has_default\": true, \"default\": \"a\", \"enum\": [\"a\", \"b\"]}, {\"key\": \"label\", \"required\": false, \"has_default\": true, \"default\": \"caf\\u00e9\", \"enum\": []}, {\"key\": \"gate_scope\", \"required\": false, \"has_default\": true, \"default\": \"auto\", \"enum\": []}, {\"key\": \"board_id\", \"required\": true, \"has_default\": false, \"default\": null, \"enum\": []}], \"tables\": [{\"key\": \"reconcile\", \"shape\": {\"scope_field\": \"string\", \"max_age_seconds\": \"integer\", \"expectations\": [{\"event\": \"string\", \"property\": \"string\", \"config_field\": \"string\", \"config_field_when_set\": \"string\"}]}}], \"manifest\": [{\"key\": \"\", \"value\": \"x\"}, {\"key\": \"board_id\", \"value\": \"b1\"}]}"
+      }
+    },
+    {
+      "name": "empty recipe field key keeps its default",
+      "kind": "differential",
+      "recipe": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.ratio]\nrequired = false\ntype = \"float\"\ndefault = 1.0\n\n[config.count]\nrequired = false\ntype = \"integer\"\ndefault = 1\n\n[config.mode]\nrequired = false\ntype = \"string\"\nenum = [\"a\", \"b\"]\ndefault = \"a\"\n\n[config.label]\nrequired = false\ntype = \"string\"\ndefault = \"café\"\n\n[config.gate_scope]\nrequired = false\ntype = \"string\"\ndefault = \"auto\"\n\n[config.board_id]\nrequired = true\ntype = \"string\"\n\n[config.reconcile]\nscope_field = \"x\"\nmax_age_seconds = 5\n\n[config.\"\"]\nrequired = false\ntype = \"string\"\ndefault = \"empty-key-default\"\n",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\n",
+      "plan": {
+        "config": {
+          "ratio": 1.0,
+          "count": 1,
+          "mode": "a",
+          "label": "café",
+          "gate_scope": "auto",
+          "": "empty-key-default",
+          "board_id": "b1"
+        },
+        "warnings": [],
+        "error": null
+      },
+      "envelope": {
+        "ok": true,
+        "request": "{\"recipe_name\": \"Alpha\", \"fields\": [{\"key\": \"ratio\", \"required\": false, \"has_default\": true, \"default\": 1.0, \"enum\": []}, {\"key\": \"count\", \"required\": false, \"has_default\": true, \"default\": 1, \"enum\": []}, {\"key\": \"mode\", \"required\": false, \"has_default\": true, \"default\": \"a\", \"enum\": [\"a\", \"b\"]}, {\"key\": \"label\", \"required\": false, \"has_default\": true, \"default\": \"caf\\u00e9\", \"enum\": []}, {\"key\": \"gate_scope\", \"required\": false, \"has_default\": true, \"default\": \"auto\", \"enum\": []}, {\"key\": \"board_id\", \"required\": true, \"has_default\": false, \"default\": null, \"enum\": []}, {\"key\": \"\", \"required\": false, \"has_default\": true, \"default\": \"empty-key-default\", \"enum\": []}], \"tables\": [{\"key\": \"reconcile\", \"shape\": {\"scope_field\": \"string\", \"max_age_seconds\": \"integer\", \"expectations\": [{\"event\": \"string\", \"property\": \"string\", \"config_field\": \"string\", \"config_field_when_set\": \"string\"}]}}], \"manifest\": [{\"key\": \"board_id\", \"value\": \"b1\"}]}"
+      }
+    },
+    {
+      "name": "field order is recipe declaration order",
+      "kind": "order",
+      "recipe": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.zeta]\nrequired = false\ntype = \"string\"\ndefault = \"z\"\n\n[config.alpha]\nrequired = false\ntype = \"string\"\ndefault = \"a\"\n\n[config.mu]\nrequired = false\ntype = \"string\"\ndefault = \"m\"\n",
+      "manifest": "[recipes.alpha]\nenabled = true\n",
+      "plan": {
+        "config": {
+          "zeta": "z",
+          "alpha": "a",
+          "mu": "m"
+        },
+        "warnings": [],
+        "error": null
+      },
+      "envelope": {
+        "ok": true,
+        "request": "{\"recipe_name\": \"Alpha\", \"fields\": [{\"key\": \"zeta\", \"required\": false, \"has_default\": true, \"default\": \"z\", \"enum\": []}, {\"key\": \"alpha\", \"required\": false, \"has_default\": true, \"default\": \"a\", \"enum\": []}, {\"key\": \"mu\", \"required\": false, \"has_default\": true, \"default\": \"m\", \"enum\": []}], \"tables\": [], \"manifest\": []}"
+      }
+    },
+    {
+      "name": "nonfinite nan",
+      "kind": "nonfinite",
+      "recipe": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.ratio]\nrequired = false\ntype = \"float\"\ndefault = 1.0\n\n[config.count]\nrequired = false\ntype = \"integer\"\ndefault = 1\n\n[config.mode]\nrequired = false\ntype = \"string\"\nenum = [\"a\", \"b\"]\ndefault = \"a\"\n\n[config.label]\nrequired = false\ntype = \"string\"\ndefault = \"café\"\n\n[config.gate_scope]\nrequired = false\ntype = \"string\"\ndefault = \"auto\"\n\n[config.board_id]\nrequired = true\ntype = \"string\"\n\n[config.reconcile]\nscope_field = \"x\"\nmax_age_seconds = 5\n",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nratio = nan\n",
+      "plan": null,
+      "envelope": {
+        "ok": false,
+        "exc_type": "ValueError",
+        "message": "Out of range float values are not JSON compliant: nan"
+      },
+      "literal": "nan"
+    },
+    {
+      "name": "nonfinite inf",
+      "kind": "nonfinite",
+      "recipe": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.ratio]\nrequired = false\ntype = \"float\"\ndefault = 1.0\n\n[config.count]\nrequired = false\ntype = \"integer\"\ndefault = 1\n\n[config.mode]\nrequired = false\ntype = \"string\"\nenum = [\"a\", \"b\"]\ndefault = \"a\"\n\n[config.label]\nrequired = false\ntype = \"string\"\ndefault = \"café\"\n\n[config.gate_scope]\nrequired = false\ntype = \"string\"\ndefault = \"auto\"\n\n[config.board_id]\nrequired = true\ntype = \"string\"\n\n[config.reconcile]\nscope_field = \"x\"\nmax_age_seconds = 5\n",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nratio = inf\n",
+      "plan": null,
+      "envelope": {
+        "ok": false,
+        "exc_type": "ValueError",
+        "message": "Out of range float values are not JSON compliant: inf"
+      },
+      "literal": "inf"
+    },
+    {
+      "name": "nonfinite -inf",
+      "kind": "nonfinite",
+      "recipe": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.ratio]\nrequired = false\ntype = \"float\"\ndefault = 1.0\n\n[config.count]\nrequired = false\ntype = \"integer\"\ndefault = 1\n\n[config.mode]\nrequired = false\ntype = \"string\"\nenum = [\"a\", \"b\"]\ndefault = \"a\"\n\n[config.label]\nrequired = false\ntype = \"string\"\ndefault = \"café\"\n\n[config.gate_scope]\nrequired = false\ntype = \"string\"\ndefault = \"auto\"\n\n[config.board_id]\nrequired = true\ntype = \"string\"\n\n[config.reconcile]\nscope_field = \"x\"\nmax_age_seconds = 5\n",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nboard_id = \"b1\"\nratio = -inf\n",
+      "plan": null,
+      "envelope": {
+        "ok": false,
+        "exc_type": "ValueError",
+        "message": "Out of range float values are not JSON compliant: -inf"
+      },
+      "literal": "-inf"
+    },
+    {
+      "name": "datetime 2024-01-02T03:04:05",
+      "kind": "datetime",
+      "recipe": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.ratio]\nrequired = false\ntype = \"float\"\ndefault = 1.0\n\n[config.count]\nrequired = false\ntype = \"integer\"\ndefault = 1\n\n[config.mode]\nrequired = false\ntype = \"string\"\nenum = [\"a\", \"b\"]\ndefault = \"a\"\n\n[config.label]\nrequired = false\ntype = \"string\"\ndefault = \"café\"\n\n[config.gate_scope]\nrequired = false\ntype = \"string\"\ndefault = \"auto\"\n\n[config.board_id]\nrequired = true\ntype = \"string\"\n\n[config.reconcile]\nscope_field = \"x\"\nmax_age_seconds = 5\n",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nstarts = 2024-01-02T03:04:05\n",
+      "plan": null,
+      "envelope": {
+        "ok": false,
+        "exc_type": "TypeError",
+        "message": "Object of type datetime is not JSON serializable"
+      },
+      "literal": "2024-01-02T03:04:05",
+      "type_name": "datetime"
+    },
+    {
+      "name": "datetime 2024-01-02",
+      "kind": "datetime",
+      "recipe": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[config.ratio]\nrequired = false\ntype = \"float\"\ndefault = 1.0\n\n[config.count]\nrequired = false\ntype = \"integer\"\ndefault = 1\n\n[config.mode]\nrequired = false\ntype = \"string\"\nenum = [\"a\", \"b\"]\ndefault = \"a\"\n\n[config.label]\nrequired = false\ntype = \"string\"\ndefault = \"café\"\n\n[config.gate_scope]\nrequired = false\ntype = \"string\"\ndefault = \"auto\"\n\n[config.board_id]\nrequired = true\ntype = \"string\"\n\n[config.reconcile]\nscope_field = \"x\"\nmax_age_seconds = 5\n",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nstarts = 2024-01-02\n",
+      "plan": null,
+      "envelope": {
+        "ok": false,
+        "exc_type": "TypeError",
+        "message": "Object of type date is not JSON serializable"
+      },
+      "literal": "2024-01-02",
+      "type_name": "date"
+    }
+  ],
+  "comment": "Frozen output of lib/_internal/recipe-materialize.py via testdata/mergeconfig_ref.py (plan + envelope modes) for the TestNativeMergeConfig* case matrix. Captured once (python 3.14.7, 2026-10-29); regenerating it is a human decision, not a test side effect. Outputs are path-free: no host path ever crosses this oracle (slice doc S4)."
+}

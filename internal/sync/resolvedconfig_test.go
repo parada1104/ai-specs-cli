@@ -1,51 +1,163 @@
 package sync
 
-// T4 differential for the native root resolved-config authority (GO-07 S13 PR3).
+// T4 differential for the native root resolved-config authority (GO-07 S13 PR3),
+// FROZEN (PR2-B S2): the Python leg is no longer executed. Its behavior is
+// captured once in testdata/resolvedconfig_golden.json — the exact project-mode
+// envelopes of testdata/resolvedconfig_ref.py (which drives the real fail-open
+// body _python_build_resolved_config in lib/_internal/recipe-materialize.py)
+// over the unchanged case matrix — and BuildResolvedConfig is required to equal
+// them. Bindings, per-recipe config, enabled order, project root and the
+// resolved topology (including the source label and the sorted submodule list)
+// must agree case for case, and the acquisition errors must agree on failure.
 //
-// BuildResolvedConfig acquires the project manifest natively and routes it into
-// the shared decision core (ai-specs.dev/worktree-gate/shared.BuildResolvedConfig)
-// the gate binary's --plan-resolved-config surface also runs, so the root single
-// binary and the gate share one projection — never a second port. This file pins
-// the adapter it adds against the real Python fail-open body in
-// lib/_internal/recipe-materialize.py via testdata/resolvedconfig_ref.py:
-// _python_build_resolved_config (:3763), the temporary authority the bridge
-// falls back to. Bindings, per-recipe config, enabled order, project root and
-// the resolved topology (including the source label and the sorted submodule
-// list) must agree case for case, and the acquisition errors must agree on
-// failure.
+// Host-path inventory: the resolved project root is the only host-derived byte
+// sequence in any record. On success it appears exactly once (the envelope's
+// project_root); the missing-manifest FileNotFoundError message also quotes it.
+// It is tokenized as <PROJECT_ROOT> in the bundle and expanded with the shared
+// RealPath rule (Python Path.resolve() semantics) on replay; every other byte
+// is compared verbatim (no global normalizer). The Go-side git fixtures for the
+// submodule cases stay live. A missing or mutated bundle is a failure, never a
+// skip. The .py driver file itself stays on disk until T5 PR4b.
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"ai-specs.dev/worktree-gate/shared"
 )
 
-// resolvedConfigRefPath resolves the reference driver under this package (go
-// test cwd is internal/sync).
-func resolvedConfigRefPath(t *testing.T) string {
-	t.Helper()
-	path, err := filepath.Abs(filepath.Join("testdata", "resolvedconfig_ref.py"))
-	if err != nil {
-		t.Fatalf("resolve ref driver: %v", err)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("ref driver %s: %v", path, err)
-	}
-	return path
+// resolvedConfigGoldenCase is one frozen record: the exact fixture inputs that
+// produced it, the inventory of host-path occurrences, and the oracle's
+// project-mode envelope with <PROJECT_ROOT> tokens.
+type resolvedConfigGoldenCase struct {
+	Name            string         `json:"name"`
+	Kind            string         `json:"kind"`
+	WriteManifest   bool           `json:"write_manifest"`
+	Manifest        string         `json:"manifest"`
+	Gitmodules      string         `json:"gitmodules,omitempty"`
+	BuildSubmodules bool           `json:"build_submodules"`
+	PathFields      map[string]int `json:"path_fields"`
+	Python          string         `json:"python"`
 }
 
-// resolvedConfigRefResult is the canonical JSON testdata/resolvedconfig_ref.py
-// emits. Result is the Python envelope; ExcType/Message carry a raised failure.
-type resolvedConfigRefResult struct {
-	OK      bool            `json:"ok"`
-	Result  json.RawMessage `json:"result"`
-	ExcType string          `json:"exc_type"`
-	Message string          `json:"message"`
+type resolvedConfigGolden struct {
+	Comment string                     `json:"comment"`
+	Cases   []resolvedConfigGoldenCase `json:"cases"`
+}
+
+// loadResolvedConfigGolden reads the frozen authority bundle. A missing bundle
+// is a failure, never a skip: the bundle IS the oracle.
+func loadResolvedConfigGolden(t *testing.T) []resolvedConfigGoldenCase {
+	t.Helper()
+	path := filepath.Join("testdata", "resolvedconfig_golden.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read frozen resolved-config oracle: %v", err)
+	}
+	var golden resolvedConfigGolden
+	if err := json.Unmarshal(data, &golden); err != nil {
+		t.Fatalf("parse frozen resolved-config oracle %s: %v", path, err)
+	}
+	if len(golden.Cases) == 0 {
+		t.Fatalf("frozen resolved-config oracle %s carries no cases", path)
+	}
+	return golden.Cases
+}
+
+// findResolvedConfigCase returns the named frozen record, failing loudly when
+// the bundle no longer carries it.
+func findResolvedConfigCase(t *testing.T, name string) resolvedConfigGoldenCase {
+	t.Helper()
+	for _, tc := range loadResolvedConfigGolden(t) {
+		if tc.Name == name {
+			return tc
+		}
+	}
+	t.Fatalf("frozen resolved-config oracle is missing case %q", name)
+	return resolvedConfigGoldenCase{}
+}
+
+// resolvedConfigRootToken is the tokenized host path in the frozen bundle.
+const resolvedConfigRootToken = "<PROJECT_ROOT>"
+
+// resolvedConfigRootOwners is the closed set of fields allowed to carry the
+// token. Anything else is a bundle mutation, not a host-path occurrence.
+var resolvedConfigRootOwners = map[string]struct{}{
+	"result.project_root": {},
+	"message":             {},
+}
+
+// collectResolvedConfigTokenPaths records, for every string value that carries
+// the host-path token, its dotted JSON path and token occurrence count.
+func collectResolvedConfigTokenPaths(value any, path []string, counts map[string]int) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			collectResolvedConfigTokenPaths(child, append(append([]string{}, path...), key), counts)
+		}
+	case []any:
+		for i, child := range typed {
+			collectResolvedConfigTokenPaths(child, append(append([]string{}, path...), fmt.Sprintf("%d", i)), counts)
+		}
+	case string:
+		if n := strings.Count(typed, resolvedConfigRootToken); n > 0 {
+			counts[strings.Join(path, ".")] += n
+		}
+	}
+}
+
+// expandResolvedConfigRoot restores the tokenized host path in the frozen
+// envelope, but only in the inventoried owner fields. The recorded occurrence
+// inventory must hold exactly: every token must sit at an inventoried position and
+// every inventoried position must carry its recorded count. No global replace.
+func expandResolvedConfigRoot(tc resolvedConfigGoldenCase, root string) (map[string]any, error) {
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(tc.Python), &envelope); err != nil {
+		return nil, fmt.Errorf("case %q: decode frozen record: %w", tc.Name, err)
+	}
+	for field := range tc.PathFields {
+		if _, ok := resolvedConfigRootOwners[field]; !ok {
+			return nil, fmt.Errorf("case %q: inventory names non-owner field %q", tc.Name, field)
+		}
+	}
+	seen := map[string]int{}
+	collectResolvedConfigTokenPaths(envelope, nil, seen)
+	for field, n := range seen {
+		if _, ok := tc.PathFields[field]; !ok {
+			return nil, fmt.Errorf("case %q: %d %s tokens at non-inventoried position %q", tc.Name, n, resolvedConfigRootToken, field)
+		}
+	}
+	for field, want := range tc.PathFields {
+		if got := seen[field]; got != want {
+			return nil, fmt.Errorf("case %q: inventory says %d %s tokens at %q, record has %d", tc.Name, want, resolvedConfigRootToken, field, got)
+		}
+	}
+
+	resolved := shared.RealPath(root)
+	if n, ok := tc.PathFields["result.project_root"]; ok {
+		if n != 1 {
+			return nil, fmt.Errorf("case %q: result.project_root inventory %d is not supported", tc.Name, n)
+		}
+		result, ok := envelope["result"].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("case %q: result is not an object", tc.Name)
+		}
+		result["project_root"] = resolved
+	}
+	if n, ok := tc.PathFields["message"]; ok {
+		message, ok := envelope["message"].(string)
+		if !ok {
+			return nil, fmt.Errorf("case %q: message is not a string", tc.Name)
+		}
+		envelope["message"] = strings.Replace(message, resolvedConfigRootToken, resolved, n)
+	}
+	return envelope, nil
 }
 
 // writeResolvedConfigManifest writes <root>/ai-specs/ai-specs.toml.
@@ -73,21 +185,41 @@ func decodeGeneric(t *testing.T, raw []byte) map[string]any {
 	return value
 }
 
-// assertResolvedConfigParity runs the Go authority and the real Python body on
-// the same root (both read-only) and requires equality of the whole envelope.
-// When the Python body raises, the Go authority must return a Go error.
-func assertResolvedConfigParity(t *testing.T, python, driver, authority, root string) shared.ResolvedConfig {
+// buildResolvedConfigFrozenFixture materializes the frozen record's inputs on
+// disk (an empty root, .gitmodules and/or the manifest, and — for the submodule
+// case — a real superproject with two submodules added in reverse order).
+func buildResolvedConfigFrozenFixture(t *testing.T, tc resolvedConfigGoldenCase) string {
 	t.Helper()
-	raw := runBindingsRefRaw(t, python, driver, "project", authority, root)
-	var ref resolvedConfigRefResult
-	if err := json.Unmarshal(raw, &ref); err != nil {
-		t.Fatalf("decode ref %s: %v", raw, err)
+	root := t.TempDir()
+	if tc.BuildSubmodules {
+		root = resolvedConfigMakeSuper(t)
 	}
+	if tc.Gitmodules != "" {
+		if err := os.WriteFile(filepath.Join(root, ".gitmodules"), []byte(tc.Gitmodules), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if tc.WriteManifest {
+		writeResolvedConfigManifest(t, root, tc.Manifest)
+	}
+	return root
+}
+
+// assertResolvedConfigFrozenParity runs the Go authority on the same root
+// (read-only) and requires equality with the frozen Python envelope. When the
+// frozen authority raised, the Go authority must return a Go error.
+func assertResolvedConfigFrozenParity(t *testing.T, tc resolvedConfigGoldenCase, root string) shared.ResolvedConfig {
+	t.Helper()
+	envelope, err := expandResolvedConfigRoot(tc, root)
+	if err != nil {
+		t.Fatalf("expand frozen ref for %q: %v", tc.Name, err)
+	}
+	refOK, _ := envelope["ok"].(bool)
 
 	got, err := BuildResolvedConfig(ResolvedConfigRequest{ProjectRoot: root})
-	if !ref.OK {
+	if !refOK {
 		if err == nil {
-			t.Fatalf("go accepted the manifest python rejected (%s: %s)", ref.ExcType, ref.Message)
+			t.Fatalf("go accepted the manifest python rejected (%v: %v)", envelope["exc_type"], envelope["message"])
 		}
 		return shared.ResolvedConfig{}
 	}
@@ -98,88 +230,42 @@ func assertResolvedConfigParity(t *testing.T, python, driver, authority, root st
 	if err != nil {
 		t.Fatalf("marshal go result: %v", err)
 	}
-	if !reflect.DeepEqual(decodeGeneric(t, goRaw), decodeGeneric(t, ref.Result)) {
-		t.Fatalf("resolved config mismatch:\n go: %s\n py: %s", goRaw, ref.Result)
+	if !reflect.DeepEqual(decodeGeneric(t, goRaw), envelope["result"]) {
+		t.Fatalf("resolved config mismatch:\n go: %s\n py: %#v", goRaw, envelope["result"])
 	}
 	return got
 }
 
 // TestNativeResolvedConfigDifferentialAgainstPython pins the native acquisition
-// and the shared projection against _python_build_resolved_config for the
-// manifest shapes the Python authority distinguishes: flat and config-style
-// recipes, explicit bindings, and each topology source/label branch.
+// and the shared projection against the FROZEN _python_build_resolved_config
+// for the manifest shapes the Python authority distinguishes: flat and
+// config-style recipes, explicit bindings, and each topology source/label
+// branch.
 func TestNativeResolvedConfigDifferentialAgainstPython(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := resolvedConfigRefPath(t)
-
-	cases := []struct {
-		name     string
-		manifest string
-	}{
-		{
-			"flat and config recipes with enabled order and bindings",
-			"[project]\nname = \"x\"\nrepo_topology = \"standalone\"\n\n" +
-				"[recipes.flat-recipe]\nenabled = true\nversion = \"1.0.0\"\nflat_setting = \"on\"\nanother = 7\n\n" +
-				"[recipes.config-recipe]\nenabled = false\nversion = \"2.0.0\"\n\n" +
-				"[recipes.config-recipe.config]\nnested_setting = \"yes\"\ncount = 3\n\n" +
-				"[[bindings]]\ncapability = \"tracker\"\nrecipe = \"flat-recipe\"\n",
-		},
-		{
-			"explicit bindings with an incomplete pair dropped",
-			"[[bindings]]\ncapability = \"tracker\"\nrecipe = \"recipe-a\"\n\n" +
-				"[[bindings]]\ncapability = \"vcs\"\nrecipe = \"recipe-b\"\n\n" +
-				"[[bindings]]\ncapability = \"\"\nrecipe = \"recipe-c\"\n",
-		},
-		{"project topology is the project source label", "[project]\nrepo_topology = \"standalone\"\n\n[recipes.a]\nenabled = true\n"},
-		{"legacy recipe config topology is the legacy-recipe label", "[recipes.worktree-flow]\nenabled = true\n\n[recipes.worktree-flow.config]\nrepo_topology = \"monorepo-apps\"\n"},
-		{"legacy recipe flat topology is the legacy-recipe label", "[recipes.worktree-flow]\nenabled = true\nrepo_topology = \"monorepo-apps\"\n"},
-		{"blank project topology falls back to the default label", "[project]\nrepo_topology = \"   \"\n\n[recipes.worktree-flow]\nenabled = true\n\n[recipes.worktree-flow.config]\nrepo_topology = \"monorepo-apps\"\n"},
-		{"non-string project topology falls back to the default label", "[project]\nrepo_topology = 5\n"},
-		{"unknown configured topology takes the auto branch", "[project]\nrepo_topology = \"weird\"\n"},
-		{"empty manifest is auto standalone at the default label", "# no recipes table\n"},
-		{
-			"inline array of inline-table bindings is acquired in document order",
-			"bindings = [{capability = \"tracker\", recipe = \"a\"}, {capability = \"vcs\", recipe = \"b\"}]\n\n" +
-				"[recipes.a]\nenabled = true\n",
-		},
-		{
-			"inline array bindings skipping non-table items keep only the tables",
-			"bindings = [{capability = \"tracker\", recipe = \"a\"}, 5, \"x\", {capability = \"vcs\", recipe = \"b\"}]\n\n" +
-				"[recipes.a]\nenabled = true\n",
-		},
-		{
-			"inline array binding missing the capability string is dropped",
-			"bindings = [{recipe = \"a\"}]\n\n[recipes.a]\nenabled = true\n",
-		},
-		{
-			"inline array binding missing the recipe string is dropped",
-			"bindings = [{capability = \"tracker\"}]\n\n[recipes.a]\nenabled = true\n",
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			writeResolvedConfigManifest(t, root, tc.manifest)
-			assertResolvedConfigParity(t, python, driver, authority, root)
+	for _, tc := range loadResolvedConfigGolden(t) {
+		if tc.Kind != "differential" {
+			continue
+		}
+		t.Run(tc.Name, func(t *testing.T) {
+			root := buildResolvedConfigFrozenFixture(t, tc)
+			assertResolvedConfigFrozenParity(t, tc, root)
 		})
 	}
 }
 
 // TestNativeResolvedConfigAcquisitionErrors pins the transport failures: a
-// missing or unparsable manifest raises in the Python authority and is a Go
-// error natively.
+// missing or unparsable manifest raised in the Python authority (frozen, the
+// missing-manifest message quoting the path) and is a Go error natively.
 func TestNativeResolvedConfigAcquisitionErrors(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := resolvedConfigRefPath(t)
-
 	t.Run("missing manifest", func(t *testing.T) {
-		assertResolvedConfigParity(t, python, driver, authority, t.TempDir())
+		tc := findResolvedConfigCase(t, "missing manifest")
+		root := buildResolvedConfigFrozenFixture(t, tc)
+		assertResolvedConfigFrozenParity(t, tc, root)
 	})
 	t.Run("unparsable manifest", func(t *testing.T) {
-		root := t.TempDir()
-		writeResolvedConfigManifest(t, root, "not = [valid\n")
-		assertResolvedConfigParity(t, python, driver, authority, root)
+		tc := findResolvedConfigCase(t, "unparsable manifest")
+		root := buildResolvedConfigFrozenFixture(t, tc)
+		assertResolvedConfigFrozenParity(t, tc, root)
 	})
 }
 
@@ -237,19 +323,17 @@ func resolvedConfigMakeSuper(t *testing.T) string {
 }
 
 // TestNativeResolvedConfigSubmoduleTopology pins the sorted submodule list and
-// the gitmodules_present flag against the real Python detection on a real
-// superproject: two submodules added in reverse order resolve to the sorted
-// list under the default auto source.
+// the gitmodules_present flag against the frozen Python detection on a live
+// real superproject: two submodules added in reverse order resolve to the
+// sorted list under the default auto source.
 func TestNativeResolvedConfigSubmoduleTopology(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := resolvedConfigRefPath(t)
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git not available: %v", err)
 	}
-	root := resolvedConfigMakeSuper(t)
-	writeResolvedConfigManifest(t, root, "")
+	tc := findResolvedConfigCase(t, "submodule topology sorted under auto")
+	root := buildResolvedConfigFrozenFixture(t, tc)
 
-	got := assertResolvedConfigParity(t, python, driver, authority, root)
+	got := assertResolvedConfigFrozenParity(t, tc, root)
 	if got.Topology.Resolved != "monorepo-submodules" || got.Topology.Via != shared.TopologyViaAuto {
 		t.Fatalf("topology = %#v, want auto monorepo-submodules", got.Topology)
 	}
@@ -265,19 +349,13 @@ func TestNativeResolvedConfigSubmoduleTopology(t *testing.T) {
 // .gitmodules exists but no submodule is initialized: present is true and the
 // submodule list is empty, under an explicitly configured monorepo-submodules.
 func TestNativeResolvedConfigGitmodulesPresentUninitialized(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := resolvedConfigRefPath(t)
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git not available: %v", err)
 	}
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, ".gitmodules"),
-		[]byte("[submodule \"apps/api\"]\n\tpath = apps/api\n\turl = https://example.invalid/api.git\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	writeResolvedConfigManifest(t, root, "[project]\nrepo_topology = \"monorepo-submodules\"\n")
+	tc := findResolvedConfigCase(t, "gitmodules present uninitialized")
+	root := buildResolvedConfigFrozenFixture(t, tc)
 
-	got := assertResolvedConfigParity(t, python, driver, authority, root)
+	got := assertResolvedConfigFrozenParity(t, tc, root)
 	if !got.Topology.GitmodulesPresent {
 		t.Fatalf("gitmodules_present = false, want true: %#v", got.Topology)
 	}
@@ -287,7 +365,7 @@ func TestNativeResolvedConfigGitmodulesPresentUninitialized(t *testing.T) {
 }
 
 // TestNativeResolvedConfigNonStringBindingCoercion pins the scalar coercion the
-// Python authority applies: _python_build_resolved_config keys
+// Python authority applies (frozen): _python_build_resolved_config keys
 // bindings_out[capability] with any truthy value and json.dumps renders the
 // object key, so an integer capability 5 keys as "5" and a boolean true as
 // "true". The native projection coerces the same way instead of skipping the
@@ -296,41 +374,38 @@ func TestNativeResolvedConfigGitmodulesPresentUninitialized(t *testing.T) {
 // _is_str_keyed_mapping(bindings, str) requires it), so the recipe is rendered
 // with Python str() where the raw Python fallback would keep the number.
 func TestNativeResolvedConfigNonStringBindingCoercion(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := resolvedConfigRefPath(t)
-
 	t.Run("integer capability keys as json.dumps renders 5", func(t *testing.T) {
-		root := t.TempDir()
-		writeResolvedConfigManifest(t, root, "[recipes.a]\nenabled = true\n\n[[bindings]]\ncapability = 5\nrecipe = \"a\"\n")
-		got := assertResolvedConfigParity(t, python, driver, authority, root)
+		tc := findResolvedConfigCase(t, "integer capability keys as json.dumps renders 5")
+		root := buildResolvedConfigFrozenFixture(t, tc)
+		got := assertResolvedConfigFrozenParity(t, tc, root)
 		if got.Bindings["5"] != "a" {
 			t.Fatalf("native bindings = %#v, want the coerced key \"5\"", got.Bindings)
 		}
 	})
 
 	t.Run("boolean capability keys as json.dumps renders true", func(t *testing.T) {
-		root := t.TempDir()
-		writeResolvedConfigManifest(t, root, "[recipes.a]\nenabled = true\n\n[[bindings]]\ncapability = true\nrecipe = \"a\"\n")
-		got := assertResolvedConfigParity(t, python, driver, authority, root)
+		tc := findResolvedConfigCase(t, "boolean capability keys as json.dumps renders true")
+		root := buildResolvedConfigFrozenFixture(t, tc)
+		got := assertResolvedConfigFrozenParity(t, tc, root)
 		if got.Bindings["true"] != "a" {
 			t.Fatalf("native bindings = %#v, want the coerced key \"true\"", got.Bindings)
 		}
 	})
 
 	t.Run("integer recipe is kept and str-coerced", func(t *testing.T) {
-		root := t.TempDir()
-		writeResolvedConfigManifest(t, root, "[recipes.a]\nenabled = true\n\n[[bindings]]\ncapability = \"tracker\"\nrecipe = 5\n")
-		raw := runBindingsRefRaw(t, python, driver, "project", authority, root)
-		var ref resolvedConfigRefResult
-		if err := json.Unmarshal(raw, &ref); err != nil {
-			t.Fatalf("decode ref %s: %v", raw, err)
+		r := findResolvedConfigCase(t, "integer recipe is kept and str-coerced")
+		root := buildResolvedConfigFrozenFixture(t, r)
+		envelope, err := expandResolvedConfigRoot(r, root)
+		if err != nil {
+			t.Fatalf("expand frozen ref: %v", err)
 		}
-		if !ref.OK {
-			t.Fatalf("python authority raised: %s: %s", ref.ExcType, ref.Message)
+		if ok, _ := envelope["ok"].(bool); !ok {
+			t.Fatalf("frozen python authority raised: %v: %v", envelope["exc_type"], envelope["message"])
 		}
-		pyBindings, _ := decodeGeneric(t, ref.Result)["bindings"].(map[string]any)
+		result, _ := envelope["result"].(map[string]any)
+		pyBindings, _ := result["bindings"].(map[string]any)
 		if pyBindings["tracker"] != float64(5) {
-			t.Fatalf("python bindings = %#v, want the raw integer recipe 5", pyBindings)
+			t.Fatalf("frozen python bindings = %#v, want the recorded raw integer recipe 5", pyBindings)
 		}
 		got, err := BuildResolvedConfig(ResolvedConfigRequest{ProjectRoot: root})
 		if err != nil {
@@ -344,16 +419,14 @@ func TestNativeResolvedConfigNonStringBindingCoercion(t *testing.T) {
 
 // TestNativeResolvedConfigEmptyRecipeTableParity pins the empty-table shape: a
 // [recipes.foo] header with no keys survives as recipes["foo"] = {} in both the
-// native projection and the Python authority, exactly as
+// native projection and the frozen Python authority, exactly as
 // _python_build_resolved_config assigns recipes_out[rid] = config
 // unconditionally.
 func TestNativeResolvedConfigEmptyRecipeTableParity(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := resolvedConfigRefPath(t)
-	root := t.TempDir()
-	writeResolvedConfigManifest(t, root, "[recipes.foo]\n")
+	tc := findResolvedConfigCase(t, "empty recipe table parity")
+	root := buildResolvedConfigFrozenFixture(t, tc)
 
-	got := assertResolvedConfigParity(t, python, driver, authority, root)
+	got := assertResolvedConfigFrozenParity(t, tc, root)
 	if goFoo, present := got.Recipes["foo"]; !present || len(goFoo) != 0 {
 		t.Fatalf("native recipes = %#v, want the empty recipe table kept as foo:{}", got.Recipes)
 	}
@@ -367,12 +440,10 @@ func TestNativeResolvedConfigEmptyRecipeTableParity(t *testing.T) {
 // sub-table last, reproducing that outcome deterministically (the winner used to
 // be decided by Go map iteration order).
 func TestNativeResolvedConfigFlatConfigCollisionIsDeterministic(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := resolvedConfigRefPath(t)
-	root := t.TempDir()
-	writeResolvedConfigManifest(t, root, "[recipes.a]\nfoo = 1\n\n[recipes.a.config]\nfoo = 2\n")
+	tc := findResolvedConfigCase(t, "flat config collision is deterministic")
+	root := buildResolvedConfigFrozenFixture(t, tc)
 
-	got := assertResolvedConfigParity(t, python, driver, authority, root)
+	got := assertResolvedConfigFrozenParity(t, tc, root)
 	if n, ok := got.Recipes["a"]["foo"].(int64); !ok || n != 2 {
 		t.Fatalf("native recipes.a.foo = %#v, want the document-ordered 2", got.Recipes["a"]["foo"])
 	}
@@ -413,26 +484,24 @@ func TestNativeResolvedConfigFlatConfigCollisionIsDeterministic(t *testing.T) {
 // maps, so the order is lost at parse time — a structural limit of the reader,
 // out of scope for this unit.
 func TestNativeResolvedConfigInlineConfigBeforeFlatKeyDivergence(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := resolvedConfigRefPath(t)
-	root := t.TempDir()
-	writeResolvedConfigManifest(t, root, "[recipes.a]\nconfig = { foo = 2 }\nfoo = 1\n")
+	tc := findResolvedConfigCase(t, "inline config before flat key divergence")
+	root := buildResolvedConfigFrozenFixture(t, tc)
 
-	// Python authority: document order, so the later flat foo = 1 wins.
-	raw := runBindingsRefRaw(t, python, driver, "project", authority, root)
-	var ref resolvedConfigRefResult
-	if err := json.Unmarshal(raw, &ref); err != nil {
-		t.Fatalf("decode ref %s: %v", raw, err)
+	// Frozen Python authority: document order, so the later flat foo = 1 wins.
+	envelope, err := expandResolvedConfigRoot(tc, root)
+	if err != nil {
+		t.Fatalf("expand frozen ref: %v", err)
 	}
-	if !ref.OK {
-		t.Fatalf("python authority raised: %s: %s", ref.ExcType, ref.Message)
+	if ok, _ := envelope["ok"].(bool); !ok {
+		t.Fatalf("frozen python authority raised: %v: %v", envelope["exc_type"], envelope["message"])
 	}
-	pyRecipes, _ := decodeGeneric(t, ref.Result)["recipes"].(map[string]any)
+	result, _ := envelope["result"].(map[string]any)
+	pyRecipes, _ := result["recipes"].(map[string]any)
 	pyRecipe, _ := pyRecipes["a"].(map[string]any)
 	if pyRecipe["foo"] != float64(1) {
-		t.Fatalf("python recipes.a.foo = %#v, want the document-ordered 1; the mixed inline-config-before-flat-key divergence is deliberate and pinned, update this assertion only if the Python authority changes", pyRecipe["foo"])
+		t.Fatalf("frozen python recipes.a.foo = %#v, want the recorded document-ordered 1; the mixed inline-config-before-flat-key divergence is deliberate and pinned, update this assertion only if the Python authority changes", pyRecipe["foo"])
 	}
-	t.Logf("python authority recipes.a.foo = %#v (document-ordered)", pyRecipe["foo"])
+	t.Logf("python authority recipes.a.foo = %#v (document-ordered, frozen)", pyRecipe["foo"])
 
 	// Native authority: two-pass, the nested config table applied last wins.
 	got, err := BuildResolvedConfig(ResolvedConfigRequest{ProjectRoot: root})
@@ -443,4 +512,32 @@ func TestNativeResolvedConfigInlineConfigBeforeFlatKeyDivergence(t *testing.T) {
 		t.Fatalf("native recipes.a.foo = %#v, want the two-pass 2; the mixed inline-config-before-flat-key divergence is deliberate and pinned, update this assertion only if the native resolution changes", got.Recipes["a"]["foo"])
 	}
 	t.Logf("native authority recipes.a.foo = %#v (two-pass)", got.Recipes["a"]["foo"])
+}
+
+// TestResolvedConfigFrozenRootExpansionIsFieldScoped is a negative control: the
+// token is restored only in inventoried owner fields, so a literal token injected
+// into a non-path value must fail instead of being silently normalized away.
+func TestResolvedConfigFrozenRootExpansionIsFieldScoped(t *testing.T) {
+	tc := findResolvedConfigCase(t, "flat config collision is deterministic")
+	root := buildResolvedConfigFrozenFixture(t, tc)
+
+	mutated := tc
+	mutated.Python = strings.Replace(tc.Python, "\"foo\":2", "\"foo\":\"<PROJECT_ROOT>\"", 1)
+	if mutated.Python == tc.Python {
+		t.Fatalf("injection did not land in the frozen record")
+	}
+	if _, err := expandResolvedConfigRoot(mutated, root); err == nil {
+		t.Fatalf("expanded a <PROJECT_ROOT> token injected outside the inventoried fields")
+	} else if !strings.Contains(err.Error(), "result.recipes.a.foo") {
+		t.Fatalf("error does not name the non-inventoried position: %v", err)
+	}
+
+	envelope, err := expandResolvedConfigRoot(tc, root)
+	if err != nil {
+		t.Fatalf("expand the unmodified frozen record: %v", err)
+	}
+	result, _ := envelope["result"].(map[string]any)
+	if result["project_root"] != shared.RealPath(root) {
+		t.Fatalf("expanded project_root = %#v, want %q", result["project_root"], shared.RealPath(root))
+	}
 }
