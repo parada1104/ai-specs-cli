@@ -6,10 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -24,31 +22,105 @@ const (
 	testRootMarkerEnd   = "# --- end ai-specs ---"
 )
 
-// gitignoreRefResult is the canonical JSON emitted by testdata/gitignore_ref.py.
-// The render mode fills the FileBytes* fields; root-refresh fills the
-// ResultingGitignore* fields. Pointers keep "absent file" distinct from an
-// empty file.
-type gitignoreRefResult struct {
-	Stdout                   string  `json:"stdout"`
-	Stderr                   string  `json:"stderr"`
-	RC                       int     `json:"rc"`
-	Action                   string  `json:"action"`
-	FileBytesSHA256          *string `json:"file_bytes_sha256"`
-	FileBytesB64             *string `json:"file_bytes_b64"`
-	ResultingGitignoreSHA256 *string `json:"resulting_gitignore_sha256"`
-	ResultingGitignoreB64    *string `json:"resulting_gitignore_b64"`
+// gitignoreGoldenRecord is one frozen case of the former live differential
+// against lib/_internal/gitignore-{render,root-refresh}.py (captured once via
+// a scratch capture script; PR2-B S3). Stderr is nil exactly for the three
+// module-direct records: the Python authority raises an uncaught traceback
+// whose text embeds host paths, and the Go contract differs by design (one
+// line), so those records freeze rc, stdout and the preserved artifact bytes
+// only. ArtifactMode is the permission bits the authority left on the file.
+type gitignoreGoldenRecord struct {
+	Name            string  `json:"name"`
+	Mode            string  `json:"mode"`
+	Stdout          string  `json:"stdout"`
+	Stderr          *string `json:"stderr"`
+	RC              int     `json:"rc"`
+	Action          string  `json:"action"`
+	ArtifactPresent bool    `json:"artifact_present"`
+	ArtifactSHA256  *string `json:"artifact_sha256"`
+	ArtifactB64     *string `json:"artifact_b64"`
+	ArtifactMode    *uint32 `json:"artifact_mode"`
 }
 
-// artifact returns the (sha256, base64, present) triple for whichever output
-// file the mode produced.
-func (r gitignoreRefResult) artifact() (sha, b64 string, present bool) {
-	if r.FileBytesB64 != nil {
-		return derefString(r.FileBytesSHA256), *r.FileBytesB64, true
+// gitignoreGoldenCaseNames is the hard-coded identity inventory of the frozen
+// bundle: the exact case names in capture order. It is an independent oracle
+// of coverage — kept in the test, never derived from the bundle — so a bundle
+// that is missing, renamed or reordered records cannot validate silently.
+var gitignoreGoldenCaseNames = []string{
+	"render manifest without deps",
+	"render manifest with two deps",
+	"render new file under umask 022",
+	"render new file under umask 002",
+	"render keeps the mode of an existing file",
+	"root-refresh appended under umask 002",
+	"root-refresh appended on missing .gitignore",
+	"root-refresh appended without trailing newline",
+	"root-refresh appended to file ending in single newline",
+	"root-refresh replaces existing block",
+	"root-refresh replaces block with content after end marker",
+	"root-refresh missing template is rc 1",
+	"unmatched begin marker",
+	"root .gitignore unreadable",
+	"template unreadable",
+}
+
+// gitignoreGoldenKindCounts pins how many records each capture kind
+// contributes, before any case loop runs.
+var gitignoreGoldenKindCounts = map[string]int{
+	"render":                     5,
+	"root-refresh":               7,
+	"module-unmatched":           1,
+	"module-unreadable-root":     1,
+	"module-unreadable-template": 1,
+}
+
+// loadGitignoreGolden reads the frozen bundle and validates its identity
+// inventory: exact names in order, no duplicates, per-kind counts.
+func loadGitignoreGolden(t *testing.T) map[string]gitignoreGoldenRecord {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "gitignore_golden.json"))
+	if err != nil {
+		t.Fatalf("read frozen oracle: %v", err)
 	}
-	if r.ResultingGitignoreB64 != nil {
-		return derefString(r.ResultingGitignoreSHA256), *r.ResultingGitignoreB64, true
+	var bundle struct {
+		Cases []gitignoreGoldenRecord `json:"cases"`
 	}
-	return "", "", false
+	if err := json.Unmarshal(raw, &bundle); err != nil {
+		t.Fatalf("parse frozen oracle: %v", err)
+	}
+	if len(bundle.Cases) != len(gitignoreGoldenCaseNames) {
+		t.Fatalf("frozen bundle has %d records, want %d", len(bundle.Cases), len(gitignoreGoldenCaseNames))
+	}
+	byName := make(map[string]gitignoreGoldenRecord, len(bundle.Cases))
+	seen := make(map[string]bool, len(bundle.Cases))
+	kindCounts := make(map[string]int)
+	for i, rec := range bundle.Cases {
+		if want := gitignoreGoldenCaseNames[i]; rec.Name != want {
+			t.Fatalf("frozen record %d is %q, want %q (identity mismatch)", i, rec.Name, want)
+		}
+		if seen[rec.Name] {
+			t.Fatalf("duplicate frozen record %q", rec.Name)
+		}
+		seen[rec.Name] = true
+		kindCounts[rec.Mode]++
+		byName[rec.Name] = rec
+	}
+	for kind, want := range gitignoreGoldenKindCounts {
+		if got := kindCounts[kind]; got != want {
+			t.Fatalf("frozen kind %q has %d records, want %d", kind, got, want)
+		}
+	}
+	return byName
+}
+
+// goldenCase looks up one frozen record by its identity name.
+func goldenCase(t *testing.T, golden map[string]gitignoreGoldenRecord, name string) gitignoreGoldenRecord {
+	t.Helper()
+	rec, ok := golden[name]
+	if !ok {
+		t.Fatalf("frozen record %q missing", name)
+	}
+	return rec
 }
 
 func derefString(s *string) string {
@@ -71,24 +143,6 @@ func gitignoreRepoRoot(t *testing.T) string {
 	return root
 }
 
-// runGitignoreRef runs the reference driver and returns its JSON stdout.
-func runGitignoreRef(t *testing.T, root, script, mode, arg1, arg2 string) gitignoreRefResult {
-	t.Helper()
-	cmd := exec.Command("python3", script, mode, arg1, arg2)
-	cmd.Dir = root
-	var out, errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("ref driver (%s) failed: %v\nstderr: %s", mode, err, errBuf.String())
-	}
-	var ref gitignoreRefResult
-	if err := json.Unmarshal([]byte(out.String()), &ref); err != nil {
-		t.Fatalf("parse ref JSON: %v\nraw: %s", err, out.String())
-	}
-	return ref
-}
-
 // writeGitignoreInput writes a fixture file, creating its parent directories.
 func writeGitignoreInput(t *testing.T, path, content string) {
 	t.Helper()
@@ -107,35 +161,33 @@ func sha256Hex(b []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// gitignoreCase is one differential scenario. prepare populates the leg's
-// isolated dir and returns the two positional arguments passed identically to
-// the ref driver and the Go port. artifact returns the path of the file whose
-// bytes must match ("" = none). goRun invokes the Go port.
+// gitignoreCase is one frozen differential scenario. prepare populates the
+// leg's isolated dir and returns the two positional arguments passed to the Go
+// port. artifact returns the path of the file whose bytes must match ("" =
+// none). goRun invokes the Go port.
 type gitignoreCase struct {
 	name     string
 	mode     string // "render" | "root-refresh"
 	prepare  func(t *testing.T, dir string) (arg1, arg2 string)
 	artifact func(dir string) string
 	goRun    func(arg1, arg2 string, stdout, stderr io.Writer) int
-	// umask, when set, is applied to the whole subtest so both legs inherit the
-	// same process umask; it is the only way to observe the Python
-	// write_text() mode rule (0666 &^ umask for a new file).
+	// umask, when set, is applied to the whole subtest so the Go leg inherits
+	// the same process umask the frozen authority was captured with; it is the
+	// only way to observe the write mode rule (0666 &^ umask for a new file).
 	umask *int
-	// wantMode, when set, is the exact permission both legs must leave on the
-	// artifact.
+	// wantMode, when set, is the exact permission the port must leave on the
+	// artifact; it is an independent absolute pin kept next to the frozen
+	// authority's own mode.
 	wantMode *os.FileMode
 }
 
-// TestGitignoreDifferential runs each case through both the Go port and the
-// real Python module (via testdata/gitignore_ref.py, which execs the module in
-// a subprocess) in isolated temp dirs, and requires byte equality of the
-// emitted file bytes, stdout, stderr and exit code.
+// TestGitignoreDifferential runs each case through the Go port in an isolated
+// temp dir and requires equality against the frozen authority record: exit
+// code, tokenized stdout/stderr, and byte equality of the emitted file
+// (PR2-B S3: the live python3 leg is replaced by testdata/gitignore_golden.json).
 func TestGitignoreDifferential(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
+	golden := loadGitignoreGolden(t)
 	root := gitignoreRepoRoot(t)
-	refScript := filepath.Join(root, "internal", "sync", "testdata", "gitignore_ref.py")
 	repoTemplate := filepath.Join(root, "templates", "gitignore-root.tmpl")
 
 	manifestNoDeps := "[project]\nname = \"x\"\n"
@@ -281,32 +333,31 @@ func TestGitignoreDifferential(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			rec := goldenCase(t, golden, tc.name)
 			if tc.umask != nil {
 				previous := syscall.Umask(*tc.umask)
 				defer syscall.Umask(previous)
 			}
-			goDir, refDir := t.TempDir(), t.TempDir()
+			goDir := t.TempDir()
 
 			goArg1, goArg2 := tc.prepare(t, goDir)
-			refArg1, refArg2 := tc.prepare(t, refDir)
 
 			var goOut, goErr bytes.Buffer
 			goRC := tc.goRun(goArg1, goArg2, &goOut, &goErr)
 
-			ref := runGitignoreRef(t, root, refScript, tc.mode, refArg1, refArg2)
-
-			if goRC != ref.RC {
-				t.Errorf("rc: go=%d ref=%d", goRC, ref.RC)
+			if goRC != rec.RC {
+				t.Errorf("rc: go=%d frozen=%d", goRC, rec.RC)
 			}
 			norm := func(s, dir string) string { return strings.ReplaceAll(s, dir, "<DIR>") }
-			if got, want := norm(goOut.String(), goDir), norm(ref.Stdout, refDir); got != want {
-				t.Errorf("stdout:\n  go:  %q\n  ref: %q", got, want)
+			if got, want := norm(goOut.String(), goDir), rec.Stdout; got != want {
+				t.Errorf("stdout:\n  go:     %q\n  frozen: %q", got, want)
 			}
-			if got, want := norm(goErr.String(), goDir), norm(ref.Stderr, refDir); got != want {
-				t.Errorf("stderr:\n  go:  %q\n  ref: %q", got, want)
+			if rec.Stderr == nil {
+				t.Fatalf("frozen record %q dropped its stderr; differential records freeze it", tc.name)
 			}
-
-			refSHA, refB64, refPresent := ref.artifact()
+			if got, want := norm(goErr.String(), goDir), *rec.Stderr; got != want {
+				t.Errorf("stderr:\n  go:     %q\n  frozen: %q", got, want)
+			}
 
 			var goBytes []byte
 			goPresent := false
@@ -318,29 +369,32 @@ func TestGitignoreDifferential(t *testing.T) {
 					t.Fatalf("read go artifact %s: %v", path, err)
 				}
 			}
-			if goPresent != refPresent {
-				t.Fatalf("artifact presence: go=%v ref=%v", goPresent, refPresent)
-			}
-			if goPresent && tc.wantMode != nil {
-				goMode := artifactMode(t, tc.artifact(goDir))
-				refMode := artifactMode(t, tc.artifact(refDir))
-				if goMode != refMode {
-					t.Errorf("artifact mode: go=%04o ref=%04o", goMode, refMode)
-				}
-				if goMode != *tc.wantMode {
-					t.Errorf("artifact mode: go=%04o want=%04o", goMode, *tc.wantMode)
-				}
+			if goPresent != rec.ArtifactPresent {
+				t.Fatalf("artifact presence: go=%v frozen=%v", goPresent, rec.ArtifactPresent)
 			}
 			if goPresent {
-				if got := sha256Hex(goBytes); got != refSHA {
-					t.Errorf("artifact sha256: go=%s ref=%s", got, refSHA)
+				if rec.ArtifactMode == nil {
+					t.Fatalf("frozen record %q has an artifact but no mode", tc.name)
 				}
-				want, err := base64.StdEncoding.DecodeString(refB64)
+				goMode := artifactMode(t, tc.artifact(goDir))
+				if got, want := uint32(goMode), *rec.ArtifactMode; got != want {
+					t.Errorf("artifact mode: go=%04o frozen=%04o", got, want)
+				}
+				if tc.wantMode != nil && goMode != *tc.wantMode {
+					t.Errorf("artifact mode: go=%04o want=%04o", goMode, *tc.wantMode)
+				}
+				if got := sha256Hex(goBytes); rec.ArtifactSHA256 == nil || got != *rec.ArtifactSHA256 {
+					t.Errorf("artifact sha256: go=%s frozen=%v", got, rec.ArtifactSHA256)
+				}
+				if rec.ArtifactB64 == nil {
+					t.Fatalf("frozen record %q has an artifact but no bytes", tc.name)
+				}
+				want, err := base64.StdEncoding.DecodeString(*rec.ArtifactB64)
 				if err != nil {
-					t.Fatalf("decode ref artifact: %v", err)
+					t.Fatalf("decode frozen artifact: %v", err)
 				}
 				if !bytes.Equal(goBytes, want) {
-					t.Errorf("artifact bytes:\n  go:  %q\n  ref: %q", goBytes, want)
+					t.Errorf("artifact bytes:\n  go:     %q\n  frozen: %q", goBytes, want)
 				}
 			}
 		})
@@ -397,11 +451,12 @@ func readFileAfterUnreadable(t *testing.T, path string) []byte {
 }
 
 // assertUnchanged verifies the read target was not rewritten. A regular file is
-// compared byte-for-byte; a directory fixture must simply remain a directory.
-func assertUnchanged(t *testing.T, label string, target string, regular bool, want string) {
+// compared byte-for-byte against the frozen authority bytes; a directory
+// fixture must simply remain a directory.
+func assertUnchanged(t *testing.T, label string, target string, regular bool, want []byte) {
 	t.Helper()
 	if regular {
-		if got := readFileAfterUnreadable(t, target); string(got) != want {
+		if got := readFileAfterUnreadable(t, target); !bytes.Equal(got, want) {
 			t.Errorf("%s changed unreadable file: got %q want %q", label, got, want)
 		}
 		return
@@ -411,69 +466,45 @@ func assertUnchanged(t *testing.T, label string, target string, regular bool, wa
 	}
 }
 
-// runGitignoreModule execs one real lib/_internal module directly and returns
-// its exit code and captured streams. Unlike runGitignoreRef it tolerates a
-// non-zero exit, which is exactly what the read-failure cases expect.
-func runGitignoreModule(t *testing.T, root, module string, args ...string) (int, string, string) {
-	t.Helper()
-	path := filepath.Join(root, "lib", "_internal", module)
-	cmd := exec.Command("python3", append([]string{path}, args...)...)
-	var out, errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	err := cmd.Run()
-	rc := 0
-	if err != nil {
-		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) {
-			t.Fatalf("run %s: %v", module, err)
-		}
-		rc = exitErr.ExitCode()
-	}
-	return rc, out.String(), errBuf.String()
-}
-
 // TestGitignoreDifferentialUnmatchedBeginMarker covers D2: a begin marker with
-// no end marker makes both legs fail, and it freezes only the frozen
-// properties — a non-zero exit, empty stdout and an untouched file. The text
-// differs by contract (the Python authority raises a traceback, the port
-// prints one line), so stderr is not compared.
+// no end marker makes the port fail exactly as the frozen authority did — a
+// non-zero exit, empty stdout and an untouched file (frozen bytes). The error
+// text differs by contract (the Python authority raised a traceback, the port
+// prints one line), so stderr is only required to be non-empty.
 func TestGitignoreDifferentialUnmatchedBeginMarker(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
+	rec := goldenCase(t, loadGitignoreGolden(t), "unmatched begin marker")
+	if rec.RC == 0 {
+		t.Fatalf("frozen authority rc = 0; the unmatched-begin-marker authority must fail")
 	}
 	root := gitignoreRepoRoot(t)
 	repoTemplate := filepath.Join(root, "templates", "gitignore-root.tmpl")
 	existing := "keep\n\n" + testRootMarkerBegin + "\nold agent line\n"
 
-	goDir, refDir := t.TempDir(), t.TempDir()
+	goDir := t.TempDir()
 	goGitignore := filepath.Join(goDir, ".gitignore")
 	writeGitignoreInput(t, goGitignore, existing)
 
 	var goOut, goErr bytes.Buffer
 	goRC := RefreshRootGitignore(goDir, repoTemplate, &goOut, &goErr)
 
-	refGitignore := filepath.Join(refDir, ".gitignore")
-	writeGitignoreInput(t, refGitignore, existing)
-	refRC, refOut, _ := runGitignoreModule(t, root, "gitignore-root-refresh.py", refDir, repoTemplate)
-
-	if goRC == 0 || refRC == 0 {
-		t.Fatalf("exit codes: go=%d ref=%d, want both non-zero", goRC, refRC)
+	if goRC != rec.RC {
+		t.Errorf("exit codes: go=%d frozen=%d", goRC, rec.RC)
 	}
-	if goRC != refRC {
-		t.Errorf("exit codes: go=%d ref=%d", goRC, refRC)
-	}
-	if goOut.String() != refOut {
-		t.Errorf("stdout: go=%q ref=%q", goOut.String(), refOut)
+	if goOut.String() != rec.Stdout {
+		t.Errorf("stdout: go=%q frozen=%q", goOut.String(), rec.Stdout)
 	}
 	if goErr.Len() == 0 {
 		t.Errorf("go printed no stderr diagnostic")
 	}
-	if got, err := os.ReadFile(goGitignore); err != nil || string(got) != existing {
-		t.Errorf("go changed the file: got %q err=%v want %q", got, err, existing)
+	if rec.ArtifactB64 == nil {
+		t.Fatalf("frozen record has no preserved artifact bytes")
 	}
-	if got, err := os.ReadFile(refGitignore); err != nil || string(got) != existing {
-		t.Errorf("ref changed the file: got %q err=%v want %q", got, err, existing)
+	want, err := base64.StdEncoding.DecodeString(*rec.ArtifactB64)
+	if err != nil {
+		t.Fatalf("decode frozen artifact: %v", err)
+	}
+	if got, err := os.ReadFile(goGitignore); err != nil || !bytes.Equal(got, want) {
+		t.Errorf("go changed the file: got %q err=%v want %q", got, err, want)
 	}
 }
 
@@ -489,79 +520,73 @@ func TestReadTextUniversalPropagatesReadError(t *testing.T) {
 }
 
 // TestGitignoreDifferentialReadFailures covers R4-SilentReadSwallowDataLoss: a
-// failed read of the root .gitignore or of the template must surface as rc 1
-// with no write, matching the Python authority, which raises. Unlike
-// TestGitignoreDifferential, stderr is not compared byte-for-byte because the
-// Python leg emits an uncaught traceback while the Go port prints one line; the
-// frozen properties are a non-zero rc and preserved bytes.
+// failed read of the root .gitignore or of the template must surface as a
+// non-zero rc with no write, exactly as the frozen authority recorded (rc 1,
+// preserved bytes). The error text differs by contract (the Python authority
+// raised an uncaught traceback, the port prints one line); the frozen
+// properties are the rc and the preserved bytes.
 func TestGitignoreDifferentialReadFailures(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
+	golden := loadGitignoreGolden(t)
 	root := gitignoreRepoRoot(t)
 	repoTemplate := filepath.Join(root, "templates", "gitignore-root.tmpl")
 
-	const existing = "keep-existing-root-content\n"
-
 	t.Run("root .gitignore unreadable", func(t *testing.T) {
-		goDir, refDir := t.TempDir(), t.TempDir()
+		rec := goldenCase(t, golden, "root .gitignore unreadable")
+		if rec.RC == 0 {
+			t.Fatalf("frozen authority rc = 0; the read-failure authority must fail")
+		}
+		goDir := t.TempDir()
 		goGitignore := filepath.Join(goDir, ".gitignore")
-		writeGitignoreInput(t, goGitignore, existing)
+		writeGitignoreInput(t, goGitignore, "keep-existing-root-content\n")
 		goTarget, goRegular := makeUnreadable(t, goGitignore)
 
 		var goOut, goErr bytes.Buffer
 		goRC := RefreshRootGitignore(goDir, repoTemplate, &goOut, &goErr)
-		if goRC == 0 {
-			t.Errorf("go rc = 0, want non-zero (stdout=%q)", goOut.String())
+		if goRC != rec.RC {
+			t.Errorf("rc: go=%d frozen=%d", goRC, rec.RC)
 		}
 		if goErr.Len() == 0 {
 			t.Errorf("go printed no stderr diagnostic")
 		}
-		assertUnchanged(t, "go", goTarget, goRegular, existing)
-
-		refGitignore := filepath.Join(refDir, ".gitignore")
-		writeGitignoreInput(t, refGitignore, existing)
-		refTarget, refRegular := makeUnreadable(t, refGitignore)
-
-		refRC, _, _ := runGitignoreModule(t, root, "gitignore-root-refresh.py", refDir, repoTemplate)
-		if refRC == 0 {
-			t.Errorf("ref rc = 0, want non-zero")
+		if rec.ArtifactB64 == nil {
+			t.Fatalf("frozen record has no preserved artifact bytes")
 		}
-		assertUnchanged(t, "ref", refTarget, refRegular, existing)
+		want, err := base64.StdEncoding.DecodeString(*rec.ArtifactB64)
+		if err != nil {
+			t.Fatalf("decode frozen artifact: %v", err)
+		}
+		assertUnchanged(t, "go", goTarget, goRegular, want)
 	})
 
 	t.Run("template unreadable", func(t *testing.T) {
-		goDir, refDir := t.TempDir(), t.TempDir()
+		rec := goldenCase(t, golden, "template unreadable")
+		if rec.RC == 0 {
+			t.Fatalf("frozen authority rc = 0; the read-failure authority must fail")
+		}
+		goDir := t.TempDir()
 		goGitignore := filepath.Join(goDir, ".gitignore")
-		writeGitignoreInput(t, goGitignore, existing)
+		writeGitignoreInput(t, goGitignore, "keep-existing-root-content\n")
 		goTemplate := filepath.Join(goDir, "template.tmpl")
 		writeGitignoreInput(t, goTemplate, "# template\n")
 		goTemplate, _ = makeUnreadable(t, goTemplate)
 
 		var goOut, goErr bytes.Buffer
 		goRC := RefreshRootGitignore(goDir, goTemplate, &goOut, &goErr)
-		if goRC == 0 {
-			t.Errorf("go rc = 0, want non-zero (stdout=%q)", goOut.String())
+		if goRC != rec.RC {
+			t.Errorf("rc: go=%d frozen=%d", goRC, rec.RC)
 		}
 		if goErr.Len() == 0 {
 			t.Errorf("go printed no stderr diagnostic")
 		}
-		if got, err := os.ReadFile(goGitignore); err != nil || string(got) != existing {
-			t.Errorf("go changed root .gitignore: got %q err=%v want %q", got, err, existing)
+		if rec.ArtifactB64 == nil {
+			t.Fatalf("frozen record has no preserved artifact bytes")
 		}
-
-		refGitignore := filepath.Join(refDir, ".gitignore")
-		writeGitignoreInput(t, refGitignore, existing)
-		refTemplate := filepath.Join(refDir, "template.tmpl")
-		writeGitignoreInput(t, refTemplate, "# template\n")
-		refTemplate, _ = makeUnreadable(t, refTemplate)
-
-		refRC, _, _ := runGitignoreModule(t, root, "gitignore-root-refresh.py", refDir, refTemplate)
-		if refRC == 0 {
-			t.Errorf("ref rc = 0, want non-zero")
+		want, err := base64.StdEncoding.DecodeString(*rec.ArtifactB64)
+		if err != nil {
+			t.Fatalf("decode frozen artifact: %v", err)
 		}
-		if got, err := os.ReadFile(refGitignore); err != nil || string(got) != existing {
-			t.Errorf("ref changed root .gitignore: got %q err=%v want %q", got, err, existing)
+		if got, err := os.ReadFile(goGitignore); err != nil || !bytes.Equal(got, want) {
+			t.Errorf("go changed root .gitignore: got %q err=%v want %q", got, err, want)
 		}
 	})
 }
