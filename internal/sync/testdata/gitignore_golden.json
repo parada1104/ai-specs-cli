@@ -1,0 +1,176 @@
+{
+  "cases": [
+    {
+      "artifact_b64": "IyAtLS0gYWktc3BlY3M6IG1hbmFnZWQgYnkgYGFpLXNwZWNzIGluaXRgL2BzeW5jYCDigJQgZG8gbm90IGVkaXQgLS0tCgouaW50ZXJuYWwvCi5kZXBzLwoKIyBSZWNpcGUgbWF0ZXJpYWxpemF0aW9uIGlzIENMSS1vd25lZDsgb25seSBkZWNsYXJlZCBvdmVycmlkZXMgYXJlIGNvbW1pdHRlZC4KcmVjaXBlcy8qKgohcmVjaXBlcy8qLwohcmVjaXBlcy8qL292ZXJyaWRlcy8KIXJlY2lwZXMvKi9vdmVycmlkZXMvKioKCiMgLS0tIGVuZCBhaS1zcGVjcyAtLS0K",
+      "artifact_mode": 420,
+      "artifact_present": true,
+      "artifact_sha256": "435a5764426295aa8bfa9540dc0c92d9a65e994e8e86bebdb2d21136f0772cbd",
+      "mode": "render",
+      "name": "render manifest without deps",
+      "rc": 0,
+      "stderr": "",
+      "stdout": "  ✓ wrote <DIR>/ai-specs/.gitignore (0 dep(s))\n"
+    },
+    {
+      "artifact_b64": "IyAtLS0gYWktc3BlY3M6IG1hbmFnZWQgYnkgYGFpLXNwZWNzIGluaXRgL2BzeW5jYCDigJQgZG8gbm90IGVkaXQgLS0tCgouaW50ZXJuYWwvCi5kZXBzLwoKIyBSZWNpcGUgbWF0ZXJpYWxpemF0aW9uIGlzIENMSS1vd25lZDsgb25seSBkZWNsYXJlZCBvdmVycmlkZXMgYXJlIGNvbW1pdHRlZC4KcmVjaXBlcy8qKgohcmVjaXBlcy8qLwohcmVjaXBlcy8qL292ZXJyaWRlcy8KIXJlY2lwZXMvKi9vdmVycmlkZXMvKioKCiMgLS0tIGVuZCBhaS1zcGVjcyAtLS0K",
+      "artifact_mode": 420,
+      "artifact_present": true,
+      "artifact_sha256": "435a5764426295aa8bfa9540dc0c92d9a65e994e8e86bebdb2d21136f0772cbd",
+      "mode": "render",
+      "name": "render manifest with two deps",
+      "rc": 0,
+      "stderr": "",
+      "stdout": "  ✓ wrote <DIR>/ai-specs/.gitignore (2 dep(s))\n"
+    },
+    {
+      "artifact_b64": "IyAtLS0gYWktc3BlY3M6IG1hbmFnZWQgYnkgYGFpLXNwZWNzIGluaXRgL2BzeW5jYCDigJQgZG8gbm90IGVkaXQgLS0tCgouaW50ZXJuYWwvCi5kZXBzLwoKIyBSZWNpcGUgbWF0ZXJpYWxpemF0aW9uIGlzIENMSS1vd25lZDsgb25seSBkZWNsYXJlZCBvdmVycmlkZXMgYXJlIGNvbW1pdHRlZC4KcmVjaXBlcy8qKgohcmVjaXBlcy8qLwohcmVjaXBlcy8qL292ZXJyaWRlcy8KIXJlY2lwZXMvKi9vdmVycmlkZXMvKioKCiMgLS0tIGVuZCBhaS1zcGVjcyAtLS0K",
+      "artifact_mode": 420,
+      "artifact_present": true,
+      "artifact_sha256": "435a5764426295aa8bfa9540dc0c92d9a65e994e8e86bebdb2d21136f0772cbd",
+      "mode": "render",
+      "name": "render new file under umask 022",
+      "rc": 0,
+      "stderr": "",
+      "stdout": "  ✓ wrote <DIR>/ai-specs/.gitignore (0 dep(s))\n"
+    },
+    {
+      "artifact_b64": "IyAtLS0gYWktc3BlY3M6IG1hbmFnZWQgYnkgYGFpLXNwZWNzIGluaXRgL2BzeW5jYCDigJQgZG8gbm90IGVkaXQgLS0tCgouaW50ZXJuYWwvCi5kZXBzLwoKIyBSZWNpcGUgbWF0ZXJpYWxpemF0aW9uIGlzIENMSS1vd25lZDsgb25seSBkZWNsYXJlZCBvdmVycmlkZXMgYXJlIGNvbW1pdHRlZC4KcmVjaXBlcy8qKgohcmVjaXBlcy8qLwohcmVjaXBlcy8qL292ZXJyaWRlcy8KIXJlY2lwZXMvKi9vdmVycmlkZXMvKioKCiMgLS0tIGVuZCBhaS1zcGVjcyAtLS0K",
+      "artifact_mode": 436,
+      "artifact_present": true,
+      "artifact_sha256": "435a5764426295aa8bfa9540dc0c92d9a65e994e8e86bebdb2d21136f0772cbd",
+      "mode": "render",
+      "name": "render new file under umask 002",
+      "rc": 0,
+      "stderr": "",
+      "stdout": "  ✓ wrote <DIR>/ai-specs/.gitignore (0 dep(s))\n"
+    },
+    {
+      "artifact_b64": "IyAtLS0gYWktc3BlY3M6IG1hbmFnZWQgYnkgYGFpLXNwZWNzIGluaXRgL2BzeW5jYCDigJQgZG8gbm90IGVkaXQgLS0tCgouaW50ZXJuYWwvCi5kZXBzLwoKIyBSZWNpcGUgbWF0ZXJpYWxpemF0aW9uIGlzIENMSS1vd25lZDsgb25seSBkZWNsYXJlZCBvdmVycmlkZXMgYXJlIGNvbW1pdHRlZC4KcmVjaXBlcy8qKgohcmVjaXBlcy8qLwohcmVjaXBlcy8qL292ZXJyaWRlcy8KIXJlY2lwZXMvKi9vdmVycmlkZXMvKioKCiMgLS0tIGVuZCBhaS1zcGVjcyAtLS0K",
+      "artifact_mode": 384,
+      "artifact_present": true,
+      "artifact_sha256": "435a5764426295aa8bfa9540dc0c92d9a65e994e8e86bebdb2d21136f0772cbd",
+      "mode": "render",
+      "name": "render keeps the mode of an existing file",
+      "rc": 0,
+      "stderr": "",
+      "stdout": "  ✓ wrote <DIR>/ai-specs/.gitignore (0 dep(s))\n"
+    },
+    {
+      "action": "appended",
+      "artifact_b64": "IyAtLS0gYWktc3BlY3M6IGFnZW50LWdlbmVyYXRlZCBmaWxlcyAobWFuYWdlZCBieSBhaS1zcGVjcyBzeW5jLWFnZW50KSAtLS0KLmNsYXVkZS8KLmN1cnNvci8KLm9wZW5jb2RlLwpvcGVuY29kZS5qc29uCi5waS8KLm9tcC8KLmNvZGV4LwouZ2VtaW5pLwouZ2l0aHViL2NvcGlsb3QtaW5zdHJ1Y3Rpb25zLm1kCkNMQVVERS5tZAoqKi9DTEFVREUubWQKR0VNSU5JLm1kCi5tY3AuanNvbgouZW52Ci5lbnZyYwphaS1zcGVjcy5lbnYKYWktc3BlY3MvLmVudgphaS1zcGVjcy8uZW52LmJhawphaS1zcGVjcy8uZW52cmMuYmFrCiMgLS0tIGVuZCBhaS1zcGVjcyAtLS0K",
+      "artifact_mode": 436,
+      "artifact_present": true,
+      "artifact_sha256": "346c2e6aaa8c4e5bf7bbbeb9565e2ea9ce037c716867e692701a7edd764499af",
+      "mode": "root-refresh",
+      "name": "root-refresh appended under umask 002",
+      "rc": 0,
+      "stderr": "",
+      "stdout": "  ✓ appended root .gitignore (agent block)\n"
+    },
+    {
+      "action": "appended",
+      "artifact_b64": "IyAtLS0gYWktc3BlY3M6IGFnZW50LWdlbmVyYXRlZCBmaWxlcyAobWFuYWdlZCBieSBhaS1zcGVjcyBzeW5jLWFnZW50KSAtLS0KLmNsYXVkZS8KLmN1cnNvci8KLm9wZW5jb2RlLwpvcGVuY29kZS5qc29uCi5waS8KLm9tcC8KLmNvZGV4LwouZ2VtaW5pLwouZ2l0aHViL2NvcGlsb3QtaW5zdHJ1Y3Rpb25zLm1kCkNMQVVERS5tZAoqKi9DTEFVREUubWQKR0VNSU5JLm1kCi5tY3AuanNvbgouZW52Ci5lbnZyYwphaS1zcGVjcy5lbnYKYWktc3BlY3MvLmVudgphaS1zcGVjcy8uZW52LmJhawphaS1zcGVjcy8uZW52cmMuYmFrCiMgLS0tIGVuZCBhaS1zcGVjcyAtLS0K",
+      "artifact_mode": 420,
+      "artifact_present": true,
+      "artifact_sha256": "346c2e6aaa8c4e5bf7bbbeb9565e2ea9ce037c716867e692701a7edd764499af",
+      "mode": "root-refresh",
+      "name": "root-refresh appended on missing .gitignore",
+      "rc": 0,
+      "stderr": "",
+      "stdout": "  ✓ appended root .gitignore (agent block)\n"
+    },
+    {
+      "action": "appended",
+      "artifact_b64": "a2VlcC1tZQoKIyAtLS0gYWktc3BlY3M6IGFnZW50LWdlbmVyYXRlZCBmaWxlcyAobWFuYWdlZCBieSBhaS1zcGVjcyBzeW5jLWFnZW50KSAtLS0KLmNsYXVkZS8KLmN1cnNvci8KLm9wZW5jb2RlLwpvcGVuY29kZS5qc29uCi5waS8KLm9tcC8KLmNvZGV4LwouZ2VtaW5pLwouZ2l0aHViL2NvcGlsb3QtaW5zdHJ1Y3Rpb25zLm1kCkNMQVVERS5tZAoqKi9DTEFVREUubWQKR0VNSU5JLm1kCi5tY3AuanNvbgouZW52Ci5lbnZyYwphaS1zcGVjcy5lbnYKYWktc3BlY3MvLmVudgphaS1zcGVjcy8uZW52LmJhawphaS1zcGVjcy8uZW52cmMuYmFrCiMgLS0tIGVuZCBhaS1zcGVjcyAtLS0K",
+      "artifact_mode": 420,
+      "artifact_present": true,
+      "artifact_sha256": "7e07dcde9d4f33c91acc838dc332e8da66a79ccd5970cc0db15ecfac80b141ba",
+      "mode": "root-refresh",
+      "name": "root-refresh appended without trailing newline",
+      "rc": 0,
+      "stderr": "",
+      "stdout": "  ✓ appended root .gitignore (agent block)\n"
+    },
+    {
+      "action": "appended",
+      "artifact_b64": "a2VlcC1tZQoKIyAtLS0gYWktc3BlY3M6IGFnZW50LWdlbmVyYXRlZCBmaWxlcyAobWFuYWdlZCBieSBhaS1zcGVjcyBzeW5jLWFnZW50KSAtLS0KLmNsYXVkZS8KLmN1cnNvci8KLm9wZW5jb2RlLwpvcGVuY29kZS5qc29uCi5waS8KLm9tcC8KLmNvZGV4LwouZ2VtaW5pLwouZ2l0aHViL2NvcGlsb3QtaW5zdHJ1Y3Rpb25zLm1kCkNMQVVERS5tZAoqKi9DTEFVREUubWQKR0VNSU5JLm1kCi5tY3AuanNvbgouZW52Ci5lbnZyYwphaS1zcGVjcy5lbnYKYWktc3BlY3MvLmVudgphaS1zcGVjcy8uZW52LmJhawphaS1zcGVjcy8uZW52cmMuYmFrCiMgLS0tIGVuZCBhaS1zcGVjcyAtLS0K",
+      "artifact_mode": 420,
+      "artifact_present": true,
+      "artifact_sha256": "7e07dcde9d4f33c91acc838dc332e8da66a79ccd5970cc0db15ecfac80b141ba",
+      "mode": "root-refresh",
+      "name": "root-refresh appended to file ending in single newline",
+      "rc": 0,
+      "stderr": "",
+      "stdout": "  ✓ appended root .gitignore (agent block)\n"
+    },
+    {
+      "action": "refreshed",
+      "artifact_b64": "a2VlcC1iZWZvcmUKCiMgLS0tIGFpLXNwZWNzOiBhZ2VudC1nZW5lcmF0ZWQgZmlsZXMgKG1hbmFnZWQgYnkgYWktc3BlY3Mgc3luYy1hZ2VudCkgLS0tCi5jbGF1ZGUvCi5jdXJzb3IvCi5vcGVuY29kZS8Kb3BlbmNvZGUuanNvbgoucGkvCi5vbXAvCi5jb2RleC8KLmdlbWluaS8KLmdpdGh1Yi9jb3BpbG90LWluc3RydWN0aW9ucy5tZApDTEFVREUubWQKKiovQ0xBVURFLm1kCkdFTUlOSS5tZAoubWNwLmpzb24KLmVudgouZW52cmMKYWktc3BlY3MuZW52CmFpLXNwZWNzLy5lbnYKYWktc3BlY3MvLmVudi5iYWsKYWktc3BlY3MvLmVudnJjLmJhawojIC0tLSBlbmQgYWktc3BlY3MgLS0tCg==",
+      "artifact_mode": 420,
+      "artifact_present": true,
+      "artifact_sha256": "237d2f2d00c79c2888c00bc37bc8d8a9d87cd6eba79e5fab99f9be4112b30115",
+      "mode": "root-refresh",
+      "name": "root-refresh replaces existing block",
+      "rc": 0,
+      "stderr": "",
+      "stdout": "  ✓ refreshed root .gitignore (agent block)\n"
+    },
+    {
+      "action": "refreshed",
+      "artifact_b64": "IyAtLS0gYWktc3BlY3M6IGFnZW50LWdlbmVyYXRlZCBmaWxlcyAobWFuYWdlZCBieSBhaS1zcGVjcyBzeW5jLWFnZW50KSAtLS0KLmNsYXVkZS8KLmN1cnNvci8KLm9wZW5jb2RlLwpvcGVuY29kZS5qc29uCi5waS8KLm9tcC8KLmNvZGV4LwouZ2VtaW5pLwouZ2l0aHViL2NvcGlsb3QtaW5zdHJ1Y3Rpb25zLm1kCkNMQVVERS5tZAoqKi9DTEFVREUubWQKR0VNSU5JLm1kCi5tY3AuanNvbgouZW52Ci5lbnZyYwphaS1zcGVjcy5lbnYKYWktc3BlY3MvLmVudgphaS1zcGVjcy8uZW52LmJhawphaS1zcGVjcy8uZW52cmMuYmFrCiMgLS0tIGVuZCBhaS1zcGVjcyAtLS0Kc3Vydml2b3ItbGluZQo=",
+      "artifact_mode": 420,
+      "artifact_present": true,
+      "artifact_sha256": "3a8e49be20ca88997f5113611336d73f8bf631ec4010aff3987ad0c9677b37d4",
+      "mode": "root-refresh",
+      "name": "root-refresh replaces block with content after end marker",
+      "rc": 0,
+      "stderr": "",
+      "stdout": "  ✓ refreshed root .gitignore (agent block)\n"
+    },
+    {
+      "action": "",
+      "artifact_b64": null,
+      "artifact_mode": null,
+      "artifact_present": false,
+      "artifact_sha256": null,
+      "mode": "root-refresh",
+      "name": "root-refresh missing template is rc 1",
+      "rc": 1,
+      "stderr": "ERROR: template not found: <DIR>/missing.tmpl\n",
+      "stdout": ""
+    },
+    {
+      "artifact_b64": "a2VlcAoKIyAtLS0gYWktc3BlY3M6IGFnZW50LWdlbmVyYXRlZCBmaWxlcyAobWFuYWdlZCBieSBhaS1zcGVjcyBzeW5jLWFnZW50KSAtLS0Kb2xkIGFnZW50IGxpbmUK",
+      "artifact_mode": 420,
+      "artifact_present": true,
+      "artifact_sha256": "17aa5f1cfd359b55a8371336f142beb406b538a8964d0ed06d3f5007e30a7389",
+      "mode": "module-unmatched",
+      "name": "unmatched begin marker",
+      "rc": 1,
+      "stderr": null,
+      "stdout": ""
+    },
+    {
+      "artifact_b64": "a2VlcC1leGlzdGluZy1yb290LWNvbnRlbnQK",
+      "artifact_mode": 420,
+      "artifact_present": true,
+      "artifact_sha256": "69aed25a12fdbc95ed18ce620603eb9cf91652cecef5156163f5576c6059829c",
+      "mode": "module-unreadable-root",
+      "name": "root .gitignore unreadable",
+      "rc": 1,
+      "stderr": null,
+      "stdout": ""
+    },
+    {
+      "artifact_b64": "a2VlcC1leGlzdGluZy1yb290LWNvbnRlbnQK",
+      "artifact_mode": 420,
+      "artifact_present": true,
+      "artifact_sha256": "69aed25a12fdbc95ed18ce620603eb9cf91652cecef5156163f5576c6059829c",
+      "mode": "module-unreadable-template",
+      "name": "template unreadable",
+      "rc": 1,
+      "stderr": null,
+      "stdout": ""
+    }
+  ]
+}
