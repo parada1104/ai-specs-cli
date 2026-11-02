@@ -1,0 +1,144 @@
+{
+  "comment": "Frozen oracle bundle for the native recipe-MCP build authority (GO-20 U2e T5 PR2-B S7). Captured once from the live Python 3.14.7 oracle (testdata/buildrecipemcp_ref.py driving lib/_internal/recipe-materialize.py) through the same in-package fixture helpers the live differential used. Host paths are tokenized: <CATALOG> is the fixture catalog root, <HOME> is the ai-specs home of that case; the per-record tokens map is the occurrence inventory. Restore from a pristine copy, never re-encode.",
+  "names": [
+    "manifest precedence and conflict warning",
+    "manifest order first then recipe presets",
+    "recipe append order across recipes",
+    "recipe-only append preserves declaration order",
+    "missing recipe error propagates",
+    "cannot read recipe for provider resolution",
+    "missing jinna dependency declaration",
+    "command not the marker literal is skipped",
+    "provider unresolved omits the server",
+    "path source resolves to the bare binary",
+    "managed source resolves to the absolute command",
+    "resolution failure degrades to a warning",
+    "big integer build parity",
+    "big integer resolve parity",
+    "datetime build parity",
+    "datetime resolve parity"
+  ],
+  "cases": [
+    {
+      "kind": "build",
+      "error": "",
+      "stdout": "",
+      "stderr": "  ! recipe 'MCP Merge' mcp.id='alpha' key 'command' conflicts with project manifest (manifest wins)\n  ! recipe 'MCP Merge' mcp.id='alpha' key 'timeout' conflicts with project manifest (manifest wins)\n",
+      "document": "{\n  \"alpha\": {\n    \"command\": \"m\",\n    \"timeout\": 1,\n    \"args\": [\n      \"-y\",\n      \"pkg\"\n    ]\n  },\n  \"delta\": {\n    \"command\": \"d\"\n  },\n  \"beta\": {\n    \"command\": \"other\"\n  },\n  \"gamma\": {\n    \"command\": \"{dep:jinna}\"\n  }\n}\n"
+    },
+    {
+      "kind": "build",
+      "error": "",
+      "stdout": "",
+      "stderr": "",
+      "document": "{\n  \"zeta\": {\n    \"command\": \"z\"\n  },\n  \"alpha\": {\n    \"command\": \"a\"\n  },\n  \"epsilon\": {\n    \"command\": \"e\"\n  }\n}\n"
+    },
+    {
+      "kind": "build",
+      "error": "",
+      "stdout": "",
+      "stderr": "",
+      "document": "{\n  \"alpha\": {\n    \"command\": \"npx\",\n    \"args\": [\n      \"-y\",\n      \"pkg\"\n    ],\n    \"timeout\": 5000\n  },\n  \"beta\": {\n    \"command\": \"other\"\n  },\n  \"gamma\": {\n    \"command\": \"{dep:jinna}\"\n  },\n  \"epsilon\": {\n    \"command\": \"e\"\n  }\n}\n"
+    },
+    {
+      "kind": "build",
+      "error": "",
+      "stdout": "",
+      "stderr": "",
+      "document": "{\n  \"epsilon\": {\n    \"command\": \"e\"\n  }\n}\n"
+    },
+    {
+      "kind": "build",
+      "error": "recipe directory not found: <CATALOG>/ghost",
+      "stdout": "",
+      "stderr": "",
+      "document": "",
+      "tokens": {
+        "error": 1
+      }
+    },
+    {
+      "kind": "resolve",
+      "error": "",
+      "stdout": "",
+      "stderr": "  ! recipe 'ghost': cannot read recipe for provider resolution (recipe directory not found: <CATALOG>/ghost)\n",
+      "document": "{}\n",
+      "tokens": {
+        "stderr": 1
+      }
+    },
+    {
+      "kind": "resolve",
+      "error": "",
+      "stdout": "",
+      "stderr": "  ! recipe 'No Dep': missing jinna dependency declaration\n",
+      "document": "{}\n"
+    },
+    {
+      "kind": "resolve",
+      "error": "",
+      "stdout": "",
+      "stderr": "",
+      "document": "{\n  \"jinna\": {\n    \"command\": \"npx\"\n  }\n}\n"
+    },
+    {
+      "kind": "resolve",
+      "error": "",
+      "stdout": "",
+      "stderr": "  ! recipe 'Jinna': provider jinna is unresolved; run ai-specs configure-recipes interactively to install it\n",
+      "document": "{}\n"
+    },
+    {
+      "kind": "resolve",
+      "error": "",
+      "stdout": "",
+      "stderr": "",
+      "document": "{\n  \"jinna\": {\n    \"command\": \"jinna\"\n  }\n}\n"
+    },
+    {
+      "kind": "resolve",
+      "error": "",
+      "stdout": "",
+      "stderr": "",
+      "document": "{\n  \"jinna\": {\n    \"command\": \"<HOME>/cache/bin/jinna/0.1.0/darwin-arm64/jinna\"\n  }\n}\n",
+      "tokens": {
+        "document": 1
+      }
+    },
+    {
+      "kind": "resolve",
+      "error": "",
+      "stdout": "",
+      "stderr": "  ! recipe 'Jinna': provider jinna could not be resolved (provider version check returned no usable version); run ai-specs configure-recipes interactively to install it\n",
+      "document": "{}\n"
+    },
+    {
+      "kind": "build",
+      "error": "",
+      "stdout": "",
+      "stderr": "",
+      "document": "{\n  \"jinna\": {\n    \"command\": \"{dep:jinna}\",\n    \"timeout\": 123456789012345678901234567890\n  }\n}\n"
+    },
+    {
+      "kind": "resolve",
+      "error": "",
+      "stdout": "",
+      "stderr": "",
+      "document": "{\n  \"jinna\": {\n    \"command\": \"jinna\"\n  }\n}\n"
+    },
+    {
+      "kind": "build",
+      "error": "Object of type datetime is not JSON serializable",
+      "stdout": "",
+      "stderr": "",
+      "document": ""
+    },
+    {
+      "kind": "resolve",
+      "error": "",
+      "stdout": "",
+      "stderr": "",
+      "document": "{\n  \"jinna\": {\n    \"command\": \"jinna\"\n  }\n}\n"
+    }
+  ]
+}
