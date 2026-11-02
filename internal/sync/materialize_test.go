@@ -1,38 +1,302 @@
 package sync
 
 // Differential contract tests for the native materializer spine (GO-07 S14a
-// WU1). The Go authority is unwired; these tests drive the REAL Python
-// orchestration through testdata/materialize_ref.py and require byte equality
-// of the emitted lines and documents.
+// WU1). The Go authority is unwired; these tests pin it against the frozen
+// oracle bundle testdata/materialize_golden.json captured once from the REAL
+// Python orchestration (testdata/materialize_ref.py, PR2-B S10) and require
+// byte equality of the emitted lines and documents.
 //
-// The Python leg is pinned to the freshly built worktree-gate binary through
-// WORKTREE_GATE_BIN so the fail-open GO_*_BRIDGE_FALLBACK warnings never mask
-// the orchestration under test. Both legs run against the SAME project and home
-// directories, so any absolute path embedded in a document is identical.
+// The capture pinned the Python leg to the freshly built worktree-gate binary
+// through WORKTREE_GATE_BIN so the fail-open GO_*_BRIDGE_FALLBACK warnings never
+// masked the orchestration under test. Both legs ran against the SAME project
+// and home directories, so any absolute path embedded in a document is
+// identical; the frozen records tokenize those roots (<HOME>, <PROJECT>) and
+// this test normalizes the Go side symmetrically.
+//
+// This file also owns the stamp-step manifest differential: the reconcile
+// defaults the gate plans are written into [recipes.<id>.config] before any
+// artifact actuation. Those cases freeze the manifest bytes the authority left
+// behind, plus the authority-stamped input of the no-op case.
 
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/ai-specs/internal/projectcache"
 )
 
-// --- harness ----------------------------------------------------------------
+// --- frozen oracle ----------------------------------------------------------
 
-func materializeRefPath(t *testing.T) string {
-	t.Helper()
-	path, err := filepath.Abs(filepath.Join("testdata", "materialize_ref.py"))
-	if err != nil {
-		t.Fatalf("resolve ref driver: %v", err)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("ref driver %s: %v", path, err)
-	}
-	return path
+// materializeGoldenCase is one frozen record of testdata/materialize_golden.json.
+// The kind selects which fields the owning family compares:
+//   - spine: rc/stdout/stderr plus the requested documents (and the marker temp
+//     document when the case wrote no explicit recipe-MCP path);
+//   - stamp: the seed manifest and the post-run manifest bytes;
+//   - loop: rc/stdout/stderr plus the documents, the whole project+cache tree
+//     and the lock bytes inside it.
+type materializeGoldenCase struct {
+	Kind           string                    `json:"kind"` // spine | stamp | loop
+	RC             int                       `json:"rc"`
+	Stdout         string                    `json:"stdout"`
+	Stderr         string                    `json:"stderr"`
+	RecipeMCP      string                    `json:"recipe_mcp,omitempty"`
+	ResolvedConfig string                    `json:"resolved_config,omitempty"`
+	ResolvedHooks  string                    `json:"resolved_hooks,omitempty"`
+	TempDocument   string                    `json:"temp_document,omitempty"`
+	Manifest       string                    `json:"manifest,omitempty"`
+	SeedManifest   string                    `json:"seed_manifest,omitempty"`
+	Tree           map[string]string         `json:"tree,omitempty"`
+	Tokens         map[string]map[string]int `json:"tokens,omitempty"`
 }
+
+// materializeGoldenIdentity is one entry of the hard-coded identity inventory.
+type materializeGoldenIdentity struct {
+	Kind, Name string
+}
+
+// materializeGoldenInventory is the hard-coded identity inventory of the frozen
+// bundle: the exact case names in capture order and their kind. It is an
+// independent oracle of coverage, kept in the test and never derived from the
+// bundle, so a missing, renamed, duplicated or reordered record fails before
+// any case loop runs.
+var materializeGoldenInventory = []materializeGoldenIdentity{
+	{"spine", "no-enabled branch writes both temp documents"},
+	{"spine", "single enabled recipe and the empty resolved-hooks dump"},
+	{"spine", "several enabled recipes in manifest order with an explicit recipe-MCP path"},
+	{"spine", "recipe-MCP temp write without an output path prints the marker"},
+	{"spine", "fatal primitive conflict"},
+	{"spine", "schema-invalid primitive-coherent recipes report the same fatal conflict"},
+	{"spine", "schema-invalid tagged recipes report the same tag warning and fatal conflict"},
+	{"spine", "resolved-config carries catalog defaults and brief fragments"},
+	{"spine", "resolved-config renders catalog default value types"},
+	{"spine", "no-enabled resolved-config is not enriched"},
+	{"spine", "advisory tag conflict"},
+	{"stamp", "added recipe writes new config values"},
+	{"stamp", "updated value rewrites the stale config"},
+	{"stamp", "no-op run leaves the already-stamped manifest untouched"},
+	{"stamp", "sorted-key reconcile order matches the bridge"},
+	{"loop", "bundled skill and command with an overwrite warning and the lock bytes"},
+	{"loop", "templates fresh managed-current and user-modified"},
+	{"loop", "docs fresh managed-current and user-modified"},
+	{"loop", "runtime hook fresh collects the resolved entry"},
+	{"loop", "runtime hook managed-current is skipped and baselined"},
+	{"loop", "runtime hook user-modified is preserved"},
+	{"loop", "runtime hook --refresh-gates backs up and rewrites"},
+	{"loop", "resolved-hooks env exports only the UPPER env-shaped keys"},
+	{"loop", "dep skill through the documented delegation"},
+	{"loop", "execute_hooks failure fails the sync with the fatal line"},
+	{"loop", "worktree-flow gate acquisition degrades offline"},
+}
+
+// materializeGoldenKindCounts is the per-kind count of the inventory above.
+var materializeGoldenKindCounts = map[string]int{"spine": 11, "stamp": 4, "loop": 11}
+
+const (
+	// materializeGoldenHomeToken is the tokenized ai-specs home fixture root.
+	materializeGoldenHomeToken = "<HOME>"
+	// materializeGoldenProjectToken is the tokenized project fixture root.
+	materializeGoldenProjectToken = "<PROJECT>"
+	// materializeGoldenCacheToken is the tokenized per-project CLI cache
+	// directory basename (<hash>-<project>); its hash derives from the fixture
+	// project path, so it differs on every run.
+	materializeGoldenCacheToken = "<CACHE_PROJECT>"
+)
+
+// materializeGoldenTokenInventory is the hard-coded host-path token inventory
+// of the frozen bundle: which record carries which token, in which field, and
+// how often. Only these positions may carry a host path; anything else is a
+// bundle mutation, not a host-path occurrence. "tree" counts occurrences across
+// every value of the loop record's project+cache tree.
+var materializeGoldenTokenInventory = map[string]map[string]map[string]int{
+	"no-enabled branch writes both temp documents":                 {"resolved_config": {"<PROJECT>": 1}},
+	"resolved-config carries catalog defaults and brief fragments": {"resolved_config": {"<PROJECT>": 1}},
+	"resolved-config renders catalog default value types":          {"resolved_config": {"<PROJECT>": 1}},
+	"no-enabled resolved-config is not enriched":                   {"resolved_config": {"<PROJECT>": 1}},
+	"bundled skill and command with an overwrite warning and the lock bytes": {
+		"stderr": {"<CACHE_PROJECT>": 1, "<HOME>": 1},
+		"tree":   {"<CACHE_PROJECT>": 3},
+	},
+	"runtime hook --refresh-gates backs up and rewrites": {"tree": {"<CACHE_PROJECT>": 1}},
+	"dep skill through the documented delegation": {
+		"stdout": {"<HOME>": 1},
+		"tree":   {"<CACHE_PROJECT>": 2, "<HOME>": 1},
+	},
+	"worktree-flow gate acquisition degrades offline": {"stderr": {"<HOME>": 1}},
+}
+
+// checkMaterializeGoldenInventory validates one loaded bundle against the
+// hard-coded identity, per-kind and token inventories. It is pure so the
+// focused control can run it against a mutated in-memory copy.
+func checkMaterializeGoldenInventory(names []string, cases []materializeGoldenCase) error {
+	if len(names) != len(materializeGoldenInventory) {
+		return fmt.Errorf("frozen oracle has %d names, want %d", len(names), len(materializeGoldenInventory))
+	}
+	if len(cases) != len(names) {
+		return fmt.Errorf("frozen oracle has %d records for %d names", len(cases), len(names))
+	}
+	seen := make(map[string]bool, len(names))
+	kinds := map[string]int{}
+	for i, tc := range cases {
+		want := materializeGoldenInventory[i]
+		if names[i] != want.Name {
+			return fmt.Errorf("frozen oracle record %d is %q, want %q (identity mismatch)", i, names[i], want.Name)
+		}
+		if seen[names[i]] {
+			return fmt.Errorf("frozen oracle duplicates record %q", names[i])
+		}
+		seen[names[i]] = true
+		if tc.Kind != want.Kind {
+			return fmt.Errorf("frozen oracle record %q has kind %q, want %q", names[i], tc.Kind, want.Kind)
+		}
+		kinds[tc.Kind]++
+		wantTokens, hasTokens := materializeGoldenTokenInventory[names[i]]
+		if !hasTokens && len(tc.Tokens) != 0 {
+			return fmt.Errorf("frozen oracle record %q carries a non-inventoried token %v", names[i], tc.Tokens)
+		}
+		if hasTokens && len(tc.Tokens) != len(wantTokens) {
+			return fmt.Errorf("frozen oracle record %q tokenizes %d fields, want %d", names[i], len(tc.Tokens), len(wantTokens))
+		}
+		for field, tokens := range tc.Tokens {
+			switch field {
+			case "stdout", "stderr", "recipe_mcp", "resolved_config", "resolved_hooks", "temp_document", "manifest", "tree":
+			default:
+				return fmt.Errorf("frozen oracle record %q tokenizes unknown field %q", names[i], field)
+			}
+			wantField, ok := wantTokens[field]
+			if !ok || len(tokens) != len(wantField) {
+				return fmt.Errorf("frozen oracle record %q tokenizes %v in %s, want %v", names[i], tokens, field, wantField)
+			}
+			for token, n := range tokens {
+				if wantField[token] != n {
+					return fmt.Errorf("frozen oracle record %q has %d %s tokens in %s, want %d", names[i], n, token, field, wantField[token])
+				}
+			}
+		}
+	}
+	for kind, want := range materializeGoldenKindCounts {
+		if kinds[kind] != want {
+			return fmt.Errorf("frozen oracle has %d %s records, want %d", kinds[kind], kind, want)
+		}
+	}
+	return nil
+}
+
+// loadMaterializeGolden validates and indexes testdata/materialize_golden.json.
+// The inventory is asserted before any case loop runs.
+func loadMaterializeGolden(t *testing.T) map[string]materializeGoldenCase {
+	t.Helper()
+	var bundle struct {
+		Names []string                `json:"names"`
+		Cases []materializeGoldenCase `json:"cases"`
+	}
+	if err := json.Unmarshal(readGoldenBundle(t, "materialize_golden.json"), &bundle); err != nil {
+		t.Fatalf("parse frozen oracle: %v", err)
+	}
+	if err := checkMaterializeGoldenInventory(bundle.Names, bundle.Cases); err != nil {
+		t.Fatalf("frozen materialize oracle: %v", err)
+	}
+	golden := make(map[string]materializeGoldenCase, len(bundle.Cases))
+	for i, rec := range bundle.Cases {
+		golden[bundle.Names[i]] = rec
+	}
+	return golden
+}
+
+// frozenMaterializeRecord looks up one frozen record by its identity name.
+func frozenMaterializeRecord(t *testing.T, golden map[string]materializeGoldenCase, name string) materializeGoldenCase {
+	t.Helper()
+	rec, ok := golden[name]
+	if !ok {
+		t.Fatalf("frozen record %q missing", name)
+	}
+	return rec
+}
+
+// TestMaterializeFrozenInventoryControl proves the inventory validation bites:
+// the intact bundle validates, while renaming, removing, duplicating or
+// mutating a record (all in memory, never on disk) fails loudly.
+func TestMaterializeFrozenInventoryControl(t *testing.T) {
+	var bundle struct {
+		Names []string                `json:"names"`
+		Cases []materializeGoldenCase `json:"cases"`
+	}
+	if err := json.Unmarshal(readGoldenBundle(t, "materialize_golden.json"), &bundle); err != nil {
+		t.Fatalf("parse frozen oracle: %v", err)
+	}
+	if err := checkMaterializeGoldenInventory(bundle.Names, bundle.Cases); err != nil {
+		t.Fatalf("intact inventory must validate: %v", err)
+	}
+
+	renamed := append([]string{}, bundle.Names...)
+	renamed[0] = "renamed record"
+	if err := checkMaterializeGoldenInventory(renamed, bundle.Cases); err == nil {
+		t.Fatal("a renamed record must fail the inventory validation")
+	}
+
+	missing := append(append([]materializeGoldenCase{}, bundle.Cases[:1]...), bundle.Cases[2:]...)
+	if err := checkMaterializeGoldenInventory(bundle.Names, missing); err == nil {
+		t.Fatal("a removed record must fail the inventory validation")
+	}
+
+	duplicated := append(append([]materializeGoldenCase{}, bundle.Cases...), bundle.Cases[0])
+	doubledNames := append(append([]string{}, bundle.Names...), bundle.Names[0])
+	if err := checkMaterializeGoldenInventory(doubledNames, duplicated); err == nil {
+		t.Fatal("a duplicated record must fail the inventory validation")
+	}
+
+	mutated := append([]materializeGoldenCase{}, bundle.Cases...)
+	mutated[0].Kind = "mutated"
+	if err := checkMaterializeGoldenInventory(bundle.Names, mutated); err == nil {
+		t.Fatal("a mutated kind must fail the inventory validation")
+	}
+}
+
+// freezeMaterializePaths replaces both spellings (raw and
+// EvalSymlinks-resolved) of the home and project fixture roots with their
+// tokens, symmetric with the capture-time tokenization.
+func freezeMaterializePaths(s, home, project string) string {
+	pairs := [][2]string{
+		{materializeGoldenHomeToken, home},
+		{materializeGoldenProjectToken, project},
+	}
+	if home != "" && project != "" {
+		pairs = append(pairs, [2]string{materializeGoldenCacheToken, filepath.Base(projectcache.CacheRoot(project, home))})
+	}
+	for _, pair := range pairs {
+		token, path := pair[0], pair[1]
+		if path == "" {
+			continue
+		}
+		// The fixture root may carry an unclean spelling (a TMPDIR with a
+		// trailing slash yields "T//x"), while the emitted value is Cleaned.
+		spellings := []string{path, filepath.Clean(path)}
+		if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != path {
+			spellings = append([]string{resolved}, spellings...)
+		}
+		for _, spelling := range spellings {
+			s = strings.ReplaceAll(s, spelling, token)
+		}
+	}
+	return s
+}
+
+// freezeMaterializeTree tokenizes every key and value of a project+cache tree.
+func freezeMaterializeTree(t *testing.T, tree map[string]string, home, project string) map[string]string {
+	t.Helper()
+	out := make(map[string]string, len(tree))
+	for key, value := range tree {
+		out[freezeMaterializePaths(key, home, project)] = freezeMaterializePaths(value, home, project)
+	}
+	return out
+}
+
+// --- harness ----------------------------------------------------------------
 
 var materializeGateDir string
 
@@ -63,36 +327,6 @@ func materializeGateBinary(t *testing.T) string {
 		t.Skipf("worktree-gate build unavailable: %v: %s", err, stderr.String())
 	}
 	materializeGateDir = dir
-	return out
-}
-
-type materializeRefOut struct {
-	RC             int    `json:"rc"`
-	Stdout         string `json:"stdout"`
-	Stderr         string `json:"stderr"`
-	RecipeMCP      string `json:"recipe_mcp"`
-	ResolvedConfig string `json:"resolved_config"`
-	ResolvedHooks  string `json:"resolved_hooks"`
-}
-
-func runMaterializeRef(t *testing.T, gate, driver, authority, project, home, mcpOut, configOut, hooksOut string) materializeRefOut {
-	t.Helper()
-	cmd := exec.Command("python3", driver, authority, project, home, mcpOut, configOut, hooksOut)
-	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(),
-		"PYTHONDONTWRITEBYTECODE=1",
-		"WORKTREE_GATE_BIN="+gate,
-		"AI_SPECS_GATE_OFFLINE=1",
-	)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("python oracle failed: %v\nstderr: %s", err, stderr.String())
-	}
-	var out materializeRefOut
-	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
-		t.Fatalf("decode ref %s: %v", stdout.String(), err)
-	}
 	return out
 }
 
@@ -171,23 +405,10 @@ func materializeRecipeBodyWith(text string) string {
 	return text
 }
 
-func TestMaterializeSpineDifferential(t *testing.T) {
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	_ = python
-	authority, err := filepath.Abs(filepath.Join("..", "..", "lib", "_internal", "recipe-materialize.py"))
-	if err != nil {
-		t.Fatalf("resolve authority: %v", err)
-	}
-	if _, err := os.Stat(authority); err != nil {
-		t.Skipf("recipe-materialize.py unavailable: %v", err)
-	}
-	driver := materializeRefPath(t)
-	gate := materializeGateBinary(t)
-
-	scenarios := []materializeScenario{
+// materializeSpineScenarios is the shared scenario set of the spine
+// differential: the frozen capture and the frozen test both drive it.
+func materializeSpineScenarios() []materializeScenario {
+	return []materializeScenario{
 		{
 			name: "no-enabled branch writes both temp documents",
 			recipes: map[string]string{
@@ -308,31 +529,34 @@ func TestMaterializeSpineDifferential(t *testing.T) {
 			recipeMCPDoc: true,
 		},
 	}
+}
 
-	for _, scenario := range scenarios {
+// TestMaterializeSpineDifferentialFrozen pins the native spine against the
+// frozen records captured once from the real Python orchestration (PR2-B S10):
+// rc, the emitted lines, and each requested document must agree scenario by
+// scenario.
+func TestMaterializeSpineDifferentialFrozen(t *testing.T) {
+	golden := loadMaterializeGolden(t)
+
+	for _, scenario := range materializeSpineScenarios() {
 		scenario := scenario
 		t.Run(scenario.name, func(t *testing.T) {
+			ref := frozenMaterializeRecord(t, golden, scenario.name)
 			fixture := writeMaterializeFixture(t, scenario.recipes, scenario.manifest)
-			pyDir := t.TempDir()
 			goDir := t.TempDir()
 
-			pyMCP, goMCP := "-", "-"
+			goMCP := "-"
 			if scenario.recipeMCPOut {
-				pyMCP = filepath.Join(pyDir, "recipe-mcp.json")
 				goMCP = filepath.Join(goDir, "recipe-mcp.json")
 			}
-			pyConfig, goConfig := "-", "-"
+			goConfig := "-"
 			if scenario.resolvedConfigOut {
-				pyConfig = filepath.Join(pyDir, "resolved-config.json")
 				goConfig = filepath.Join(goDir, "resolved-config.json")
 			}
-			pyHooks, goHooks := "-", "-"
+			goHooks := "-"
 			if scenario.resolvedHooksOut {
-				pyHooks = filepath.Join(pyDir, "resolved-hooks.json")
 				goHooks = filepath.Join(goDir, "resolved-hooks.json")
 			}
-
-			ref := runMaterializeRef(t, gate, driver, authority, fixture.project, fixture.home, pyMCP, pyConfig, pyHooks)
 
 			var mcpOut, configOut, hooksOut *string
 			if scenario.recipeMCPOut {
@@ -359,44 +583,43 @@ func TestMaterializeSpineDifferential(t *testing.T) {
 				goRC = 1
 			}
 			if goRC != ref.RC {
-				t.Fatalf("rc: go=%d python=%d\n--- go stderr ---\n%s\n--- python stderr ---\n%s", goRC, ref.RC, stderr.String(), ref.Stderr)
+				t.Fatalf("rc: go=%d frozen=%d\n--- go stderr ---\n%s\n--- frozen stderr ---\n%s", goRC, ref.RC, stderr.String(), ref.Stderr)
 			}
-			if normalizeRecipeMCPPath(stdout.String()) != normalizeRecipeMCPPath(ref.Stdout) {
-				t.Fatalf("stdout:\n--- go ---\n%q\n--- python ---\n%q", stdout.String(), ref.Stdout)
+			if got := freezeMaterializePaths(normalizeRecipeMCPPath(stdout.String()), fixture.home, fixture.project); got != ref.Stdout {
+				t.Fatalf("stdout:\n--- go ---\n%q\n--- frozen ---\n%q", got, ref.Stdout)
 			}
-			if stderr.String() != ref.Stderr {
-				t.Fatalf("stderr:\n--- go ---\n%q\n--- python ---\n%q", stderr.String(), ref.Stderr)
+			if got := freezeMaterializePaths(stderr.String(), fixture.home, fixture.project); got != ref.Stderr {
+				t.Fatalf("stderr:\n--- go ---\n%q\n--- frozen ---\n%q", got, ref.Stderr)
 			}
 
 			// recipe-MCP document: explicit path or the marker's temp file.
 			switch {
 			case scenario.recipeMCPOut:
-				assertDocumentEqual(t, "recipe-mcp", result.RecipeMCPDocument, ref.RecipeMCP)
+				got := freezeMaterializePaths(result.RecipeMCPDocument, fixture.home, fixture.project)
+				assertDocumentEqual(t, "recipe-mcp", got, ref.RecipeMCP)
 			case scenario.recipeMCPDoc:
-				pyTemp := markerPath(ref.Stdout)
 				goTemp := markerPath(stdout.String())
-				if pyTemp == "" || goTemp == "" {
-					t.Fatalf("RECIPE_MCP_TEMP marker missing: go=%q python=%q", stdout.String(), ref.Stdout)
-				}
-				pyDoc, err := os.ReadFile(pyTemp)
-				if err != nil {
-					t.Fatalf("read python temp: %v", err)
+				if goTemp == "" {
+					t.Fatalf("RECIPE_MCP_TEMP marker missing: %q", stdout.String())
 				}
 				goDoc, err := os.ReadFile(goTemp)
 				if err != nil {
 					t.Fatalf("read go temp: %v", err)
 				}
-				assertDocumentEqual(t, "recipe-mcp", string(goDoc), string(pyDoc))
+				got := freezeMaterializePaths(string(goDoc), fixture.home, fixture.project)
+				assertDocumentEqual(t, "recipe-mcp", got, ref.TempDocument)
 				if result.RecipeMCPPath != goTemp {
 					t.Fatalf("result path = %q, want the marker path %q", result.RecipeMCPPath, goTemp)
 				}
 			}
 
 			if scenario.resolvedConfigOut {
-				assertDocumentEqual(t, "resolved-config", result.ResolvedConfigDocument, ref.ResolvedConfig)
+				got := freezeMaterializePaths(result.ResolvedConfigDocument, fixture.home, fixture.project)
+				assertDocumentEqual(t, "resolved-config", got, ref.ResolvedConfig)
 			}
 			if scenario.resolvedHooksOut {
-				assertDocumentEqual(t, "resolved-hooks", result.ResolvedHooksDocument, ref.ResolvedHooks)
+				got := freezeMaterializePaths(result.ResolvedHooksDocument, fixture.home, fixture.project)
+				assertDocumentEqual(t, "resolved-hooks", got, ref.ResolvedHooks)
 			}
 		})
 	}
@@ -405,7 +628,7 @@ func TestMaterializeSpineDifferential(t *testing.T) {
 func assertDocumentEqual(t *testing.T, label, got, want string) {
 	t.Helper()
 	if got != want {
-		t.Fatalf("%s document:\n--- go ---\n%q\n--- python ---\n%q", label, got, want)
+		t.Fatalf("%s document:\n--- go ---\n%q\n--- frozen ---\n%q", label, got, want)
 	}
 }
 
@@ -413,12 +636,13 @@ func assertDocumentEqual(t *testing.T, label, got, want string) {
 //
 // The stamp step MUTATES the user's manifest: the reconcile defaults the gate
 // plans are written into [recipes.<id>.config] before any artifact actuation.
-// These scenarios run the Python authority and the Go spine on two byte-identical
-// project copies and compare the manifest bytes AFTER the write. The Python leg
-// reaches the same shared writer through the gate's --write-recipe-config bridge
-// (the reconcile-stamp decision and the write decision are both Go), so this is
-// the strongest available check that the in-process PlanReconcileStamps ->
-// materializeStampOrdered -> shared.ApplyRecipeConfigWrite path is byte-faithful.
+// These scenarios froze the manifest bytes the Python authority left behind on
+// two byte-identical project copies. The Python leg reached the same shared
+// writer through the gate's --write-recipe-config bridge (the reconcile-stamp
+// decision and the write decision are both Go), so this is the strongest
+// available check that the in-process PlanReconcileStamps ->
+// materializeStampOrdered -> shared.ApplyRecipeConfigWrite path is
+// byte-faithful.
 
 // materializeReconcileRecipe is a schema-valid recipe declaring a reconcile
 // mapping that selects two config-field defaults. Both the whole reconcile table
@@ -485,119 +709,94 @@ func writeMaterializeManifest(t *testing.T, project string, data []byte) {
 	}
 }
 
-// cloneMaterializeProject creates a fresh project carrying a byte-identical
-// copy of srcProject's manifest, so each leg mutates its own copy.
-func cloneMaterializeProject(t *testing.T, srcProject string) string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(srcProject, "ai-specs", "ai-specs.toml"))
-	if err != nil {
-		t.Fatalf("read source manifest: %v", err)
-	}
-	dst := t.TempDir()
-	writeMaterializeManifest(t, dst, data)
-	return dst
+// materializeStampScenario is one stamp-step differential case.
+type materializeStampScenario struct {
+	name      string
+	recipes   map[string]string
+	manifest  string // literal seed; empty means the authority-stamped output
+	untouched bool
 }
 
-// TestMaterializeSpineStampManifestDifferential compares the manifest bytes the
-// two legs leave behind after the stamp step, for an added recipe (new values),
-// an updated value, a no-op run, and a reconcile table whose declaration order
-// differs from the sorted inline-table order the bridge emits.
-func TestMaterializeSpineStampManifestDifferential(t *testing.T) {
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	_ = python
-	authority, err := filepath.Abs(filepath.Join("..", "..", "lib", "_internal", "recipe-materialize.py"))
-	if err != nil {
-		t.Fatalf("resolve authority: %v", err)
-	}
-	if _, err := os.Stat(authority); err != nil {
-		t.Skipf("recipe-materialize.py unavailable: %v", err)
-	}
-	driver := materializeRefPath(t)
-	gate := materializeGateBinary(t)
-
+// materializeStampScenarios is the shared scenario set of the stamp
+// differential: the frozen capture and the frozen test both drive it.
+func materializeStampScenarios() []materializeStampScenario {
 	reconcileRecipes := map[string]string{"alpha": materializeReconcileRecipe("alpha", "Alpha")}
 	sortedRecipes := map[string]string{"alpha": materializeSortedStampRecipe("alpha", "Alpha")}
-
-	// The no-op input is the authority's own stamped output: the scenario proves
-	// that re-running over an already-stamped manifest rewrites NOTHING, so the
-	// input must be exactly what a correct first run produces.
-	stamped := func(t *testing.T, recipes map[string]string, manifest string) string {
-		t.Helper()
-		fixture := writeMaterializeFixture(t, recipes, manifest)
-		scratch := cloneMaterializeProject(t, fixture.project)
-		ref := runMaterializeRef(t, gate, driver, authority, scratch, fixture.home, "-", "-", "-")
-		if ref.RC != 0 {
-			t.Fatalf("authority stamp run rc=%d stderr=%s", ref.RC, ref.Stderr)
-		}
-		data, err := os.ReadFile(filepath.Join(scratch, "ai-specs", "ai-specs.toml"))
-		if err != nil {
-			t.Fatalf("read stamped manifest: %v", err)
-		}
-		return string(data)
+	return []materializeStampScenario{
+		{
+			name:     "added recipe writes new config values",
+			recipes:  reconcileRecipes,
+			manifest: "[recipes.alpha]\nenabled = true\n",
+		},
+		{
+			name:     "updated value rewrites the stale config",
+			recipes:  reconcileRecipes,
+			manifest: "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nworkflow = \"stale\"\n",
+		},
+		{
+			name:      "no-op run leaves the already-stamped manifest untouched",
+			recipes:   reconcileRecipes,
+			manifest:  "",
+			untouched: true,
+		},
+		{
+			name:     "sorted-key reconcile order matches the bridge",
+			recipes:  sortedRecipes,
+			manifest: "[recipes.alpha]\nenabled = true\n",
+		},
 	}
+}
 
-	run := func(t *testing.T, recipes map[string]string, manifest string, untouched bool) {
-		t.Helper()
-		fixture := writeMaterializeFixture(t, recipes, manifest)
-		pyProject := cloneMaterializeProject(t, fixture.project)
-		goProject := cloneMaterializeProject(t, fixture.project)
+// TestMaterializeSpineStampManifestDifferentialFrozen compares the manifest
+// bytes the native stamp step leaves behind against the frozen records for an
+// added recipe (new values), an updated value, a no-op run, and a reconcile
+// table whose declaration order differs from the sorted inline-table order the
+// bridge emits. The no-op input comes from the frozen authority-stamped
+// manifest.
+func TestMaterializeSpineStampManifestDifferentialFrozen(t *testing.T) {
+	golden := loadMaterializeGolden(t)
 
-		pyManifest := filepath.Join(pyProject, "ai-specs", "ai-specs.toml")
-		goManifest := filepath.Join(goProject, "ai-specs", "ai-specs.toml")
-		goBefore, err := os.Stat(goManifest)
-		if err != nil {
-			t.Fatalf("stat go manifest: %v", err)
-		}
-
-		ref := runMaterializeRef(t, gate, driver, authority, pyProject, fixture.home, "-", "-", "-")
-		if ref.RC != 0 {
-			t.Fatalf("python leg rc=%d stderr=%s", ref.RC, ref.Stderr)
-		}
-		var stdout, stderr bytes.Buffer
-		if _, err := MaterializeRecipes(MaterializeRequest{
-			ProjectRoot: goProject,
-			AISpecsHome: fixture.home,
-			Stdout:      &stdout,
-			Stderr:      &stderr,
-		}); err != nil {
-			t.Fatalf("go leg failed: %v\nstderr: %s", err, stderr.String())
-		}
-
-		pyBytes, err := os.ReadFile(pyManifest)
-		if err != nil {
-			t.Fatalf("read python manifest: %v", err)
-		}
-		goBytes, err := os.ReadFile(goManifest)
-		if err != nil {
-			t.Fatalf("read go manifest: %v", err)
-		}
-		if !bytes.Equal(goBytes, pyBytes) {
-			t.Fatalf("manifest bytes diverge\n--- go ---\n%q\n--- python ---\n%q", goBytes, pyBytes)
-		}
-		if untouched {
-			goAfter, err := os.Stat(goManifest)
+	for _, scenario := range materializeStampScenarios() {
+		scenario := scenario
+		t.Run(scenario.name, func(t *testing.T) {
+			ref := frozenMaterializeRecord(t, golden, scenario.name)
+			seed := scenario.manifest
+			if seed == "" {
+				seed = ref.SeedManifest
+			}
+			fixture := writeMaterializeFixture(t, scenario.recipes, seed)
+			goManifest := filepath.Join(fixture.project, "ai-specs", "ai-specs.toml")
+			goBefore, err := os.Stat(goManifest)
 			if err != nil {
-				t.Fatalf("stat go manifest after: %v", err)
+				t.Fatalf("stat go manifest: %v", err)
 			}
-			if !os.SameFile(goBefore, goAfter) {
-				t.Fatalf("a no-op run rewrote the manifest (inode changed): %q", goBytes)
-			}
-		}
-	}
 
-	t.Run("added recipe writes new config values", func(t *testing.T) {
-		run(t, reconcileRecipes, "[recipes.alpha]\nenabled = true\n", false)
-	})
-	t.Run("updated value rewrites the stale config", func(t *testing.T) {
-		run(t, reconcileRecipes, "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nworkflow = \"stale\"\n", false)
-	})
-	t.Run("no-op run leaves the already-stamped manifest untouched", func(t *testing.T) {
-		run(t, reconcileRecipes, stamped(t, reconcileRecipes, "[recipes.alpha]\nenabled = true\n"), true)
-	})
-	t.Run("sorted-key reconcile order matches the bridge", func(t *testing.T) {
-		run(t, sortedRecipes, "[recipes.alpha]\nenabled = true\n", false)
-	})
+			var stdout, stderr bytes.Buffer
+			if _, err := MaterializeRecipes(MaterializeRequest{
+				ProjectRoot: fixture.project,
+				AISpecsHome: fixture.home,
+				Stdout:      &stdout,
+				Stderr:      &stderr,
+			}); err != nil {
+				t.Fatalf("go leg failed: %v\nstderr: %s", err, stderr.String())
+			}
+
+			goBytes, err := os.ReadFile(goManifest)
+			if err != nil {
+				t.Fatalf("read go manifest: %v", err)
+			}
+			if got := freezeMaterializePaths(string(goBytes), fixture.home, fixture.project); got != ref.Manifest {
+				t.Fatalf("manifest bytes diverge\n--- go ---\n%q\n--- frozen ---\n%q", got, ref.Manifest)
+			}
+			if scenario.untouched {
+				goAfter, err := os.Stat(goManifest)
+				if err != nil {
+					t.Fatalf("stat go manifest after: %v", err)
+				}
+				if !os.SameFile(goBefore, goAfter) {
+					t.Fatalf("a no-op run rewrote the manifest (inode changed): %q", goBytes)
+				}
+			}
+		})
+	}
 }
