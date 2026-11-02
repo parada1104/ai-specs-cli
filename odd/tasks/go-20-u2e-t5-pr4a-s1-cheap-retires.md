@@ -76,3 +76,16 @@ removed; PR4b does the deletion.
     tests OK; golden fixtures untouched.
   - Evidence: package suite `-count=1` green (16.1s); `gofmt -l internal/`
     empty; `go vet` clean. Diff: 4 files, 9+/93-.
+- L3 — CORRECTION (parent): the S5 scope was wrong. The parity N10/T7 rule is
+  LOAD-BEARING: it normalizes a real legacy-vs-Go divergence in
+  `.cursor/hooks/worktree-flow-worktree-gate-shell.sh`; removing it before the
+  flip broke 2 parity fixtures (cache-layout, hooks-five-runtimes; 2 deltas
+  each, both modes) in the full validate. The rule's "EXPIRES with
+  lib/_internal" means the FLIP, not PR4a. Restored tests/parity/parity.py to
+  the epic baseline (byte-identical to 07d59d5; git diff vs base = 0; 39
+  harness unit tests OK). S5 is DROPPED from this slice and moves to the
+  flip-time checklist. Recorded debt: 5 static-analysis findings in parity.py
+  (dynamic callables, tuple assignment, unused import, zip strict) are
+  pre-existing in the validated baseline, untouched by this slice.
+- L4 — Validate re-run after the restore: pending (this entry filed before
+  the run; result appended below).
