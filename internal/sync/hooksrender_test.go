@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -12,13 +13,325 @@ import (
 	"testing"
 )
 
-// hooksRefResult is the canonical JSON emitted by testdata/hooksrender_ref.py.
-type hooksRefResult struct {
-	Stdout string            `json:"stdout"`
-	Stderr string            `json:"stderr"`
-	RC     int               `json:"rc"`
-	Tree   map[string]string `json:"tree"`
-	Modes  map[string]int    `json:"modes"`
+// --- frozen oracle ----------------------------------------------------------
+
+// hooksGoldenCase is one frozen record of testdata/hooksrender_golden.json: the
+// properties the live differential compared — rc, stdout, the written tree and
+// modes, and stderr. For traceback records Python stderr is an uncaught
+// traceback embedding host paths, so Stderr is nil and only the exception-type
+// marker is frozen, exactly the containment check the live test made. Tokens is
+// the per-field host-path token inventory; this family has none.
+type hooksGoldenCase struct {
+	Kind      string            `json:"kind"` // render | sorted-dumps
+	RC        int               `json:"rc"`
+	Stdout    string            `json:"stdout"`
+	Stderr    *string           `json:"stderr"`
+	ExcMarker string            `json:"exc_marker,omitempty"`
+	Tree      map[string]string `json:"tree"`
+	Modes     map[string]int    `json:"modes"`
+	Tokens    map[string]int    `json:"tokens,omitempty"`
+}
+
+// hooksGoldenIdentity is one entry of the hard-coded identity inventory.
+type hooksGoldenIdentity struct{ Kind, Name string }
+
+// hooksGoldenInventory is the hard-coded identity inventory of the frozen
+// bundle: the exact case names in capture order and their kind. It is an
+// independent oracle of coverage, kept in the test and never derived from the
+// bundle, so a missing, renamed, duplicated or reordered record fails before
+// any case loop runs.
+var hooksGoldenInventory = []hooksGoldenIdentity{
+	{"render", "claude all events"},
+	{"render", "cursor all events"},
+	{"render", "opencode all events"},
+	{"render", "pi all events"},
+	{"render", "omp all events"},
+	{"render", "cursor file-write matcher skipped"},
+	{"render", "claude file-write matcher kept"},
+	{"render", "cursor matcher tokens with padding"},
+	{"render", "claude env rich"},
+	{"render", "cursor env rich"},
+	{"render", "opencode env rich"},
+	{"render", "pi env rich"},
+	{"render", "omp env rich"},
+	{"render", "claude existing settings merged"},
+	{"render", "claude multiple hooks ordering"},
+	{"render", "claude existing settings invalid json"},
+	{"render", "claude existing settings non-object"},
+	{"render", "claude existing settings duplicate keys"},
+	{"render", "claude existing settings surrogate and bigint"},
+	{"render", "claude settings invalid utf8"},
+	{"render", "claude settings unreadable swallowed"},
+	{"render", "cursor existing hooks merged"},
+	{"render", "cursor hooks.json invalid json"},
+	{"render", "cursor wrapper written then hooks json invalid utf8"},
+	{"render", "opencode stale adapter preserved"},
+	{"render", "pi stale adapter preserved"},
+	{"render", "omp stale adapter preserved"},
+	{"render", "missing resolved file"},
+	{"render", "invalid resolved json"},
+	{"render", "non-object resolved json"},
+	{"render", "resolved hooks not a list"},
+	{"render", "agent with no hooks"},
+	{"render", "resolved invalid utf8"},
+	{"render", "resolved unreadable swallowed"},
+	{"render", "resolved is a directory"},
+	{"render", "agent without renderer"},
+	{"render", "non-dict hooks skipped"},
+	{"render", "claude missing recipe keyerror"},
+	{"render", "opencode missing id keyerror"},
+	{"render", "pi missing script_path keyerror"},
+	{"render", "omp missing recipe keyerror"},
+	{"render", "cursor file-write skip missing recipe keyerror"},
+	{"render", "claude script_path number typeerror"},
+	{"render", "cursor script_path number typeerror"},
+	{"render", "opencode script_path number tolerated"},
+	{"render", "pi script_path bool tolerated"},
+	{"render", "omp script_path list tolerated"},
+	{"render", "claude recipe number tolerated"},
+	{"render", "opencode recipe bool tolerated"},
+	{"render", "claude matcher number tolerated"},
+	{"render", "cursor matcher number attributeerror"},
+	{"render", "opencode matcher list tolerated"},
+	{"render", "pi matcher object tolerated"},
+	{"render", "omp matcher bool tolerated"},
+	{"render", "cursor non-pre-tool matcher tolerated"},
+	{"render", "claude env number attributeerror"},
+	{"render", "opencode env list attributeerror"},
+	{"render", "pi env string attributeerror"},
+	{"render", "omp env number attributeerror"},
+	{"render", "cursor env number typeerror"},
+	{"render", "cursor env list of strings typeerror"},
+	{"render", "cursor env list out of range indexerror"},
+	{"render", "cursor env list of valid indices tolerated"},
+	{"render", "cursor env list negative index tolerated"},
+	{"render", "cursor env list negative and positive index tolerated"},
+	{"render", "cursor env list negative out of range indexerror"},
+	{"render", "cursor env empty list tolerated"},
+	{"render", "cursor raw env list negative index tolerated"},
+	{"render", "cursor env list big index cannot fit"},
+	{"render", "cursor env list negative big index cannot fit"},
+	{"render", "cursor env list big vs int sorts then index out of range"},
+	{"render", "cursor env list exact big float order"},
+	{"render", "cursor env list big vs string typeerror"},
+	{"render", "sort int vs str typeerror"},
+	{"render", "sort str vs int typeerror"},
+	{"render", "sort float vs str typeerror"},
+	{"render", "sort str vs float typeerror"},
+	{"render", "sort str vs big typeerror"},
+	{"render", "sort big vs nan preserves order index cannot fit"},
+	{"render", "sort nan vs big preserves order float index typeerror"},
+	{"render", "sort inf vs big index cannot fit"},
+	{"render", "sort neg inf vs big float index typeerror"},
+	{"render", "claude event list typeerror"},
+	{"render", "opencode event object typeerror"},
+	{"render", "unhashable event after a written hook"},
+	{"render", "claude event number tolerated"},
+	{"render", "claude event true tolerated"},
+	{"render", "claude script_path surrogate tolerated"},
+	{"render", "claude env value surrogate tolerated"},
+	{"render", "opencode env value surrogate tolerated"},
+	{"render", "cursor matcher surrogate tolerated"},
+	{"render", "cursor recipe surrogate path encode error"},
+	{"render", "opencode id surrogate path encode error"},
+	{"render", "pi script_path surrogate content encode error"},
+	{"render", "omp script_path surrogate content encode error"},
+	{"render", "cursor script_path surrogate content encode error"},
+	{"render", "cursor env value surrogate content encode error"},
+	{"sorted-dumps", "sorted dumps"},
+}
+
+// hooksGoldenKindCounts is the per-kind count of the inventory above.
+var hooksGoldenKindCounts = map[string]int{"render": 97, "sorted-dumps": 1}
+
+// hooksGoldenTokenInventory is the hard-coded host-path token inventory of the
+// frozen bundle. This family captures no host path at all, so any record that
+// carries a token is a bundle mutation, not a host-path occurrence.
+var hooksGoldenTokenInventory = map[string]map[string]int{}
+
+// hooksGoldenDroppedStderr is the dropped-stderr inventory: for each traceback
+// record, the exception-type marker that was frozen instead of the Python
+// stderr. The Python stderr of those records is an uncaught traceback that
+// embeds host paths (verified at capture time), and the live test never
+// compared it beyond the marker.
+var hooksGoldenDroppedStderr = map[string]string{
+	"claude settings invalid utf8":                             "UnicodeDecodeError",
+	"cursor wrapper written then hooks json invalid utf8":      "UnicodeDecodeError",
+	"resolved invalid utf8":                                    "UnicodeDecodeError",
+	"claude missing recipe keyerror":                           "KeyError",
+	"opencode missing id keyerror":                             "KeyError",
+	"pi missing script_path keyerror":                          "KeyError",
+	"omp missing recipe keyerror":                              "KeyError",
+	"cursor file-write skip missing recipe keyerror":           "KeyError",
+	"claude script_path number typeerror":                      "TypeError",
+	"cursor script_path number typeerror":                      "TypeError",
+	"cursor matcher number attributeerror":                     "AttributeError",
+	"claude env number attributeerror":                         "AttributeError",
+	"opencode env list attributeerror":                         "AttributeError",
+	"pi env string attributeerror":                             "AttributeError",
+	"omp env number attributeerror":                            "AttributeError",
+	"cursor env number typeerror":                              "TypeError",
+	"cursor env list of strings typeerror":                     "TypeError",
+	"cursor env list out of range indexerror":                  "IndexError",
+	"cursor env list negative out of range indexerror":         "IndexError",
+	"cursor env list big index cannot fit":                     "IndexError",
+	"cursor env list negative big index cannot fit":            "IndexError",
+	"cursor env list big vs int sorts then index out of range": "IndexError",
+	"cursor env list exact big float order":                    "TypeError",
+	"cursor env list big vs string typeerror":                  "TypeError",
+	"sort int vs str typeerror":                                "TypeError",
+	"sort str vs int typeerror":                                "TypeError",
+	"sort float vs str typeerror":                              "TypeError",
+	"sort str vs float typeerror":                              "TypeError",
+	"sort str vs big typeerror":                                "TypeError",
+	"sort big vs nan preserves order index cannot fit":         "IndexError",
+	"sort nan vs big preserves order float index typeerror":    "TypeError",
+	"sort inf vs big index cannot fit":                         "IndexError",
+	"sort neg inf vs big float index typeerror":                "TypeError",
+	"claude event list typeerror":                              "TypeError",
+	"opencode event object typeerror":                          "TypeError",
+	"unhashable event after a written hook":                    "TypeError",
+	"cursor recipe surrogate path encode error":                "UnicodeEncodeError",
+	"opencode id surrogate path encode error":                  "UnicodeEncodeError",
+	"pi script_path surrogate content encode error":            "UnicodeEncodeError",
+	"omp script_path surrogate content encode error":           "UnicodeEncodeError",
+	"cursor script_path surrogate content encode error":        "UnicodeEncodeError",
+	"cursor env value surrogate content encode error":          "UnicodeEncodeError",
+}
+
+// checkHooksGoldenInventory validates one loaded bundle against the hard-coded
+// identity, per-kind, dropped-stderr and token inventories. It is pure so the
+// focused control can run it against a mutated in-memory copy.
+func checkHooksGoldenInventory(names []string, cases []hooksGoldenCase) error {
+	if len(names) != len(hooksGoldenInventory) {
+		return fmt.Errorf("frozen oracle has %d names, want %d", len(names), len(hooksGoldenInventory))
+	}
+	if len(cases) != len(names) {
+		return fmt.Errorf("frozen oracle has %d records for %d names", len(cases), len(names))
+	}
+	seen := make(map[string]bool, len(names))
+	kinds := map[string]int{}
+	dropped := 0
+	for i, tc := range cases {
+		want := hooksGoldenInventory[i]
+		if names[i] != want.Name {
+			return fmt.Errorf("frozen oracle record %d is %q, want %q (identity mismatch)", i, names[i], want.Name)
+		}
+		if seen[names[i]] {
+			return fmt.Errorf("frozen oracle duplicates record %q", names[i])
+		}
+		seen[names[i]] = true
+		if tc.Kind != want.Kind {
+			return fmt.Errorf("frozen oracle record %q has kind %q, want %q", names[i], tc.Kind, want.Kind)
+		}
+		kinds[tc.Kind]++
+		if marker, isDropped := hooksGoldenDroppedStderr[names[i]]; isDropped {
+			dropped++
+			if tc.Stderr != nil {
+				return fmt.Errorf("frozen oracle record %q must drop its traceback stderr", names[i])
+			}
+			if tc.ExcMarker != marker {
+				return fmt.Errorf("frozen oracle record %q has exception marker %q, want %q", names[i], tc.ExcMarker, marker)
+			}
+		} else {
+			if tc.Stderr == nil {
+				return fmt.Errorf("frozen oracle record %q must freeze its stderr", names[i])
+			}
+			if tc.ExcMarker != "" {
+				return fmt.Errorf("frozen oracle record %q carries an unexpected exception marker %q", names[i], tc.ExcMarker)
+			}
+		}
+		wantTokens, hasTokens := hooksGoldenTokenInventory[names[i]]
+		if !hasTokens && len(tc.Tokens) != 0 {
+			return fmt.Errorf("frozen oracle record %q carries a non-inventoried token %v", names[i], tc.Tokens)
+		}
+		for field, n := range tc.Tokens {
+			switch field {
+			case "stdout", "stderr":
+			default:
+				return fmt.Errorf("frozen oracle record %q tokenizes unknown field %q", names[i], field)
+			}
+			if wantTokens[field] != n {
+				return fmt.Errorf("frozen oracle record %q has %d host tokens in %s, want %d", names[i], n, field, wantTokens[field])
+			}
+		}
+		if hasTokens && len(tc.Tokens) != len(wantTokens) {
+			return fmt.Errorf("frozen oracle record %q tokenizes %d fields, want %d", names[i], len(tc.Tokens), len(wantTokens))
+		}
+	}
+	if dropped != len(hooksGoldenDroppedStderr) {
+		return fmt.Errorf("frozen oracle drops %d stderr records, want %d", dropped, len(hooksGoldenDroppedStderr))
+	}
+	for kind, want := range hooksGoldenKindCounts {
+		if kinds[kind] != want {
+			return fmt.Errorf("frozen oracle has %d %s records, want %d", kinds[kind], kind, want)
+		}
+	}
+	return nil
+}
+
+// loadHooksGolden validates and indexes testdata/hooksrender_golden.json. The
+// inventories are asserted before any case loop runs.
+func loadHooksGolden(t *testing.T) map[string]hooksGoldenCase {
+	t.Helper()
+	var bundle struct {
+		Names []string          `json:"names"`
+		Cases []hooksGoldenCase `json:"cases"`
+	}
+	if err := json.Unmarshal(readGoldenBundle(t, "hooksrender_golden.json"), &bundle); err != nil {
+		t.Fatalf("parse frozen oracle: %v", err)
+	}
+	if err := checkHooksGoldenInventory(bundle.Names, bundle.Cases); err != nil {
+		t.Fatalf("frozen hooks-render oracle: %v", err)
+	}
+	golden := make(map[string]hooksGoldenCase, len(bundle.Cases))
+	for i, rec := range bundle.Cases {
+		golden[bundle.Names[i]] = rec
+	}
+	return golden
+}
+
+// frozenHooksRecord looks up one frozen record by its identity name.
+func frozenHooksRecord(t *testing.T, golden map[string]hooksGoldenCase, name string) hooksGoldenCase {
+	t.Helper()
+	rec, ok := golden[name]
+	if !ok {
+		t.Fatalf("frozen record %q missing", name)
+	}
+	return rec
+}
+
+// TestHooksRenderFrozenInventoryControl proves the inventory validation bites:
+// the intact bundle validates, while renaming, removing or duplicating a record
+// (all in memory, never on disk) fails loudly.
+func TestHooksRenderFrozenInventoryControl(t *testing.T) {
+	var bundle struct {
+		Names []string          `json:"names"`
+		Cases []hooksGoldenCase `json:"cases"`
+	}
+	if err := json.Unmarshal(readGoldenBundle(t, "hooksrender_golden.json"), &bundle); err != nil {
+		t.Fatalf("parse frozen oracle: %v", err)
+	}
+	if err := checkHooksGoldenInventory(bundle.Names, bundle.Cases); err != nil {
+		t.Fatalf("intact inventory must validate: %v", err)
+	}
+
+	renamed := append([]string{}, bundle.Names...)
+	renamed[0] = "renamed record"
+	if err := checkHooksGoldenInventory(renamed, bundle.Cases); err == nil {
+		t.Fatal("a renamed record must fail the inventory validation")
+	}
+
+	missing := append(append([]hooksGoldenCase{}, bundle.Cases[:1]...), bundle.Cases[2:]...)
+	if err := checkHooksGoldenInventory(bundle.Names, missing); err == nil {
+		t.Fatal("a removed record must fail the inventory validation")
+	}
+
+	duplicated := append(append([]hooksGoldenCase{}, bundle.Cases...), bundle.Cases[0])
+	doubledNames := append(append([]string{}, bundle.Names...), bundle.Names[0])
+	if err := checkHooksGoldenInventory(doubledNames, duplicated); err == nil {
+		t.Fatal("a duplicated record must fail the inventory validation")
+	}
 }
 
 // hooksRefCase is one differential scenario for the hooks-render port.
@@ -102,45 +415,6 @@ func hooksAllEvents() []any {
 		hook("hookdemo", "bye", "stop", "", hooksScriptPath, false, nil),
 		hook("hookdemo", "custom", "on-custom", "", hooksScriptPath, false, nil),
 	}
-}
-
-func runHooksRef(t *testing.T, root, script string, tc hooksRefCase) hooksRefResult {
-	t.Helper()
-	caseJSON := map[string]any{
-		"resolved_rel":   tc.resolvedRel,
-		"resolved_dir":   tc.resolvedDir,
-		"unreadable_rel": tc.unreadableRel,
-		"agent":          tc.agent,
-	}
-	if tc.resolved != nil {
-		caseJSON["resolved_b64"] = base64.StdEncoding.EncodeToString([]byte(*tc.resolved))
-	} else {
-		caseJSON["resolved_b64"] = nil
-	}
-	files := map[string]string{}
-	for rel, content := range tc.files {
-		files[rel] = base64.StdEncoding.EncodeToString([]byte(content))
-	}
-	caseJSON["files"] = files
-	payload, err := json.Marshal(caseJSON)
-	if err != nil {
-		t.Fatalf("marshal case: %v", err)
-	}
-	cmd := exec.Command("python3", script)
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "PYTHONUTF8=1")
-	cmd.Stdin = bytes.NewReader(payload)
-	var out, errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("ref driver failed: %v\nstderr: %s", err, errBuf.String())
-	}
-	var ref hooksRefResult
-	if err := json.Unmarshal(out.Bytes(), &ref); err != nil {
-		t.Fatalf("parse ref JSON: %v\nraw: %s", err, out.String())
-	}
-	return ref
 }
 
 // hooksModeBits mirrors Python's st_mode & 0o7777 (permission bits plus
@@ -244,38 +518,39 @@ func runHooksGo(t *testing.T, tc hooksRefCase) (string, string, int, map[string]
 }
 
 // TestHooksRenderDifferential requires byte equality of every written file,
-// stdout, stderr and exit code across the Go port and the REAL hooks-render.py.
+// stdout, stderr and exit code across the Go port and the frozen records
+// captured from the REAL hooks-render.py (PR2-B S8).
 func TestHooksRenderDifferential(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	root := gitignoreRepoRoot(t)
-	refScript := filepath.Join(root, "internal", "sync", "testdata", "hooksrender_ref.py")
+	golden := loadHooksGolden(t)
 
 	for _, tc := range hooksRenderCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.unreadableRel != "" && os.Geteuid() == 0 {
 				t.Skip("chmod 0200 does not deny reads as root")
 			}
-			ref := runHooksRef(t, root, refScript, tc)
+			ref := frozenHooksRecord(t, golden, tc.name)
+			if tc.tracebackStderr != (ref.Stderr == nil) {
+				t.Fatalf("frozen record stderr/dropped mismatch (traceback=%v)", tc.tracebackStderr)
+			}
 			goOut, goErr, goRC, goTree, goModes := runHooksGo(t, tc)
 
 			if goOut != ref.Stdout {
-				t.Errorf("stdout differs\n--- go ---\n%q\n--- ref ---\n%q", goOut, ref.Stdout)
+				t.Errorf("stdout differs\n--- go ---\n%q\n--- frozen ---\n%q", goOut, ref.Stdout)
 			}
 			if goRC != ref.RC {
-				t.Errorf("rc: go=%d ref=%d", goRC, ref.RC)
+				t.Errorf("rc: go=%d frozen=%d", goRC, ref.RC)
 			}
 			if !hooksTreeEqual(goTree, ref.Tree) {
 				t.Errorf("tree differs:\n%s", hooksTreeDiff(goTree, ref.Tree))
 			}
 			if !hooksModesEqual(goModes, ref.Modes) {
-				t.Errorf("modes differ:\n  go:  %v\n  ref: %v", goModes, ref.Modes)
+				t.Errorf("modes differ:\n  go:     %v\n  frozen: %v", goModes, ref.Modes)
 			}
 			if tc.tracebackStderr {
-				// Python's stderr is an unreproducible traceback here.
-				if !strings.Contains(ref.Stderr, tc.pythonExc) {
-					t.Errorf("ref stderr missing %q:\n%s", tc.pythonExc, ref.Stderr)
+				// Only the exception-type marker is frozen here; Python's stderr
+				// is an unreproducible traceback embedding host paths.
+				if ref.ExcMarker != tc.pythonExc {
+					t.Errorf("frozen exception marker %q, want %q", ref.ExcMarker, tc.pythonExc)
 				}
 				lines := strings.Split(strings.TrimSuffix(goErr, "\n"), "\n")
 				if len(lines) != 1 || !strings.HasPrefix(lines[0], "error: ") {
@@ -286,8 +561,8 @@ func TestHooksRenderDifferential(t *testing.T) {
 				}
 				return
 			}
-			if goErr != ref.Stderr {
-				t.Errorf("stderr differs\n--- go ---\n%q\n--- ref ---\n%q", goErr, ref.Stderr)
+			if goErr != *ref.Stderr {
+				t.Errorf("stderr differs\n--- go ---\n%q\n--- frozen ---\n%q", goErr, *ref.Stderr)
 			}
 		})
 	}
@@ -690,7 +965,7 @@ func hooksRenderCases() []hooksRefCase {
 			}))},
 
 		// --- mcpBigInt (> int64) in the cursor env-list path ---
-		{name: "cursor env list negative index tolerated", agent: "cursor", resolvedRel: rel,
+		{name: "cursor raw env list negative index tolerated", agent: "cursor", resolvedRel: rel,
 			resolved: hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":[-1]}`))},
 		{name: "cursor env list big index cannot fit", agent: "cursor", resolvedRel: rel,
 			resolved:        hooksStr(hooksRawBlob(`{"recipe":"r","id":"i","event":"pre-tool-use","matcher":"Bash","script_path":"x","env":[100000000000000000000]}`)),
@@ -805,13 +1080,9 @@ func hooksRenderCases() []hooksRefCase {
 // Python's json.dumps(indent=2, sort_keys=True) for the exact shapes the
 // settings/hooks merge produces, including empty containers and nested keys.
 func TestHooksJSONDumpsSortedDifferential(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	root := gitignoreRepoRoot(t)
-	refScript := filepath.Join(root, "internal", "sync", "testdata", "hooksrender_ref.py")
+	golden := loadHooksGolden(t)
 
-	// Drive the reference through a claude render of a resolved blob whose
+	// Drive the frozen capture through a claude render of a resolved blob whose
 	// settings surface is known, then compare the written settings.json bytes.
 	blob := hooksBlob(
 		hook("hookdemo", "shell-gate", "pre-tool-use", "Bash", hooksScriptPath, true, map[string]any{
@@ -824,7 +1095,7 @@ func TestHooksJSONDumpsSortedDifferential(t *testing.T) {
 		resolved: hooksStr(blob),
 		files:    map[string]string{".claude/settings.json": settingsSeed},
 	}
-	ref := runHooksRef(t, root, refScript, tc)
+	ref := frozenHooksRecord(t, golden, tc.name)
 	_, _, _, goTree, _ := runHooksGo(t, tc)
 	if !hooksTreeEqual(goTree, ref.Tree) {
 		t.Fatalf("tree differs:\n%s", hooksTreeDiff(goTree, ref.Tree))
