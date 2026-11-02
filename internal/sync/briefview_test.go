@@ -1,15 +1,17 @@
 package sync
 
 // GO-07 S18: the read-only brief view the doctor's brief probes now run in
-// process. These tests pin it against the real Python chain the bridge used
-// (internal/sync/testdata/briefref_ref.py drives the same three legacy modules
-// in the same order), state by state.
+// process. These tests pin it against the frozen record of the Python chain the
+// bridge used (internal/sync/testdata/briefref_ref.py used to drive the same
+// three legacy modules in the same order), state by state.
+//
+// PR2-B S6: the differential tests consume testdata/briefref_golden.json, the
+// golden bundle captured once from the live Python 3.14.7 oracle through the
+// same in-package fixture helpers below; no test execs Python anymore.
 
 import (
-	"bytes"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,8 +19,10 @@ import (
 	"ai-specs.dev/ai-specs/internal/lock"
 )
 
-// briefRefOut is one oracle run.
-type briefRefOut struct {
+// briefRefGoldenCase is one frozen record of testdata/briefref_golden.json: one
+// oracle run's state and rendered sha in the view half, its dead-fragments value
+// in the dead half, or the raised Python authority's message in Error.
+type briefRefGoldenCase struct {
 	Error        *string `json:"error"`
 	State        *string `json:"state"`
 	WouldWriteSH string  `json:"would_write_sha"`
@@ -26,47 +30,104 @@ type briefRefOut struct {
 	Dead         *bool   `json:"dead"`
 }
 
-// briefRefAuthority locates python3, the oracle driver and the legacy lib dir.
-func briefRefAuthority(t *testing.T) (python, driver, lib string) {
-	t.Helper()
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatalf("repo root: %v", err)
-	}
-	lib = filepath.Join(root, "lib", "_internal")
-	if _, err := os.Stat(filepath.Join(lib, "recipe-materialize.py")); err != nil {
-		t.Skipf("recipe-materialize.py not available: %v", err)
-	}
-	driver = filepath.Join(root, "internal", "sync", "testdata", "briefref_ref.py")
-	return python, driver, lib
+// briefRefViewGoldenNames is the hard-coded identity inventory of the frozen
+// view half: exact case names in capture order (8 = 6 states + the explicit
+// binding + the invalid-mode error). Kept in the test, never derived from the
+// bundle.
+var briefRefViewGoldenNames = []string{
+	"missing",
+	"managed_current",
+	"managed_stale",
+	"untracked",
+	"user_modified",
+	"marker",
+	"explicit bindings reach the rendered brief",
+	"invalid brief mode fails on both sides",
 }
 
-// runBriefRef runs the oracle for one fixture. The gate binary is pinned so
-// Python's build_resolved_config and the native projection share one decision
-// core — this test pins the brief wiring, not core-vs-fallback parity, which
-// the S13/S14 differentials already own.
-func runBriefRef(t *testing.T, python, driver, lib, root, home string) briefRefOut {
+// briefRefDeadGoldenNames is the hard-coded identity inventory of the frozen
+// dead-fragments half (6 records, capture order).
+var briefRefDeadGoldenNames = []string{
+	"fragments with render disabled",
+	"fragments with render enabled",
+	"enabled recipe declares no fragments",
+	"catalog recipe the loader rejects declares nothing",
+	"enabled recipe missing from the catalog",
+	"recipe declared but not enabled",
+}
+
+// loadBriefRefGolden validates and indexes testdata/briefref_golden.json. The
+// identity inventories are asserted before any case loop runs.
+func loadBriefRefGolden(t *testing.T) (map[string]briefRefGoldenCase, map[string]briefRefGoldenCase) {
 	t.Helper()
-	cmd := exec.Command(python, driver, root, home, lib)
-	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(),
-		"PYTHONDONTWRITEBYTECODE=1",
-		"WORKTREE_GATE_BIN="+materializeGateBinary(t),
-	)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("python oracle failed: %v\nstderr: %s", err, stderr.String())
+	var bundle struct {
+		View struct {
+			Names []string             `json:"names"`
+			Cases []briefRefGoldenCase `json:"cases"`
+		} `json:"view"`
+		Dead struct {
+			Names []string             `json:"names"`
+			Cases []briefRefGoldenCase `json:"cases"`
+		} `json:"dead"`
 	}
-	var out briefRefOut
-	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
-		t.Fatalf("decode oracle %s: %v", stdout.String(), err)
+	if err := json.Unmarshal(readGoldenBundle(t, "briefref_golden.json"), &bundle); err != nil {
+		t.Fatalf("parse frozen oracle: %v", err)
 	}
-	return out
+
+	validateGoldenIdentity(t, "briefref view", bundle.View.Names, briefRefViewGoldenNames)
+	if len(bundle.View.Cases) != len(bundle.View.Names) {
+		t.Fatalf("briefref view: %d records for %d names", len(bundle.View.Cases), len(bundle.View.Names))
+	}
+	view := make(map[string]briefRefGoldenCase, len(bundle.View.Cases))
+	viewErrors := 0
+	for i, rec := range bundle.View.Cases {
+		if rec.Error != nil {
+			viewErrors++
+			if rec.State != nil || rec.WouldWriteSH != "" {
+				t.Fatalf("frozen view record %q mixes a raised error with a rendered brief", bundle.View.Names[i])
+			}
+		} else if rec.State == nil || rec.WouldWriteSH == "" {
+			t.Fatalf("frozen view record %q has no rendered brief", bundle.View.Names[i])
+		}
+		view[bundle.View.Names[i]] = rec
+	}
+	if viewErrors != 1 {
+		t.Fatalf("briefref view bundle has %d error records, want 1", viewErrors)
+	}
+
+	validateGoldenIdentity(t, "briefref dead", bundle.Dead.Names, briefRefDeadGoldenNames)
+	if len(bundle.Dead.Cases) != len(bundle.Dead.Names) {
+		t.Fatalf("briefref dead: %d records for %d names", len(bundle.Dead.Cases), len(bundle.Dead.Names))
+	}
+	dead := make(map[string]briefRefGoldenCase, len(bundle.Dead.Cases))
+	deadTrue := 0
+	for i, rec := range bundle.Dead.Cases {
+		if rec.Error != nil || rec.Dead == nil {
+			t.Fatalf("frozen dead record %q has no dead value", bundle.Dead.Names[i])
+		}
+		if *rec.Dead {
+			deadTrue++
+		}
+		dead[bundle.Dead.Names[i]] = rec
+	}
+	if deadTrue != 2 {
+		t.Fatalf("briefref dead bundle has %d dead=true records, want 2", deadTrue)
+	}
+	return view, dead
+}
+
+// frozenViewCase returns the frozen view record for name and requires the
+// oracle to have rendered it.
+func frozenViewCase(t *testing.T, golden map[string]briefRefGoldenCase, name string) briefRefGoldenCase {
+	t.Helper()
+	rec, ok := golden[name]
+	if !ok {
+		t.Fatalf("frozen record %q missing", name)
+	}
+	if rec.Error != nil {
+		t.Fatalf("frozen record %q reports %s", name, *rec.Error)
+	}
+	return rec
 }
 
 // briefRecipeToml is a minimal catalog recipe: one brief fragment on the
@@ -171,22 +232,19 @@ func writeBrief(t *testing.T, root string, content []byte) {
 	}
 }
 
-// TestBuildBriefViewDifferentialAgainstPython pins the would-write bytes and the
-// effective state against the Python chain, over every state a doctor run can
-// report.
-func TestBuildBriefViewDifferentialAgainstPython(t *testing.T) {
-	python, driver, lib := briefRefAuthority(t)
+// TestBuildBriefViewDifferentialAgainstFrozenOracle pins the would-write bytes
+// and the effective state against the frozen Python chain record, over every
+// state a doctor run can report.
+func TestBuildBriefViewDifferentialAgainstFrozenOracle(t *testing.T) {
+	viewGolden, _ := loadBriefRefGolden(t)
 	const manifest = "[project]\nname = \"probe\"\n\n[recipes.alpha]\nenabled = true\n\n[agents]\nenabled = [\"claude\"]\n"
 
-	// The reference bytes both legs must agree on come from the Python oracle's
-	// own render, so a drift in the render is visible as a sha mismatch.
+	// The reference bytes both legs must agree on come from the renderer's own
+	// output, so a drift in the render is visible as a sha mismatch.
 	root, home := newBriefProject(t, manifest, briefRecipeToml)
-	ref := runBriefRef(t, python, driver, lib, root, home)
-	if ref.Error != nil {
-		t.Fatalf("oracle reported %s", *ref.Error)
-	}
-	if ref.WouldWriteSH == "" || ref.State == nil || *ref.State != "missing" {
-		t.Fatalf("oracle = %+v, want a rendered brief in the missing state", ref)
+	ref := frozenViewCase(t, viewGolden, "missing")
+	if *ref.State != "missing" {
+		t.Fatalf("frozen record = %+v, want a rendered brief in the missing state", ref)
 	}
 	view, err := BuildBriefView(BriefViewRequest{ProjectRoot: root, AISpecsHome: home})
 	if err != nil {
@@ -225,10 +283,7 @@ func TestBuildBriefViewDifferentialAgainstPython(t *testing.T) {
 				writeBriefBaseline(t, scRoot, scenario.baseline)
 			}
 
-			scRef := runBriefRef(t, python, driver, lib, scRoot, scHome)
-			if scRef.Error != nil {
-				t.Fatalf("oracle reported %s", *scRef.Error)
-			}
+			scRef := frozenViewCase(t, viewGolden, scenario.name)
 			scView, viewErr := BuildBriefView(BriefViewRequest{ProjectRoot: scRoot, AISpecsHome: scHome})
 			if viewErr != nil {
 				t.Fatalf("BuildBriefView: %v", viewErr)
@@ -250,12 +305,9 @@ func TestBuildBriefViewDifferentialAgainstPython(t *testing.T) {
 		// response (a bridge defect recorded as a follow-up in the unit doc).
 		boundManifest := "[project]\nname = \"probe\"\n\n[recipes.git-pr-flow]\nenabled = true\n\n[agents]\nenabled = [\"claude\"]\n\n[[bindings]]\ncapability = \"vcs-pr-flow\"\nrecipe = \"git-pr-flow\"\n"
 		boundRoot, boundHome := newBriefProjectRecipe(t, boundManifest, "git-pr-flow", briefRecipeBoundToml)
-		boundRef := runBriefRef(t, python, driver, lib, boundRoot, boundHome)
-		if boundRef.Error != nil {
-			t.Fatalf("oracle reported %s", *boundRef.Error)
-		}
+		boundRef := frozenViewCase(t, viewGolden, "explicit bindings reach the rendered brief")
 		if boundRef.RenderStdout != "" {
-			t.Errorf("the fixture must render without a stdout warning, got %q", boundRef.RenderStdout)
+			t.Errorf("the fixture must render without a stdout warning, frozen record has %q", boundRef.RenderStdout)
 		}
 		boundView, boundErr := BuildBriefView(BriefViewRequest{ProjectRoot: boundRoot, AISpecsHome: boundHome})
 		if boundErr != nil {
@@ -278,11 +330,14 @@ func TestBuildBriefViewDifferentialAgainstPython(t *testing.T) {
 		// the bridge answered as "undetermined".
 		badManifest := manifest + "\n[brief]\nworkflow_rules_mode = \"nope\"\n"
 		badRoot, badHome := newBriefProject(t, badManifest, briefRecipeToml)
-		badRef := runBriefRef(t, python, driver, lib, badRoot, badHome)
-		_, nativeErr := BuildBriefView(BriefViewRequest{ProjectRoot: badRoot, AISpecsHome: badHome})
-		if badRef.Error == nil {
-			t.Fatal("the oracle rendered an invalid mode")
+		badRef, ok := viewGolden["invalid brief mode fails on both sides"]
+		if !ok {
+			t.Fatalf("frozen record %q missing", "invalid brief mode fails on both sides")
 		}
+		if badRef.Error == nil || !strings.Contains(*badRef.Error, "invalid mode") {
+			t.Fatalf("the frozen oracle rendered an invalid mode: %+v", badRef)
+		}
+		_, nativeErr := BuildBriefView(BriefViewRequest{ProjectRoot: badRoot, AISpecsHome: badHome})
 		if nativeErr == nil {
 			t.Fatal("the native view rendered an invalid mode")
 		}
@@ -297,12 +352,12 @@ func appended(content []byte, suffix string) []byte {
 	return append(append([]byte(nil), content...), suffix...)
 }
 
-// TestBriefHasDeadRecipeFragmentsDifferentialAgainstPython pins the
+// TestBriefHasDeadRecipeFragmentsDifferentialAgainstFrozenOracle pins the
 // dead-fragments predicate over the same fixtures, including its own shorter
 // chain (projection plus fragments, without the catalog defaults or the
 // auto-bindings the provenance chain applies).
-func TestBriefHasDeadRecipeFragmentsDifferentialAgainstPython(t *testing.T) {
-	python, driver, lib := briefRefAuthority(t)
+func TestBriefHasDeadRecipeFragmentsDifferentialAgainstFrozenOracle(t *testing.T) {
+	_, deadGolden := loadBriefRefGolden(t)
 
 	scenarios := []struct {
 		name       string
@@ -343,12 +398,9 @@ func TestBriefHasDeadRecipeFragmentsDifferentialAgainstPython(t *testing.T) {
 		scenario := scenario
 		t.Run(scenario.name, func(t *testing.T) {
 			root, home := newBriefProject(t, scenario.manifest, scenario.recipeToml)
-			ref := runBriefRef(t, python, driver, lib, root, home)
-			if ref.Error != nil {
-				t.Fatalf("oracle reported %s", *ref.Error)
-			}
-			if ref.Dead == nil {
-				t.Fatalf("oracle returned no dead value: %+v", ref)
+			ref, ok := deadGolden[scenario.name]
+			if !ok {
+				t.Fatalf("frozen record %q missing", scenario.name)
 			}
 			got, err := BriefHasDeadRecipeFragments(BriefViewRequest{ProjectRoot: root, AISpecsHome: home})
 			if err != nil {
