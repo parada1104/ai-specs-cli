@@ -10,11 +10,13 @@ package sync
 // :2614) plus _python_check_capability_conflicts, and the durable writer
 // write_tracker_witness (:2763) through the shared producer.
 //
-// The differential test at the bottom shells out to the real Python module via
-// testdata/bindings_ref.py (the hookactuator/gitignore differential shape).
+// The differential tests at the bottom compare the native authority against
+// testdata/bindings_golden.json, the frozen golden bundle captured once from the
+// live Python oracle (PR2-B S5); no test execs Python anymore.
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -26,36 +28,6 @@ import (
 	"ai-specs.dev/worktree-gate/ledger"
 	"ai-specs.dev/worktree-gate/shared"
 )
-
-// bindingsRefPath resolves the reference driver under this package (go test cwd
-// is internal/sync).
-func bindingsRefPath(t *testing.T) string {
-	t.Helper()
-	path, err := filepath.Abs(filepath.Join("testdata", "bindings_ref.py"))
-	if err != nil {
-		t.Fatalf("resolve ref driver: %v", err)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("ref driver %s: %v", path, err)
-	}
-	return path
-}
-
-// runBindingsRefRaw runs the reference driver and returns its raw stdout bytes
-// (no trimming: the witness mode compares exact bytes including the trailing
-// newline).
-func runBindingsRefRaw(t *testing.T, python, driver string, args ...string) []byte {
-	t.Helper()
-	cmd := exec.Command(python, append([]string{driver}, args...)...)
-	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("python oracle failed: %v\nstderr: %s", err, stderr.String())
-	}
-	return stdout.Bytes()
-}
 
 // bindingsCapTable renders the [[capabilities]] tables for a fixture recipe.
 func bindingsCapTable(caps ...string) string {
@@ -89,22 +61,18 @@ type bindingsRefResult struct {
 	ConflictsError string                      `json:"conflicts_error"`
 }
 
-// TestNativeBindingsDifferentialAgainstPython pins ResolveBindings against the
-// real Python fallback authority (_python_resolve_bindings and
-// _python_check_capability_conflicts). Bindings, resolution errors and graded
-// conflicts must agree case for case, and an unreadable recipe.toml (parsable
-// directory, unparsable bytes, absent directory) is skipped exactly as the
-// Python try/except swallows it.
-func TestNativeBindingsDifferentialAgainstPython(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := bindingsRefPath(t)
-	catalog := bindingsCatalog(t)
+// bindingsResolveCase is one resolve-mode differential scenario: the enabled
+// recipe ids and the explicit manifest bindings handed to both legs.
+type bindingsResolveCase struct {
+	name     string
+	enabled  []string
+	bindings []shared.ManifestBinding
+}
 
-	cases := []struct {
-		name     string
-		enabled  []string
-		bindings []shared.ManifestBinding
-	}{
+// bindingsResolveCases is the shared resolve fixture (the live differential and
+// the PR2-B S5 capture test both consume it, so the inputs stay byte-identical).
+func bindingsResolveCases() []bindingsResolveCase {
+	return []bindingsResolveCase{
 		{"single tracker provider auto-binds", []string{"alpha"}, nil},
 		{"two capabilities auto-bind independently", []string{"alpha", "gamma"}, nil},
 		{"ambiguous tracker is not bound", []string{"alpha", "beta"}, nil},
@@ -115,26 +83,128 @@ func TestNativeBindingsDifferentialAgainstPython(t *testing.T) {
 		{"disabled or unknown recipe raises", []string{"alpha"}, []shared.ManifestBinding{{Capability: "tracker", Recipe: "ghost"}}},
 		{"undeclared capability raises", []string{"alpha", "gamma"}, []shared.ManifestBinding{{Capability: "tracker", Recipe: "gamma"}}},
 	}
+}
 
-	for _, tc := range cases {
+// bindingsWitnessCase is one witness-mode differential scenario: the resolved
+// bindings and declaration flag fed to the writer at a fixed instant.
+type bindingsWitnessCase struct {
+	name     string
+	enabled  []string
+	resolved map[string]string
+	declared bool
+}
+
+// bindingsWitnessCases is the shared witness fixture (see bindingsResolveCases).
+func bindingsWitnessCases() []bindingsWitnessCase {
+	return []bindingsWitnessCase{
+		{"bound names the resolved recipe", []string{"alpha"}, map[string]string{"tracker": "alpha"}, false},
+		{"bound wins over a competing declarer", []string{"alpha", "beta"}, map[string]string{"tracker": "beta"}, false},
+		{"ambiguous records every candidate in enabled order", []string{"beta", "alpha", "gamma"}, map[string]string{}, false},
+		{"declared-not-bound carries no candidate", []string{"gamma"}, map[string]string{}, true},
+		{"unbound carries no candidate", []string{"gamma"}, map[string]string{}, false},
+		{"single candidate with a declaration is declared-not-bound", []string{"alpha"}, map[string]string{}, true},
+		{"unreadable recipe declares nothing", []string{"broken", "gamma"}, map[string]string{}, false},
+	}
+}
+
+// bindingsWitnessGoldenCase is one frozen record of the witness half of
+// testdata/bindings_golden.json: the raw writer bytes plus their sha256.
+type bindingsWitnessGoldenCase struct {
+	BytesB64 string `json:"bytes_b64"`
+	SHA256   string `json:"sha256"`
+}
+
+// bindingsResolveGoldenNames is the hard-coded identity inventory of the frozen
+// resolve half: exact case names in capture order (9 = 6 resolved + 3 errors).
+// Kept in the test, never derived from the bundle.
+var bindingsResolveGoldenNames = []string{
+	"single tracker provider auto-binds",
+	"two capabilities auto-bind independently",
+	"ambiguous tracker is not bound",
+	"explicit binding wins over two declarers",
+	"unparsable recipe.toml is skipped",
+	"absent recipe directory is skipped",
+	"duplicate explicit binding raises",
+	"disabled or unknown recipe raises",
+	"undeclared capability raises",
+}
+
+// bindingsWitnessGoldenNames is the hard-coded identity inventory of the frozen
+// witness half (7 records, capture order).
+var bindingsWitnessGoldenNames = []string{
+	"bound names the resolved recipe",
+	"bound wins over a competing declarer",
+	"ambiguous records every candidate in enabled order",
+	"declared-not-bound carries no candidate",
+	"unbound carries no candidate",
+	"single candidate with a declaration is declared-not-bound",
+	"unreadable recipe declares nothing",
+}
+
+// loadBindingsGolden validates and indexes testdata/bindings_golden.json. The
+// identity inventories are asserted before any case loop runs.
+func loadBindingsGolden(t *testing.T) (map[string]bindingsRefResult, map[string]bindingsWitnessGoldenCase) {
+	t.Helper()
+	var bundle struct {
+		Resolve struct {
+			Names []string            `json:"names"`
+			Cases []bindingsRefResult `json:"cases"`
+		} `json:"resolve"`
+		Witness struct {
+			Names []string                    `json:"names"`
+			Cases []bindingsWitnessGoldenCase `json:"cases"`
+		} `json:"witness"`
+	}
+	if err := json.Unmarshal(readGoldenBundle(t, "bindings_golden.json"), &bundle); err != nil {
+		t.Fatalf("parse frozen oracle: %v", err)
+	}
+
+	validateGoldenIdentity(t, "bindings resolve", bundle.Resolve.Names, bindingsResolveGoldenNames)
+	if len(bundle.Resolve.Cases) != len(bundle.Resolve.Names) {
+		t.Fatalf("bindings resolve: %d records for %d names", len(bundle.Resolve.Cases), len(bundle.Resolve.Names))
+	}
+	resolve := make(map[string]bindingsRefResult, len(bundle.Resolve.Cases))
+	errors := 0
+	for i, rec := range bundle.Resolve.Cases {
+		if rec.Error != "" {
+			errors++
+		}
+		resolve[bundle.Resolve.Names[i]] = rec
+	}
+	if errors != 3 {
+		t.Fatalf("bindings resolve bundle has %d error records, want 3", errors)
+	}
+
+	validateGoldenIdentity(t, "bindings witness", bundle.Witness.Names, bindingsWitnessGoldenNames)
+	if len(bundle.Witness.Cases) != len(bundle.Witness.Names) {
+		t.Fatalf("bindings witness: %d records for %d names", len(bundle.Witness.Cases), len(bundle.Witness.Names))
+	}
+	witness := make(map[string]bindingsWitnessGoldenCase, len(bundle.Witness.Cases))
+	for i, rec := range bundle.Witness.Cases {
+		if rec.BytesB64 == "" || rec.SHA256 == "" {
+			t.Fatalf("frozen witness record %q has no bytes", bundle.Witness.Names[i])
+		}
+		witness[bundle.Witness.Names[i]] = rec
+	}
+	return resolve, witness
+}
+
+// TestNativeBindingsDifferentialAgainstFrozenOracle pins ResolveBindings against
+// the frozen record of the real Python fallback authority
+// (_python_resolve_bindings and _python_check_capability_conflicts, captured in
+// testdata/bindings_golden.json). Bindings, resolution errors and graded
+// conflicts must agree case for case, and an unreadable recipe.toml (parsable
+// directory, unparsable bytes, absent directory) is skipped exactly as the
+// Python try/except swallows it.
+func TestNativeBindingsDifferentialAgainstFrozenOracle(t *testing.T) {
+	golden, _ := loadBindingsGolden(t)
+	catalog := bindingsCatalog(t)
+
+	for _, tc := range bindingsResolveCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			enabledJSON, err := json.Marshal(tc.enabled)
-			if err != nil {
-				t.Fatal(err)
-			}
-			explicit := tc.bindings
-			if explicit == nil {
-				explicit = []shared.ManifestBinding{}
-			}
-			bindingsJSON, err := json.Marshal(explicit)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			raw := runBindingsRefRaw(t, python, driver, "resolve", authority, catalog, string(enabledJSON), string(bindingsJSON))
-			var ref bindingsRefResult
-			if err := json.Unmarshal(raw, &ref); err != nil {
-				t.Fatalf("decode ref %s: %v", raw, err)
+			ref, ok := golden[tc.name]
+			if !ok {
+				t.Fatalf("frozen record %q missing", tc.name)
 			}
 
 			got := ResolveBindings(BindingRequest{
@@ -145,14 +215,14 @@ func TestNativeBindingsDifferentialAgainstPython(t *testing.T) {
 
 			if ref.Error != "" {
 				if len(got.Errors) != 1 || got.Errors[0] != ref.Error {
-					t.Fatalf("errors: go=%#v python=%q", got.Errors, ref.Error)
+					t.Fatalf("errors: go=%#v frozen=%q", got.Errors, ref.Error)
 				}
 			} else {
 				if len(got.Errors) != 0 {
-					t.Fatalf("go reported %#v but python resolved %#v", got.Errors, ref.Bindings)
+					t.Fatalf("go reported %#v but the frozen authority resolved %#v", got.Errors, ref.Bindings)
 				}
 				if !reflect.DeepEqual(got.Bindings, ref.Bindings) {
-					t.Fatalf("bindings: go=%#v python=%#v", got.Bindings, ref.Bindings)
+					t.Fatalf("bindings: go=%#v frozen=%#v", got.Bindings, ref.Bindings)
 				}
 			}
 			if ref.ConflictsError != "" {
@@ -166,52 +236,36 @@ func TestNativeBindingsDifferentialAgainstPython(t *testing.T) {
 				return
 			}
 			if !reflect.DeepEqual(got.Conflicts, ref.Conflicts) {
-				t.Fatalf("conflicts: go=%#v python=%#v", got.Conflicts, ref.Conflicts)
+				t.Fatalf("conflicts: go=%#v frozen=%#v", got.Conflicts, ref.Conflicts)
 			}
 		})
 	}
 }
 
-// TestNativeWitnessBytesMatchPythonWriter pins the exact on-disk witness bytes to
-// the Python writer: json.dumps(indent=2, sort_keys=True) plus one trailing
-// newline, key order included. The Go shared producer must reproduce it for every
-// state (bound, ambiguous, declared-not-bound, unbound) at a fixed instant.
-func TestNativeWitnessBytesMatchPythonWriter(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := bindingsRefPath(t)
+// TestNativeWitnessBytesMatchFrozenWriter pins the exact on-disk witness bytes
+// to the frozen record of the Python writer: json.dumps(indent=2,
+// sort_keys=True) plus one trailing newline, key order included. The Go shared
+// producer must reproduce it for every state (bound, ambiguous,
+// declared-not-bound, unbound) at a fixed instant.
+func TestNativeWitnessBytesMatchFrozenWriter(t *testing.T) {
+	_, witness := loadBindingsGolden(t)
 	catalog := bindingsCatalog(t)
 
 	const stamp = "2026-01-02T03:04:05Z"
-	cases := []struct {
-		name     string
-		enabled  []string
-		resolved map[string]string
-		declared bool
-	}{
-		{"bound names the resolved recipe", []string{"alpha"}, map[string]string{"tracker": "alpha"}, false},
-		{"bound wins over a competing declarer", []string{"alpha", "beta"}, map[string]string{"tracker": "beta"}, false},
-		{"ambiguous records every candidate in enabled order", []string{"beta", "alpha", "gamma"}, map[string]string{}, false},
-		{"declared-not-bound carries no candidate", []string{"gamma"}, map[string]string{}, true},
-		{"unbound carries no candidate", []string{"gamma"}, map[string]string{}, false},
-		{"single candidate with a declaration is declared-not-bound", []string{"alpha"}, map[string]string{}, true},
-		{"unreadable recipe declares nothing", []string{"broken", "gamma"}, map[string]string{}, false},
-	}
 
-	for _, tc := range cases {
+	for _, tc := range bindingsWitnessCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			enabledJSON, err := json.Marshal(tc.enabled)
+			rec, ok := witness[tc.name]
+			if !ok {
+				t.Fatalf("frozen record %q missing", tc.name)
+			}
+			want, err := base64.StdEncoding.DecodeString(rec.BytesB64)
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("decode frozen witness bytes: %v", err)
 			}
-			resolvedJSON, err := json.Marshal(tc.resolved)
-			if err != nil {
-				t.Fatal(err)
+			if gotSHA := sha256Hex(want); gotSHA != rec.SHA256 {
+				t.Fatalf("frozen witness sha256 = %s, recorded %s", gotSHA, rec.SHA256)
 			}
-			declared := "0"
-			if tc.declared {
-				declared = "1"
-			}
-			want := runBindingsRefRaw(t, python, driver, "witness", authority, catalog, string(enabledJSON), string(resolvedJSON), declared, stamp)
 
 			caps := acquireRecipeCapabilities(catalog, tc.enabled)
 			payload := shared.TrackerWitnessPayload(tc.enabled, caps, tc.resolved, tc.declared, stamp)
@@ -220,7 +274,7 @@ func TestNativeWitnessBytesMatchPythonWriter(t *testing.T) {
 				t.Fatalf("marshal witness: %v", err)
 			}
 			if !bytes.Equal(got, want) {
-				t.Fatalf("witness bytes diverge\n--- go ---\n%q\n--- python ---\n%q", got, want)
+				t.Fatalf("witness bytes diverge\n--- go ---\n%q\n--- frozen ---\n%q", got, want)
 			}
 		})
 	}

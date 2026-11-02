@@ -1,0 +1,143 @@
+{
+  "resolve": {
+    "cases": [
+      {
+        "bindings": {
+          "tracker": "alpha"
+        },
+        "conflicts": [],
+        "error": "",
+        "conflicts_error": ""
+      },
+      {
+        "bindings": {
+          "tracker": "alpha",
+          "vcs": "gamma"
+        },
+        "conflicts": [],
+        "error": "",
+        "conflicts_error": ""
+      },
+      {
+        "bindings": {},
+        "conflicts": [
+          {
+            "type": "capability",
+            "id": "tracker",
+            "recipes": [
+              "alpha",
+              "beta"
+            ],
+            "severity": "warning"
+          }
+        ],
+        "error": "",
+        "conflicts_error": ""
+      },
+      {
+        "bindings": {
+          "tracker": "beta"
+        },
+        "conflicts": [],
+        "error": "",
+        "conflicts_error": ""
+      },
+      {
+        "bindings": {
+          "tracker": "alpha"
+        },
+        "conflicts": null,
+        "error": "",
+        "conflicts_error": "Invalid value (at line 6, column 8)"
+      },
+      {
+        "bindings": {
+          "tracker": "alpha"
+        },
+        "conflicts": [],
+        "error": "",
+        "conflicts_error": ""
+      },
+      {
+        "bindings": null,
+        "conflicts": [
+          {
+            "type": "capability",
+            "id": "tracker",
+            "recipes": [
+              "alpha",
+              "beta"
+            ],
+            "severity": "fatal"
+          }
+        ],
+        "error": "duplicate explicit binding for capability 'tracker'",
+        "conflicts_error": ""
+      },
+      {
+        "bindings": null,
+        "conflicts": [],
+        "error": "explicit binding for capability 'tracker' references disabled/unknown recipe 'ghost'",
+        "conflicts_error": ""
+      },
+      {
+        "bindings": null,
+        "conflicts": [],
+        "error": "explicit binding for capability 'tracker' references recipe 'gamma' which does not declare that capability",
+        "conflicts_error": ""
+      }
+    ],
+    "names": [
+      "single tracker provider auto-binds",
+      "two capabilities auto-bind independently",
+      "ambiguous tracker is not bound",
+      "explicit binding wins over two declarers",
+      "unparsable recipe.toml is skipped",
+      "absent recipe directory is skipped",
+      "duplicate explicit binding raises",
+      "disabled or unknown recipe raises",
+      "undeclared capability raises"
+    ]
+  },
+  "witness": {
+    "cases": [
+      {
+        "bytes_b64": "ewogICJjYW5kaWRhdGVzIjogW10sCiAgImNhcGFiaWxpdHkiOiAidHJhY2tlciIsCiAgInJlY2lwZV9pZCI6ICJhbHBoYSIsCiAgInN0YXRlIjogImJvdW5kIiwKICAidiI6IDEsCiAgIndyaXR0ZW5fYXQiOiAiMjAyNi0wMS0wMlQwMzowNDowNVoiCn0K",
+        "sha256": "94d91953dc167f343c9103ec428e7990898b6136d8538defd24fd8231e5316bc"
+      },
+      {
+        "bytes_b64": "ewogICJjYW5kaWRhdGVzIjogW10sCiAgImNhcGFiaWxpdHkiOiAidHJhY2tlciIsCiAgInJlY2lwZV9pZCI6ICJiZXRhIiwKICAic3RhdGUiOiAiYm91bmQiLAogICJ2IjogMSwKICAid3JpdHRlbl9hdCI6ICIyMDI2LTAxLTAyVDAzOjA0OjA1WiIKfQo=",
+        "sha256": "7c04036c02d809b36ef82ffd0a739eea6826fc9439aa945203840ef7e18308ba"
+      },
+      {
+        "bytes_b64": "ewogICJjYW5kaWRhdGVzIjogWwogICAgImJldGEiLAogICAgImFscGhhIgogIF0sCiAgImNhcGFiaWxpdHkiOiAidHJhY2tlciIsCiAgInJlY2lwZV9pZCI6ICIiLAogICJzdGF0ZSI6ICJhbWJpZ3VvdXMiLAogICJ2IjogMSwKICAid3JpdHRlbl9hdCI6ICIyMDI2LTAxLTAyVDAzOjA0OjA1WiIKfQo=",
+        "sha256": "368a953bce0da93624bc7a10fd11f74a2adf15af8d17e528572389ec3147befd"
+      },
+      {
+        "bytes_b64": "ewogICJjYW5kaWRhdGVzIjogW10sCiAgImNhcGFiaWxpdHkiOiAidHJhY2tlciIsCiAgInJlY2lwZV9pZCI6ICIiLAogICJzdGF0ZSI6ICJkZWNsYXJlZC1ub3QtYm91bmQiLAogICJ2IjogMSwKICAid3JpdHRlbl9hdCI6ICIyMDI2LTAxLTAyVDAzOjA0OjA1WiIKfQo=",
+        "sha256": "eb1fb7633732bd9463e9a06db3f7dfa2bf85dc2a958bafea2efe882b8de93a71"
+      },
+      {
+        "bytes_b64": "ewogICJjYW5kaWRhdGVzIjogW10sCiAgImNhcGFiaWxpdHkiOiAidHJhY2tlciIsCiAgInJlY2lwZV9pZCI6ICIiLAogICJzdGF0ZSI6ICJ1bmJvdW5kIiwKICAidiI6IDEsCiAgIndyaXR0ZW5fYXQiOiAiMjAyNi0wMS0wMlQwMzowNDowNVoiCn0K",
+        "sha256": "0661ee8cf536576a4ec5c15b8ba0974d950fd944d765e5bbe4b911c693548565"
+      },
+      {
+        "bytes_b64": "ewogICJjYW5kaWRhdGVzIjogWwogICAgImFscGhhIgogIF0sCiAgImNhcGFiaWxpdHkiOiAidHJhY2tlciIsCiAgInJlY2lwZV9pZCI6ICIiLAogICJzdGF0ZSI6ICJkZWNsYXJlZC1ub3QtYm91bmQiLAogICJ2IjogMSwKICAid3JpdHRlbl9hdCI6ICIyMDI2LTAxLTAyVDAzOjA0OjA1WiIKfQo=",
+        "sha256": "5795fe0d6876841bbfbc76a5c5ad2c8a1f4a90d00937d2bd9c24537543820c3b"
+      },
+      {
+        "bytes_b64": "ewogICJjYW5kaWRhdGVzIjogW10sCiAgImNhcGFiaWxpdHkiOiAidHJhY2tlciIsCiAgInJlY2lwZV9pZCI6ICIiLAogICJzdGF0ZSI6ICJ1bmJvdW5kIiwKICAidiI6IDEsCiAgIndyaXR0ZW5fYXQiOiAiMjAyNi0wMS0wMlQwMzowNDowNVoiCn0K",
+        "sha256": "0661ee8cf536576a4ec5c15b8ba0974d950fd944d765e5bbe4b911c693548565"
+      }
+    ],
+    "names": [
+      "bound names the resolved recipe",
+      "bound wins over a competing declarer",
+      "ambiguous records every candidate in enabled order",
+      "declared-not-bound carries no candidate",
+      "unbound carries no candidate",
+      "single candidate with a declaration is declared-not-bound",
+      "unreadable recipe declares nothing"
+    ]
+  }
+}
