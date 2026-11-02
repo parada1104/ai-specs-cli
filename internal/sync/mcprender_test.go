@@ -4,19 +4,226 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// mcpRefResult is the canonical JSON emitted by testdata/mcprender_ref.py.
-type mcpRefResult struct {
-	Stdout    string  `json:"stdout"`
-	Stderr    string  `json:"stderr"`
+// --- frozen oracle ----------------------------------------------------------
+
+// mcpGoldenCase is one frozen record of testdata/mcprender_golden.json: the
+// properties the live differential compared — rc, stdout, the written target
+// bytes and stderr. For traceback records Python stderr is an uncaught traceback
+// embedding host paths, so Stderr is nil and only the exception-type marker is
+// frozen, exactly the containment check the live test made. The capture scanned
+// every frozen string for host paths and found none, so the bundle carries no
+// host-path token.
+type mcpGoldenCase struct {
+	Kind      string  `json:"kind"` // differential
 	RC        int     `json:"rc"`
+	Stdout    string  `json:"stdout"`
+	Stderr    *string `json:"stderr,omitempty"`
+	ExcMarker string  `json:"exc_marker,omitempty"`
 	TargetB64 *string `json:"target_b64"`
+}
+
+// mcpGoldenInventory is the hard-coded identity inventory of the frozen bundle:
+// the exact case names in capture order, all of the single "differential" kind.
+// It is an independent oracle of coverage, kept in the test and never derived
+// from the bundle, so a missing, renamed, duplicated or reordered record fails
+// before any case loop runs.
+var mcpGoldenInventory = []string{
+	"claude .mcp.json mcpServers",
+	"cursor .cursor/mcp.json mcpServers",
+	"opencode opencode.json mcp",
+	"codex .codex/config.toml mcp_servers",
+	"gemini .gemini/settings.json mcpServers",
+	"pi .mcp.json mcpServers",
+	"omp .omp/mcp.json mcpServers",
+	"existing json preserves keys order duplicates and unicode",
+	"existing json numeric extremes round-trip",
+	"invalid json becomes empty object",
+	"json array becomes empty object",
+	"json scalar becomes empty object",
+	"opencode schema not first is promoted",
+	"opencode schema default inserted",
+	"opencode schema null preserved",
+	"recipe mcp merges and overrides",
+	"recipe mcp big integer json agent",
+	"recipe mcp big integer codex toml",
+	"recipe mcp non-object json ignored",
+	"recipe mcp missing file is ignored",
+	"codex strips prior blocks and keeps user tables",
+	"codex CRLF lines",
+	"env ref quirks generic",
+	"env ref quirks opencode local",
+	"opencode remote url stays literal",
+	"missing manifest rc 1",
+	"manifest without mcp entries skips",
+	"dry-run json",
+	"dry-run toml",
+	"target unreadable json",
+	"target unreadable toml",
+	"target invalid utf8 json",
+	"target invalid utf8 toml",
+	"target is a directory",
+	"recipe mcp unreadable",
+	"recipe mcp invalid utf8",
+	"recipe mcp invalid json ignored",
+	"manifest unreadable",
+	"manifest invalid utf8",
+	"json nan infinity literals",
+	"json lone surrogate escape",
+	"json raw control char rejected",
+	"recipe json nan json agent",
+	"recipe json nan codex toml",
+	"recipe lone surrogate codex toml",
+	"surrogate server name codex toml truncates existing target",
+	"surrogate server name codex toml creates empty target",
+	"surrogate env key codex toml truncates existing target",
+	"surrogate server name json escaped is unaffected",
+}
+
+// mcpGoldenKindCounts is the per-kind count of the inventory above.
+var mcpGoldenKindCounts = map[string]int{"differential": 49}
+
+// mcpGoldenDroppedStderr is the dropped-stderr inventory: for each traceback
+// record, the exception-type marker that was frozen instead of the Python
+// stderr. The Python stderr of those records is an uncaught traceback that
+// embeds host paths (verified at capture time), and the live test never compared
+// it beyond the marker.
+var mcpGoldenDroppedStderr = map[string]string{
+	"target unreadable json":   "PermissionError",
+	"target unreadable toml":   "PermissionError",
+	"target invalid utf8 json": "UnicodeDecodeError",
+	"target invalid utf8 toml": "UnicodeDecodeError",
+	"target is a directory":    "IsADirectoryError",
+	"recipe mcp unreadable":    "PermissionError",
+	"recipe mcp invalid utf8":  "UnicodeDecodeError",
+	"manifest unreadable":      "PermissionError",
+	"manifest invalid utf8":    "UnicodeDecodeError",
+	"surrogate server name codex toml truncates existing target": "UnicodeEncodeError",
+	"surrogate server name codex toml creates empty target":      "UnicodeEncodeError",
+	"surrogate env key codex toml truncates existing target":     "UnicodeEncodeError",
+}
+
+// checkMCPGoldenInventory validates one loaded bundle against the hard-coded
+// identity, per-kind and dropped-stderr inventories. It is pure so the focused
+// control can run it against a mutated in-memory copy.
+func checkMCPGoldenInventory(names []string, cases []mcpGoldenCase) error {
+	if len(names) != len(mcpGoldenInventory) {
+		return fmt.Errorf("frozen oracle has %d names, want %d", len(names), len(mcpGoldenInventory))
+	}
+	if len(cases) != len(names) {
+		return fmt.Errorf("frozen oracle has %d records for %d names", len(cases), len(names))
+	}
+	seen := make(map[string]bool, len(names))
+	kinds := map[string]int{}
+	dropped := 0
+	for i, tc := range cases {
+		if names[i] != mcpGoldenInventory[i] {
+			return fmt.Errorf("frozen oracle record %d is %q, want %q (identity mismatch)", i, names[i], mcpGoldenInventory[i])
+		}
+		if seen[names[i]] {
+			return fmt.Errorf("frozen oracle duplicates record %q", names[i])
+		}
+		seen[names[i]] = true
+		if tc.Kind != "differential" {
+			return fmt.Errorf("frozen oracle record %q has kind %q, want %q", names[i], tc.Kind, "differential")
+		}
+		kinds[tc.Kind]++
+		if marker, isDropped := mcpGoldenDroppedStderr[names[i]]; isDropped {
+			dropped++
+			if tc.Stderr != nil {
+				return fmt.Errorf("frozen oracle record %q must drop its traceback stderr", names[i])
+			}
+			if tc.ExcMarker != marker {
+				return fmt.Errorf("frozen oracle record %q has exception marker %q, want %q", names[i], tc.ExcMarker, marker)
+			}
+		} else {
+			if tc.Stderr == nil {
+				return fmt.Errorf("frozen oracle record %q must freeze its stderr", names[i])
+			}
+			if tc.ExcMarker != "" {
+				return fmt.Errorf("frozen oracle record %q carries an unexpected exception marker %q", names[i], tc.ExcMarker)
+			}
+		}
+	}
+	if dropped != len(mcpGoldenDroppedStderr) {
+		return fmt.Errorf("frozen oracle drops %d stderr records, want %d", dropped, len(mcpGoldenDroppedStderr))
+	}
+	for kind, want := range mcpGoldenKindCounts {
+		if kinds[kind] != want {
+			return fmt.Errorf("frozen oracle has %d %s records, want %d", kinds[kind], kind, want)
+		}
+	}
+	return nil
+}
+
+// loadMCPGolden validates and indexes testdata/mcprender_golden.json. The
+// inventories are asserted before any case loop runs.
+func loadMCPGolden(t *testing.T) map[string]mcpGoldenCase {
+	t.Helper()
+	var bundle struct {
+		Names []string        `json:"names"`
+		Cases []mcpGoldenCase `json:"cases"`
+	}
+	if err := json.Unmarshal(readGoldenBundle(t, "mcprender_golden.json"), &bundle); err != nil {
+		t.Fatalf("parse frozen oracle: %v", err)
+	}
+	if err := checkMCPGoldenInventory(bundle.Names, bundle.Cases); err != nil {
+		t.Fatalf("frozen mcp-render oracle: %v", err)
+	}
+	golden := make(map[string]mcpGoldenCase, len(bundle.Cases))
+	for i, rec := range bundle.Cases {
+		golden[bundle.Names[i]] = rec
+	}
+	return golden
+}
+
+// frozenMCPRecord looks up one frozen record by its identity name.
+func frozenMCPRecord(t *testing.T, golden map[string]mcpGoldenCase, name string) mcpGoldenCase {
+	t.Helper()
+	rec, ok := golden[name]
+	if !ok {
+		t.Fatalf("frozen record %q missing", name)
+	}
+	return rec
+}
+
+// TestMCPRenderFrozenInventoryControl proves the inventory validation bites: the
+// intact bundle validates, while renaming, removing or duplicating a record (all
+// in memory, never on disk) fails loudly.
+func TestMCPRenderFrozenInventoryControl(t *testing.T) {
+	var bundle struct {
+		Names []string        `json:"names"`
+		Cases []mcpGoldenCase `json:"cases"`
+	}
+	if err := json.Unmarshal(readGoldenBundle(t, "mcprender_golden.json"), &bundle); err != nil {
+		t.Fatalf("parse frozen oracle: %v", err)
+	}
+	if err := checkMCPGoldenInventory(bundle.Names, bundle.Cases); err != nil {
+		t.Fatalf("intact inventory must validate: %v", err)
+	}
+
+	renamed := append([]string{}, bundle.Names...)
+	renamed[0] = "renamed record"
+	if err := checkMCPGoldenInventory(renamed, bundle.Cases); err == nil {
+		t.Fatal("a renamed record must fail the inventory validation")
+	}
+
+	missing := append(append([]mcpGoldenCase{}, bundle.Cases[:1]...), bundle.Cases[2:]...)
+	if err := checkMCPGoldenInventory(bundle.Names, missing); err == nil {
+		t.Fatal("a removed record must fail the inventory validation")
+	}
+
+	duplicated := append(append([]mcpGoldenCase{}, bundle.Cases...), bundle.Cases[0])
+	doubledNames := append(append([]string{}, bundle.Names...), bundle.Names[0])
+	if err := checkMCPGoldenInventory(doubledNames, duplicated); err == nil {
+		t.Fatal("a duplicated record must fail the inventory validation")
+	}
 }
 
 // mcpRefCase is one differential scenario for the mcp-render port.
@@ -75,59 +282,6 @@ command = ['node', 'server.js']
 `
 
 func mcpStr(s string) *string { return &s }
-
-func mcpB64(s string) *string {
-	b := base64.StdEncoding.EncodeToString([]byte(s))
-	return &b
-}
-
-func runMCPRef(t *testing.T, root, script string, tc mcpRefCase) mcpRefResult {
-	t.Helper()
-	caseJSON := map[string]any{
-		"manifest_rel":   mcpManifestRel,
-		"target_rel":     tc.targetRel,
-		"agent":          tc.agent,
-		"mcp_key":        tc.mcpKey,
-		"dry_run":        tc.dryRun,
-		"recipe_rel":     tc.recipeRel,
-		"target_dir":     tc.targetDir,
-		"unreadable_rel": tc.unreadableRel,
-	}
-	if tc.manifest != nil {
-		caseJSON["manifest_b64"] = mcpB64(*tc.manifest)
-	} else {
-		caseJSON["manifest_b64"] = nil
-	}
-	if tc.recipe != nil {
-		caseJSON["recipe_b64"] = mcpB64(*tc.recipe)
-	} else {
-		caseJSON["recipe_b64"] = nil
-	}
-	if tc.target != nil {
-		caseJSON["target_b64"] = mcpB64(*tc.target)
-	} else {
-		caseJSON["target_b64"] = nil
-	}
-	payload, err := json.Marshal(caseJSON)
-	if err != nil {
-		t.Fatalf("marshal case: %v", err)
-	}
-	cmd := exec.Command("python3", script)
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "PYTHONUTF8=1")
-	cmd.Stdin = bytes.NewReader(payload)
-	var out, errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("ref driver failed: %v\nstderr: %s", err, errBuf.String())
-	}
-	var ref mcpRefResult
-	if err := json.Unmarshal(out.Bytes(), &ref); err != nil {
-		t.Fatalf("parse ref JSON: %v\nraw: %s", err, out.String())
-	}
-	return ref
-}
 
 // runMCPGo runs the Go port against a fresh sandbox with the same layout the
 // ref driver uses, returning stdout/stderr (temp root collapsed to <TEMP>),
@@ -194,36 +348,37 @@ func runMCPGo(t *testing.T, tc mcpRefCase) (string, string, int, *string) {
 }
 
 // TestMCPRenderDifferential requires byte equality of the written file bytes,
-// stdout, stderr and exit code across the Go port and the REAL mcp-render.py.
+// stdout, stderr and exit code across the Go port and the frozen records captured
+// from the REAL mcp-render.py (PR2-B S11).
 func TestMCPRenderDifferential(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	root := gitignoreRepoRoot(t)
-	refScript := filepath.Join(root, "internal", "sync", "testdata", "mcprender_ref.py")
+	golden := loadMCPGolden(t)
 
 	for _, tc := range mcpRenderCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.unreadableRel != "" && os.Geteuid() == 0 {
 				t.Skip("chmod 000 does not deny reads as root")
 			}
-			ref := runMCPRef(t, root, refScript, tc)
+			ref := frozenMCPRecord(t, golden, tc.name)
+			if tc.tracebackStderr != (ref.Stderr == nil) {
+				t.Fatalf("frozen record stderr/dropped mismatch (traceback=%v)", tc.tracebackStderr)
+			}
 			goOut, goErr, goRC, goTarget := runMCPGo(t, tc)
 
 			if goOut != ref.Stdout {
-				t.Errorf("stdout differs\n--- go ---\n%q\n--- ref ---\n%q", goOut, ref.Stdout)
+				t.Errorf("stdout differs\n--- go ---\n%q\n--- frozen ---\n%q", goOut, ref.Stdout)
 			}
 			if goRC != ref.RC {
-				t.Errorf("rc: go=%d ref=%d", goRC, ref.RC)
+				t.Errorf("rc: go=%d frozen=%d", goRC, ref.RC)
 			}
 			if !govPtrEqual(goTarget, ref.TargetB64) {
-				t.Errorf("target bytes differ\n  go:  %s\n  ref: %s",
+				t.Errorf("target bytes differ\n  go:     %s\n  frozen: %s",
 					derefString(goTarget), derefString(ref.TargetB64))
 			}
 			if tc.tracebackStderr {
-				// Python's stderr is an unreproducible traceback here.
-				if !strings.Contains(ref.Stderr, tc.pythonExc) {
-					t.Errorf("ref stderr missing %q:\n%s", tc.pythonExc, ref.Stderr)
+				// Only the exception-type marker is frozen here; Python's stderr
+				// is an unreproducible traceback embedding host paths.
+				if ref.ExcMarker != tc.pythonExc {
+					t.Errorf("frozen exception marker %q, want %q", ref.ExcMarker, tc.pythonExc)
 				}
 				lines := strings.Split(strings.TrimSuffix(goErr, "\n"), "\n")
 				if len(lines) != 1 || !strings.HasPrefix(lines[0], "error: ") {
@@ -234,8 +389,8 @@ func TestMCPRenderDifferential(t *testing.T) {
 				}
 				return
 			}
-			if goErr != ref.Stderr {
-				t.Errorf("stderr differs\n--- go ---\n%q\n--- ref ---\n%q", goErr, ref.Stderr)
+			if goErr != *ref.Stderr {
+				t.Errorf("stderr differs\n--- go ---\n%q\n--- frozen ---\n%q", goErr, *ref.Stderr)
 			}
 		})
 	}
