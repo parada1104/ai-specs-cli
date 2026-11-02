@@ -8,14 +8,15 @@ package sync
 // marker, prints the deferred-action info lines, and warns on an unknown
 // action. The runner is added, not wired; S14 owns the sync-pipeline wiring.
 //
-// The differential test at the bottom shells out to the real Python module via
-// testdata/hooksrunner_ref.py (the bindings_test.go / hooksrender_test.go
-// shape) and compares the marker file bytes, the raised error string and the
-// captured info/warning lines scenario by scenario.
+// The differential test at the bottom compares against the frozen oracle bundle
+// testdata/hooksrunner_golden.json (captured once from the real Python module via
+// testdata/hooksrunner_ref.py, PR2-B S9) and requires the marker file bytes, the
+// raised error string and the captured info/warning lines scenario by scenario.
 
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,43 +26,156 @@ import (
 	"ai-specs.dev/ai-specs/internal/projectcache"
 )
 
-// hooksRunnerRefPath resolves the reference driver under this package (go test
-// cwd is internal/sync).
-func hooksRunnerRefPath(t *testing.T) string {
-	t.Helper()
-	path, err := filepath.Abs(filepath.Join("testdata", "hooksrunner_ref.py"))
-	if err != nil {
-		t.Fatalf("resolve ref driver: %v", err)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("ref driver %s: %v", path, err)
-	}
-	return path
+// --- frozen oracle ----------------------------------------------------------
+
+// hooksRunnerGoldenCase is one frozen record of testdata/hooksrunner_golden.json:
+// the properties the live differential compared — the raised error string, stdout,
+// stderr and the bootstrap-board marker bytes (Marker nil when the oracle wrote
+// no marker). The capture scanned every frozen string for host paths and found
+// none, so the bundle carries no host-path token.
+type hooksRunnerGoldenCase struct {
+	Kind   string  `json:"kind"` // differential | repr
+	Error  string  `json:"error"`
+	Stdout string  `json:"stdout"`
+	Stderr string  `json:"stderr"`
+	Marker *string `json:"marker,omitempty"`
 }
 
-// hooksRunnerRefOut is the canonical JSON testdata/hooksrunner_ref.py emits.
-type hooksRunnerRefOut struct {
-	Error  string `json:"error"`
-	Stdout string `json:"stdout"`
-	Stderr string `json:"stderr"`
+// hooksRunnerGoldenIdentity is one entry of the hard-coded identity inventory.
+type hooksRunnerGoldenIdentity struct {
+	Kind, Name string
+	Marker     bool
 }
 
-// runHooksRunnerRef runs the reference driver once and decodes its envelope.
-func runHooksRunnerRef(t *testing.T, python, driver string, args ...string) hooksRunnerRefOut {
+// hooksRunnerGoldenInventory is the hard-coded identity inventory of the frozen
+// bundle: the exact case names in capture order, their kind and whether the
+// oracle wrote a bootstrap marker. It is an independent oracle of coverage, kept
+// in the test and never derived from the bundle, so a missing, renamed,
+// duplicated or reordered record fails before any case loop runs.
+var hooksRunnerGoldenInventory = []hooksRunnerGoldenIdentity{
+	{"differential", "all actions in declaration order", true},
+	{"differential", "bootstrap marker with defaults", true},
+	{"differential", "bootstrap marker with config values", true},
+	{"differential", "required field missing", false},
+	{"differential", "field not present is skipped", false},
+	{"differential", "first missing field wins declaration order", false},
+	{"differential", "board_id shortLink rejected", false},
+	{"differential", "board_id 24-hex regex matches", false},
+	{"differential", "board_id regex mismatch", false},
+	{"differential", "slug regex matches", false},
+	{"differential", "slug regex mismatch", false},
+	{"repr", "nested map", false},
+	{"repr", "nil inside a slice", false},
+}
+
+// hooksRunnerGoldenKindCounts is the per-kind count of the inventory above.
+var hooksRunnerGoldenKindCounts = map[string]int{"differential": 11, "repr": 2}
+
+// checkHooksRunnerGoldenInventory validates one loaded bundle against the
+// hard-coded identity, per-kind and marker inventories. It is pure so the
+// focused control can run it against a mutated in-memory copy.
+func checkHooksRunnerGoldenInventory(names []string, cases []hooksRunnerGoldenCase) error {
+	if len(names) != len(hooksRunnerGoldenInventory) {
+		return fmt.Errorf("frozen oracle has %d names, want %d", len(names), len(hooksRunnerGoldenInventory))
+	}
+	if len(cases) != len(names) {
+		return fmt.Errorf("frozen oracle has %d records for %d names", len(cases), len(names))
+	}
+	seen := make(map[string]bool, len(names))
+	kinds := map[string]int{}
+	for i, tc := range cases {
+		want := hooksRunnerGoldenInventory[i]
+		if names[i] != want.Name {
+			return fmt.Errorf("frozen oracle record %d is %q, want %q (identity mismatch)", i, names[i], want.Name)
+		}
+		if seen[names[i]] {
+			return fmt.Errorf("frozen oracle duplicates record %q", names[i])
+		}
+		seen[names[i]] = true
+		if tc.Kind != want.Kind {
+			return fmt.Errorf("frozen oracle record %q has kind %q, want %q", names[i], tc.Kind, want.Kind)
+		}
+		kinds[tc.Kind]++
+		if (tc.Marker != nil) != want.Marker {
+			return fmt.Errorf("frozen oracle record %q has marker=%v, want %v", names[i], tc.Marker != nil, want.Marker)
+		}
+	}
+	for kind, want := range hooksRunnerGoldenKindCounts {
+		if kinds[kind] != want {
+			return fmt.Errorf("frozen oracle has %d %s records, want %d", kinds[kind], kind, want)
+		}
+	}
+	return nil
+}
+
+// loadHooksRunnerGolden validates and indexes testdata/hooksrunner_golden.json.
+// The inventory is asserted before any case loop runs.
+func loadHooksRunnerGolden(t *testing.T) map[string]hooksRunnerGoldenCase {
 	t.Helper()
-	cmd := exec.Command(python, append([]string{driver}, args...)...)
-	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("python oracle failed: %v\nstderr: %s", err, stderr.String())
+	var bundle struct {
+		Names []string                `json:"names"`
+		Cases []hooksRunnerGoldenCase `json:"cases"`
 	}
-	var out hooksRunnerRefOut
-	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
-		t.Fatalf("decode ref %s: %v", stdout.String(), err)
+	if err := json.Unmarshal(readGoldenBundle(t, "hooksrunner_golden.json"), &bundle); err != nil {
+		t.Fatalf("parse frozen oracle: %v", err)
 	}
-	return out
+	if err := checkHooksRunnerGoldenInventory(bundle.Names, bundle.Cases); err != nil {
+		t.Fatalf("frozen hooks-runner oracle: %v", err)
+	}
+	golden := make(map[string]hooksRunnerGoldenCase, len(bundle.Cases))
+	for i, rec := range bundle.Cases {
+		golden[bundle.Names[i]] = rec
+	}
+	return golden
+}
+
+// frozenHooksRunnerRecord looks up one frozen record by its identity name.
+func frozenHooksRunnerRecord(t *testing.T, golden map[string]hooksRunnerGoldenCase, name string) hooksRunnerGoldenCase {
+	t.Helper()
+	rec, ok := golden[name]
+	if !ok {
+		t.Fatalf("frozen record %q missing", name)
+	}
+	return rec
+}
+
+// TestHooksRunnerFrozenInventoryControl proves the inventory validation bites:
+// the intact bundle validates, while renaming, removing or duplicating a record
+// (all in memory, never on disk) fails loudly.
+func TestHooksRunnerFrozenInventoryControl(t *testing.T) {
+	var bundle struct {
+		Names []string                `json:"names"`
+		Cases []hooksRunnerGoldenCase `json:"cases"`
+	}
+	if err := json.Unmarshal(readGoldenBundle(t, "hooksrunner_golden.json"), &bundle); err != nil {
+		t.Fatalf("parse frozen oracle: %v", err)
+	}
+	if err := checkHooksRunnerGoldenInventory(bundle.Names, bundle.Cases); err != nil {
+		t.Fatalf("intact inventory must validate: %v", err)
+	}
+
+	renamed := append([]string{}, bundle.Names...)
+	renamed[0] = "renamed record"
+	if err := checkHooksRunnerGoldenInventory(renamed, bundle.Cases); err == nil {
+		t.Fatal("a renamed record must fail the inventory validation")
+	}
+
+	missing := append(append([]hooksRunnerGoldenCase{}, bundle.Cases[:1]...), bundle.Cases[2:]...)
+	if err := checkHooksRunnerGoldenInventory(bundle.Names, missing); err == nil {
+		t.Fatal("a removed record must fail the inventory validation")
+	}
+
+	duplicated := append(append([]hooksRunnerGoldenCase{}, bundle.Cases...), bundle.Cases[0])
+	doubledNames := append(append([]string{}, bundle.Names...), bundle.Names[0])
+	if err := checkHooksRunnerGoldenInventory(doubledNames, duplicated); err == nil {
+		t.Fatal("a duplicated record must fail the inventory validation")
+	}
+
+	mutated := append([]hooksRunnerGoldenCase{}, bundle.Cases...)
+	mutated[0].Marker = nil
+	if err := checkHooksRunnerGoldenInventory(bundle.Names, mutated); err == nil {
+		t.Fatal("a mutated marker presence must fail the inventory validation")
+	}
 }
 
 // hooksRunnerCatalog is the shared fixture catalog: one recipe per action and
@@ -156,44 +270,38 @@ func readHooksMarker(t *testing.T, root, cliHome, recipeID string) ([]byte, bool
 	return data, true
 }
 
-// TestRecipeHooksDifferentialAgainstPython pins RunRecipeHooks against the real
-// Python execute_hooks: the marker bytes, the raised error string and the
-// printed info/warning lines must agree scenario by scenario.
-func TestRecipeHooksDifferentialAgainstPython(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := hooksRunnerRefPath(t)
+// TestRecipeHooksDifferentialFrozen pins RunRecipeHooks against the frozen
+// records captured once from the real Python execute_hooks (PR2-B S9): the
+// marker bytes, the raised error string and the printed info/warning lines must
+// agree scenario by scenario.
+func TestRecipeHooksDifferentialFrozen(t *testing.T) {
+	golden := loadHooksRunnerGolden(t)
 	catalog := hooksRunnerCatalog(t)
 	cliHome := t.TempDir()
 
 	for _, tc := range hooksRunnerScenarios() {
 		t.Run(tc.name, func(t *testing.T) {
-			mergedJSON, err := json.Marshal(tc.merged)
-			if err != nil {
-				t.Fatal(err)
-			}
-			pyRoot := t.TempDir()
+			ref := frozenHooksRunnerRecord(t, golden, tc.name)
 			goRoot := t.TempDir()
 
-			ref := runHooksRunnerRef(t, python, driver, "run", authority, catalog, tc.recipe, pyRoot, cliHome, string(mergedJSON))
 			goOut, goErr, goMessage := runNativeRecipeHooks(t, catalog, tc.recipe, tc.merged, goRoot, cliHome)
 
 			if goMessage != ref.Error {
-				t.Fatalf("error: go=%q python=%q", goMessage, ref.Error)
+				t.Fatalf("error: go=%q frozen=%q", goMessage, ref.Error)
 			}
 			if goOut != ref.Stdout {
-				t.Fatalf("stdout:\n--- go ---\n%q\n--- python ---\n%q", goOut, ref.Stdout)
+				t.Fatalf("stdout:\n--- go ---\n%q\n--- frozen ---\n%q", goOut, ref.Stdout)
 			}
 			if goErr != ref.Stderr {
-				t.Fatalf("stderr:\n--- go ---\n%q\n--- python ---\n%q", goErr, ref.Stderr)
+				t.Fatalf("stderr:\n--- go ---\n%q\n--- frozen ---\n%q", goErr, ref.Stderr)
 			}
 
-			pyMarker, pyOK := readHooksMarker(t, pyRoot, cliHome, tc.recipe)
 			goMarker, goOK := readHooksMarker(t, goRoot, cliHome, tc.recipe)
-			if pyOK != goOK {
-				t.Fatalf("marker presence: go=%v python=%v", goOK, pyOK)
+			if goOK != (ref.Marker != nil) {
+				t.Fatalf("marker presence: go=%v frozen=%v", goOK, ref.Marker != nil)
 			}
-			if !bytes.Equal(pyMarker, goMarker) {
-				t.Fatalf("marker bytes:\n--- go ---\n%q\n--- python ---\n%q", goMarker, pyMarker)
+			if goOK && string(goMarker) != *ref.Marker {
+				t.Fatalf("marker bytes:\n--- go ---\n%q\n--- frozen ---\n%q", goMarker, *ref.Marker)
 			}
 		})
 	}
@@ -481,12 +589,12 @@ func hooksRunnerReprCatalog(t *testing.T) string {
 // nested value that arrives here as a Go map[string]any falls through to fmt's
 // %v (printing map[a:1] where Python prints {'a': 1}), and a nil nested inside
 // a []any prints as an empty string (where Python prints None). These strings
-// surface in this runner's validation error messages and marker bytes, so both
-// sides are pinned against the real Python authority. A nested-value repr fix
-// belongs to the repr-port owner (internal/config), not to the hooks runner.
+// surface in this runner's validation error messages and marker bytes, so the
+// Python side is pinned against the frozen oracle record and the native side
+// against the recorded divergence. A nested-value repr fix belongs to the
+// repr-port owner (internal/config), not to the hooks runner.
 func TestRecipeHooksNestedValueReprDivergence(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := hooksRunnerRefPath(t)
+	golden := loadHooksRunnerGolden(t)
 	catalog := hooksRunnerReprCatalog(t)
 	cliHome := t.TempDir()
 
@@ -501,12 +609,7 @@ func TestRecipeHooksNestedValueReprDivergence(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			mergedJSON, err := json.Marshal(tc.merged)
-			if err != nil {
-				t.Fatal(err)
-			}
-			ref := runHooksRunnerRef(t, python, driver, "run", authority, catalog, "hookrepr",
-				t.TempDir(), cliHome, string(mergedJSON))
+			ref := frozenHooksRunnerRecord(t, golden, tc.name)
 			_, _, goMessage := runNativeRecipeHooks(t, catalog, "hookrepr", tc.merged, t.TempDir(), cliHome)
 
 			pyWant := "recipe 'hookrepr': hook 'validate-config' failed: field 'nested' value '" +
@@ -514,13 +617,13 @@ func TestRecipeHooksNestedValueReprDivergence(t *testing.T) {
 			goWant := "recipe 'hookrepr': hook 'validate-config' failed: field 'nested' value '" +
 				tc.goValue + "' does not match required pattern '[0-9]+'"
 			if ref.Error != pyWant {
-				t.Fatalf("python error = %q, want %q", ref.Error, pyWant)
+				t.Fatalf("frozen error = %q, want %q", ref.Error, pyWant)
 			}
 			if goMessage != goWant {
 				t.Fatalf("native error = %q, want %q", goMessage, goWant)
 			}
 			if goMessage == ref.Error {
-				t.Fatalf("native and python now agree (%q); the recorded repr divergence changed", goMessage)
+				t.Fatalf("native and frozen now agree (%q); the recorded repr divergence changed", goMessage)
 			}
 		})
 	}
