@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,18 +13,213 @@ import (
 	"ai-specs.dev/ai-specs/internal/toml"
 )
 
-// agentsRenderRefError is the {"error": {...}} payload testdata/agentsrender_ref.py
-// emits when the Python authority raises (the brief-modes validation path).
+// agentsRenderRefError is the {"error": {...}} payload the frozen
+// agentsrender bundle carries when the Python authority raised (the
+// brief-modes validation path).
 type agentsRenderRefError struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
 }
 
-// agentsRenderRefResult is the canonical JSON emitted by the ref driver.
-type agentsRenderRefResult struct {
-	BytesB64 string                `json:"bytes_b64"`
-	SHA256   string                `json:"sha256"`
+// agentsRenderGoldenCase is one frozen record of
+// testdata/agentsrender_golden.json (PR2-B S4): the render-core authority for
+// one agentsRenderCases entry. Exactly one of (bytes/sha) and (error) is set.
+type agentsRenderGoldenCase struct {
+	Name     string                `json:"name"`
+	BytesB64 *string               `json:"bytes_b64"`
+	SHA256   *string               `json:"sha256"`
 	Error    *agentsRenderRefError `json:"error"`
+}
+
+// goldenB64Artifact freezes both the presence and the exact bytes of one
+// output file (PR2-B S4 step bundle).
+type goldenB64Artifact struct {
+	Present bool   `json:"present"`
+	B64     string `json:"b64"`
+}
+
+// agentsStepGoldenCase is one frozen record of
+// testdata/agentsstep_golden.json: the observable surface of the real
+// two-module Python sequence (brief-render-policy.py + agents-render.py) that
+// sync ran before T3, over one briefGovCases entry.
+type agentsStepGoldenCase struct {
+	Name   string            `json:"name"`
+	Stdout string            `json:"stdout"`
+	Stderr string            `json:"stderr"`
+	RC     int               `json:"rc"`
+	Agents goldenB64Artifact `json:"agents"`
+	Lock   goldenB64Artifact `json:"lock"`
+}
+
+// agentsRenderGoldenNames is the hard-coded identity inventory of the frozen
+// agentsrender bundle: exact case names in capture order (13 = 11 render +
+// 2 error). Kept in the test, never derived from the bundle.
+var agentsRenderGoldenNames = []string{
+	"minimal manifest project only",
+	"full manifest with every brief section",
+	"deps and recipe brief fragments",
+	"config substitution edge cases",
+	"mcp env redaction",
+	"missing optional sections",
+	"blank optional sections",
+	"repo topology from project field",
+	"unknown vcs recipe uses generic label",
+	"vcs sibling filtering keeps only the bound provider",
+	"replace modes suppress recipe fragments per section",
+	"invalid brief mode raises",
+	"invalid brief mode date raises",
+}
+
+// briefGovGoldenNames is the hard-coded identity inventory of the frozen
+// briefgov bundle (13 governance cases, capture order).
+var briefGovGoldenNames = []string{
+	"missing writes",
+	"managed_stale writes",
+	"marker preserves",
+	"marker preserves with inert preserve flag",
+	"untracked preserves",
+	"untracked adopts with adopt_brief",
+	"user_modified preserves",
+	"user_modified adopts with adopt_brief",
+	"corrupt lock is undetermined and preserves",
+	"brief render false disables the policy gate",
+	"brief render non-boolean string fails safe under validate",
+	"brief render non-boolean int fails safe under validate",
+	"unknown vcs recipe warns on stderr",
+}
+
+// agentsStepGoldenNames is the hard-coded identity inventory of the frozen
+// composed-step bundle (11 = briefGov order minus the two --validate cases,
+// which are off the sync path).
+var agentsStepGoldenNames = []string{
+	"missing writes",
+	"managed_stale writes",
+	"marker preserves",
+	"marker preserves with inert preserve flag",
+	"untracked preserves",
+	"untracked adopts with adopt_brief",
+	"user_modified preserves",
+	"user_modified adopts with adopt_brief",
+	"corrupt lock is undetermined and preserves",
+	"brief render false disables the policy gate",
+	"unknown vcs recipe warns on stderr",
+}
+
+// validateGoldenIdentity checks one bundle's recorded names against the
+// hard-coded inventory: exact order, no duplicates, exact length.
+func validateGoldenIdentity(t *testing.T, bundle string, gotNames, wantNames []string) {
+	t.Helper()
+	if len(gotNames) != len(wantNames) {
+		t.Fatalf("%s: %d records, want %d", bundle, len(gotNames), len(wantNames))
+	}
+	seen := make(map[string]bool, len(wantNames))
+	for i, got := range gotNames {
+		if got != wantNames[i] {
+			t.Fatalf("%s: record %d is %q, want %q (identity mismatch)", bundle, i, got, wantNames[i])
+		}
+		if seen[got] {
+			t.Fatalf("%s: duplicate record %q", bundle, got)
+		}
+		seen[got] = true
+	}
+}
+
+func readGoldenBundle(t *testing.T, filename string) json.RawMessage {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", filename))
+	if err != nil {
+		t.Fatalf("read frozen oracle: %v", err)
+	}
+	return raw
+}
+
+// loadAgentsRenderGolden validates and indexes testdata/agentsrender_golden.json.
+func loadAgentsRenderGolden(t *testing.T) map[string]agentsRenderGoldenCase {
+	t.Helper()
+	var bundle struct {
+		Cases []agentsRenderGoldenCase `json:"cases"`
+	}
+	if err := json.Unmarshal(readGoldenBundle(t, "agentsrender_golden.json"), &bundle); err != nil {
+		t.Fatalf("parse frozen oracle: %v", err)
+	}
+	names := make([]string, len(bundle.Cases))
+	for i, rec := range bundle.Cases {
+		names[i] = rec.Name
+	}
+	validateGoldenIdentity(t, "agentsrender", names, agentsRenderGoldenNames)
+	errors := 0
+	byName := make(map[string]agentsRenderGoldenCase, len(bundle.Cases))
+	for _, rec := range bundle.Cases {
+		if rec.Error != nil {
+			errors++
+			if rec.BytesB64 != nil || rec.SHA256 != nil {
+				t.Fatalf("frozen record %q mixes bytes and error", rec.Name)
+			}
+		} else if rec.BytesB64 == nil || rec.SHA256 == nil {
+			t.Fatalf("frozen record %q has neither bytes nor error", rec.Name)
+		}
+		byName[rec.Name] = rec
+	}
+	if errors != 2 {
+		t.Fatalf("agentsrender bundle has %d error records, want 2", errors)
+	}
+	return byName
+}
+
+// loadBriefGovGolden validates and indexes testdata/briefgov_golden.json.
+func loadBriefGovGolden(t *testing.T) map[string]briefGovRefResult {
+	t.Helper()
+	var bundle struct {
+		Names []string            `json:"names"`
+		Cases []briefGovRefResult `json:"cases"`
+	}
+	if err := json.Unmarshal(readGoldenBundle(t, "briefgov_golden.json"), &bundle); err != nil {
+		t.Fatalf("parse frozen oracle: %v", err)
+	}
+	validateGoldenIdentity(t, "briefgov", bundle.Names, briefGovGoldenNames)
+	if len(bundle.Cases) != len(bundle.Names) {
+		t.Fatalf("briefgov: %d records for %d names", len(bundle.Cases), len(bundle.Names))
+	}
+	wrote := 0
+	byName := make(map[string]briefGovRefResult, len(bundle.Cases))
+	for i, rec := range bundle.Cases {
+		if rec.Wrote {
+			wrote++
+		}
+		byName[bundle.Names[i]] = rec
+	}
+	if wrote != 6 {
+		t.Fatalf("briefgov bundle has %d wrote=true records, want 6", wrote)
+	}
+	return byName
+}
+
+// loadAgentsStepGolden validates and indexes testdata/agentsstep_golden.json.
+func loadAgentsStepGolden(t *testing.T) map[string]agentsStepGoldenCase {
+	t.Helper()
+	var bundle struct {
+		Names []string               `json:"names"`
+		Cases []agentsStepGoldenCase `json:"cases"`
+	}
+	if err := json.Unmarshal(readGoldenBundle(t, "agentsstep_golden.json"), &bundle); err != nil {
+		t.Fatalf("parse frozen oracle: %v", err)
+	}
+	validateGoldenIdentity(t, "agentsstep", bundle.Names, agentsStepGoldenNames)
+	if len(bundle.Cases) != len(bundle.Names) {
+		t.Fatalf("agentsstep: %d records for %d names", len(bundle.Cases), len(bundle.Names))
+	}
+	present := 0
+	byName := make(map[string]agentsStepGoldenCase, len(bundle.Cases))
+	for i, rec := range bundle.Cases {
+		if rec.Agents.Present {
+			present++
+		}
+		byName[bundle.Names[i]] = rec
+	}
+	if present != 10 {
+		t.Fatalf("agentsstep bundle has %d AGENTS.md artifacts, want 10", present)
+	}
+	return byName
 }
 
 // agentsRenderCase is one differential scenario. resolved builds a fresh
@@ -48,49 +242,19 @@ func emptyResolved(projectRoot string) map[string]any {
 	}
 }
 
-func runAgentsRenderRef(t *testing.T, root, script, manifest string, resolved map[string]any) agentsRenderRefResult {
-	t.Helper()
-	resolvedJSON, err := json.Marshal(resolved)
-	if err != nil {
-		t.Fatalf("marshal resolved: %v", err)
-	}
-	caseJSON, err := json.Marshal(map[string]string{
-		"manifest_toml_b64": base64.StdEncoding.EncodeToString([]byte(manifest)),
-		"resolved_json_b64": base64.StdEncoding.EncodeToString(resolvedJSON),
-	})
-	if err != nil {
-		t.Fatalf("marshal case: %v", err)
-	}
-	cmd := exec.Command("python3", script)
-	cmd.Dir = root
-	cmd.Stdin = bytes.NewReader(caseJSON)
-	var out, errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("ref driver failed: %v\nstderr: %s", err, errBuf.String())
-	}
-	var ref agentsRenderRefResult
-	if err := json.Unmarshal(out.Bytes(), &ref); err != nil {
-		t.Fatalf("parse ref JSON: %v\nraw: %s", err, out.String())
-	}
-	return ref
-}
-
-// TestAgentsRenderDifferential runs every case through both the Go rendering
-// core and the REAL agents-render.py (via the ref driver) and requires byte
-// equality of the would-write bytes, plus SHA-256 agreement.
+// TestAgentsRenderDifferential runs every case through the Go rendering core
+// and requires byte equality against the frozen authority record
+// (PR2-B S4: the live python3 leg is replaced by
+// testdata/agentsrender_golden.json).
 func TestAgentsRenderDifferential(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	root := gitignoreRepoRoot(t)
-	refScript := filepath.Join(root, "internal", "sync", "testdata", "agentsrender_ref.py")
+	golden := loadAgentsRenderGolden(t)
 
 	for _, tc := range agentsRenderCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			refDir := t.TempDir()
-			ref := runAgentsRenderRef(t, root, refScript, tc.manifest, tc.resolved(refDir))
+			rec, ok := golden[tc.name]
+			if !ok {
+				t.Fatalf("frozen record %q missing", tc.name)
+			}
 
 			manifestTable, err := toml.Parse([]byte(tc.manifest))
 			if err != nil {
@@ -101,11 +265,11 @@ func TestAgentsRenderDifferential(t *testing.T) {
 			got := RenderAgentsMarkdown(manifestTable, tc.resolved(goDir))
 
 			if tc.wantErr {
-				if ref.Error == nil {
-					t.Fatalf("ref did not raise; got %+v", ref)
+				if rec.Error == nil {
+					t.Fatalf("frozen authority did not raise; got %+v", rec)
 				}
-				if ref.Error.Type != "ValueError" {
-					t.Errorf("ref error type = %q, want ValueError", ref.Error.Type)
+				if rec.Error.Type != "ValueError" {
+					t.Errorf("frozen error type = %q, want ValueError", rec.Error.Type)
 				}
 				if got != nil {
 					t.Errorf("RenderAgentsMarkdown returned %d byte(s), want nil on invalid brief mode", len(got))
@@ -113,26 +277,23 @@ func TestAgentsRenderDifferential(t *testing.T) {
 				brief, _ := manifestTable.Table("brief")
 				verr := ValidateBriefModes(brief)
 				if verr == nil {
-					t.Fatalf("ValidateBriefModes returned nil, want %q", ref.Error.Message)
+					t.Fatalf("ValidateBriefModes returned nil, want %q", rec.Error.Message)
 				}
-				if verr.Error() != ref.Error.Message {
-					t.Errorf("ValidateBriefModes message:\n  go:  %q\n  ref: %q", verr.Error(), ref.Error.Message)
+				if verr.Error() != rec.Error.Message {
+					t.Errorf("ValidateBriefModes message:\n  go:     %q\n  frozen: %q", verr.Error(), rec.Error.Message)
 				}
 				return
 			}
 
-			if ref.Error != nil {
-				t.Fatalf("ref raised unexpectedly: %s: %s", ref.Error.Type, ref.Error.Message)
-			}
-			want, err := base64.StdEncoding.DecodeString(ref.BytesB64)
+			want, err := base64.StdEncoding.DecodeString(*rec.BytesB64)
 			if err != nil {
-				t.Fatalf("decode ref bytes: %v", err)
+				t.Fatalf("decode frozen bytes: %v", err)
 			}
 			if !bytes.Equal(got, want) {
-				t.Errorf("would-write bytes differ\n--- go ---\n%s\n--- ref ---\n%s", got, want)
+				t.Errorf("would-write bytes differ\n--- go ---\n%s\n--- frozen ---\n%s", got, want)
 			}
-			if gotSHA := sha256Hex(got); gotSHA != ref.SHA256 {
-				t.Errorf("sha256: go=%s ref=%s", gotSHA, ref.SHA256)
+			if gotSHA := sha256Hex(got); gotSHA != *rec.SHA256 {
+				t.Errorf("sha256: go=%s frozen=%s", gotSHA, *rec.SHA256)
 			}
 		})
 	}
@@ -472,24 +633,15 @@ workflow_rules_mode = 1979-05-27
 // ---------------------------------------------------------------------------
 
 // briefGovRefInput mirrors testdata/briefgov_ref.py's stdin JSON.
-type briefGovRefInput struct {
-	ManifestTOMLB64   string  `json:"manifest_toml_b64"`
-	ExistingAgentsB64 *string `json:"existing_agents_b64"`
-	LockTOMLB64       *string `json:"lock_toml_b64"`
-	ResolvedJSONB64   *string `json:"resolved_json_b64"`
-	AdoptBrief        bool    `json:"adopt_brief"`
-	PreserveFlag      bool    `json:"preserve_flag"`
-	PolicyValidate    bool    `json:"policy_validate"`
-}
-
-// briefGovRefPolicy mirrors the policy leg of the ref driver's output.
+// briefGovRefPolicy mirrors the policy leg of the frozen briefgov bundle.
 type briefGovRefPolicy struct {
 	Stdout string `json:"stdout"`
 	Stderr string `json:"stderr"`
 	RC     int    `json:"rc"`
 }
 
-// briefGovRefResult mirrors testdata/briefgov_ref.py's stdout JSON.
+// briefGovRefResult mirrors one frozen record of
+// testdata/briefgov_golden.json (PR2-B S4).
 type briefGovRefResult struct {
 	Policy         briefGovRefPolicy `json:"policy"`
 	RenderStdout   string            `json:"render_stdout"`
@@ -633,51 +785,6 @@ func setupBriefGovDir(t *testing.T, dir string, tc briefGovCase) (tomlPath, outP
 	return tomlPath, outPath, lockPath, resolvedPath
 }
 
-// runBriefGovRef drives testdata/briefgov_ref.py for one case.
-func runBriefGovRef(t *testing.T, root, script string, tc briefGovCase) briefGovRefResult {
-	t.Helper()
-	in := briefGovRefInput{
-		ManifestTOMLB64: base64.StdEncoding.EncodeToString([]byte(tc.manifest)),
-		AdoptBrief:      tc.adoptBrief,
-		PreserveFlag:    tc.preserveFlag,
-		PolicyValidate:  tc.policyValidate,
-	}
-	if tc.existingAgents != nil {
-		b := base64.StdEncoding.EncodeToString([]byte(*tc.existingAgents))
-		in.ExistingAgentsB64 = &b
-	}
-	if tc.lockTOML != nil {
-		b := base64.StdEncoding.EncodeToString([]byte(*tc.lockTOML))
-		in.LockTOMLB64 = &b
-	}
-	if tc.resolved != nil {
-		data, err := json.Marshal(tc.resolved)
-		if err != nil {
-			t.Fatalf("marshal resolved: %v", err)
-		}
-		b := base64.StdEncoding.EncodeToString(data)
-		in.ResolvedJSONB64 = &b
-	}
-	caseJSON, err := json.Marshal(in)
-	if err != nil {
-		t.Fatalf("marshal case: %v", err)
-	}
-	cmd := exec.Command("python3", script)
-	cmd.Dir = root
-	cmd.Stdin = bytes.NewReader(caseJSON)
-	var out, errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("ref driver failed: %v\nstderr: %s", err, errBuf.String())
-	}
-	var ref briefGovRefResult
-	if err := json.Unmarshal(out.Bytes(), &ref); err != nil {
-		t.Fatalf("parse ref JSON: %v\nraw: %s", err, out.String())
-	}
-	return ref
-}
-
 // goBriefPolicy reproduces brief-render-policy.py main()'s observable surface.
 func goBriefPolicy(t *testing.T, tomlPath string, validate bool) (string, string, int) {
 	t.Helper()
@@ -712,32 +819,32 @@ func govPtrEqual(a, b *string) bool {
 }
 
 // TestAgentsRenderGovernanceDifferential runs every governance case through
-// both the Go port and the REAL agents-render.py + brief-render-policy.py and
-// requires byte equality of the policy surface, the render surface, the raw
-// state decision, and the written AGENTS.md / lock bytes.
+// the Go port and requires byte equality against the frozen authority record
+// (PR2-B S4: the live briefgov_ref.py leg is replaced by
+// testdata/briefgov_golden.json): the policy surface, the render surface, the
+// raw state decision, and the written AGENTS.md / lock bytes.
 func TestAgentsRenderGovernanceDifferential(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	root := gitignoreRepoRoot(t)
-	refScript := filepath.Join(root, "internal", "sync", "testdata", "briefgov_ref.py")
+	golden := loadBriefGovGolden(t)
 
 	for _, tc := range briefGovCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			ref := runBriefGovRef(t, root, refScript, tc)
+			rec, ok := golden[tc.name]
+			if !ok {
+				t.Fatalf("frozen record %q missing", tc.name)
+			}
 
 			goDir := t.TempDir()
 			tomlPath, outPath, lockPath, resolvedPath := setupBriefGovDir(t, goDir, tc)
 
 			pOut, pErr, pRC := goBriefPolicy(t, tomlPath, tc.policyValidate)
-			if pOut != ref.Policy.Stdout {
-				t.Errorf("policy stdout:\n  go: %q\n ref: %q", pOut, ref.Policy.Stdout)
+			if pOut != rec.Policy.Stdout {
+				t.Errorf("policy stdout:\n  go:     %q\n  frozen: %q", pOut, rec.Policy.Stdout)
 			}
-			if pErr != ref.Policy.Stderr {
-				t.Errorf("policy stderr:\n  go: %q\n ref: %q", pErr, ref.Policy.Stderr)
+			if pErr != rec.Policy.Stderr {
+				t.Errorf("policy stderr:\n  go:     %q\n  frozen: %q", pErr, rec.Policy.Stderr)
 			}
-			if pRC != ref.Policy.RC {
-				t.Errorf("policy rc: go=%d ref=%d", pRC, ref.Policy.RC)
+			if pRC != rec.Policy.RC {
+				t.Errorf("policy rc: go=%d frozen=%d", pRC, rec.Policy.RC)
 			}
 
 			manifest, resolved, err := loadAgentsRenderInputs(tomlPath, resolvedPath)
@@ -745,11 +852,11 @@ func TestAgentsRenderGovernanceDifferential(t *testing.T) {
 				t.Fatalf("load inputs: %v", err)
 			}
 			content := RenderAgentsMarkdown(manifest, resolved)
-			if got := classifyBriefState(tomlPath, outPath, content, lockPath, nil); got != ref.ClassifyState {
-				t.Errorf("classify state: go=%q ref=%q", got, ref.ClassifyState)
+			if got := classifyBriefState(tomlPath, outPath, content, lockPath, nil); got != rec.ClassifyState {
+				t.Errorf("classify state: go=%q frozen=%q", got, rec.ClassifyState)
 			}
-			if got := briefEffectiveState(tomlPath, outPath, content, lockPath, nil); got != ref.EffectiveState {
-				t.Errorf("effective state: go=%q ref=%q", got, ref.EffectiveState)
+			if got := briefEffectiveState(tomlPath, outPath, content, lockPath, nil); got != rec.EffectiveState {
+				t.Errorf("effective state: go=%q frozen=%q", got, rec.EffectiveState)
 			}
 
 			var rOut, rErr bytes.Buffer
@@ -758,92 +865,39 @@ func TestAgentsRenderGovernanceDifferential(t *testing.T) {
 				AdoptBrief:             tc.adoptBrief,
 				ResolvedConfigPath:     resolvedPath,
 			}, &rOut, &rErr)
-			if action != ref.Action {
-				t.Errorf("action: go=%q ref=%q", action, ref.Action)
+			if action != rec.Action {
+				t.Errorf("action: go=%q frozen=%q", action, rec.Action)
 			}
-			if wrote != ref.Wrote {
-				t.Errorf("wrote: go=%v ref=%v", wrote, ref.Wrote)
+			if wrote != rec.Wrote {
+				t.Errorf("wrote: go=%v frozen=%v", wrote, rec.Wrote)
 			}
-			if rc != ref.RenderRC {
-				t.Errorf("render rc: go=%d ref=%d", rc, ref.RenderRC)
+			if rc != rec.RenderRC {
+				t.Errorf("render rc: go=%d frozen=%d", rc, rec.RenderRC)
 			}
-			if rOut.String() != ref.RenderStdout {
-				t.Errorf("render stdout:\n  go: %q\n ref: %q", rOut.String(), ref.RenderStdout)
+			if rOut.String() != rec.RenderStdout {
+				t.Errorf("render stdout:\n  go:     %q\n  frozen: %q", rOut.String(), rec.RenderStdout)
 			}
-			if rErr.String() != ref.RenderStderr {
-				t.Errorf("render stderr:\n  go: %q\n ref: %q", rErr.String(), ref.RenderStderr)
+			if rErr.String() != rec.RenderStderr {
+				t.Errorf("render stderr:\n  go:     %q\n  frozen: %q", rErr.String(), rec.RenderStderr)
 			}
-			if got := fileSHA256OrNull(outPath); !govPtrEqual(got, ref.AgentsSHA256) {
-				t.Errorf("AGENTS.md sha: go=%v ref=%v", derefString(got), derefString(ref.AgentsSHA256))
+			if got := fileSHA256OrNull(outPath); !govPtrEqual(got, rec.AgentsSHA256) {
+				t.Errorf("AGENTS.md sha: go=%v frozen=%v", derefString(got), derefString(rec.AgentsSHA256))
 			}
-			if got := fileSHA256OrNull(lockPath); !govPtrEqual(got, ref.LockSHA256) {
-				t.Errorf("lock sha: go=%v ref=%v", derefString(got), derefString(ref.LockSHA256))
+			if got := fileSHA256OrNull(lockPath); !govPtrEqual(got, rec.LockSHA256) {
+				t.Errorf("lock sha: go=%v frozen=%v", derefString(got), derefString(rec.LockSHA256))
 			}
 		})
 	}
 }
 
-// runPythonAgentsStep reproduces the argv sequence sync used before T3: the
-// policy module runs first and its exit status is ignored (D3) — the gate is
-// the `true` on its stdout — then the renderer runs with the same flags. Some
-// of those steps are native now, so this is the oracle, not the implementation.
-func runPythonAgentsStep(t *testing.T, root, tomlPath, outPath, resolvedPath string, adoptBrief bool) (string, string, int) {
-	t.Helper()
-	internal := func(name string) string {
-		return filepath.Join(root, "lib", "_internal", name)
-	}
-	var policyOut, stdout, stderr bytes.Buffer
-	policy := exec.Command("python3", internal("brief-render-policy.py"), tomlPath)
-	// Pin the verified gate binary so the fail-open bridge warnings never reach
-	// stderr (odd/tasks/go-20-u2a-agents-gate.md S2-S3).
-	policy.Env = append(os.Environ(), "WORKTREE_GATE_BIN="+materializeGateBinary(t))
-	// The verdict is captured privately: sync never forwards the policy's
-	// stdout, only the skip notice below.
-	policy.Stdout = &policyOut
-	policy.Stderr = &stderr
-	if err := policy.Run(); err != nil {
-		if _, ok := err.(*exec.ExitError); !ok {
-			t.Fatalf("run brief-render-policy.py: %v", err)
-		}
-		// Deliberately ignored: sync gates on stdout only.
-	}
-	if strings.TrimRight(policyOut.String(), "\n") != "true" {
-		stdout.WriteString("  \u2139 skipped AGENTS.md (brief.render = false)\n")
-		return stdout.String(), stderr.String(), 0
-	}
-	argv := []string{
-		internal("agents-render.py"), tomlPath, outPath,
-		"--preserve-if-runtime-brief",
-	}
-	if adoptBrief {
-		argv = append(argv, "--adopt-brief")
-	}
-	argv = append(argv, "--resolved-config", resolvedPath)
-	render := exec.Command("python3", argv...)
-	render.Env = append(os.Environ(), "WORKTREE_GATE_BIN="+materializeGateBinary(t))
-	render.Stdout = &stdout
-	render.Stderr = &stderr
-	rc := 0
-	if err := render.Run(); err != nil {
-		exitErr, ok := err.(*exec.ExitError)
-		if !ok {
-			t.Fatalf("run agents-render.py: %v", err)
-		}
-		rc = exitErr.ExitCode()
-	}
-	return stdout.String(), stderr.String(), rc
-}
-
 // TestAgentsRenderStepDifferential drives the composed native step
-// (policy gate + renderer) against the REAL two-Python-module sequence sync ran
-// before T3, over every governance fixture plus a preserve-if-runtime-brief
-// case. It compares the exit code, both streams, the AGENTS.md bytes and the
-// lock bytes.
+// (policy gate + renderer) against the frozen record of the real
+// two-Python-module sequence sync ran before T3 (PR2-B S4:
+// testdata/agentsstep_golden.json), over every governance fixture plus a
+// preserve-if-runtime-brief case. It compares the exit code, both streams and
+// the exact AGENTS.md / lock bytes.
 func TestAgentsRenderStepDifferential(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	root := gitignoreRepoRoot(t)
+	golden := loadAgentsStepGolden(t)
 
 	for _, tc := range briefGovCases() {
 		if tc.policyValidate {
@@ -853,12 +907,10 @@ func TestAgentsRenderStepDifferential(t *testing.T) {
 		}
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			refDir := t.TempDir()
-			refTOML, refOut, refLock, refResolved := setupBriefGovDir(t, refDir, tc)
-			if refResolved == "" {
-				refResolved = writeEmptyResolved(t, refDir)
+			rec, ok := golden[tc.name]
+			if !ok {
+				t.Fatalf("frozen record %q missing", tc.name)
 			}
-			wantOut, wantErr, wantRC := runPythonAgentsStep(t, root, refTOML, refOut, refResolved, tc.adoptBrief)
 
 			goDir := t.TempDir()
 			goTOML, goOut, goLock, goResolved := setupBriefGovDir(t, goDir, tc)
@@ -868,22 +920,45 @@ func TestAgentsRenderStepDifferential(t *testing.T) {
 			var out, errW bytes.Buffer
 			gotRC := renderAgentsStep(goTOML, goOut, goResolved, tc.adoptBrief, &out, &errW)
 
-			if gotRC != wantRC {
-				t.Errorf("rc: go=%d python=%d (go stderr=%q)", gotRC, wantRC, errW.String())
+			if gotRC != rec.RC {
+				t.Errorf("rc: go=%d frozen=%d (go stderr=%q)", gotRC, rec.RC, errW.String())
 			}
-			if out.String() != wantOut {
-				t.Errorf("stdout:\n  go: %q\npython: %q", out.String(), wantOut)
+			if out.String() != rec.Stdout {
+				t.Errorf("stdout:\n  go:     %q\n  frozen: %q", out.String(), rec.Stdout)
 			}
-			if errW.String() != wantErr {
-				t.Errorf("stderr:\n  go: %q\npython: %q", errW.String(), wantErr)
+			if errW.String() != rec.Stderr {
+				t.Errorf("stderr:\n  go:     %q\n  frozen: %q", errW.String(), rec.Stderr)
 			}
-			if got, want := fileSHA256OrNull(goOut), fileSHA256OrNull(refOut); !govPtrEqual(got, want) {
-				t.Errorf("AGENTS.md sha: go=%v python=%v", derefString(got), derefString(want))
-			}
-			if got, want := fileSHA256OrNull(goLock), fileSHA256OrNull(refLock); !govPtrEqual(got, want) {
-				t.Errorf("lock sha: go=%v python=%v", derefString(got), derefString(want))
-			}
+			assertFrozenArtifact(t, "AGENTS.md", goOut, rec.Agents)
+			assertFrozenArtifact(t, "lock", goLock, rec.Lock)
 		})
+	}
+}
+
+// assertFrozenArtifact requires the file at path to be present exactly when
+// the frozen record says so, with byte equality when present.
+func assertFrozenArtifact(t *testing.T, label, path string, want goldenB64Artifact) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if want.Present {
+				t.Errorf("%s: file absent, frozen authority wrote it", label)
+			}
+			return
+		}
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if !want.Present {
+		t.Errorf("%s: file present, frozen authority left none", label)
+		return
+	}
+	wantBytes, err := base64.StdEncoding.DecodeString(want.B64)
+	if err != nil {
+		t.Fatalf("decode frozen %s bytes: %v", label, err)
+	}
+	if !bytes.Equal(data, wantBytes) {
+		t.Errorf("%s bytes differ from the frozen authority", label)
 	}
 }
 
@@ -913,9 +988,6 @@ func writeEmptyResolved(t *testing.T, dir string) string {
 // policy was a child process. Only the error wording differs, since the two
 // parsers describe the same defect differently (L6's recorded divergence).
 func TestRenderAgentsStepPolicyFailurePreservesTheSilentSkip(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
 	const broken = "[project\nname = 'x'\n"
 
 	tomlPath := filepath.Join(t.TempDir(), "ai-specs", "ai-specs.toml")
