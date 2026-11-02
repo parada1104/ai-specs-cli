@@ -2,22 +2,21 @@ package sync
 
 // Differential contract tests for the native per-recipe loop (GO-07 S14a WU2).
 //
-// Each scenario is driven twice against the REAL Python orchestration
-// (testdata/materialize_ref.py, pinned to the freshly built worktree-gate
-// binary) and against sync.MaterializeRecipes, on the SAME project and home
-// paths so every absolute path (cache roots, command destinations, dep sources)
-// is byte-identical. Between the two legs the project tree and the CLI cache
-// are rebuilt from the scenario definition, so each leg starts from the same
-// pristine state and the comparison is of behaviour, not of order. The
-// comparison covers rc, stdout, stderr, the three documents, the ENTIRE project
-// + cache file tree and the .ai-specs.lock bytes.
+// Each scenario is pinned against the frozen oracle bundle
+// testdata/materialize_golden.json captured once from the REAL Python
+// orchestration (testdata/materialize_ref.py, PR2-B S10), on the SAME project
+// and home paths so every absolute path (cache roots, command destinations, dep
+// sources) was byte-identical. The capture rebuilt the project tree and the CLI
+// cache from the scenario definition before the Python leg, so the comparison is
+// of behaviour, not of order. The comparison covers rc, stdout, stderr, the
+// three documents, the ENTIRE project + cache file tree and the .ai-specs.lock
+// bytes; the fixture roots are tokenized (<HOME>, <PROJECT>, <CACHE_PROJECT>)
+// and this test normalizes the Go side symmetrically.
 
 import (
 	"bytes"
-	"encoding/json"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -212,51 +211,40 @@ func materializeLoopDiffTree(t *testing.T, want, got map[string]string) {
 	}
 }
 
-func TestMaterializeLoopDifferential(t *testing.T) {
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	_ = python
-	authority, err := filepath.Abs(filepath.Join("..", "..", "lib", "_internal", "recipe-materialize.py"))
-	if err != nil {
-		t.Fatalf("resolve authority: %v", err)
-	}
-	if _, err := os.Stat(authority); err != nil {
-		t.Skipf("recipe-materialize.py unavailable: %v", err)
-	}
-	driver := materializeRefPath(t)
-	gate := materializeGateBinary(t)
+// TestMaterializeLoopDifferentialFrozen pins the native per-recipe loop against
+// the frozen records captured once from the real Python orchestration (PR2-B
+// S10). Each frozen record is the Python leg of the live differential: rc,
+// stdout, stderr, the three documents, and the ENTIRE project + cache file tree
+// (the .ai-specs.lock bytes are inside it).
+//
+// The capture built the project tree and the CLI cache from the scenario
+// definition before each leg, on the SAME project and home paths, so every
+// absolute path (cache roots, command destinations, dep sources) the Python leg
+// emitted is byte-identical; the frozen records tokenize those roots (<HOME>,
+// <PROJECT>) and this test normalizes the Go side symmetrically.
+func TestMaterializeLoopDifferentialFrozen(t *testing.T) {
+	golden := loadMaterializeGolden(t)
 	t.Setenv("AI_SPECS_GATE_OFFLINE", "1")
 
 	for _, scenario := range materializeLoopScenarios() {
 		scenario := scenario
 		t.Run(scenario.name, func(t *testing.T) {
+			ref := frozenMaterializeRecord(t, golden, scenario.name)
 			home := t.TempDir()
 			project := filepath.Join(t.TempDir(), "project")
 			materializeLoopWriteStatic(t, scenario, home)
 
-			pyDir := t.TempDir()
 			goDir := t.TempDir()
-			pyMCP, goMCP := "-", "-"
+			goMCP, goConfig, goHooks := "-", "-", "-"
 			if scenario.recipeMCPOut {
-				pyMCP = filepath.Join(pyDir, "recipe-mcp.json")
 				goMCP = filepath.Join(goDir, "recipe-mcp.json")
 			}
-			pyConfig, goConfig := "-", "-"
 			if scenario.resolvedConfigOut {
-				pyConfig = filepath.Join(pyDir, "resolved-config.json")
 				goConfig = filepath.Join(goDir, "resolved-config.json")
 			}
-			pyHooks, goHooks := "-", "-"
 			if scenario.resolvedHooksOut {
-				pyHooks = filepath.Join(pyDir, "resolved-hooks.json")
 				goHooks = filepath.Join(goDir, "resolved-hooks.json")
 			}
-
-			materializeLoopProvision(t, scenario, home, project)
-			ref := runMaterializeLoopRef(t, gate, driver, authority, project, home, pyMCP, pyConfig, pyHooks, scenario.refreshGates)
-			pyTree := materializeLoopTree(t, home, project)
 
 			materializeLoopProvision(t, scenario, home, project)
 			var mcpOut, configOut, hooksOut *string
@@ -287,24 +275,27 @@ func TestMaterializeLoopDifferential(t *testing.T) {
 			goTree := materializeLoopTree(t, home, project)
 
 			if goRC != ref.RC {
-				t.Fatalf("rc: go=%d python=%d\n--- go stderr ---\n%s\n--- python stderr ---\n%s", goRC, ref.RC, stderr.String(), ref.Stderr)
+				t.Fatalf("rc: go=%d frozen=%d\n--- go stderr ---\n%s\n--- frozen stderr ---\n%s", goRC, ref.RC, stderr.String(), ref.Stderr)
 			}
-			if normalizeRecipeMCPPath(stdout.String()) != normalizeRecipeMCPPath(ref.Stdout) {
-				t.Fatalf("stdout:\n--- go ---\n%q\n--- python ---\n%q", stdout.String(), ref.Stdout)
+			if got := freezeMaterializePaths(normalizeRecipeMCPPath(stdout.String()), home, project); got != ref.Stdout {
+				t.Fatalf("stdout:\n--- go ---\n%q\n--- frozen ---\n%q", got, ref.Stdout)
 			}
-			if stderr.String() != ref.Stderr {
-				t.Fatalf("stderr:\n--- go ---\n%q\n--- python ---\n%q", stderr.String(), ref.Stderr)
+			if got := freezeMaterializePaths(stderr.String(), home, project); got != ref.Stderr {
+				t.Fatalf("stderr:\n--- go ---\n%q\n--- frozen ---\n%q", got, ref.Stderr)
 			}
 			if scenario.recipeMCPOut {
-				assertDocumentEqual(t, "recipe-mcp", result.RecipeMCPDocument, ref.RecipeMCP)
+				got := freezeMaterializePaths(result.RecipeMCPDocument, home, project)
+				assertDocumentEqual(t, "recipe-mcp", got, ref.RecipeMCP)
 			}
 			if scenario.resolvedConfigOut {
-				assertDocumentEqual(t, "resolved-config", result.ResolvedConfigDocument, ref.ResolvedConfig)
+				got := freezeMaterializePaths(result.ResolvedConfigDocument, home, project)
+				assertDocumentEqual(t, "resolved-config", got, ref.ResolvedConfig)
 			}
 			if scenario.resolvedHooksOut {
-				assertDocumentEqual(t, "resolved-hooks", result.ResolvedHooksDocument, ref.ResolvedHooks)
+				got := freezeMaterializePaths(result.ResolvedHooksDocument, home, project)
+				assertDocumentEqual(t, "resolved-hooks", got, ref.ResolvedHooks)
 			}
-			materializeLoopDiffTree(t, pyTree, goTree)
+			materializeLoopDiffTree(t, ref.Tree, freezeMaterializeTree(t, goTree, home, project))
 		})
 	}
 }
@@ -313,33 +304,6 @@ func TestMaterializeLoopDifferential(t *testing.T) {
 // hash so pre-seeded managed entries classify against the same value.
 func materializeLoopHash(content string) string {
 	return lock.Sha256Bytes([]byte(content))
-}
-
-// runMaterializeLoopRef drives the Python oracle with the scenario's
-// refresh-gates flag (the driver reads MATERIALIZE_REFRESH_GATES).
-func runMaterializeLoopRef(t *testing.T, gate, driver, authority, project, home, mcpOut, configOut, hooksOut string, refreshGates bool) materializeRefOut {
-	t.Helper()
-	cmd := exec.Command("python3", driver, authority, project, home, mcpOut, configOut, hooksOut)
-	cmd.Dir = t.TempDir()
-	env := append(os.Environ(),
-		"PYTHONDONTWRITEBYTECODE=1",
-		"WORKTREE_GATE_BIN="+gate,
-		"AI_SPECS_GATE_OFFLINE=1",
-	)
-	if refreshGates {
-		env = append(env, "MATERIALIZE_REFRESH_GATES=1")
-	}
-	cmd.Env = env
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("python oracle failed: %v\nstderr: %s", err, stderr.String())
-	}
-	var out materializeRefOut
-	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
-		t.Fatalf("decode ref %s: %v", stdout.String(), err)
-	}
-	return out
 }
 
 const materializeLoopHookScript = "#!/bin/sh\necho guard\n"
