@@ -1,0 +1,88 @@
+{
+  "cases": [
+    {
+      "name": "minimal manifest project only",
+      "bytes_b64": "IyBtaW5pbWFsIFJ1bnRpbWUgQnJpZWYKCiMjIFByb2plY3QKCi0gKipQcm9qZWN0Kio6IGBtaW5pbWFsYAotICoqRW5hYmxlZCBydW50aW1lcyoqOiBgY2xhdWRlYAoKIyMgVXNlZnVsIENvbW1hbmRzCgotIEZvciBhaS1zcGVjcyBoYXJuZXNzIG9wZXJhdGlvbnMgKGluaXQsIHN5bmMsIHJlY2lwZXMsIHNraWxscy9kZXBzLCBkb2N0b3IpLCBsb2FkIHRoZSBgaGFybmVzcy1saWZlY3ljbGVgLCBgaGFybmVzcy1yZWNpcGVzYCwgb3IgYGhhcm5lc3Mtc2tpbGxzLWRlcHNgIHNraWxscy4K",
+      "sha256": "ed69b58a888454af21b51ed1d29786b0941fd5b2e37fc1e4d9cabb3e73e1b821",
+      "error": null
+    },
+    {
+      "name": "full manifest with every brief section",
+      "bytes_b64": "IyBmdWxsIFJ1bnRpbWUgQnJpZWYKCj4gRmlyc3QgbGluZS4KPgo+IFNlY29uZCBsaW5lLgoKIyMgUHJvamVjdAoKLSAqKlByb2plY3QqKjogYGZ1bGxgCi0gKipQdXJwb3NlKio6IERvIGdyZWF0IHRoaW5ncy4KLSAqKkVuYWJsZWQgcnVudGltZXMqKjogYGNsYXVkZWAsIGBwaWAKLSAqKkludGVncmF0aW9uIGJyYW5jaCoqOiBgZGV2ZWxvcG1lbnRgCi0gKipSZXBvIHRvcG9sb2d5Kio6IGBzdGFuZGFsb25lYCAodmlhIGF1dG8pCgojIyBSdW50aW1lIE1DUHMKCioqdHJlbGxvKioKLSBjb21tYW5kOiBucHgKLSBhcmdzOiAteSBAdHJlbGxvL21jcAotIGVudjoKICAtIFRPS0VOOiAke1RSRUxMT19UT0tFTn0KLSBkZXNjcmlwdGlvbjogUHJvamVjdCB0cmFja2luZy4KCioqZW5ncmFtKioKLSBjb21tYW5kOiBlbmdyYW0KLSBlbnY6CiAgLSBBUElfS0VZOiAqKipSRURBQ1RFRCoqKgogIC0gSE9NRTogJHtIT01FfQoKKip2YXVsdCoqICooZ2xvYmFsKSoKLSBkZXNjcmlwdGlvbjogQ2Fub25pY2FsIG5vdGVzLgoKTmV2ZXIgZXhwb3NlIGVudi1iYWNrZWQgc2VjcmV0cyBmcm9tIE1DUCBjb25maWcgaW4gZ2VuZXJhdGVkIGRvY3Mgb3IgY29tbWVudHMuCgojIyBSdW50aW1lIEZsb3cKCi0gRmxvdyBvbmUuCi0gRmxvdyB0d28uCi0gVkNTL1BSIHByb3ZpZGVyOiBHaXRIdWIgKGBnaGAgQ0xJKTsgYmFzZSBicmFuY2g6IGBkZXZlbG9wbWVudGAKCiMjIFRyZWxsbyBUcmFja2luZwoKLSAqKkJvYXJkKio6IGA2OWVjMDk3ZjEzZTJkMzhlY2Q4OWE1NTdgCgojIyBDb250ZXh0IFNvdXJjZXMKCi0gU291cmNlIG9uZS4KCiMjIENvbmZsaWN0IFBvbGljeQoKLSBQb2xpY3kgb25lLgoKIyMgV29ya2Zsb3cgUnVsZXMKCi0gUnVsZSBvbmUuCgojIyBVc2VmdWwgQ29tbWFuZHMKCi0gRnVsbCB2YWxpZGF0aW9uOiBgLi90ZXN0cy92YWxpZGF0ZS5zaGAKLSBSdW4gdGhlIGZvY3VzZWQgc3VpdGUuCi0gRm9yIGFpLXNwZWNzIGhhcm5lc3Mgb3BlcmF0aW9ucyAoaW5pdCwgc3luYywgcmVjaXBlcywgc2tpbGxzL2RlcHMsIGRvY3RvciksIGxvYWQgdGhlIGBoYXJuZXNzLWxpZmVjeWNsZWAsIGBoYXJuZXNzLXJlY2lwZXNgLCBvciBgaGFybmVzcy1za2lsbHMtZGVwc2Agc2tpbGxzLgo=",
+      "sha256": "a85eb67f417678bbdeeeb7bede463a6581e806959e1cc1d1954f7f2207955376",
+      "error": null
+    },
+    {
+      "name": "deps and recipe brief fragments",
+      "bytes_b64": "IyBmcmFnbWVudHMgUnVudGltZSBCcmllZgoKIyMgUHJvamVjdAoKLSAqKlByb2plY3QqKjogYGZyYWdtZW50c2AKLSAqKkVuYWJsZWQgcnVudGltZXMqKjogYGNsYXVkZWAKCiMjIENvbnRleHQgU291cmNlcwoKLSBUcmVsbG8gaXMgdGhlIHNvdXJjZSBvZiB0cnV0aC4KCiMjIFdvcmtmbG93IFJ1bGVzCgotIENyZWF0ZSBhIHdvcmt0cmVlIG9uIGBtYWluYC4KLSBXcml0ZSBmYWlsaW5nIHRlc3RzIGZpcnN0LgoKIyMgVXNlZnVsIENvbW1hbmRzCgotIFJ1biB0ZXN0czogYC4vdGVzdHMvcnVuLnNoYAotIEZvciBhaS1zcGVjcyBoYXJuZXNzIG9wZXJhdGlvbnMgKGluaXQsIHN5bmMsIHJlY2lwZXMsIHNraWxscy9kZXBzLCBkb2N0b3IpLCBsb2FkIHRoZSBgaGFybmVzcy1saWZlY3ljbGVgLCBgaGFybmVzcy1yZWNpcGVzYCwgb3IgYGhhcm5lc3Mtc2tpbGxzLWRlcHNgIHNraWxscy4K",
+      "sha256": "11941f9fae0e3801bc785631961caaa3aec281b3499ba3e66b5282705ca8aa82",
+      "error": null
+    },
+    {
+      "name": "config substitution edge cases",
+      "bytes_b64": "IyBzdWIgUnVudGltZSBCcmllZgoKIyMgUHJvamVjdAoKLSAqKlByb2plY3QqKjogYHN1YmAKLSAqKkVuYWJsZWQgcnVudGltZXMqKjogYGNsYXVkZWAKCiMjIFdvcmtmbG93IFJ1bGVzCgotIEEgVkFMVUUgQiB7Y29uZmlnLm1pc3Npbmd9IEMge2JhcmV9IEQge2VzY30gRSBUcnVlIEYgMyBHIFsncm9vdCcsICdza2lsbCddIEggeyBsb25lCgojIyBVc2VmdWwgQ29tbWFuZHMKCi0gRm9yIGFpLXNwZWNzIGhhcm5lc3Mgb3BlcmF0aW9ucyAoaW5pdCwgc3luYywgcmVjaXBlcywgc2tpbGxzL2RlcHMsIGRvY3RvciksIGxvYWQgdGhlIGBoYXJuZXNzLWxpZmVjeWNsZWAsIGBoYXJuZXNzLXJlY2lwZXNgLCBvciBgaGFybmVzcy1za2lsbHMtZGVwc2Agc2tpbGxzLgo=",
+      "sha256": "93464afa3cc4ccbb285c31b5acddaf78be43f71c8dbb9721689daaff61977d49",
+      "error": null
+    },
+    {
+      "name": "mcp env redaction",
+      "bytes_b64": "IyBlbnZzIFJ1bnRpbWUgQnJpZWYKCiMjIFByb2plY3QKCi0gKipQcm9qZWN0Kio6IGBlbnZzYAotICoqRW5hYmxlZCBydW50aW1lcyoqOiBgY2xhdWRlYAoKIyMgUnVudGltZSBNQ1BzCgoqKmFscGhhKioKLSBjb21tYW5kOiBhbHBoYQotIGVudjoKICAtIFBMQUlOX1ZBUjogJHtQTEFJTl9WQVJ9CiAgLSBPVEhFUl9WQVI6ICR7T1RIRVJfVkFSfQoKKipiZXRhKioKLSBjb21tYW5kOiBiZXRhCi0gZW52OgogIC0gQTogJHtBX1ZBUn0KICAtIEI6ICR7Ql9WQVJ9CiAgLSBDOiAqKipSRURBQ1RFRCoqKgogIC0gRDogJHtQQURERUR9CgpOZXZlciBleHBvc2UgZW52LWJhY2tlZCBzZWNyZXRzIGZyb20gTUNQIGNvbmZpZyBpbiBnZW5lcmF0ZWQgZG9jcyBvciBjb21tZW50cy4KCiMjIFVzZWZ1bCBDb21tYW5kcwoKLSBGb3IgYWktc3BlY3MgaGFybmVzcyBvcGVyYXRpb25zIChpbml0LCBzeW5jLCByZWNpcGVzLCBza2lsbHMvZGVwcywgZG9jdG9yKSwgbG9hZCB0aGUgYGhhcm5lc3MtbGlmZWN5Y2xlYCwgYGhhcm5lc3MtcmVjaXBlc2AsIG9yIGBoYXJuZXNzLXNraWxscy1kZXBzYCBza2lsbHMuCg==",
+      "sha256": "4f8b7941662222b16dcfbd16114151cb8f4084de722925516b04edc9b09513d1",
+      "error": null
+    },
+    {
+      "name": "missing optional sections",
+      "bytes_b64": "IyBlbXB0eSBSdW50aW1lIEJyaWVmCgojIyBQcm9qZWN0CgotICoqUHJvamVjdCoqOiBgZW1wdHlgCgojIyBVc2VmdWwgQ29tbWFuZHMKCi0gRm9yIGFpLXNwZWNzIGhhcm5lc3Mgb3BlcmF0aW9ucyAoaW5pdCwgc3luYywgcmVjaXBlcywgc2tpbGxzL2RlcHMsIGRvY3RvciksIGxvYWQgdGhlIGBoYXJuZXNzLWxpZmVjeWNsZWAsIGBoYXJuZXNzLXJlY2lwZXNgLCBvciBgaGFybmVzcy1za2lsbHMtZGVwc2Agc2tpbGxzLgo=",
+      "sha256": "e9f189f94d127b929c7457b55f640805b401d3df16d655a8ab1b5a943e18d2c2",
+      "error": null
+    },
+    {
+      "name": "blank optional sections",
+      "bytes_b64": "IyBibGFuayBSdW50aW1lIEJyaWVmCgojIyBQcm9qZWN0CgotICoqUHJvamVjdCoqOiBgYmxhbmtgCi0gKipFbmFibGVkIHJ1bnRpbWVzKio6IGBwaWAKCiMjIFVzZWZ1bCBDb21tYW5kcwoKLSBGb3IgYWktc3BlY3MgaGFybmVzcyBvcGVyYXRpb25zIChpbml0LCBzeW5jLCByZWNpcGVzLCBza2lsbHMvZGVwcywgZG9jdG9yKSwgbG9hZCB0aGUgYGhhcm5lc3MtbGlmZWN5Y2xlYCwgYGhhcm5lc3MtcmVjaXBlc2AsIG9yIGBoYXJuZXNzLXNraWxscy1kZXBzYCBza2lsbHMuCg==",
+      "sha256": "badbb2ad0e8bc67d82930cc275e10f8635a85cc9b33c6af84f65797714c4ecc7",
+      "error": null
+    },
+    {
+      "name": "repo topology from project field",
+      "bytes_b64": "IyB0b3BvIFJ1bnRpbWUgQnJpZWYKCiMjIFByb2plY3QKCi0gKipQcm9qZWN0Kio6IGB0b3BvYAotICoqRW5hYmxlZCBydW50aW1lcyoqOiBgY2xhdWRlYAotICoqUmVwbyB0b3BvbG9neSoqOiBgbW9ub3JlcG8tYXBwc2AgKHZpYSBjb25maWcpCgojIyBVc2VmdWwgQ29tbWFuZHMKCi0gRm9yIGFpLXNwZWNzIGhhcm5lc3Mgb3BlcmF0aW9ucyAoaW5pdCwgc3luYywgcmVjaXBlcywgc2tpbGxzL2RlcHMsIGRvY3RvciksIGxvYWQgdGhlIGBoYXJuZXNzLWxpZmVjeWNsZWAsIGBoYXJuZXNzLXJlY2lwZXNgLCBvciBgaGFybmVzcy1za2lsbHMtZGVwc2Agc2tpbGxzLgo=",
+      "sha256": "ba5bd0302dd5099b38cbe2f73fafdcd2a118a79fc1b9dbb8a42c30ac67b9c596",
+      "error": null
+    },
+    {
+      "name": "unknown vcs recipe uses generic label",
+      "bytes_b64": "IyB2Y3MgUnVudGltZSBCcmllZgoKIyMgUHJvamVjdAoKLSAqKlByb2plY3QqKjogYHZjc2AKLSAqKkVuYWJsZWQgcnVudGltZXMqKjogYGNsYXVkZWAKCiMjIFJ1bnRpbWUgRmxvdwoKLSBWQ1MvUFIgcHJvdmlkZXI6IFZDUyBQUiAoY3VzdG9tKTsgYmFzZSBicmFuY2g6IGB0cnVua2AKCiMjIFVzZWZ1bCBDb21tYW5kcwoKLSBGb3IgYWktc3BlY3MgaGFybmVzcyBvcGVyYXRpb25zIChpbml0LCBzeW5jLCByZWNpcGVzLCBza2lsbHMvZGVwcywgZG9jdG9yKSwgbG9hZCB0aGUgYGhhcm5lc3MtbGlmZWN5Y2xlYCwgYGhhcm5lc3MtcmVjaXBlc2AsIG9yIGBoYXJuZXNzLXNraWxscy1kZXBzYCBza2lsbHMuCg==",
+      "sha256": "c7a455b94b6661996a2ea8f64118dd9ed2debeace224fb0104867c6274bbfda2",
+      "error": null
+    },
+    {
+      "name": "vcs sibling filtering keeps only the bound provider",
+      "bytes_b64": "IyB2Y3NmaWx0ZXIgUnVudGltZSBCcmllZgoKIyMgUHJvamVjdAoKLSAqKlByb2plY3QqKjogYHZjc2ZpbHRlcmAKLSAqKkVuYWJsZWQgcnVudGltZXMqKjogYGNsYXVkZWAKLSAqKlJlcG8gdG9wb2xvZ3kqKjogYHN0YW5kYWxvbmVgICh2aWEgYXV0bykKCiMjIFJ1bnRpbWUgRmxvdwoKLSBWQ1MvUFIgcHJvdmlkZXI6IEdpdExhYiAoYGdsYWJgIENMSSkKCiMjIFdvcmtmbG93IFJ1bGVzCgotIFVzZSBHaXRMYWIgTVJzIHRvIG1lcmdlLgotIENyZWF0ZSBhIHdvcmt0cmVlIGZvciBldmVyeSBjaGFuZ2UuCgojIyBVc2VmdWwgQ29tbWFuZHMKCi0gRm9yIGFpLXNwZWNzIGhhcm5lc3Mgb3BlcmF0aW9ucyAoaW5pdCwgc3luYywgcmVjaXBlcywgc2tpbGxzL2RlcHMsIGRvY3RvciksIGxvYWQgdGhlIGBoYXJuZXNzLWxpZmVjeWNsZWAsIGBoYXJuZXNzLXJlY2lwZXNgLCBvciBgaGFybmVzcy1za2lsbHMtZGVwc2Agc2tpbGxzLgo=",
+      "sha256": "32072447851d0cbdcb05dab7fb5b2a2bc7615f8ebc93c48b055ee26204bef37b",
+      "error": null
+    },
+    {
+      "name": "replace modes suppress recipe fragments per section",
+      "bytes_b64": "IyByZXBsYWNlIFJ1bnRpbWUgQnJpZWYKCiMjIFByb2plY3QKCi0gKipQcm9qZWN0Kio6IGByZXBsYWNlYAotICoqRW5hYmxlZCBydW50aW1lcyoqOiBgY2xhdWRlYAoKIyMgQ29udGV4dCBTb3VyY2VzCgotIFJlY2lwZSBjb250ZXh0LgoKIyMgV29ya2Zsb3cgUnVsZXMKCi0gT25seSB0aGlzIHJ1bGUuCgojIyBVc2VmdWwgQ29tbWFuZHMKCi0gRm9yIGFpLXNwZWNzIGhhcm5lc3Mgb3BlcmF0aW9ucyAoaW5pdCwgc3luYywgcmVjaXBlcywgc2tpbGxzL2RlcHMsIGRvY3RvciksIGxvYWQgdGhlIGBoYXJuZXNzLWxpZmVjeWNsZWAsIGBoYXJuZXNzLXJlY2lwZXNgLCBvciBgaGFybmVzcy1za2lsbHMtZGVwc2Agc2tpbGxzLgo=",
+      "sha256": "cd6eecedbb457728e25492bf482f5686fa86e6ca8a2dfaf23af7e749b46c0ed4",
+      "error": null
+    },
+    {
+      "name": "invalid brief mode raises",
+      "bytes_b64": null,
+      "sha256": null,
+      "error": {
+        "type": "ValueError",
+        "message": "[brief].workflow_rules_mode: invalid mode 'merge'; valid values are ['append', 'replace']"
+      }
+    },
+    {
+      "name": "invalid brief mode date raises",
+      "bytes_b64": null,
+      "sha256": null,
+      "error": {
+        "type": "ValueError",
+        "message": "[brief].workflow_rules_mode: invalid mode datetime.date(1979, 5, 27); valid values are ['append', 'replace']"
+      }
+    }
+  ]
+}

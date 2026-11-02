@@ -1,0 +1,227 @@
+{
+  "cases": [
+    {
+      "policy": {
+        "stdout": "true\n",
+        "stderr": "",
+        "rc": 0
+      },
+      "render_stdout": "",
+      "render_stderr": "",
+      "render_rc": 0,
+      "action": "written",
+      "classify_state": "missing",
+      "effective_state": "missing",
+      "wrote": true,
+      "agents_sha256": "4141d1d5a49a70f6c2688a1b9de0605837fbf1cd4609362ee5dd7e5ff947ff85",
+      "lock_sha256": "e650607857c2b1295986b19de6c5aa004808b9a0bd5d43c8207dc4a99f35f500"
+    },
+    {
+      "policy": {
+        "stdout": "true\n",
+        "stderr": "",
+        "rc": 0
+      },
+      "render_stdout": "",
+      "render_stderr": "",
+      "render_rc": 0,
+      "action": "written",
+      "classify_state": "managed_stale",
+      "effective_state": "managed_stale",
+      "wrote": true,
+      "agents_sha256": "4141d1d5a49a70f6c2688a1b9de0605837fbf1cd4609362ee5dd7e5ff947ff85",
+      "lock_sha256": "e650607857c2b1295986b19de6c5aa004808b9a0bd5d43c8207dc4a99f35f500"
+    },
+    {
+      "policy": {
+        "stdout": "true\n",
+        "stderr": "",
+        "rc": 0
+      },
+      "render_stdout": "",
+      "render_stderr": "  ℹ AGENTS.md left unchanged (marker; preserving existing file)\n    to let ai-specs manage it:  ai-specs sync --adopt-brief\n    to keep it yours forever:   add \u003c!-- ai-specs:runtime-brief --\u003e at the top\n",
+      "render_rc": 0,
+      "action": "preserved",
+      "classify_state": "marker",
+      "effective_state": "marker",
+      "wrote": false,
+      "agents_sha256": "5e4097f83c970b10bac73bea75a1f9113bca3a4ccd325eee0eaed8163bc46da7",
+      "lock_sha256": null
+    },
+    {
+      "policy": {
+        "stdout": "true\n",
+        "stderr": "",
+        "rc": 0
+      },
+      "render_stdout": "",
+      "render_stderr": "  ℹ AGENTS.md left unchanged (marker; preserving existing file)\n    to let ai-specs manage it:  ai-specs sync --adopt-brief\n    to keep it yours forever:   add \u003c!-- ai-specs:runtime-brief --\u003e at the top\n",
+      "render_rc": 0,
+      "action": "preserved",
+      "classify_state": "marker",
+      "effective_state": "marker",
+      "wrote": false,
+      "agents_sha256": "5e4097f83c970b10bac73bea75a1f9113bca3a4ccd325eee0eaed8163bc46da7",
+      "lock_sha256": null
+    },
+    {
+      "policy": {
+        "stdout": "true\n",
+        "stderr": "",
+        "rc": 0
+      },
+      "render_stdout": "",
+      "render_stderr": "  ℹ AGENTS.md left unchanged (untracked; preserving existing file)\n    to let ai-specs manage it:  ai-specs sync --adopt-brief\n    to keep it yours forever:   add \u003c!-- ai-specs:runtime-brief --\u003e at the top\n",
+      "render_rc": 0,
+      "action": "preserved",
+      "classify_state": "untracked",
+      "effective_state": "untracked",
+      "wrote": false,
+      "agents_sha256": "49cf24c707d61fd324680bc9e7c5b08ab77c7dc9b9d229397b7844085379095f",
+      "lock_sha256": null
+    },
+    {
+      "policy": {
+        "stdout": "true\n",
+        "stderr": "",
+        "rc": 0
+      },
+      "render_stdout": "",
+      "render_stderr": "",
+      "render_rc": 0,
+      "action": "adopted",
+      "classify_state": "untracked",
+      "effective_state": "untracked",
+      "wrote": false,
+      "agents_sha256": "49cf24c707d61fd324680bc9e7c5b08ab77c7dc9b9d229397b7844085379095f",
+      "lock_sha256": "fe2bbadcd35a2ef20ffda031006738310f30d6fc2771d79e3bf7677751722363"
+    },
+    {
+      "policy": {
+        "stdout": "true\n",
+        "stderr": "",
+        "rc": 0
+      },
+      "render_stdout": "",
+      "render_stderr": "  ℹ AGENTS.md left unchanged (user_modified; preserving existing file)\n    to let ai-specs manage it:  ai-specs sync --adopt-brief\n    to keep it yours forever:   add \u003c!-- ai-specs:runtime-brief --\u003e at the top\n",
+      "render_rc": 0,
+      "action": "preserved",
+      "classify_state": "user_modified",
+      "effective_state": "user_modified",
+      "wrote": false,
+      "agents_sha256": "49cf24c707d61fd324680bc9e7c5b08ab77c7dc9b9d229397b7844085379095f",
+      "lock_sha256": "ed239888e07c279e1af93b62330d10d6aee65604e83db52b69e7700b2692bb04"
+    },
+    {
+      "policy": {
+        "stdout": "true\n",
+        "stderr": "",
+        "rc": 0
+      },
+      "render_stdout": "",
+      "render_stderr": "",
+      "render_rc": 0,
+      "action": "adopted",
+      "classify_state": "user_modified",
+      "effective_state": "user_modified",
+      "wrote": false,
+      "agents_sha256": "49cf24c707d61fd324680bc9e7c5b08ab77c7dc9b9d229397b7844085379095f",
+      "lock_sha256": "fe2bbadcd35a2ef20ffda031006738310f30d6fc2771d79e3bf7677751722363"
+    },
+    {
+      "policy": {
+        "stdout": "true\n",
+        "stderr": "",
+        "rc": 0
+      },
+      "render_stdout": "",
+      "render_stderr": "  ℹ AGENTS.md left unchanged (undetermined; preserving existing file)\n    to let ai-specs manage it:  ai-specs sync --adopt-brief\n    to keep it yours forever:   add \u003c!-- ai-specs:runtime-brief --\u003e at the top\n",
+      "render_rc": 0,
+      "action": "preserved",
+      "classify_state": "undetermined",
+      "effective_state": "undetermined",
+      "wrote": false,
+      "agents_sha256": "49cf24c707d61fd324680bc9e7c5b08ab77c7dc9b9d229397b7844085379095f",
+      "lock_sha256": "0945f99b4db3da40a13c4b53b5c5a7945e121ed4cbe537c7dc7a354ead522abc"
+    },
+    {
+      "policy": {
+        "stdout": "false\n",
+        "stderr": "",
+        "rc": 0
+      },
+      "render_stdout": "",
+      "render_stderr": "",
+      "render_rc": 0,
+      "action": "written",
+      "classify_state": "missing",
+      "effective_state": "missing",
+      "wrote": true,
+      "agents_sha256": "2dc8a855a1f0595883ef642922eabf6cdc7d370cc730e68cb542472f5ce935bb",
+      "lock_sha256": "eaae230d2d268822acbf1160ca2a22bdd559e70cd5a92dbc9dec77d1731c32ec"
+    },
+    {
+      "policy": {
+        "stdout": "",
+        "stderr": "error: [brief].render must be a boolean (true or false); got str\n",
+        "rc": 1
+      },
+      "render_stdout": "",
+      "render_stderr": "",
+      "render_rc": 0,
+      "action": "written",
+      "classify_state": "missing",
+      "effective_state": "missing",
+      "wrote": true,
+      "agents_sha256": "2dc8a855a1f0595883ef642922eabf6cdc7d370cc730e68cb542472f5ce935bb",
+      "lock_sha256": "eaae230d2d268822acbf1160ca2a22bdd559e70cd5a92dbc9dec77d1731c32ec"
+    },
+    {
+      "policy": {
+        "stdout": "",
+        "stderr": "error: [brief].render must be a boolean (true or false); got int\n",
+        "rc": 1
+      },
+      "render_stdout": "",
+      "render_stderr": "",
+      "render_rc": 0,
+      "action": "written",
+      "classify_state": "missing",
+      "effective_state": "missing",
+      "wrote": true,
+      "agents_sha256": "2dc8a855a1f0595883ef642922eabf6cdc7d370cc730e68cb542472f5ce935bb",
+      "lock_sha256": "eaae230d2d268822acbf1160ca2a22bdd559e70cd5a92dbc9dec77d1731c32ec"
+    },
+    {
+      "policy": {
+        "stdout": "true\n",
+        "stderr": "",
+        "rc": 0
+      },
+      "render_stdout": "",
+      "render_stderr": "⚠ ai-specs: VCS recipe 'custom-vcs' is not in the known label set; using generic label 'VCS PR (custom)'\n",
+      "render_rc": 0,
+      "action": "written",
+      "classify_state": "missing",
+      "effective_state": "missing",
+      "wrote": true,
+      "agents_sha256": "c2e4d1e4fb448223d5e8b51142d8e4339a9469c2240f71f463de3c3d45f38ff7",
+      "lock_sha256": "9f2be7abfbcca3d3f6d39ecece706b0d0938d928c9cbf6252915f0e5d4f1a76b"
+    }
+  ],
+  "names": [
+    "missing writes",
+    "managed_stale writes",
+    "marker preserves",
+    "marker preserves with inert preserve flag",
+    "untracked preserves",
+    "untracked adopts with adopt_brief",
+    "user_modified preserves",
+    "user_modified adopts with adopt_brief",
+    "corrupt lock is undetermined and preserves",
+    "brief render false disables the policy gate",
+    "brief render non-boolean string fails safe under validate",
+    "brief render non-boolean int fails safe under validate",
+    "unknown vcs recipe warns on stderr"
+  ]
+}

@@ -1,0 +1,171 @@
+{
+  "cases": [
+    {
+      "name": "missing writes",
+      "stdout": "",
+      "stderr": "",
+      "rc": 0,
+      "agents": {
+        "present": true,
+        "b64": "IyBnb3YgUnVudGltZSBCcmllZgoKIyMgUHJvamVjdAoKLSAqKlByb2plY3QqKjogYGdvdmAKLSAqKkVuYWJsZWQgcnVudGltZXMqKjogYGNsYXVkZWAKCiMjIFVzZWZ1bCBDb21tYW5kcwoKLSBGb3IgYWktc3BlY3MgaGFybmVzcyBvcGVyYXRpb25zIChpbml0LCBzeW5jLCByZWNpcGVzLCBza2lsbHMvZGVwcywgZG9jdG9yKSwgbG9hZCB0aGUgYGhhcm5lc3MtbGlmZWN5Y2xlYCwgYGhhcm5lc3MtcmVjaXBlc2AsIG9yIGBoYXJuZXNzLXNraWxscy1kZXBzYCBza2lsbHMuCg=="
+      },
+      "lock": {
+        "present": true,
+        "b64": "IyBNYW5hZ2VkIGJ5IGFpLXNwZWNzLiBEbyBub3QgZWRpdCBieSBoYW5kLgojIFByb3ZlbmFuY2Ugc3RhbXA6IFttZXRhXSByZWNvcmRzIHRoZSBDTEkgdmVyc2lvbiBhbmQgdGltZXN0YW1wIG9mIHRoZSBsYXN0CiMgc3luYy4gW21hbmFnZWQuKl0gcmVjb3JkcyBpbnRlZ3JpdHkgb25seSBmb3IgQ0xJLW93bmVkIG92ZXJyaWRlIHRhcmdldHM7CiMgaXQgaXMgbm90IGEgZ2VuZXJhbCBjb250ZW50LWludGVncml0eSBtYW5pZmVzdC4gZ2l0IGNvdmVycyB0aGUgY29tbWl0dGVkCiMgcHJvamVjdCBzdXJmYWNlOyBkZXAgY29udGVudCBoYXNoZXMgKFtkZXBzLipdKSBhcmUgdHJhY2tlZCBmb3IgZHJpZnQKIyBkZXRlY3Rpb247IHJlY2lwZS9za2lsbCBjb250ZW50IGhhc2hlcyBhcmUgbm90IHRyYWNrZWQuCgpbbWFuYWdlZC4iQUdFTlRTLm1kIl0Kc2hhMjU2ID0gIjQxNDFkMWQ1YTQ5YTcwZjZjMjY4OGExYjlkZTA2MDU4MzdmYmYxY2Q0NjA5MzYyZWU1ZGQ3ZTVmZjk0N2ZmODUiCmtpbmQgPSAicnVudGltZS1icmllZiIKcG9saWN5ID0gIm5ldmVyLWZvcmNlIgo="
+      }
+    },
+    {
+      "name": "managed_stale writes",
+      "stdout": "",
+      "stderr": "",
+      "rc": 0,
+      "agents": {
+        "present": true,
+        "b64": "IyBnb3YgUnVudGltZSBCcmllZgoKIyMgUHJvamVjdAoKLSAqKlByb2plY3QqKjogYGdvdmAKLSAqKkVuYWJsZWQgcnVudGltZXMqKjogYGNsYXVkZWAKCiMjIFVzZWZ1bCBDb21tYW5kcwoKLSBGb3IgYWktc3BlY3MgaGFybmVzcyBvcGVyYXRpb25zIChpbml0LCBzeW5jLCByZWNpcGVzLCBza2lsbHMvZGVwcywgZG9jdG9yKSwgbG9hZCB0aGUgYGhhcm5lc3MtbGlmZWN5Y2xlYCwgYGhhcm5lc3MtcmVjaXBlc2AsIG9yIGBoYXJuZXNzLXNraWxscy1kZXBzYCBza2lsbHMuCg=="
+      },
+      "lock": {
+        "present": true,
+        "b64": "IyBNYW5hZ2VkIGJ5IGFpLXNwZWNzLiBEbyBub3QgZWRpdCBieSBoYW5kLgojIFByb3ZlbmFuY2Ugc3RhbXA6IFttZXRhXSByZWNvcmRzIHRoZSBDTEkgdmVyc2lvbiBhbmQgdGltZXN0YW1wIG9mIHRoZSBsYXN0CiMgc3luYy4gW21hbmFnZWQuKl0gcmVjb3JkcyBpbnRlZ3JpdHkgb25seSBmb3IgQ0xJLW93bmVkIG92ZXJyaWRlIHRhcmdldHM7CiMgaXQgaXMgbm90IGEgZ2VuZXJhbCBjb250ZW50LWludGVncml0eSBtYW5pZmVzdC4gZ2l0IGNvdmVycyB0aGUgY29tbWl0dGVkCiMgcHJvamVjdCBzdXJmYWNlOyBkZXAgY29udGVudCBoYXNoZXMgKFtkZXBzLipdKSBhcmUgdHJhY2tlZCBmb3IgZHJpZnQKIyBkZXRlY3Rpb247IHJlY2lwZS9za2lsbCBjb250ZW50IGhhc2hlcyBhcmUgbm90IHRyYWNrZWQuCgpbbWFuYWdlZC4iQUdFTlRTLm1kIl0Kc2hhMjU2ID0gIjQxNDFkMWQ1YTQ5YTcwZjZjMjY4OGExYjlkZTA2MDU4MzdmYmYxY2Q0NjA5MzYyZWU1ZGQ3ZTVmZjk0N2ZmODUiCmtpbmQgPSAicnVudGltZS1icmllZiIKcG9saWN5ID0gIm5ldmVyLWZvcmNlIgo="
+      }
+    },
+    {
+      "name": "marker preserves",
+      "stdout": "",
+      "stderr": "  ℹ AGENTS.md left unchanged (marker; preserving existing file)\n    to let ai-specs manage it:  ai-specs sync --adopt-brief\n    to keep it yours forever:   add \u003c!-- ai-specs:runtime-brief --\u003e at the top\n",
+      "rc": 0,
+      "agents": {
+        "present": true,
+        "b64": "IyBtaW5lCjwhLS0gYWktc3BlY3M6cnVudGltZS1icmllZiAtLT4K"
+      },
+      "lock": {
+        "present": false,
+        "b64": ""
+      }
+    },
+    {
+      "name": "marker preserves with inert preserve flag",
+      "stdout": "",
+      "stderr": "  ℹ AGENTS.md left unchanged (marker; preserving existing file)\n    to let ai-specs manage it:  ai-specs sync --adopt-brief\n    to keep it yours forever:   add \u003c!-- ai-specs:runtime-brief --\u003e at the top\n",
+      "rc": 0,
+      "agents": {
+        "present": true,
+        "b64": "IyBtaW5lCjwhLS0gYWktc3BlY3M6cnVudGltZS1icmllZiAtLT4K"
+      },
+      "lock": {
+        "present": false,
+        "b64": ""
+      }
+    },
+    {
+      "name": "untracked preserves",
+      "stdout": "",
+      "stderr": "  ℹ AGENTS.md left unchanged (untracked; preserving existing file)\n    to let ai-specs manage it:  ai-specs sync --adopt-brief\n    to keep it yours forever:   add \u003c!-- ai-specs:runtime-brief --\u003e at the top\n",
+      "rc": 0,
+      "agents": {
+        "present": true,
+        "b64": "IyBtaW5lCg=="
+      },
+      "lock": {
+        "present": false,
+        "b64": ""
+      }
+    },
+    {
+      "name": "untracked adopts with adopt_brief",
+      "stdout": "",
+      "stderr": "",
+      "rc": 0,
+      "agents": {
+        "present": true,
+        "b64": "IyBtaW5lCg=="
+      },
+      "lock": {
+        "present": true,
+        "b64": "IyBNYW5hZ2VkIGJ5IGFpLXNwZWNzLiBEbyBub3QgZWRpdCBieSBoYW5kLgojIFByb3ZlbmFuY2Ugc3RhbXA6IFttZXRhXSByZWNvcmRzIHRoZSBDTEkgdmVyc2lvbiBhbmQgdGltZXN0YW1wIG9mIHRoZSBsYXN0CiMgc3luYy4gW21hbmFnZWQuKl0gcmVjb3JkcyBpbnRlZ3JpdHkgb25seSBmb3IgQ0xJLW93bmVkIG92ZXJyaWRlIHRhcmdldHM7CiMgaXQgaXMgbm90IGEgZ2VuZXJhbCBjb250ZW50LWludGVncml0eSBtYW5pZmVzdC4gZ2l0IGNvdmVycyB0aGUgY29tbWl0dGVkCiMgcHJvamVjdCBzdXJmYWNlOyBkZXAgY29udGVudCBoYXNoZXMgKFtkZXBzLipdKSBhcmUgdHJhY2tlZCBmb3IgZHJpZnQKIyBkZXRlY3Rpb247IHJlY2lwZS9za2lsbCBjb250ZW50IGhhc2hlcyBhcmUgbm90IHRyYWNrZWQuCgpbbWFuYWdlZC4iQUdFTlRTLm1kIl0Kc2hhMjU2ID0gIjQ5Y2YyNGM3MDdkNjFmZDMyNDY4MGJjOWU3YzViMDhhYjc3YzdkYzliOWQyMjkzOTdiNzg0NDA4NTM3OTA5NWYiCmtpbmQgPSAicnVudGltZS1icmllZiIKcG9saWN5ID0gIm5ldmVyLWZvcmNlIgo="
+      }
+    },
+    {
+      "name": "user_modified preserves",
+      "stdout": "",
+      "stderr": "  ℹ AGENTS.md left unchanged (user_modified; preserving existing file)\n    to let ai-specs manage it:  ai-specs sync --adopt-brief\n    to keep it yours forever:   add \u003c!-- ai-specs:runtime-brief --\u003e at the top\n",
+      "rc": 0,
+      "agents": {
+        "present": true,
+        "b64": "IyBtaW5lCg=="
+      },
+      "lock": {
+        "present": true,
+        "b64": "W21hbmFnZWQuIkFHRU5UUy5tZCJdCnNoYTI1NiA9ICIzMWMwMzQzNWFkYzZmZDQwN2MxZmYzY2JkMmZhZTgxNzQ5NDgzNmE4M2MyMGUxNzc1NWFiNmFkNGZlYjQ0OTc1IgpraW5kID0gInJ1bnRpbWUtYnJpZWYiCnBvbGljeSA9ICJuZXZlci1mb3JjZSIK"
+      }
+    },
+    {
+      "name": "user_modified adopts with adopt_brief",
+      "stdout": "",
+      "stderr": "",
+      "rc": 0,
+      "agents": {
+        "present": true,
+        "b64": "IyBtaW5lCg=="
+      },
+      "lock": {
+        "present": true,
+        "b64": "IyBNYW5hZ2VkIGJ5IGFpLXNwZWNzLiBEbyBub3QgZWRpdCBieSBoYW5kLgojIFByb3ZlbmFuY2Ugc3RhbXA6IFttZXRhXSByZWNvcmRzIHRoZSBDTEkgdmVyc2lvbiBhbmQgdGltZXN0YW1wIG9mIHRoZSBsYXN0CiMgc3luYy4gW21hbmFnZWQuKl0gcmVjb3JkcyBpbnRlZ3JpdHkgb25seSBmb3IgQ0xJLW93bmVkIG92ZXJyaWRlIHRhcmdldHM7CiMgaXQgaXMgbm90IGEgZ2VuZXJhbCBjb250ZW50LWludGVncml0eSBtYW5pZmVzdC4gZ2l0IGNvdmVycyB0aGUgY29tbWl0dGVkCiMgcHJvamVjdCBzdXJmYWNlOyBkZXAgY29udGVudCBoYXNoZXMgKFtkZXBzLipdKSBhcmUgdHJhY2tlZCBmb3IgZHJpZnQKIyBkZXRlY3Rpb247IHJlY2lwZS9za2lsbCBjb250ZW50IGhhc2hlcyBhcmUgbm90IHRyYWNrZWQuCgpbbWFuYWdlZC4iQUdFTlRTLm1kIl0Kc2hhMjU2ID0gIjQ5Y2YyNGM3MDdkNjFmZDMyNDY4MGJjOWU3YzViMDhhYjc3YzdkYzliOWQyMjkzOTdiNzg0NDA4NTM3OTA5NWYiCmtpbmQgPSAicnVudGltZS1icmllZiIKcG9saWN5ID0gIm5ldmVyLWZvcmNlIgo="
+      }
+    },
+    {
+      "name": "corrupt lock is undetermined and preserves",
+      "stdout": "",
+      "stderr": "  ℹ AGENTS.md left unchanged (undetermined; preserving existing file)\n    to let ai-specs manage it:  ai-specs sync --adopt-brief\n    to keep it yours forever:   add \u003c!-- ai-specs:runtime-brief --\u003e at the top\n",
+      "rc": 0,
+      "agents": {
+        "present": true,
+        "b64": "IyBtaW5lCg=="
+      },
+      "lock": {
+        "present": true,
+        "b64": "bWFuYWdlZCA9ID0gYnJva2VuCg=="
+      }
+    },
+    {
+      "name": "brief render false disables the policy gate",
+      "stdout": "  ℹ skipped AGENTS.md (brief.render = false)\n",
+      "stderr": "",
+      "rc": 0,
+      "agents": {
+        "present": false,
+        "b64": ""
+      },
+      "lock": {
+        "present": false,
+        "b64": ""
+      }
+    },
+    {
+      "name": "unknown vcs recipe warns on stderr",
+      "stdout": "",
+      "stderr": "⚠ ai-specs: VCS recipe 'custom-vcs' is not in the known label set; using generic label 'VCS PR (custom)'\n",
+      "rc": 0,
+      "agents": {
+        "present": true,
+        "b64": "IyBnb3YgUnVudGltZSBCcmllZgoKIyMgUHJvamVjdAoKLSAqKlByb2plY3QqKjogYGdvdmAKLSAqKkVuYWJsZWQgcnVudGltZXMqKjogYGNsYXVkZWAKCiMjIFJ1bnRpbWUgRmxvdwoKLSBWQ1MvUFIgcHJvdmlkZXI6IFZDUyBQUiAoY3VzdG9tKTsgYmFzZSBicmFuY2g6IGB0cnVua2AKCiMjIFVzZWZ1bCBDb21tYW5kcwoKLSBGb3IgYWktc3BlY3MgaGFybmVzcyBvcGVyYXRpb25zIChpbml0LCBzeW5jLCByZWNpcGVzLCBza2lsbHMvZGVwcywgZG9jdG9yKSwgbG9hZCB0aGUgYGhhcm5lc3MtbGlmZWN5Y2xlYCwgYGhhcm5lc3MtcmVjaXBlc2AsIG9yIGBoYXJuZXNzLXNraWxscy1kZXBzYCBza2lsbHMuCg=="
+      },
+      "lock": {
+        "present": true,
+        "b64": "IyBNYW5hZ2VkIGJ5IGFpLXNwZWNzLiBEbyBub3QgZWRpdCBieSBoYW5kLgojIFByb3ZlbmFuY2Ugc3RhbXA6IFttZXRhXSByZWNvcmRzIHRoZSBDTEkgdmVyc2lvbiBhbmQgdGltZXN0YW1wIG9mIHRoZSBsYXN0CiMgc3luYy4gW21hbmFnZWQuKl0gcmVjb3JkcyBpbnRlZ3JpdHkgb25seSBmb3IgQ0xJLW93bmVkIG92ZXJyaWRlIHRhcmdldHM7CiMgaXQgaXMgbm90IGEgZ2VuZXJhbCBjb250ZW50LWludGVncml0eSBtYW5pZmVzdC4gZ2l0IGNvdmVycyB0aGUgY29tbWl0dGVkCiMgcHJvamVjdCBzdXJmYWNlOyBkZXAgY29udGVudCBoYXNoZXMgKFtkZXBzLipdKSBhcmUgdHJhY2tlZCBmb3IgZHJpZnQKIyBkZXRlY3Rpb247IHJlY2lwZS9za2lsbCBjb250ZW50IGhhc2hlcyBhcmUgbm90IHRyYWNrZWQuCgpbbWFuYWdlZC4iQUdFTlRTLm1kIl0Kc2hhMjU2ID0gImMyZTRkMWU0ZmI0NDgyMjNkNWU4YjUxMTQyZDhlNDMzOWE5NDY5YzIyNDBmNzFmNDYzZGUzYzNkNDVmMzhmZjciCmtpbmQgPSAicnVudGltZS1icmllZiIKcG9saWN5ID0gIm5ldmVyLWZvcmNlIgo="
+      }
+    }
+  ],
+  "names": [
+    "missing writes",
+    "managed_stale writes",
+    "marker preserves",
+    "marker preserves with inert preserve flag",
+    "untracked preserves",
+    "untracked adopts with adopt_brief",
+    "user_modified preserves",
+    "user_modified adopts with adopt_brief",
+    "corrupt lock is undetermined and preserves",
+    "brief render false disables the policy gate",
+    "unknown vcs recipe warns on stderr"
+  ]
+}
