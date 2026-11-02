@@ -1,0 +1,100 @@
+{
+  "view": {
+    "names": [
+      "missing",
+      "managed_current",
+      "managed_stale",
+      "untracked",
+      "user_modified",
+      "marker",
+      "explicit bindings reach the rendered brief",
+      "invalid brief mode fails on both sides"
+    ],
+    "cases": [
+      {
+        "error": null,
+        "state": "missing",
+        "would_write_sha": "dc1816c9b02a2186b700257ef8d61c429fa7976828427cd1fbc1564311539bab",
+        "render_stdout": ""
+      },
+      {
+        "error": null,
+        "state": "managed_current",
+        "would_write_sha": "dc1816c9b02a2186b700257ef8d61c429fa7976828427cd1fbc1564311539bab",
+        "render_stdout": ""
+      },
+      {
+        "error": null,
+        "state": "managed_stale",
+        "would_write_sha": "dc1816c9b02a2186b700257ef8d61c429fa7976828427cd1fbc1564311539bab",
+        "render_stdout": ""
+      },
+      {
+        "error": null,
+        "state": "untracked",
+        "would_write_sha": "dc1816c9b02a2186b700257ef8d61c429fa7976828427cd1fbc1564311539bab",
+        "render_stdout": ""
+      },
+      {
+        "error": null,
+        "state": "user_modified",
+        "would_write_sha": "dc1816c9b02a2186b700257ef8d61c429fa7976828427cd1fbc1564311539bab",
+        "render_stdout": ""
+      },
+      {
+        "error": null,
+        "state": "marker",
+        "would_write_sha": "dc1816c9b02a2186b700257ef8d61c429fa7976828427cd1fbc1564311539bab",
+        "render_stdout": ""
+      },
+      {
+        "error": null,
+        "state": "missing",
+        "would_write_sha": "eeefda7890c2fec9bf2d96a4d6f12f2a6a1fb7cb37bb3869f5a53ef25d266295",
+        "render_stdout": ""
+      },
+      {
+        "error": "ValueError: [brief].workflow_rules_mode: invalid mode 'nope'; valid values are ['append', 'replace']",
+        "state": null,
+        "would_write_sha": "",
+        "render_stdout": ""
+      }
+    ]
+  },
+  "dead": {
+    "names": [
+      "fragments with render disabled",
+      "fragments with render enabled",
+      "enabled recipe declares no fragments",
+      "catalog recipe the loader rejects declares nothing",
+      "enabled recipe missing from the catalog",
+      "recipe declared but not enabled"
+    ],
+    "cases": [
+      {
+        "error": null,
+        "dead": true
+      },
+      {
+        "error": null,
+        "dead": true
+      },
+      {
+        "error": null,
+        "dead": false
+      },
+      {
+        "error": null,
+        "dead": false
+      },
+      {
+        "error": null,
+        "dead": false
+      },
+      {
+        "error": null,
+        "dead": false
+      }
+    ]
+  }
+}
