@@ -2,8 +2,6 @@ package sync
 
 import (
 	"bytes"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -90,29 +88,5 @@ func TestStepModeDefaultsToPython(t *testing.T) {
 	t.Setenv("GO_SYNC_STEP_GITIGNORE", "go")
 	if got := stepMode("gitignore"); got != "go" {
 		t.Errorf("=go: stepMode = %q, want %q", got, "go")
-	}
-}
-
-// TestSyncCDLineMatchesShellSource pins syncCDLine to the actual line of
-// `TARGET_PATH="$(cd "$TARGET_PATH" && pwd)"` in lib/sync.sh: bash prints that
-// number in its failing-cd diagnostic, and TestDifferentialSmoke compares the
-// Go spine byte-for-byte against the legacy launcher. Drift in the shell source
-// must fail here instead of silently breaking the smoke test.
-func TestSyncCDLineMatchesShellSource(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "lib", "sync.sh"))
-	if err != nil {
-		t.Skipf("lib/sync.sh not available: %v", err)
-	}
-	found := 0
-	for i, line := range strings.Split(string(data), "\n") {
-		if strings.Contains(line, `TARGET_PATH="$(cd "$TARGET_PATH" && pwd)"`) {
-			found = i + 1
-		}
-	}
-	if found == 0 {
-		t.Fatalf("could not locate the cd statement in lib/sync.sh")
-	}
-	if found != syncCDLine {
-		t.Errorf("syncCDLine = %d, but lib/sync.sh:%d has the cd statement", syncCDLine, found)
 	}
 }

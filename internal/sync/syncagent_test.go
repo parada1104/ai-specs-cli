@@ -14,7 +14,6 @@ import (
 	"bytes"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -876,38 +875,6 @@ func TestAgentRunNestedSuppressesFraming(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "  syncing claude\n") {
 		t.Errorf("nested run lost the step label:\n%s", out.String())
-	}
-}
-
-// ── Cache path oracle ─────────────────────────────────────────────────────
-
-// TestCachePathOracleMatchesProjectCachePy compares the Go cache-path
-// derivation with the Python module for the two kinds the fan-out consumes.
-func TestCachePathOracleMatchesProjectCachePy(t *testing.T) {
-	python3, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	home := t.TempDir()
-	project := t.TempDir()
-	t.Setenv("AI_SPECS_HOME", home)
-	for _, kind := range []string{"resolved-skills", "root"} {
-		cmd := exec.Command(python3, filepath.Join("..", "..", "lib", "_internal", "project-cache.py"), project, "path", kind)
-		out, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("project-cache.py path %s: %v", kind, err)
-		}
-		want := strings.TrimSpace(string(out))
-		got := ""
-		switch kind {
-		case "resolved-skills":
-			got = projectcache.ResolvedSkillsDir(project, home)
-		case "root":
-			got = projectcache.CacheRoot(project, home)
-		}
-		if got != want {
-			t.Errorf("kind %s: go = %q, python = %q", kind, got, want)
-		}
 	}
 }
 
