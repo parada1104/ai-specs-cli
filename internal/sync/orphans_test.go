@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -486,115 +485,47 @@ func TestCleanOrphansLockWriteFailureIsReported(t *testing.T) {
 	}
 }
 
-// --- differential parity against the Python oracle -------------------------
+// --- differential parity against the frozen Python oracle ------------------
 
-// orphanRefDriver drives the REAL lib/_internal/recipe-materialize.py
-// clean_orphans on two identical fixture trees. It builds both trees, runs the
-// Python oracle on tree A, and prints the B-side facts the Go port needs plus
-// the captured Python stdout. The pure-Python lock writer is pinned so the
-// oracle never depends on a gate binary, and WORKTREE_GATE_BIN is cleared so
-// the orphan bridge provably falls back to the retained Python authority (its
-// GO_ORPHANS_BRIDGE_FALLBACK warning goes to stderr, which this driver does not
-// capture).
-const orphanRefDriver = `import contextlib
-import importlib.util
-import io
-import json
-import os
-import sys
-from pathlib import Path
+// frozenOrphans is the frozen Python-oracle outcome for every differential
+// fixture, captured live once from the real clean_orphans authority and
+// serialized base-relative, so the test rebuilds identical trees without
+// running Python.
+type frozenOrphans struct {
+	Cases []frozenOrphanCase `json:"cases"`
+}
 
-os.environ.pop("WORKTREE_GATE_BIN", None)
-
-repo_root = Path(sys.argv[1])
-spec = json.load(sys.stdin)
-
-mod_path = repo_root / "lib" / "_internal" / "recipe-materialize.py"
-loader = importlib.util.spec_from_file_location("recipe_materialize_orphan_diff", mod_path)
-mod = importlib.util.module_from_spec(loader)
-sys.modules[loader.name] = mod
-loader.loader.exec_module(mod)
-
-# Pin the pure-Python lock writer: this oracle pins Python's lock bytes, not
-# whatever gate binary may or may not be installed.
-mod.write_lock = mod._lock_mod._write_lock_python
-
-pc = mod._load_project_cache()
-home = Path(spec["home"]).resolve()
-
-
-def build(root, lock_recipes):
-    (root / "ai-specs").mkdir(parents=True, exist_ok=True)
-    for directory, names in (
-        (pc.recipe_skills_root(root, cli_home=home), spec["recipes"]),
-        (pc.deps_skills_root(root, cli_home=home), spec["deps"]),
-        (pc.inproject_deps_root(root), spec["inproject"]),
-    ):
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / "stray.txt").write_text("ignore me")
-        for child in names:
-            (directory / child).mkdir()
-            (directory / child / "SKILL.md").write_text("x")
-    if lock_recipes is not None:
-        lines = ["# Managed by ai-specs. Do not edit by hand.", ""]
-        for rid in lock_recipes:
-            lines.append("[recipes.%s.skills.some-skill]" % rid)
-            lines.append('SKILL.md = "deadbeef"')
-            lines.append("")
-        (root / "ai-specs" / ".ai-specs.lock").write_text("\n".join(lines) + "\n")
-
-
-def roots_of(root):
-    return {
-        "recipe_skills": str(pc.recipe_skills_root(root, cli_home=home)),
-        "deps_skills": str(pc.deps_skills_root(root, cli_home=home)),
-        "inproject_deps": str(pc.inproject_deps_root(root)),
-    }
-
-
-def lock_text(root):
-    path = root / "ai-specs" / ".ai-specs.lock"
-    return path.read_text() if path.is_file() else ""
-
-
-root_a = Path(spec["root_a"]).resolve()
-root_b = Path(spec["root_b"]).resolve()
-build(root_a, spec["lock_recipes"])
-build(root_b, spec["lock_recipes"])
-
-# plan_input from the untouched B tree, exactly as the acquisition step would.
-roots_b = roots_of(root_b)
-lock = mod.load_lock(root_b / "ai-specs" / ".ai-specs.lock")
-plan_input = mod._orphan_plan_input(
-    Path(roots_b["recipe_skills"]),
-    Path(roots_b["deps_skills"]),
-    Path(roots_b["inproject_deps"]),
-    lock,
-    set(spec["enabled"]),
-    set(spec["expected"]),
-)
-
-buf = io.StringIO()
-with contextlib.redirect_stdout(buf):
-    mod.clean_orphans(root_a, set(spec["enabled"]), set(spec["expected"]), cli_home=home)
-
-print(json.dumps({
-    "roots_a": roots_of(root_a),
-    "roots_b": roots_b,
-    "lock_a": lock_text(root_a),
-    "lock_path": str(root_b / "ai-specs" / ".ai-specs.lock"),
-    "plan_input": plan_input,
-    "stdout": buf.getvalue(),
-}))
-`
-
-type orphanRefResult struct {
-	RootsA    shared.OrphanApplyRoots `json:"roots_a"`
-	RootsB    shared.OrphanApplyRoots `json:"roots_b"`
-	LockA     string                  `json:"lock_a"`
+// frozenOrphanCase is one captured fixture: the build recipe, the
+// base-relative roots and lock path (exactly where Python resolved them), the
+// plan input Python derived from the untouched tree, Python's byte-exact
+// stdout, and its post-run tree/lock facts.
+type frozenOrphanCase struct {
+	Name      string                  `json:"name"`
+	Build     frozenOrphanBuild       `json:"build"`
+	Roots     shared.OrphanApplyRoots `json:"roots"`
 	LockPath  string                  `json:"lock_path"`
 	PlanInput shared.OrphanPlanInput  `json:"plan_input"`
 	Stdout    string                  `json:"stdout"`
+	Tree      frozenOrphanTrees       `json:"tree"`
+	LockInput string                  `json:"lock_input"`
+	Lock      string                  `json:"lock"`
+}
+
+// frozenOrphanBuild mirrors the capture build: the child names per scope root
+// and the stale lock recipe ids (nil builds no lock file).
+type frozenOrphanBuild struct {
+	Recipes     []string `json:"recipes"`
+	Deps        []string `json:"deps"`
+	Inproject   []string `json:"inproject"`
+	LockRecipes []string `json:"lock_recipes"`
+}
+
+// frozenOrphanTrees holds the post-run tree A snapshots, relative to each
+// scope root, in the same shape orphanTreeSnapshot produces.
+type frozenOrphanTrees struct {
+	RecipeSkills  map[string]string `json:"recipe_skills"`
+	DepsSkills    map[string]string `json:"deps_skills"`
+	InprojectDeps map[string]string `json:"inproject_deps"`
 }
 
 // orphanTreeSnapshot maps every relative path under root to its content (a
@@ -630,87 +561,77 @@ func orphanTreeSnapshot(t *testing.T, root string) map[string]string {
 	return snap
 }
 
-// TestCleanOrphansDifferentialAgainstPython runs the real Python clean_orphans
-// on tree A and the native core on an identical tree B, then requires
-// byte-identical stdout, identical trees, and identical lock bytes.
+// TestCleanOrphansDifferentialAgainstPython pins CleanOrphans against the
+// frozen output of the real Python clean_orphans for the same fixtures: the
+// first case exercises every scope plus a stale lock, the second proves the
+// no-op, and the third pins the missing-lock boundary. Byte equality of the
+// captured stdout, of the rebuilt tree structure, and of the lock bytes pins
+// the whole observable oracle behavior without running Python.
 func TestCleanOrphansDifferentialAgainstPython(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	frozenJSON, err := os.ReadFile(filepath.Join("testdata", "orphans_golden.json"))
 	if err != nil {
-		t.Fatalf("repo root: %v", err)
+		t.Fatalf("read frozen oracle: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(repoRoot, "lib", "_internal", "recipe-materialize.py")); err != nil {
-		t.Skipf("recipe-materialize.py not found under %s: %v", repoRoot, err)
+	var frozen frozenOrphans
+	if err := json.Unmarshal(frozenJSON, &frozen); err != nil {
+		t.Fatalf("parse frozen oracle: %v", err)
 	}
-	driver := filepath.Join(t.TempDir(), "orphan_cleanup_ref.py")
-	if err := os.WriteFile(driver, []byte(orphanRefDriver), 0o600); err != nil {
-		t.Fatalf("write driver: %v", err)
+	if len(frozen.Cases) == 0 {
+		t.Fatal("the frozen oracle must carry at least one case")
 	}
-
-	cases := []struct {
-		name string
-		spec map[string]any
-	}{
-		{
-			name: "all scopes orphaned with a stale lock",
-			spec: map[string]any{
-				"recipes": []string{"a", "gone"}, "deps": []string{"x", "gone-dep"},
-				"inproject": []string{"gone-inproj"}, "lock_recipes": []string{"gone", "keep"},
-				"enabled": []string{"keep"}, "expected": []string{"x"},
-			},
-		},
-		{
-			name: "nothing orphaned is a silent no-op",
-			spec: map[string]any{
-				"recipes": []string{"a"}, "deps": []string{"x"}, "inproject": []string{"x"},
-				"lock_recipes": []string{"a"}, "enabled": []string{"a"}, "expected": []string{"x"},
-			},
-		},
-		{
-			name: "missing lock is never created",
-			spec: map[string]any{
-				"recipes": []string{"gone"}, "deps": []string{}, "inproject": []string{},
-				"lock_recipes": nil, "enabled": []string{}, "expected": []string{},
-			},
-		},
+	// Non-vacuity: the first fixture really removed orphaned cache
+	// directories, so the comparisons below cannot pass on empty pairs.
+	if !strings.Contains(frozen.Cases[0].Stdout, "removed orphaned cache") {
+		t.Fatalf("frozen first-case stdout lost the removal lines: %q", frozen.Cases[0].Stdout)
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range frozen.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
 			base := t.TempDir()
-			home := filepath.Join(base, "home")
-			if err := os.MkdirAll(home, 0o755); err != nil {
-				t.Fatalf("mkdir home: %v", err)
+			root := func(rel string) string {
+				return filepath.Join(base, filepath.FromSlash(rel))
 			}
-			tc.spec["home"] = home
-			tc.spec["root_a"] = filepath.Join(base, "a")
-			tc.spec["root_b"] = filepath.Join(base, "b")
-			specJSON, err := json.Marshal(tc.spec)
-			if err != nil {
-				t.Fatalf("marshal spec: %v", err)
+			roots := shared.OrphanApplyRoots{
+				RecipeSkills:  root(tc.Roots.RecipeSkills),
+				DepsSkills:    root(tc.Roots.DepsSkills),
+				InprojectDeps: root(tc.Roots.InprojectDeps),
 			}
+			lockPath := root(tc.LockPath)
 
-			cmd := exec.Command("python3", driver, repoRoot)
-			cmd.Stdin = bytes.NewReader(specJSON)
-			cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "WORKTREE_GATE_BIN=")
-			var stdout, stderr bytes.Buffer
-			cmd.Stdout = &stdout
-			cmd.Stderr = &stderr
-			if err := cmd.Run(); err != nil {
-				t.Fatalf("python oracle failed: %v\nstderr: %s", err, stderr.String())
+			// Rebuild tree B exactly as the capture's Python build created it.
+			for _, scope := range []struct {
+				relRoot string
+				names   []string
+			}{
+				{tc.Roots.RecipeSkills, tc.Build.Recipes},
+				{tc.Roots.DepsSkills, tc.Build.Deps},
+				{tc.Roots.InprojectDeps, tc.Build.Inproject},
+			} {
+				dir := root(scope.relRoot)
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatalf("mkdir scope root %s: %v", dir, err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "stray.txt"), []byte("ignore me"), 0o644); err != nil {
+					t.Fatalf("write stray: %v", err)
+				}
+				for _, name := range scope.names {
+					if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
+						t.Fatalf("mkdir %s: %v", name, err)
+					}
+					if err := os.WriteFile(filepath.Join(dir, name, "SKILL.md"), []byte("x"), 0o644); err != nil {
+						t.Fatalf("write skill: %v", err)
+					}
+				}
 			}
-			var ref orphanRefResult
-			if err := json.Unmarshal(stdout.Bytes(), &ref); err != nil {
-				t.Fatalf("parse oracle JSON: %v\nraw: %s", err, stdout.String())
+			if tc.LockInput != "" {
+				writeOrphanLock(t, lockPath, tc.LockInput)
 			}
 
 			var out bytes.Buffer
 			outcome, err := CleanOrphans(OrphanCleanupInput{
-				PlanInput: ref.PlanInput,
-				Roots:     ref.RootsB,
-				LockPath:  ref.LockPath,
+				PlanInput: tc.PlanInput,
+				Roots:     roots,
+				LockPath:  lockPath,
 				Output:    &out,
 			}, os.RemoveAll)
 			if err != nil {
@@ -719,21 +640,20 @@ func TestCleanOrphansDifferentialAgainstPython(t *testing.T) {
 			if outcome.Status != shared.StatusApplied {
 				t.Fatalf("status = %q, want %q; error=%q", outcome.Status, shared.StatusApplied, outcome.Error)
 			}
-
-			if out.String() != ref.Stdout {
-				t.Errorf("stdout diverges\n--- go ---\n%q\n--- python ---\n%q", out.String(), ref.Stdout)
+			if out.String() != tc.Stdout {
+				t.Errorf("stdout diverges\n--- go ---\n%q\n--- frozen python ---\n%q", out.String(), tc.Stdout)
 			}
-			if got, want := orphanTreeSnapshot(t, ref.RootsB.RecipeSkills), orphanTreeSnapshot(t, ref.RootsA.RecipeSkills); !reflect.DeepEqual(got, want) {
-				t.Errorf("recipe tree diverges\n--- go ---\n%#v\n--- python ---\n%#v", got, want)
+			if got, want := orphanTreeSnapshot(t, roots.RecipeSkills), tc.Tree.RecipeSkills; !reflect.DeepEqual(got, want) {
+				t.Errorf("recipe tree diverges\n--- go ---\n%#v\n--- frozen python ---\n%#v", got, want)
 			}
-			if got, want := orphanTreeSnapshot(t, ref.RootsB.DepsSkills), orphanTreeSnapshot(t, ref.RootsA.DepsSkills); !reflect.DeepEqual(got, want) {
-				t.Errorf("deps tree diverges\n--- go ---\n%#v\n--- python ---\n%#v", got, want)
+			if got, want := orphanTreeSnapshot(t, roots.DepsSkills), tc.Tree.DepsSkills; !reflect.DeepEqual(got, want) {
+				t.Errorf("deps tree diverges\n--- go ---\n%#v\n--- frozen python ---\n%#v", got, want)
 			}
-			if got, want := orphanTreeSnapshot(t, ref.RootsB.InprojectDeps), orphanTreeSnapshot(t, ref.RootsA.InprojectDeps); !reflect.DeepEqual(got, want) {
-				t.Errorf("in-project tree diverges\n--- go ---\n%#v\n--- python ---\n%#v", got, want)
+			if got, want := orphanTreeSnapshot(t, roots.InprojectDeps), tc.Tree.InprojectDeps; !reflect.DeepEqual(got, want) {
+				t.Errorf("in-project tree diverges\n--- go ---\n%#v\n--- frozen python ---\n%#v", got, want)
 			}
-			if got := readOrphanBytesIfPresent(t, ref.LockPath); got != ref.LockA {
-				t.Errorf("lock bytes diverge\n--- go ---\n%q\n--- python ---\n%q", got, ref.LockA)
+			if got := readOrphanBytesIfPresent(t, lockPath); got != tc.Lock {
+				t.Errorf("lock bytes diverge\n--- go ---\n%q\n--- frozen python ---\n%q", got, tc.Lock)
 			}
 		})
 	}

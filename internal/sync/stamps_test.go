@@ -70,44 +70,14 @@ func runSyncPythonOracle(t *testing.T, python, driver string, args ...string) st
 	return strings.TrimSpace(stdout.String())
 }
 
-// reconcileStampOracle imports the real Python materialize authority and runs
-// its temporary stamp authority (_stamp_recipe_reconcile_defaults_python) over
-// the fixture catalog. It replaces only the manifest sink: a recorder captures
-// the stamp dict and recipe id in call order instead of writing the manifest,
-// so the stamp computation and the recipe loading stay the real authority. The
-// output is compact JSON with sorted keys, byte-comparable to the Go
-// ReconcileStampEntry slice.
-const reconcileStampOracle = `
-import importlib.util, json, sys
-from pathlib import Path
-spec = importlib.util.spec_from_file_location("materialize_stamp_oracle", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = mod
-spec.loader.exec_module(mod)
-recorded = []
-class Recorder:
-    def update_recipe_config(self, manifest, recipe_id, values):
-        recorded.append({"id": recipe_id, "stamp": values})
-mod._load_recipe_config_write = lambda: Recorder()
-catalog = Path(sys.argv[2])
-mod._stamp_recipe_reconcile_defaults_python(catalog.parent, catalog, json.loads(sys.argv[3]))
-print(json.dumps(recorded, sort_keys=True, separators=(",", ":")))
-`
-
 // TestReconcileStampsDifferentialAgainstPython pins PlanReconcileStamps against
-// the real Python stamp authority. Both sides read the same fixture catalog:
+// the frozen output of the Python stamp authority for the same fixture catalog:
 // dir-a carries a false default and a zero default selected by one
 // table-shaped expectation each, dir-b carries a single scope default, and the
 // ghost id and the unparsable dir-broken must be skipped by both authorities.
 // Byte equality of the compact JSON pins the recipe ids, the order, the
 // reconcile values and every selected default — including TOML false and 0.
 func TestReconcileStampsDifferentialAgainstPython(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := filepath.Join(t.TempDir(), "reconcile_stamp_oracle.py")
-	if err := os.WriteFile(driver, []byte(reconcileStampOracle), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
 	catalog := t.TempDir()
 	writeSyncCatalogRecipe(t, catalog, "dir-a", syncRecipeHeader("dir-a", "A")+`
 [config.reconcile]
@@ -149,16 +119,15 @@ default = "build"
 	writeSyncCatalogRecipe(t, catalog, "dir-broken", "not = [valid\n")
 
 	ids := []string{"dir-a", "dir-b", "ghost", "dir-broken"}
-	idsJSON, err := json.Marshal(ids)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	got, err := json.Marshal(PlanReconcileStamps(catalog, ids))
 	if err != nil {
 		t.Fatalf("marshal native plan: %v", err)
 	}
-	want := runSyncPythonOracle(t, python, driver, authority, catalog, string(idsJSON))
+	frozen, err := os.ReadFile(filepath.Join("testdata", "stamps_golden.json"))
+	if err != nil {
+		t.Fatalf("read frozen oracle: %v", err)
+	}
+	want := strings.TrimSpace(string(frozen))
 	// Non-vacuity: the oracle really stamped both readable recipes and kept the
 	// TOML false and 0 defaults, so the comparison below cannot pass on an empty
 	// pair of plans.
