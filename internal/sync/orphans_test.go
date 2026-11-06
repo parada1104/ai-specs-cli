@@ -561,6 +561,17 @@ func orphanTreeSnapshot(t *testing.T, root string) map[string]string {
 	return snap
 }
 
+// expectedOrphanGoldenCases is the independent golden inventory pinned by the
+// post-merge review of PR #493 (Cody's coverage finding): the golden file
+// must carry exactly these captured cases, in order and without duplicates,
+// so deleting or duplicating a record fails the test instead of silently
+// shrinking both the stimulus and the expectation set.
+var expectedOrphanGoldenCases = []string{
+	"all scopes orphaned with a stale lock",
+	"nothing orphaned is a silent no-op",
+	"missing lock is never created",
+}
+
 // TestCleanOrphansDifferentialAgainstPython pins CleanOrphans against the
 // frozen output of the real Python clean_orphans for the same fixtures: the
 // first case exercises every scope plus a stale lock, the second proves the
@@ -578,6 +589,22 @@ func TestCleanOrphansDifferentialAgainstPython(t *testing.T) {
 	}
 	if len(frozen.Cases) == 0 {
 		t.Fatal("the frozen oracle must carry at least one case")
+	}
+	// Independent golden inventory: exact case set, cardinality, and
+	// uniqueness, checked before the case loop so a mutated golden cannot
+	// yield an empty or silently reduced comparison.
+	if len(frozen.Cases) != len(expectedOrphanGoldenCases) {
+		t.Fatalf("frozen oracle carries %d cases, want exactly %d", len(frozen.Cases), len(expectedOrphanGoldenCases))
+	}
+	seen := map[string]bool{}
+	for i, want := range expectedOrphanGoldenCases {
+		if got := frozen.Cases[i].Name; got != want {
+			t.Fatalf("frozen case %d name = %q, want %q", i, got, want)
+		}
+		if seen[want] {
+			t.Fatalf("duplicate frozen case name %q", want)
+		}
+		seen[want] = true
 	}
 	// Non-vacuity: the first fixture really removed orphaned cache
 	// directories, so the comparisons below cannot pass on empty pairs.
