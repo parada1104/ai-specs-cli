@@ -1,0 +1,123 @@
+{
+  "oracle": {
+    "script": "lib/_internal/brief-render-policy.py",
+    "python": "3.14.7",
+    "note": "Frozen snapshot of the legacy brief-render-policy.py surface, captured once; the temporary directory is tokenized as <DIR>. Regenerating it needs a human decision."
+  },
+  "cases": [
+    {
+      "name": "missing brief table",
+      "manifest": "[project]\nname = 'x'\n",
+      "missing": false,
+      "modes": [
+        {
+          "mode": "default",
+          "rc": 0,
+          "stdout": "true\n",
+          "stderr": ""
+        },
+        {
+          "mode": "validate",
+          "rc": 0,
+          "stdout": "true\n",
+          "stderr": ""
+        }
+      ]
+    },
+    {
+      "name": "render true",
+      "manifest": "[project]\nname = 'x'\n\n[brief]\nrender = true\n",
+      "missing": false,
+      "modes": [
+        {
+          "mode": "default",
+          "rc": 0,
+          "stdout": "true\n",
+          "stderr": ""
+        },
+        {
+          "mode": "validate",
+          "rc": 0,
+          "stdout": "true\n",
+          "stderr": ""
+        }
+      ]
+    },
+    {
+      "name": "render false",
+      "manifest": "[project]\nname = 'x'\n\n[brief]\nrender = false\n",
+      "missing": false,
+      "modes": [
+        {
+          "mode": "default",
+          "rc": 0,
+          "stdout": "false\n",
+          "stderr": ""
+        },
+        {
+          "mode": "validate",
+          "rc": 0,
+          "stdout": "false\n",
+          "stderr": ""
+        }
+      ]
+    },
+    {
+      "name": "invalid type",
+      "manifest": "[project]\nname = 'x'\n\n[brief]\nrender = 'yes'\n",
+      "missing": false,
+      "modes": [
+        {
+          "mode": "default",
+          "rc": 0,
+          "stdout": "true\n",
+          "stderr": ""
+        },
+        {
+          "mode": "validate",
+          "rc": 1,
+          "stdout": "",
+          "stderr": "error: [brief].render must be a boolean (true or false); got str\n"
+        }
+      ]
+    },
+    {
+      "name": "bad toml",
+      "manifest": "[project\nname = 'x'\n",
+      "missing": false,
+      "modes": [
+        {
+          "mode": "default",
+          "rc": 1,
+          "stdout": "",
+          "stderr": "error: Expected ']' at the end of a table declaration (at line 1, column 9)\n"
+        },
+        {
+          "mode": "validate",
+          "rc": 1,
+          "stdout": "",
+          "stderr": "error: Expected ']' at the end of a table declaration (at line 1, column 9)\n"
+        }
+      ]
+    },
+    {
+      "name": "missing manifest",
+      "manifest": "",
+      "missing": true,
+      "modes": [
+        {
+          "mode": "default",
+          "rc": 1,
+          "stdout": "",
+          "stderr": "error: [Errno 2] No such file or directory: '<DIR>/ai-specs.toml'\n"
+        },
+        {
+          "mode": "validate",
+          "rc": 1,
+          "stdout": "",
+          "stderr": "error: [Errno 2] No such file or directory: '<DIR>/ai-specs.toml'\n"
+        }
+      ]
+    }
+  ]
+}
