@@ -10,7 +10,8 @@ package sync
 // materialize_doc :1551) and return the managed-override record payload for the
 // caller — S14 owns the lock write.
 //
-// T4's Python-oracle differential lives at the bottom of this file.
+// The frozen record of that authority lives at the bottom of this file and in
+// testdata/templatedocs_golden.json.
 
 import (
 	"encoding/json"
@@ -450,7 +451,7 @@ func TestMaterializeStateParity(t *testing.T) {
 			got := sc.run(t)
 			want := *sc.want
 			// Dest identity is asserted against the real Python authority by
-			// TestMaterializePythonDifferential; this fixture-only check
+			// TestMaterializeFrozenDifferential; this fixture-only check
 			// compares the decision fields (the token is fixture-specific).
 			got.Dest, want.Dest = "", ""
 			if !reflect.DeepEqual(got, want) {
@@ -552,166 +553,6 @@ func TestMaterializeRefusalsAndBoundary(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// T4: Python-oracle differential
-// ---------------------------------------------------------------------------
-
-// tdOracle drives the REAL Python entry points — _python_materialize_template
-// and materialize_doc — on the given scenarios. It patches only the lock and
-// copy sinks: load_lock returns the scenario's prepared lock, write_lock
-// captures it, go_apply_copy copies through shutil.copy2, and warn/info record
-// their exact messages. The outcome is path-independent, byte-comparable to
-// the native tdOutcome. GO_*_BRIDGE_FALLBACK stderr noise is discarded.
-const tdOracle = `
-import contextlib, copy, hashlib, importlib.util, io, json, shutil, sys
-from pathlib import Path
-from types import SimpleNamespace
-
-spec = importlib.util.spec_from_file_location("materialize_outcome_oracle", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = mod
-spec.loader.exec_module(mod)
-
-scenarios = json.loads(Path(sys.argv[2]).read_text())
-
-def sha(data):
-    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
-
-results = []
-for sc in scenarios:
-    project_root = Path(sc["project_root"])
-    recipe_dir = Path(sc["recipe_dir"])
-    base = str(project_root.parent)
-
-    def project(s):
-        return s.replace("//" + base.lstrip("/"), "<//BASE>").replace(base, "<BASE>")
-
-    dest = project_root / sc["target"]
-    before = dest.read_bytes() if dest.is_file() else None
-    key = Path(sc["target"]).as_posix()
-    lock = {"managed": {}}
-    if sc.get("managed_entry"):
-        lock["managed"][key] = dict(sc["managed_entry"])
-    captured = {}
-    lines = []
-    mod.load_lock = lambda p, _l=lock: _l
-    mod.write_lock = lambda p, l, _c=captured: _c.__setitem__("lock", copy.deepcopy(l))
-    mod.warn = lambda msg, _lines=lines: _lines.append("warn:" + msg)
-    mod.info = lambda msg, _lines=lines: _lines.append("info:" + msg)
-    if sc["kind"] == "doc":
-        def _copy(items):
-            for it in items:
-                d = Path(it["dest"])
-                d.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(it["src"], d)
-            return [{"id": it["id"], "status": "ok"} for it in items]
-        mod.go_apply_copy = _copy
-    stdout = io.StringIO()
-    error = None
-    try:
-        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
-            if sc["kind"] == "doc":
-                doc = SimpleNamespace(source=sc["source"], target=sc["target"])
-                mod.materialize_doc(recipe_dir, doc, project_root, sc.get("recipe_id"))
-            else:
-                tpl = SimpleNamespace(source=sc["source"], target=sc["target"],
-                                      condition=sc.get("condition", "not_exists"),
-                                      update_policy=sc.get("update_policy", "auto"))
-                mod._python_materialize_template(recipe_dir, tpl, project_root, sc.get("config"), sc.get("recipe_id"))
-    except Exception as exc:  # noqa: BLE001
-        error = str(exc)
-    for line in stdout.getvalue().splitlines():
-        if line.startswith("    "):
-            lines.append("msg:" + line[4:])
-    after = dest.read_bytes() if dest.is_file() else None
-    entry = (captured.get("lock") or {}).get("managed", {}).get(key)
-    if entry is not None:
-        entry = {"target": key, **entry}
-        entry = {k: (project(v) if isinstance(v, str) else v) for k, v in entry.items()}
-    results.append({
-        "wrote": before != after,
-        "dest": project(str(dest)) if sc["kind"] == "doc" else "",
-        "record": entry,
-        "disk_sha": sha(after) if after is not None else "",
-        "lines": [project(line) for line in lines],
-        "error": error,
-    })
-print(json.dumps(results, sort_keys=True))
-`
-
-// TestMaterializePythonDifferential compares the native outcomes against the
-// real Python authority over the full state matrix. Both sides start from
-// byte-identical fixtures under different roots and must agree on wrote,
-// record fields, bytes on disk, and every emitted line.
-func TestMaterializePythonDifferential(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := filepath.Join(t.TempDir(), "td_oracle.py")
-	if err := os.WriteFile(driver, []byte(tdOracle), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	nativeBase := t.TempDir()
-	pythonBase := t.TempDir()
-	nativeScenarios := buildTDScenarios(t, nativeBase)
-	pythonScenarios := buildTDScenarios(t, pythonBase)
-	if len(nativeScenarios) == 0 || len(nativeScenarios) != len(pythonScenarios) {
-		t.Fatalf("scenario builders disagree: %d vs %d", len(nativeScenarios), len(pythonScenarios))
-	}
-
-	got := make([]tdOutcome, 0, len(nativeScenarios))
-	for i := range nativeScenarios {
-		got = append(got, nativeScenarios[i].run(t))
-	}
-	for i := range pythonScenarios {
-		pythonScenarios[i].prepare(t)
-	}
-
-	specPath := filepath.Join(t.TempDir(), "scenarios.json")
-	spec, err := json.Marshal(pythonScenarios)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(specPath, spec, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	raw := runSyncPythonOracle(t, python, driver, authority, specPath)
-	var want []tdOutcome
-	if err := json.Unmarshal([]byte(raw), &want); err != nil {
-		t.Fatalf("parse oracle JSON: %v\nraw: %s", err, raw)
-	}
-	if len(want) != len(got) {
-		t.Fatalf("oracle returned %d outcome(s), want %d", len(want), len(got))
-	}
-
-	// Non-vacuity: both sides really wrote, seeded and warned.
-	for _, marker := range []struct {
-		name string
-		any  func([]tdOutcome) bool
-	}{
-		{"a write", func(os []tdOutcome) bool { return tdCount(os, func(o tdOutcome) bool { return o.Wrote }) > 0 }},
-		{"a record", func(os []tdOutcome) bool { return tdCount(os, func(o tdOutcome) bool { return o.Record != nil }) > 0 }},
-		{"a warning", func(os []tdOutcome) bool {
-			return tdCount(os, func(o tdOutcome) bool { return tdHasPrefix(o.Lines, "warn:") }) > 0
-		}},
-		{"an info refresh", func(os []tdOutcome) bool {
-			return tdCount(os, func(o tdOutcome) bool { return tdHasPrefix(o.Lines, "info:") }) > 0
-		}},
-	} {
-		if !marker.any(want) {
-			t.Fatalf("oracle outcomes are missing %s: %#v", marker.name, want)
-		}
-		if !marker.any(got) {
-			t.Fatalf("native outcomes are missing %s: %#v", marker.name, got)
-		}
-	}
-
-	for i := range got {
-		if !reflect.DeepEqual(got[i], want[i]) {
-			t.Fatalf("scenario %d diverges\n--- go ---\n%#v\n--- python ---\n%#v", i, got[i], want[i])
-		}
-	}
-}
-
 func tdCount(outcomes []tdOutcome, pred func(tdOutcome) bool) int {
 	n := 0
 	for _, o := range outcomes {
@@ -734,55 +575,6 @@ func tdHasPrefix(lines []string, prefix string) bool {
 // ---------------------------------------------------------------------------
 // .git template destinations in normal and linked temporary Git worktrees
 // ---------------------------------------------------------------------------
-
-// tdGitOracle drives the REAL Python template authority on a git project root
-// and reports the ACTUAL destination it wrote: the realpath-relative location
-// under the primary repository, the bytes, the permission bits and the record
-// provenance. Only the lock sink and the warn/info sinks are patched.
-const tdGitOracle = `
-import contextlib, copy, hashlib, importlib.util, io, json, os, stat, sys
-from pathlib import Path
-from types import SimpleNamespace
-
-spec = importlib.util.spec_from_file_location("git_dest_oracle", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = mod
-spec.loader.exec_module(mod)
-
-project_root, main_root = Path(sys.argv[2]), Path(sys.argv[3])
-recipe_dir, target, src_rel = Path(sys.argv[4]), sys.argv[5], sys.argv[6]
-
-captured, lines = {}, []
-mod.load_lock = lambda p: {"managed": {}}
-mod.write_lock = lambda p, l: captured.__setitem__("lock", copy.deepcopy(l))
-mod.warn = lambda m: lines.append("warn:" + m)
-mod.info = lambda m: lines.append("info:" + m)
-
-dest, git_resolved = mod.resolve_template_dest(project_root, target)
-stdout = io.StringIO()
-error = None
-try:
-    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
-        tpl = SimpleNamespace(source=src_rel, target=target, condition="not_exists", update_policy="auto")
-        mod._python_materialize_template(recipe_dir, tpl, project_root, None, "worktree-flow")
-except Exception as exc:  # noqa: BLE001
-    error = str(exc)
-for line in stdout.getvalue().splitlines():
-    if line.startswith("    "):
-        lines.append("msg:" + line[4:])
-data = dest.read_bytes() if dest.is_file() else b""
-key = Path(target).as_posix()
-entry = (captured.get("lock") or {}).get("managed", {}).get(key)
-print(json.dumps({
-    "dest_rel": os.path.relpath(os.path.realpath(dest), os.path.realpath(main_root)),
-    "git_resolved": bool(git_resolved),
-    "sha": hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest() if data else "",
-    "mode": format(stat.S_IMODE(dest.stat().st_mode), "o") if dest.exists() else "",
-    "record": ({"target": key, **entry} if entry else None),
-    "lines": lines,
-    "error": error,
-}, sort_keys=True))
-`
 
 // tdGitOutcome is the path-independent projection of one .git-destination
 // materialization: identity by realpath so a lexical spelling difference (the
@@ -828,6 +620,11 @@ func tdBuildGitProject(t *testing.T, kind, srcRel string) (mainRoot, projectRoot
 	}
 	recipeDir = filepath.Join(projectRoot, "recipe")
 	writeTDFile(t, filepath.Join(recipeDir, srcRel), "#!/bin/sh\nexit 0\n", 0o755)
+	// Neutralize the process umask: the authority chmods the destination to the
+	// SOURCE mode, so the hook's frozen 0755 must not follow the umask.
+	if err := os.Chmod(filepath.Join(recipeDir, srcRel), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	return mainRoot, projectRoot, recipeDir
 }
 
@@ -849,45 +646,381 @@ func tdRealRel(t *testing.T, root, path string) string {
 	return rel
 }
 
+// ---------------------------------------------------------------------------
+// Frozen Python-oracle payload
+// ---------------------------------------------------------------------------
+
+// The legacy live legs drove the REAL Python authority — _python_materialize_
+// template (recipe-materialize.py:1430) and materialize_doc (:1551) — patching
+// only the lock, copy and print sinks: load_lock returned the scenario's
+// prepared lock, write_lock captured it, go_apply_copy copied through
+// shutil.copy2 and warn/info recorded the exact messages. The matrix leg ran the
+// state matrix below; the git leg ran the same template authority through
+// resolve_template_dest on a throwaway normal and linked Git worktree and
+// reported the ACTUAL destination as a realpath-relative path under the primary
+// repository, with its bytes, permission bits and record.
+//
+// That output is frozen in testdata/templatedocs_golden.json: per matrix case
+// the input projection the fixture drove and the outcome Python produced, per
+// git kind the throwaway repo layout and the same outcome fields.
+//
+// The payload is host-independent: the legacy drivers replaced each fixture's
+// temp root with <BASE> (and the POSIX doubled-slash spelling with <//BASE>) on
+// both sides, so no host path is frozen. The matrix leg freezes no mode at all
+// and the git leg only the written hook's 0755, which the authority chmods from
+// the fixture's explicitly-set source mode, so no frozen mode follows the
+// process umask. A run of these tests under `umask 077` proves it.
+//
+// The tests never exec python3 or read lib/. The golden is a snapshot:
+// regenerating it needs a human decision.
+const templateDocsGoldenFile = "templatedocs_golden.json"
+
+// templateDocsMatrixCases is the hard-coded identity inventory of the frozen
+// matrix: the exact case names in capture order. It is an independent oracle of
+// coverage — kept in the test, never derived from the bundle — so a bundle that
+// is missing, renamed, duplicated or reordered cannot validate silently.
+var templateDocsMatrixCases = []string{
+	"template_t1.sh", "template_t2.sh", "template_t3.sh", "template_t4.sh",
+	"template_t5.sh", "template_t6.sh", "template_t7.sh", "template_t8.sh",
+	"doc_d1.md", "doc_d2.md", "doc_d3.md", "doc_d4.md", "doc_d5.md", "doc_d6.md", "doc_d7.md",
+	"doc_d8-dir", "doc_d9-link",
+	"doc_d10.md", "doc_d11.md", "doc_d12.md", "doc_d13.md", "doc_d14.md",
+	"doc_d15-dangling", "template_t9.sh", "doc_d16.md", "doc_d17.md", "doc_d18.md",
+}
+
+// templateDocsGitCases is the same inventory for the .git-destination leg.
+var templateDocsGitCases = []string{"normal", "linked"}
+
+// The two token spellings every host-dependent path segment is frozen as, and
+// the .git leg's fixed request.
+const (
+	tdGoldenBaseToken = "<BASE>"
+	tdGitTarget       = ".git/hooks/pre-commit"
+	tdGitSrcRel       = "templates/pre-commit"
+)
+
+// tdFrozenInput is the frozen input projection of one matrix case: the request
+// fields the authority reads plus the fixture state the case seeded. A drifted
+// fixture fails on this, before any outcome is compared, instead of appearing as
+// an opaque payload mismatch.
+type tdFrozenInput struct {
+	Kind         string            `json:"kind"`
+	Target       string            `json:"target"`
+	Source       string            `json:"source"`
+	RecipeID     string            `json:"recipe_id"`
+	Condition    string            `json:"condition,omitempty"`
+	UpdatePolicy string            `json:"update_policy,omitempty"`
+	Config       map[string]string `json:"config,omitempty"`
+	ManagedEntry map[string]string `json:"managed_entry,omitempty"`
+	DestKind     string            `json:"dest_kind,omitempty"`
+	SeedSHA256   string            `json:"seed_sha256,omitempty"`
+}
+
+// tdFrozenCase is the frozen record of one matrix case.
+type tdFrozenCase struct {
+	Name    string        `json:"name"`
+	Input   tdFrozenInput `json:"input"`
+	Outcome tdOutcome     `json:"outcome"`
+}
+
+// tdGitFrozenInput is the frozen input projection of one .git-destination case.
+// The throwaway repo layout rides here per case, not per leg, because a linked
+// worktree's project root lives beside the primary repo instead of inside it.
+type tdGitFrozenInput struct {
+	Kind         string `json:"kind"`
+	Target       string `json:"target"`
+	SrcRel       string `json:"src_rel"`
+	SourceSHA256 string `json:"source_sha256"`
+	Main         string `json:"main"`
+	ProjectRoot  string `json:"project_root"`
+	RecipeDir    string `json:"recipe_dir"`
+}
+
+// tdGitFrozenCase is the frozen record of one .git-destination case.
+type tdGitFrozenCase struct {
+	Name    string           `json:"name"`
+	Input   tdGitFrozenInput `json:"input"`
+	Outcome tdGitOutcome     `json:"outcome"`
+}
+
+// templateDocsGolden is the frozen bundle: oracle provenance, the matrix leg and
+// the .git-destination leg, each with its own inventory.
+type templateDocsGolden struct {
+	Oracle map[string]string `json:"oracle"`
+	Matrix struct {
+		Fixture map[string]string `json:"fixture"`
+		Cases   []tdFrozenCase    `json:"cases"`
+	} `json:"matrix"`
+	GitDest struct {
+		Cases []tdGitFrozenCase `json:"cases"`
+	} `json:"gitdest"`
+}
+
+// tdCaseName is the frozen identity of one matrix scenario: the same kind and
+// destination basename the fixture-only parity test uses as its subtest name.
+func tdCaseName(sc *tdScenario) string {
+	return sc.Kind + "_" + filepath.Base(sc.Target)
+}
+
+// tdStringMap narrows a scenario's string-valued map field for the freeze.
+func tdStringMap(in map[string]any) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		text, _ := value.(string)
+		out[key] = text
+	}
+	return out
+}
+
+// tdInputOf projects one matrix scenario onto the frozen input surface.
+func tdInputOf(sc *tdScenario) tdFrozenInput {
+	base := filepath.Dir(sc.ProjectRoot)
+	in := tdFrozenInput{
+		Kind: sc.Kind, Target: tdProjectText(base, sc.Target), Source: tdProjectText(base, sc.Source),
+		RecipeID: sc.RecipeID, Condition: sc.Condition, UpdatePolicy: sc.UpdatePolicy,
+		Config: tdStringMap(sc.Config), ManagedEntry: tdStringMap(sc.ManagedEntry),
+		DestKind: sc.destKind,
+	}
+	if sc.destSeed != nil {
+		in.SeedSHA256 = shared.Sha256Bytes(sc.destSeed)
+	}
+	return in
+}
+
+// tdMatrixFixture projects the matrix fixture onto the frozen layout surface:
+// the two roots relative to the temp base and the bytes hash of each source
+// family the cases read.
+func tdMatrixFixture(t *testing.T, base string, sc *tdScenario) map[string]string {
+	t.Helper()
+	rel := func(path string) string {
+		s, err := filepath.Rel(base, path)
+		if err != nil {
+			t.Fatalf("fixture path %s is not under the base: %v", path, err)
+		}
+		return filepath.ToSlash(s)
+	}
+	sourceSHA := ""
+	if data := tdReadRegular(filepath.Join(sc.RecipeDir, "templates", "run.sh")); data != nil {
+		sourceSHA = shared.Sha256Bytes(data)
+	}
+	return map[string]string{
+		"recipe_dir": rel(sc.RecipeDir), "project_root": rel(sc.ProjectRoot),
+		"template_sha256": sourceSHA, "doc_sha256": shared.Sha256Bytes([]byte(tdDocBody)),
+	}
+}
+
+// tdGitInputAndFixture builds the frozen input projection of one .git case from
+// the throwaway repo the builder created: the three roots relative to the temp
+// base and the hook source hash.
+func tdGitInputAndFixture(t *testing.T, kind, mainRoot, projectRoot, recipeDir string) (tdGitFrozenInput, map[string]string) {
+	t.Helper()
+	base := filepath.Dir(mainRoot)
+	rel := func(path string) string {
+		s, err := filepath.Rel(base, path)
+		if err != nil {
+			t.Fatalf("fixture path %s is not under the base: %v", path, err)
+		}
+		return filepath.ToSlash(s)
+	}
+	source := ""
+	if data := tdReadRegular(filepath.Join(recipeDir, filepath.FromSlash(tdGitSrcRel))); data != nil {
+		source = shared.Sha256Bytes(data)
+	}
+	in := tdGitFrozenInput{
+		Kind: kind, Target: tdGitTarget, SrcRel: tdGitSrcRel, SourceSHA256: source,
+		Main: rel(mainRoot), ProjectRoot: rel(projectRoot), RecipeDir: rel(recipeDir),
+	}
+	return in, map[string]string{kind: filepath.ToSlash(rel(mainRoot)) + "/" + tdGitTarget}
+}
+
+// loadTemplateDocsGolden reads the frozen bundle and validates both identity
+// inventories, the oracle metadata, the fixture layout and the tokenized shape
+// of every frozen path before any comparison runs.
+func loadTemplateDocsGolden(t *testing.T) templateDocsGolden {
+	t.Helper()
+	raw := readGoldenBundle(t, templateDocsGoldenFile)
+	// A capture that leaked a host path cannot validate here.
+	for _, leak := range []string{"/Users/", "/private/", "/var/folders"} {
+		if strings.Contains(string(raw), leak) {
+			t.Fatalf("frozen oracle %s leaks the host path segment %q", templateDocsGoldenFile, leak)
+		}
+	}
+	var golden templateDocsGolden
+	if err := json.Unmarshal(raw, &golden); err != nil {
+		t.Fatalf("parse frozen oracle %s: %v", templateDocsGoldenFile, err)
+	}
+	for _, key := range []string{"python", "script", "driver"} {
+		if golden.Oracle[key] == "" {
+			t.Fatalf("frozen oracle %s carries no %s metadata", templateDocsGoldenFile, key)
+		}
+	}
+	for _, key := range []string{"recipe_dir", "project_root", "template_sha256", "doc_sha256"} {
+		if golden.Matrix.Fixture[key] == "" {
+			t.Fatalf("frozen oracle %s carries no fixture %s", templateDocsGoldenFile, key)
+		}
+	}
+	for _, key := range []string{"recipe_dir", "project_root"} {
+		if path := golden.Matrix.Fixture[key]; filepath.IsAbs(path) || strings.HasPrefix(path, "..") {
+			t.Fatalf("frozen fixture %s %q must be root-relative", key, path)
+		}
+	}
+	// A path that is absolute but not tokenized would carry the host: every
+	// host-dependent segment is <BASE> or <//BASE>.
+	tokenized := func(path string) bool {
+		return !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "/"+tdGoldenBaseToken+"/")
+	}
+	names := make([]string, len(golden.Matrix.Cases))
+	for i, rec := range golden.Matrix.Cases {
+		names[i] = rec.Name
+		if rec.Input.Kind == "" || rec.Input.Target == "" || rec.Input.RecipeID == "" {
+			t.Fatalf("frozen case %q carries an incomplete input projection", rec.Name)
+		}
+		for _, path := range []string{rec.Input.Target, rec.Input.Source, rec.Outcome.Dest} {
+			if !tokenized(path) {
+				t.Fatalf("frozen case %q path %q must be tokenized or project-relative", rec.Name, path)
+			}
+		}
+	}
+	validateGoldenIdentity(t, "templatedocs matrix", names, templateDocsMatrixCases)
+	gitNames := make([]string, len(golden.GitDest.Cases))
+	for i, rec := range golden.GitDest.Cases {
+		gitNames[i] = rec.Name
+		if rec.Input.Kind != rec.Name || rec.Input.Target == "" || rec.Input.SrcRel == "" || rec.Input.SourceSHA256 == "" {
+			t.Fatalf("frozen git case %q carries an incomplete input projection", rec.Name)
+		}
+		for _, path := range []string{rec.Input.Main, rec.Input.ProjectRoot, rec.Input.RecipeDir, rec.Outcome.DestRel} {
+			if filepath.IsAbs(path) || strings.HasPrefix(path, "..") {
+				t.Fatalf("frozen git case %q path %q must be root-relative", rec.Name, path)
+			}
+		}
+		if rec.Outcome.DestRel != rec.Input.Target {
+			t.Fatalf("frozen git case %q wrote %q, want the target %q in the primary repo",
+				rec.Name, rec.Outcome.DestRel, rec.Input.Target)
+		}
+	}
+	validateGoldenIdentity(t, "templatedocs gitdest", gitNames, templateDocsGitCases)
+	return golden
+}
+
+// TestMaterializeFrozenDifferential pins the native outcomes against the frozen
+// record of the real Python authority over the full state matrix: templates
+// t1-t9 and docs d1-d18 — write, seed, skip, user-modified warn, managed-stale
+// refresh, stale non-auto warn, directory and symlink preservation, the dangling
+// symlink copy-through, noncanonical lock keys, out-of-project and
+// doubled-slash destinations and an absolute doc source. Both sides must agree
+// on wrote, destination identity, record fields, bytes on disk, every emitted
+// line and the error.
+func TestMaterializeFrozenDifferential(t *testing.T) {
+	golden := loadTemplateDocsGolden(t)
+
+	base := t.TempDir()
+	scenarios := buildTDScenarios(t, base)
+	byName := make(map[string]*tdScenario, len(scenarios))
+	for i := range scenarios {
+		sc := &scenarios[i]
+		name := tdCaseName(sc)
+		if _, seen := byName[name]; seen {
+			t.Fatalf("the fixture builder produced the case %q twice", name)
+		}
+		byName[name] = sc
+	}
+	if layout := tdMatrixFixture(t, base, &scenarios[0]); !reflect.DeepEqual(layout, golden.Matrix.Fixture) {
+		t.Fatalf("fixture layout diverges\n--- go ---\n%+v\n--- frozen ---\n%+v", layout, golden.Matrix.Fixture)
+	}
+	if len(byName) != len(golden.Matrix.Cases) {
+		t.Fatalf("the fixture builder produced %d case(s), the frozen bundle records %d", len(byName), len(golden.Matrix.Cases))
+	}
+
+	got := make([]tdOutcome, 0, len(golden.Matrix.Cases))
+	for _, rec := range golden.Matrix.Cases {
+		sc, ok := byName[rec.Name]
+		if !ok {
+			t.Fatalf("frozen case %q has no native scenario", rec.Name)
+		}
+		// The frozen inputs are an input of the payload: a drifted fixture
+		// fails here, not as an opaque outcome mismatch.
+		if input := tdInputOf(sc); !reflect.DeepEqual(input, rec.Input) {
+			t.Fatalf("case %q input diverges\n--- go ---\n%+v\n--- frozen ---\n%+v", rec.Name, input, rec.Input)
+		}
+		got = append(got, sc.run(t))
+	}
+
+	// Non-vacuity: both sides really wrote, recorded, warned, refreshed a
+	// managed override and kept the doubled-slash destination distinct.
+	for _, marker := range []struct {
+		name string
+		any  func([]tdOutcome) bool
+	}{
+		{"a write", func(os []tdOutcome) bool { return tdCount(os, func(o tdOutcome) bool { return o.Wrote }) > 0 }},
+		{"a record", func(os []tdOutcome) bool { return tdCount(os, func(o tdOutcome) bool { return o.Record != nil }) > 0 }},
+		{"a warning", func(os []tdOutcome) bool {
+			return tdCount(os, func(o tdOutcome) bool { return tdHasPrefix(o.Lines, "warn:") }) > 0
+		}},
+		{"an info refresh", func(os []tdOutcome) bool {
+			return tdCount(os, func(o tdOutcome) bool { return tdHasPrefix(o.Lines, "info:") }) > 0
+		}},
+		{"a doubled-slash destination", func(os []tdOutcome) bool {
+			return tdCount(os, func(o tdOutcome) bool { return strings.HasPrefix(o.Dest, "<//") }) > 0
+		}},
+	} {
+		frozen := make([]tdOutcome, 0, len(golden.Matrix.Cases))
+		for _, rec := range golden.Matrix.Cases {
+			frozen = append(frozen, rec.Outcome)
+		}
+		if !marker.any(frozen) {
+			t.Fatalf("frozen outcomes are missing %s: %#v", marker.name, frozen)
+		}
+		if !marker.any(got) {
+			t.Fatalf("native outcomes are missing %s: %#v", marker.name, got)
+		}
+	}
+
+	for i, rec := range golden.Matrix.Cases {
+		t.Run(rec.Name, func(t *testing.T) {
+			if !reflect.DeepEqual(got[i], rec.Outcome) {
+				t.Fatalf("outcome diverges\n--- go ---\n%#v\n--- frozen ---\n%#v", got[i], rec.Outcome)
+			}
+		})
+	}
+}
+
 // TestMaterializeTemplateGitDestParity verifies a `.git/hooks/...` template
-// destination in a NORMAL and a LINKED temporary Git worktree. The root
-// authority and the real Python authority must write the SAME file (equal
-// realpath-relative identity), with equal bytes, permission bits and record.
-// Both fixtures are throwaway repos: the real repository's .git is never
+// destination in a NORMAL and a LINKED temporary Git worktree against the frozen
+// record of the real Python authority: the identical realpath-relative
+// destination under the primary repository, the same bytes, permission bits and
+// record. Both fixtures are throwaway repos: the real repository's .git is never
 // touched.
 func TestMaterializeTemplateGitDestParity(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git not available: %v", err)
 	}
-	python, authority := syncPythonAuthority(t)
-	driver := filepath.Join(t.TempDir(), "td_git_oracle.py")
-	if err := os.WriteFile(driver, []byte(tdGitOracle), 0o600); err != nil {
-		t.Fatal(err)
+	golden := loadTemplateDocsGolden(t)
+	byKind := make(map[string]tdGitFrozenCase, len(golden.GitDest.Cases))
+	for _, rec := range golden.GitDest.Cases {
+		byKind[rec.Name] = rec
 	}
-	const target = ".git/hooks/pre-commit"
-	const srcRel = "templates/pre-commit"
 
-	for _, kind := range []string{"normal", "linked"} {
+	for _, kind := range templateDocsGitCases {
 		t.Run(kind, func(t *testing.T) {
-			pyMain, pyRoot, pyRecipe := tdBuildGitProject(t, kind, srcRel)
-			raw := runSyncPythonOracle(t, python, driver, authority, pyRoot, pyMain, pyRecipe, target, srcRel)
-			var want tdGitOutcome
-			if err := json.Unmarshal([]byte(raw), &want); err != nil {
-				t.Fatalf("parse oracle: %v\nraw: %s", err, raw)
+			rec, ok := byKind[kind]
+			if !ok {
+				t.Fatalf("frozen git case %q is missing", kind)
 			}
-			if want.Error != "" {
-				t.Fatalf("python oracle refused the .git target: %s", want.Error)
+			mainRoot, projectRoot, recipeDir := tdBuildGitProject(t, kind, tdGitSrcRel)
+			if input, _ := tdGitInputAndFixture(t, kind, mainRoot, projectRoot, recipeDir); !reflect.DeepEqual(input, rec.Input) {
+				t.Fatalf("case %q input diverges\n--- go ---\n%+v\n--- frozen ---\n%+v", kind, input, rec.Input)
 			}
-
-			goMain, goRoot, goRecipe := tdBuildGitProject(t, kind, srcRel)
 			res, err := MaterializeTemplate(&shared.TemplateRequest{
-				ProjectRoot: goRoot, RecipeDir: goRecipe, RecipeID: "worktree-flow",
-				Source: srcRel, Target: target, Condition: "not_exists", UpdatePolicy: "auto",
+				ProjectRoot: projectRoot, RecipeDir: recipeDir, RecipeID: "worktree-flow",
+				Source: tdGitSrcRel, Target: tdGitTarget, Condition: "not_exists", UpdatePolicy: "auto",
 			})
 			if err != nil {
 				t.Fatalf("MaterializeTemplate: %v", err)
 			}
-			got := tdGitOutcome{DestRel: tdRealRel(t, goMain, res.Dest), Lines: tdLines(res.Warnings, res.Info, res.Message)}
+			got := tdGitOutcome{DestRel: tdRealRel(t, mainRoot, res.Dest), Lines: tdLines(res.Warnings, res.Info, res.Message)}
 			if data := tdReadRegular(res.Dest); data != nil {
 				got.SHA = shared.Sha256Bytes(data)
 			}
@@ -904,10 +1037,10 @@ func TestMaterializeTemplateGitDestParity(t *testing.T) {
 			if !res.Wrote {
 				t.Errorf("native did not write %s", res.Dest)
 			}
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("outcome =\n%#v\nwant\n%#v", got, want)
+			if !reflect.DeepEqual(got, rec.Outcome) {
+				t.Errorf("outcome =\n%#v\nwant\n%#v", got, rec.Outcome)
 			}
-			if _, err := os.Stat(filepath.Join(goMain, ".git", "hooks", "pre-commit")); err != nil {
+			if _, err := os.Stat(filepath.Join(mainRoot, ".git", "hooks", "pre-commit")); err != nil {
 				t.Errorf("hook not in the primary repo's shared hooks dir: %v", err)
 			}
 		})
