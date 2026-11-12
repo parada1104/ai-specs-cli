@@ -2,17 +2,30 @@ package skills
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"ai-specs.dev/ai-specs/internal/projectcache"
 )
+
+// The legacy flatten oracle (lib/_internal/flatten-resolved-skills.py main) was
+// captured once into testdata/flatten_golden.json. The test never execs python3
+// or reads lib/. The golden is a snapshot: regenerating it needs a human
+// decision.
+
+const flattenGoldenPath = "testdata/flatten_golden.json"
+
+// corpusMtime pins every fabricated file and directory, because copytree/copy2
+// propagate mtimes through copystat: the frozen dest projection then carries
+// constants instead of the wall clock the corpus was built at.
+var corpusMtime = time.Unix(1700000000, 0)
 
 // flattenRun is one leg's observable outcome: rc, stdout, stderr and the
 // projection of everything under dest.
@@ -64,23 +77,6 @@ func snapshotTree(t *testing.T, dest string) []string {
 	return out
 }
 
-func runLegacyFlatten(t *testing.T, script, root, home, dest string) flattenRun {
-	t.Helper()
-	cmd := exec.Command("python3", script, root, dest)
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "AI_SPECS_HOME="+home)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	rc := 0
-	if err := cmd.Run(); err != nil {
-		ee, ok := err.(*exec.ExitError)
-		if !ok {
-			t.Fatalf("python3 %s: %v", script, err)
-		}
-		rc = ee.ExitCode()
-	}
-	return flattenRun{rc, stdout.String(), stderr.String(), snapshotTree(t, dest)}
-}
-
 func runGoFlatten(t *testing.T, root, home, dest string) flattenRun {
 	t.Helper()
 	t.Setenv("AI_SPECS_HOME", home)
@@ -89,25 +85,63 @@ func runGoFlatten(t *testing.T, root, home, dest string) flattenRun {
 	return flattenRun{rc, stdout.String(), stderr.String(), snapshotTree(t, dest)}
 }
 
-// TestFlattenDifferential runs the REAL flatten-resolved-skills.py and the Go
-// port against the SAME sandbox (the frozen cache key hashes the realpath, so
-// sharing the tree avoids any path normalisation). Each leg starts from the
-// same pre-state via setup. Success cases pin stdout, stderr, rc and the dest
-// projection byte-for-byte; failure cases (Python traceback) pin rc, stdout
-// and the partial dest projection.
-func TestFlattenDifferential(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
+// pinMtimes fixes the mtime of every entry under the corpus dirs so the frozen
+// snapshot is reproducible; setting a child's times never touches its parent.
+// Symlinks are skipped: Chtimes follows them and a dangling link has no target.
+func pinMtimes(t *testing.T, dirs ...string) {
+	t.Helper()
+	for _, dir := range dirs {
+		err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
+			return os.Chtimes(path, corpusMtime, corpusMtime)
+		})
+		if err != nil {
+			t.Fatalf("pin mtimes under %s: %v", dir, err)
+		}
 	}
-	script := legacyModule(t, "flatten-resolved-skills.py")
+}
 
-	cases := []struct {
-		name  string
-		fails bool
-		// build seeds the sources once; reset restores dest before each leg.
-		build func(t *testing.T, root, home string) (dest string)
-		reset func(t *testing.T, dest string)
-	}{
+type frozenFlattenCase struct {
+	Name          string   `json:"name"`
+	CompareStderr bool     `json:"compare_stderr"`
+	Exit          int      `json:"exit"`
+	Tree          []string `json:"tree"`
+	Stdout        string   `json:"stdout"`
+	Stderr        string   `json:"stderr"`
+	Snapshot      []string `json:"snapshot"`
+}
+
+type frozenFlatten struct {
+	Oracle map[string]any      `json:"oracle"`
+	Cases  []frozenFlattenCase `json:"cases"`
+}
+
+// expectedFlattenGoldenCases is the independent inventory of the frozen bundle:
+// deleting, duplicating or reordering a golden case fails before any comparison.
+var expectedFlattenGoldenCases = []string{
+	"four-tiers-duplicates-nested-modes-links",
+	"stale-dest-is-wiped",
+	"no-skills",
+	"dest-through-symlinked-parent",
+	"dangling-link-stops-after-failing-skill",
+	"dest-is-a-file",
+}
+
+type flattenCase struct {
+	name  string
+	fails bool
+	// build seeds the sources once; reset restores dest before each leg.
+	build func(t *testing.T, root, home string) (dest string)
+	reset func(t *testing.T, dest string)
+}
+
+func flattenCases() []flattenCase {
+	return []flattenCase{
 		{
 			name: "four-tiers-duplicates-nested-modes-links",
 			build: func(t *testing.T, root, home string) string {
@@ -183,41 +217,95 @@ func TestFlattenDifferential(t *testing.T) {
 			},
 		},
 	}
+}
 
-	for _, tc := range cases {
+func loadFlattenGolden(t *testing.T) frozenFlatten {
+	t.Helper()
+	raw, err := os.ReadFile(flattenGoldenPath)
+	if err != nil {
+		t.Fatalf("read frozen oracle %s: %v", flattenGoldenPath, err)
+	}
+	var golden frozenFlatten
+	if err := json.Unmarshal(raw, &golden); err != nil {
+		t.Fatalf("decode frozen oracle %s: %v", flattenGoldenPath, err)
+	}
+	return golden
+}
+
+// TestFlattenDifferential compares the Go port with the frozen legacy oracle
+// across every fabricated case: exit code, stdout, the dest projection, and
+// stderr where the two legs agree (the failure cases keep a Python traceback
+// that the port replaces with one "error:" line, so stderr is not frozen
+// there). Inputs are pinned by a manifest so corpus drift fails as input drift.
+func TestFlattenDifferential(t *testing.T) {
+	golden := loadFlattenGolden(t)
+	corpus := flattenCases()
+
+	if len(corpus) != len(expectedFlattenGoldenCases) {
+		t.Fatalf("in-test corpus has %d cases, inventory %d", len(corpus), len(expectedFlattenGoldenCases))
+	}
+	if len(golden.Cases) != len(expectedFlattenGoldenCases) {
+		t.Fatalf("frozen oracle has %d cases, inventory %d", len(golden.Cases), len(expectedFlattenGoldenCases))
+	}
+	seen := map[string]bool{}
+	for i, want := range expectedFlattenGoldenCases {
+		if seen[want] {
+			t.Fatalf("inventory lists %q twice", want)
+		}
+		seen[want] = true
+		if golden.Cases[i].Name != want || corpus[i].name != want {
+			t.Fatalf("case %d: golden %q, corpus %q, inventory %q", i, golden.Cases[i].Name, corpus[i].name, want)
+		}
+	}
+
+	for i, tc := range corpus {
 		t.Run(tc.name, func(t *testing.T) {
+			frozen := golden.Cases[i]
+			if frozen.CompareStderr != !tc.fails {
+				t.Fatalf("%s: frozen compare_stderr = %v, corpus fails = %v", tc.name, frozen.CompareStderr, tc.fails)
+			}
+			if (frozen.Exit != 0) != tc.fails {
+				t.Fatalf("%s: frozen exit = %d, corpus fails = %v", tc.name, frozen.Exit, tc.fails)
+			}
+
 			root := t.TempDir()
 			home := t.TempDir()
 			dest := tc.build(t, root, home)
-			prepare := func() {
-				if err := os.RemoveAll(dest); err != nil {
-					t.Fatal(err)
-				}
-				if tc.reset != nil {
-					tc.reset(t, dest)
-				}
+			pinMtimes(t, root, home)
+
+			gotTree := treeManifest(t, root, home)
+			if strings.Join(gotTree, "\n") != strings.Join(frozen.Tree, "\n") {
+				t.Fatalf("%s: frozen inputs differ from the corpus tree:\n--- frozen ---\n%s\n--- corpus ---\n%s",
+					tc.name, strings.Join(frozen.Tree, "\n"), strings.Join(gotTree, "\n"))
 			}
 
-			prepare()
-			legacy := runLegacyFlatten(t, script, root, home, dest)
-			prepare()
+			if err := os.RemoveAll(dest); err != nil {
+				t.Fatal(err)
+			}
+			if tc.reset != nil {
+				tc.reset(t, dest)
+			}
 			port := runGoFlatten(t, root, home, dest)
+			tokens := frozenTokens(root, home)
 
-			if (legacy.rc != 0) != tc.fails {
-				t.Fatalf("legacy rc=%d, case expects fails=%v\nstderr: %s", legacy.rc, tc.fails, legacy.stderr)
+			if port.rc != frozen.Exit {
+				t.Errorf("rc: port %d, legacy %d\nport stderr: %s", port.rc, frozen.Exit, port.stderr)
 			}
-			if port.rc != legacy.rc {
-				t.Errorf("rc: port %d, legacy %d\nport stderr: %s", port.rc, legacy.rc, port.stderr)
+			if got := applyTokens(port.stdout, tokens); got != frozen.Stdout {
+				t.Errorf("stdout:\n port   %q\n legacy %q", got, frozen.Stdout)
 			}
-			if port.stdout != legacy.stdout {
-				t.Errorf("stdout:\n port   %q\n legacy %q", port.stdout, legacy.stdout)
+			if frozen.CompareStderr {
+				if got := applyTokens(port.stderr, tokens); got != frozen.Stderr {
+					t.Errorf("stderr:\n port   %q\n legacy %q", got, frozen.Stderr)
+				}
 			}
-			if !tc.fails && port.stderr != legacy.stderr {
-				t.Errorf("stderr:\n port   %q\n legacy %q", port.stderr, legacy.stderr)
+			gotSnapshot := port.tree
+			for j, line := range gotSnapshot {
+				gotSnapshot[j] = applyTokens(line, tokens)
 			}
-			if !reflect.DeepEqual(port.tree, legacy.tree) {
+			if !reflect.DeepEqual(gotSnapshot, frozen.Snapshot) {
 				t.Errorf("dest tree:\n port   %s\n legacy %s",
-					strings.Join(port.tree, "\n        "), strings.Join(legacy.tree, "\n        "))
+					strings.Join(gotSnapshot, "\n        "), strings.Join(frozen.Snapshot, "\n        "))
 			}
 		})
 	}
