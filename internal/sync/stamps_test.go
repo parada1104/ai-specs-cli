@@ -1,10 +1,8 @@
 package sync
 
 import (
-	"bytes"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -31,43 +29,6 @@ func writeSyncCatalogRecipe(t *testing.T, catalogDir, id, body string) {
 // syncRecipeHeader is the minimal valid [recipe] table every fixture needs.
 func syncRecipeHeader(id, name string) string {
 	return "[recipe]\nid = \"" + id + "\"\nname = \"" + name + "\"\ndescription = \"d\"\nversion = \"1.0.0\"\n"
-}
-
-// syncPythonAuthority resolves python3 and the real Python materialize
-// authority, skipping the caller cleanly when either is unavailable. This is
-// the same differential shape used across the repository (internal/conflicts,
-// internal/sync/orphans).
-func syncPythonAuthority(t *testing.T) (python, authority string) {
-	t.Helper()
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatalf("repo root: %v", err)
-	}
-	authority = filepath.Join(root, "lib", "_internal", "recipe-materialize.py")
-	if _, err := os.Stat(authority); err != nil {
-		t.Skipf("recipe-materialize.py not available under %s: %v", root, err)
-	}
-	return python, authority
-}
-
-// runSyncPythonOracle runs a Python oracle driver from a temp working directory
-// with bytecode writing disabled, so the repository never gains __pycache__
-// files. It returns the trimmed stdout.
-func runSyncPythonOracle(t *testing.T, python, driver string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command(python, append([]string{driver}, args...)...)
-	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("python oracle failed: %v\nstderr: %s", err, stderr.String())
-	}
-	return strings.TrimSpace(stdout.String())
 }
 
 // TestReconcileStampsDifferentialAgainstPython pins PlanReconcileStamps against
