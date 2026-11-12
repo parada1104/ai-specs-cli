@@ -1,46 +1,32 @@
 package conflicts
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
+	"strings"
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/schema"
 )
 
-// oracle runs the REAL recipe-conflicts.py functions and prints the same
-// projection the Go side builds: conflicts in list order with sorted recipes,
-// or the RecipeValidationError text.
-const oracle = `
-import importlib.util, json, sys
-from pathlib import Path
-spec = importlib.util.spec_from_file_location("recipe_conflicts_oracle", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = mod
-spec.loader.exec_module(mod)
-catalog = Path(sys.argv[2]); ids = json.loads(sys.argv[3]); bindings = json.loads(sys.argv[4])
-def proj(cs):
-    return [{"type": getattr(c, "primitive_type", "tag_conflict"),
-             "id": getattr(c, "primitive_id", getattr(c, "tag", "")),
-             "recipes": sorted(c.recipes), "severity": c.severity} for c in cs]
-out = {}
-try:
-    out["primitive"] = proj(mod.check_recipe_conflicts(catalog, ids))
-except mod.RecipeValidationError as exc:
-    out["primitive_error"] = str(exc)
-out["capability"] = proj(mod.check_capability_conflicts(catalog, ids, bindings))
-recipes = []
-for rid in ids:
-    try:
-        recipes.append(mod.load_recipe_toml(catalog / rid / "recipe.toml"))
-    except Exception:
-        pass
-out["tag"] = proj(mod.check_tag_conflicts(recipes))
-print(json.dumps(out))
-`
+// The legacy recipe-conflicts.py oracle (the projection below: conflicts in
+// list order with sorted recipes, or the RecipeValidationError text) was
+// captured once into testdata/recipe_conflicts_golden.json. The test never execs
+// python3 or reads lib/. The golden is a snapshot: regenerating it needs a human
+// decision.
+
+const conflictsGoldenPath = "testdata/recipe_conflicts_golden.json"
+
+// catalogToken replaces the fabricated catalog directory: it is the only
+// host-dependent value in the payload, and it reaches the frozen snapshot only
+// through the "recipe directory not found: <dir>/<id>" error text.
+const catalogToken = "<CATALOG>"
 
 type projection struct {
 	Primitive      []Conflict `json:"primitive"`
@@ -49,31 +35,49 @@ type projection struct {
 	Tag            []Conflict `json:"tag"`
 }
 
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	dir, _ := os.Getwd()
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatal("no go.mod")
-		}
-		dir = parent
-	}
+type frozenConflictsCase struct {
+	Name     string              `json:"name"`
+	IDs      []string            `json:"ids"`
+	Bindings []map[string]string `json:"bindings"`
+	Legacy   projection          `json:"legacy"`
+}
+
+type frozenConflicts struct {
+	Oracle map[string]any        `json:"oracle"`
+	Corpus []string              `json:"corpus"`
+	Cases  []frozenConflictsCase `json:"cases"`
+}
+
+// expectedConflictsGoldenCases is the independent inventory of the frozen
+// bundle: deleting, duplicating or reordering a golden case fails before any
+// comparison runs.
+var expectedConflictsGoldenCases = []string{
+	"no-conflicts",
+	"skill-command-tag-cap",
+	"order-reversed",
+	"dup-inside-one-recipe-stops-registration",
+	"mcp-collision",
+	"explicit-binding-silences-warning",
+	"duplicate-explicit-binding-fatal",
+	"binding-missing-keys",
+	"missing-recipe-dir",
+	"invalid-recipe",
 }
 
 func recipeToml(id, name, extra string) string {
 	return "[recipe]\nid = \"" + id + "\"\nname = \"" + name + "\"\ndescription = \"d\"\nversion = \"1.0.0\"\n" + extra
 }
 
-func TestConflictsDifferential(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 unavailable")
-	}
-	script := filepath.Join(repoRoot(t), "lib", "_internal", "recipe-conflicts.py")
+type conflictsCase struct {
+	name     string
+	ids      []string
+	bindings []map[string]string
+}
 
+// differentialCorpus is the fabricated catalog plus the enabled-recipe and
+// binding sets the oracle was captured over. The catalog is shared by every
+// case and pinned by a sha256 manifest in the golden.
+func differentialCorpus() (map[string]string, []conflictsCase) {
 	skills := func(ids ...string) string {
 		s := "skills = ["
 		for _, id := range ids {
@@ -104,12 +108,7 @@ capabilities = [{ id = "vault" }]
 		"mcp2":   recipeToml("mcp2", "M2", "[provides]\nmcp = [{ id = \"srv\" }]\n"),
 		"broken": "[recipe]\nid = \"broken\"\n",
 	}
-
-	cases := []struct {
-		name     string
-		ids      []string
-		bindings []map[string]string
-	}{
+	cases := []conflictsCase{
 		{"no-conflicts", []string{"a", "mcp1"}, nil},
 		{"skill-command-tag-cap", []string{"a", "b", "c"}, nil},
 		{"order-reversed", []string{"c", "b", "a"}, nil},
@@ -122,6 +121,65 @@ capabilities = [{ id = "vault" }]
 		{"missing-recipe-dir", []string{"a", "nope", "b"}, nil},
 		{"invalid-recipe", []string{"a", "broken"}, nil},
 	}
+	return catalog, cases
+}
+
+// catalogManifest pins the catalog inputs the oracle was captured from as
+// sorted "sha256  <id>/recipe.toml" lines, so corpus drift fails as input drift
+// instead of an opaque payload mismatch.
+func catalogManifest(t *testing.T, dir string, catalog map[string]string) []string {
+	t.Helper()
+	lines := make([]string, 0, len(catalog))
+	for id := range catalog {
+		rel := id + "/recipe.toml"
+		data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("manifest %s: %v", rel, err)
+		}
+		sum := sha256.Sum256(data)
+		lines = append(lines, fmt.Sprintf("%s  %s", hex.EncodeToString(sum[:]), rel))
+	}
+	sort.Strings(lines)
+	return lines
+}
+
+func loadConflictsGolden(t *testing.T) frozenConflicts {
+	t.Helper()
+	raw, err := os.ReadFile(conflictsGoldenPath)
+	if err != nil {
+		t.Fatalf("read frozen oracle %s: %v", conflictsGoldenPath, err)
+	}
+	var golden frozenConflicts
+	if err := json.Unmarshal(raw, &golden); err != nil {
+		t.Fatalf("decode frozen oracle %s: %v", conflictsGoldenPath, err)
+	}
+	return golden
+}
+
+// TestConflictsDifferential compares the Go port with the frozen legacy oracle
+// across every fabricated case: the primitive conflicts or the
+// RecipeValidationError text, the capability conflicts and the tag conflicts.
+// Inputs are pinned by a catalog manifest and by the per-case ids/bindings.
+func TestConflictsDifferential(t *testing.T) {
+	golden := loadConflictsGolden(t)
+	catalog, cases := differentialCorpus()
+
+	if len(cases) != len(expectedConflictsGoldenCases) {
+		t.Fatalf("in-test corpus has %d cases, inventory %d", len(cases), len(expectedConflictsGoldenCases))
+	}
+	if len(golden.Cases) != len(expectedConflictsGoldenCases) {
+		t.Fatalf("frozen oracle has %d cases, inventory %d", len(golden.Cases), len(expectedConflictsGoldenCases))
+	}
+	seen := map[string]bool{}
+	for i, want := range expectedConflictsGoldenCases {
+		if seen[want] {
+			t.Fatalf("inventory lists %q twice", want)
+		}
+		seen[want] = true
+		if golden.Cases[i].Name != want || cases[i].name != want {
+			t.Fatalf("case %d: golden %q, corpus %q, inventory %q", i, golden.Cases[i].Name, cases[i].name, want)
+		}
+	}
 
 	dir := t.TempDir()
 	for id, body := range catalog {
@@ -133,22 +191,23 @@ capabilities = [{ id = "vault" }]
 		}
 	}
 
-	for _, tc := range cases {
+	gotCorpus := catalogManifest(t, dir, catalog)
+	if strings.Join(gotCorpus, "\n") != strings.Join(golden.Corpus, "\n") {
+		t.Fatalf("frozen inputs differ from the corpus catalog:\n--- frozen ---\n%s\n--- corpus ---\n%s",
+			strings.Join(golden.Corpus, "\n"), strings.Join(gotCorpus, "\n"))
+	}
+
+	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ids, _ := json.Marshal(tc.ids)
+			legacy := golden.Cases[i].Legacy
+			if !reflect.DeepEqual(golden.Cases[i].IDs, tc.ids) {
+				t.Fatalf("%s: frozen ids %v, corpus %v", tc.name, golden.Cases[i].IDs, tc.ids)
+			}
 			if tc.bindings == nil {
 				tc.bindings = []map[string]string{}
 			}
-			bind, _ := json.Marshal(tc.bindings)
-			cmd := exec.Command("python3", "-c", oracle, script, dir, string(ids), string(bind))
-			cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-			out, err := cmd.Output()
-			if err != nil {
-				t.Fatalf("oracle: %v\n%s", err, out)
-			}
-			var legacy projection
-			if err := json.Unmarshal(out, &legacy); err != nil {
-				t.Fatalf("decode: %v\n%s", err, out)
+			if !reflect.DeepEqual(golden.Cases[i].Bindings, tc.bindings) {
+				t.Fatalf("%s: frozen bindings %v, corpus %v", tc.name, golden.Cases[i].Bindings, tc.bindings)
 			}
 
 			var port projection
@@ -179,13 +238,15 @@ capabilities = [{ id = "vault" }]
 			}
 			if port.PrimitiveError != "" {
 				port.Primitive = []Conflict{}
+				port.PrimitiveError = strings.ReplaceAll(port.PrimitiveError, dir, catalogToken)
 			}
 			if legacy.PrimitiveError != "" {
 				legacy.Primitive = []Conflict{}
 			}
 			if !reflect.DeepEqual(port, legacy) {
 				pj, _ := json.Marshal(port)
-				t.Fatalf("\n port   %s\n legacy %s", pj, out)
+				lj, _ := json.Marshal(legacy)
+				t.Fatalf("\n port   %s\n legacy %s", pj, lj)
 			}
 		})
 	}
