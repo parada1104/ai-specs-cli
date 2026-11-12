@@ -2,68 +2,71 @@ package rulesaudit
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/projectcache"
 )
 
-// Full-payload differential: run the native scanner and the legacy
-// rules-inventory.py over the same fabricated trees and compare stdout bytes
-// and exit codes (plus stderr where warnings are expected). Skips when
-// python3 or the legacy script is unavailable.
+// Full-payload oracle: the legacy rules-inventory.py output over a set of
+// fabricated trees was captured once into testdata/rules_inventory_golden.json.
+// The test never execs python3 or reads lib/. The golden is a snapshot:
+// regenerating it needs a human decision.
 
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("no go.mod above %s", dir)
-		}
-		dir = parent
-	}
-}
+const rulesInventoryGoldenPath = "testdata/rules_inventory_golden.json"
 
-func runLegacy(t *testing.T, root, home string) (string, string, int) {
-	t.Helper()
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("python3 unavailable")
-	}
-	script := filepath.Join(repoRoot(t), "lib", "_internal", "rules-inventory.py")
-	if _, err := os.Stat(script); err != nil {
-		t.Skipf("legacy rules-inventory.py unavailable: %v", err)
-	}
-	cmd := exec.Command(python, script, root)
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "AI_SPECS_HOME="+home)
-	var out, errb bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errb
-	err = cmd.Run()
-	code := 0
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			code = ee.ExitCode()
-		} else {
-			t.Fatalf("python3 %s: %v", script, err)
-		}
-	}
-	return out.String(), errb.String(), code
-}
+// Tokens replace the host-dependent absolute directories in the frozen payload
+// (the only host-dependent field is sources.target, the resolved scanned root)
+// and in the frozen tree manifest. The cache root is tokenized first: it lives
+// under the CLI home and its own key hashes the TempDir path.
+const (
+	rootToken  = "<ROOT>"
+	homeToken  = "<HOME>"
+	cacheToken = "<CACHE>"
+)
 
 type treeCase struct {
 	name       string
 	compareErr bool
 	build      func(t *testing.T, root, home string)
+}
+
+type frozenRulesInventoryCase struct {
+	Name          string   `json:"name"`
+	CompareStderr bool     `json:"compare_stderr"`
+	Exit          int      `json:"exit"`
+	Tree          []string `json:"tree"`
+	Stdout        string   `json:"stdout"`
+	Stderr        string   `json:"stderr"`
+}
+
+type frozenRulesInventory struct {
+	Oracle map[string]any             `json:"oracle"`
+	Cases  []frozenRulesInventoryCase `json:"cases"`
+}
+
+// expectedRulesInventoryGoldenCases is the independent inventory of the frozen
+// bundle: deleting, duplicating or reordering a golden case fails before any
+// comparison runs.
+var expectedRulesInventoryGoldenCases = []string{
+	"empty",
+	"cursor-agents-manifest",
+	"manifest-widened-bigint",
+	"manifest-float-widened",
+	"manifest-datetime",
+	"mode-b-stack-hints",
+	"manifest-parse-error",
+	"recipes-list-and-monolithic-agents",
+	"agents-heading-depths",
+	"mdc-scalar-globs-and-snake-always",
+	"skills-cache-atl",
 }
 
 func differentialTrees() []treeCase {
@@ -184,26 +187,127 @@ func differentialTrees() []treeCase {
 	}
 }
 
+type pathToken struct{ path, token string }
+
+// frozenTokens lists the host-dependent directories of one case, longest-lived
+// prefix first: the cache root lives under the CLI home.
+func frozenTokens(root, home string) []pathToken {
+	return []pathToken{
+		{projectcache.CacheRoot(root, home), cacheToken},
+		{projectcache.ResolvePath(root), rootToken},
+		{projectcache.ResolvePath(home), homeToken},
+	}
+}
+
+func applyTokens(s string, tokens []pathToken) string {
+	for _, tk := range tokens {
+		s = strings.ReplaceAll(s, tk.path, tk.token)
+	}
+	return s
+}
+
+// treeManifest describes the tree a case builds as "sha256  <tokenized path>"
+// lines sorted by path, so the frozen golden pins exactly the inputs the oracle
+// was captured from.
+func treeManifest(t *testing.T, root, home string) []string {
+	t.Helper()
+	tokens := frozenTokens(root, home)
+	type entry struct{ path, line string }
+	var entries []entry
+	for _, dir := range []string{root, home} {
+		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			sum := sha256.Sum256(data)
+			tokenized := applyTokens(projectcache.ResolvePath(path), tokens)
+			entries = append(entries, entry{tokenized, hex.EncodeToString(sum[:]) + "  " + tokenized})
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", dir, err)
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].path < entries[j].path })
+	lines := make([]string, len(entries))
+	for i, e := range entries {
+		lines[i] = e.line
+	}
+	return lines
+}
+
+func loadRulesInventoryGolden(t *testing.T) frozenRulesInventory {
+	t.Helper()
+	raw, err := os.ReadFile(rulesInventoryGoldenPath)
+	if err != nil {
+		t.Fatalf("read frozen oracle %s: %v", rulesInventoryGoldenPath, err)
+	}
+	var golden frozenRulesInventory
+	if err := json.Unmarshal(raw, &golden); err != nil {
+		t.Fatalf("decode frozen oracle %s: %v", rulesInventoryGoldenPath, err)
+	}
+	return golden
+}
+
+// TestDifferentialRulesInventory compares the native scanner with the frozen
+// legacy oracle across every fabricated tree: exit code, stdout and stderr.
 func TestDifferentialRulesInventory(t *testing.T) {
-	for _, tc := range differentialTrees() {
+	golden := loadRulesInventoryGolden(t)
+	corpus := differentialTrees()
+
+	if len(corpus) != len(expectedRulesInventoryGoldenCases) {
+		t.Fatalf("in-test corpus has %d cases, inventory %d", len(corpus), len(expectedRulesInventoryGoldenCases))
+	}
+	if len(golden.Cases) != len(expectedRulesInventoryGoldenCases) {
+		t.Fatalf("frozen oracle has %d cases, inventory %d", len(golden.Cases), len(expectedRulesInventoryGoldenCases))
+	}
+	seen := map[string]bool{}
+	for i, want := range expectedRulesInventoryGoldenCases {
+		if seen[want] {
+			t.Fatalf("inventory lists %q twice", want)
+		}
+		seen[want] = true
+		if golden.Cases[i].Name != want || corpus[i].name != want {
+			t.Fatalf("case %d: golden %q, corpus %q, inventory %q", i, golden.Cases[i].Name, corpus[i].name, want)
+		}
+	}
+
+	for i, tc := range corpus {
 		t.Run(tc.name, func(t *testing.T) {
+			frozen := golden.Cases[i]
+			if frozen.CompareStderr != tc.compareErr {
+				t.Fatalf("%s: frozen compare_stderr = %v, corpus %v", tc.name, frozen.CompareStderr, tc.compareErr)
+			}
 			root := t.TempDir()
 			home := t.TempDir()
 			tc.build(t, root, home)
 
+			gotTree := treeManifest(t, root, home)
+			if strings.Join(gotTree, "\n") != strings.Join(frozen.Tree, "\n") {
+				t.Fatalf("%s: frozen inputs differ from the corpus tree:\n--- frozen ---\n%s\n--- corpus ---\n%s",
+					tc.name, strings.Join(frozen.Tree, "\n"), strings.Join(gotTree, "\n"))
+			}
+
 			var gout, gerr bytes.Buffer
 			gcode := Run(root, home, &gout, &gerr)
-			lout, lerr, lcode := runLegacy(t, root, home)
+			tokens := frozenTokens(root, home)
 
-			if gcode != lcode {
-				t.Fatalf("exit = %d, legacy %d\nport stderr: %s\nlegacy stderr: %s",
-					gcode, lcode, gerr.String(), lerr)
+			if gcode != frozen.Exit {
+				t.Errorf("exit = %d, legacy %d\nport stderr: %s\nlegacy stderr: %s",
+					gcode, frozen.Exit, gerr.String(), frozen.Stderr)
 			}
-			if gout.String() != lout {
-				t.Errorf("stdout mismatch:\n--- port ---\n%s\n--- legacy ---\n%s", gout.String(), lout)
+			if got := applyTokens(gout.String(), tokens); got != frozen.Stdout {
+				t.Errorf("stdout mismatch:\n--- port ---\n%s\n--- legacy ---\n%s", got, frozen.Stdout)
 			}
-			if tc.compareErr && gerr.String() != lerr {
-				t.Errorf("stderr mismatch:\n--- port ---\n%q\n--- legacy ---\n%q", gerr.String(), lerr)
+			if got := applyTokens(gerr.String(), tokens); got != frozen.Stderr {
+				t.Errorf("stderr mismatch:\n--- port ---\n%q\n--- legacy ---\n%q", got, frozen.Stderr)
 			}
 		})
 	}
