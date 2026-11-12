@@ -1,0 +1,368 @@
+{
+  "oracle": {
+    "entry": "check_recipe_conflicts+check_capability_conflicts+check_tag_conflicts",
+    "python": "3.14.7",
+    "script": "lib/_internal/recipe-conflicts.py"
+  },
+  "corpus": [
+    "6da23ec693d95a9a9dc2a914b402b2549e137afce46455de1f4f2e00dc813361  mcp1/recipe.toml",
+    "76c114109c80ca9f6645aaa5d9b93b40d62e8c85bcc5e7f0f3f362eed1917427  mcp2/recipe.toml",
+    "8760782e2dfb42cf0c4c48d697fee40db3d07535034cefcd9c551b37e6226adc  b/recipe.toml",
+    "a399a847b13d46bb10b695025ac7a01426f464cfbacb083089ea97ba55abe36c  c/recipe.toml",
+    "c32084c6038918c9167a671c4a91cec08a434668dd2fe862be632750b6f77c43  a/recipe.toml",
+    "cfb6932fe40100f2c1c884081ec0f569f08aca61e8139f8a8c89d0a36bd23aa0  dup/recipe.toml",
+    "d212474259159e0ecb734668462298debd4ff0e43ae735a1ea7c70c654dc90c1  broken/recipe.toml"
+  ],
+  "cases": [
+    {
+      "name": "no-conflicts",
+      "ids": [
+        "a",
+        "mcp1"
+      ],
+      "bindings": [],
+      "legacy": {
+        "primitive": [],
+        "capability": [],
+        "tag": []
+      }
+    },
+    {
+      "name": "skill-command-tag-cap",
+      "ids": [
+        "a",
+        "b",
+        "c"
+      ],
+      "bindings": [],
+      "legacy": {
+        "primitive": [
+          {
+            "type": "skill",
+            "id": "s2",
+            "recipes": [
+              "Rec A",
+              "Rec B"
+            ],
+            "severity": "fatal"
+          },
+          {
+            "type": "command",
+            "id": "cmd1",
+            "recipes": [
+              "Rec A",
+              "Rec C"
+            ],
+            "severity": "fatal"
+          }
+        ],
+        "capability": [],
+        "tag": [
+          {
+            "type": "tag_conflict",
+            "id": "tracker",
+            "recipes": [
+              "a",
+              "c"
+            ],
+            "severity": "fatal"
+          },
+          {
+            "type": "tag_conflict",
+            "id": "vcs",
+            "recipes": [
+              "a",
+              "b"
+            ],
+            "severity": "warning"
+          }
+        ]
+      }
+    },
+    {
+      "name": "order-reversed",
+      "ids": [
+        "c",
+        "b",
+        "a"
+      ],
+      "bindings": [],
+      "legacy": {
+        "primitive": [
+          {
+            "type": "skill",
+            "id": "s2",
+            "recipes": [
+              "Rec A",
+              "Rec B"
+            ],
+            "severity": "fatal"
+          }
+        ],
+        "capability": [],
+        "tag": [
+          {
+            "type": "tag_conflict",
+            "id": "tracker",
+            "recipes": [
+              "a",
+              "c"
+            ],
+            "severity": "fatal"
+          },
+          {
+            "type": "tag_conflict",
+            "id": "vcs",
+            "recipes": [
+              "a",
+              "b"
+            ],
+            "severity": "warning"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dup-inside-one-recipe-stops-registration",
+      "ids": [
+        "dup",
+        "a"
+      ],
+      "bindings": [],
+      "legacy": {
+        "primitive": [
+          {
+            "type": "skill",
+            "id": "x",
+            "recipes": [
+              "Rec Dup"
+            ],
+            "severity": "fatal"
+          }
+        ],
+        "capability": [],
+        "tag": []
+      }
+    },
+    {
+      "name": "mcp-collision",
+      "ids": [
+        "mcp1",
+        "mcp2"
+      ],
+      "bindings": [],
+      "legacy": {
+        "primitive": [
+          {
+            "type": "mcp",
+            "id": "srv",
+            "recipes": [
+              "M1",
+              "M2"
+            ],
+            "severity": "fatal"
+          }
+        ],
+        "capability": [],
+        "tag": []
+      }
+    },
+    {
+      "name": "explicit-binding-silences-warning",
+      "ids": [
+        "a",
+        "b",
+        "c"
+      ],
+      "bindings": [
+        {
+          "capability": "tracker",
+          "recipe": "a"
+        }
+      ],
+      "legacy": {
+        "primitive": [
+          {
+            "type": "skill",
+            "id": "s2",
+            "recipes": [
+              "Rec A",
+              "Rec B"
+            ],
+            "severity": "fatal"
+          },
+          {
+            "type": "command",
+            "id": "cmd1",
+            "recipes": [
+              "Rec A",
+              "Rec C"
+            ],
+            "severity": "fatal"
+          }
+        ],
+        "capability": [],
+        "tag": [
+          {
+            "type": "tag_conflict",
+            "id": "tracker",
+            "recipes": [
+              "a",
+              "c"
+            ],
+            "severity": "fatal"
+          },
+          {
+            "type": "tag_conflict",
+            "id": "vcs",
+            "recipes": [
+              "a",
+              "b"
+            ],
+            "severity": "warning"
+          }
+        ]
+      }
+    },
+    {
+      "name": "duplicate-explicit-binding-fatal",
+      "ids": [
+        "a",
+        "b"
+      ],
+      "bindings": [
+        {
+          "capability": "vault",
+          "recipe": "b"
+        },
+        {
+          "capability": "tracker",
+          "recipe": "a"
+        },
+        {
+          "capability": "vault",
+          "recipe": "c"
+        }
+      ],
+      "legacy": {
+        "primitive": [
+          {
+            "type": "skill",
+            "id": "s2",
+            "recipes": [
+              "Rec A",
+              "Rec B"
+            ],
+            "severity": "fatal"
+          }
+        ],
+        "capability": [
+          {
+            "type": "capability",
+            "id": "vault",
+            "recipes": [
+              "b",
+              "c"
+            ],
+            "severity": "fatal"
+          }
+        ],
+        "tag": [
+          {
+            "type": "tag_conflict",
+            "id": "vcs",
+            "recipes": [
+              "a",
+              "b"
+            ],
+            "severity": "warning"
+          }
+        ]
+      }
+    },
+    {
+      "name": "binding-missing-keys",
+      "ids": [
+        "a",
+        "b"
+      ],
+      "bindings": [
+        {},
+        {}
+      ],
+      "legacy": {
+        "primitive": [
+          {
+            "type": "skill",
+            "id": "s2",
+            "recipes": [
+              "Rec A",
+              "Rec B"
+            ],
+            "severity": "fatal"
+          }
+        ],
+        "capability": [
+          {
+            "type": "capability",
+            "id": "",
+            "recipes": [
+              ""
+            ],
+            "severity": "fatal"
+          }
+        ],
+        "tag": [
+          {
+            "type": "tag_conflict",
+            "id": "vcs",
+            "recipes": [
+              "a",
+              "b"
+            ],
+            "severity": "warning"
+          }
+        ]
+      }
+    },
+    {
+      "name": "missing-recipe-dir",
+      "ids": [
+        "a",
+        "nope",
+        "b"
+      ],
+      "bindings": [],
+      "legacy": {
+        "primitive": [],
+        "primitive_error": "recipe directory not found: <CATALOG>/nope",
+        "capability": [],
+        "tag": [
+          {
+            "type": "tag_conflict",
+            "id": "vcs",
+            "recipes": [
+              "a",
+              "b"
+            ],
+            "severity": "warning"
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid-recipe",
+      "ids": [
+        "a",
+        "broken"
+      ],
+      "bindings": [],
+      "legacy": {
+        "primitive": [],
+        "primitive_error": "[recipe]: missing or invalid required field 'name'",
+        "capability": [],
+        "tag": []
+      }
+    }
+  ]
+}
