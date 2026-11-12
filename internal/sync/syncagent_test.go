@@ -2,16 +2,19 @@ package sync
 
 // Contract tests for the native sync-agent fan-out port (epic [Go 07.S15]).
 //
-// The oracle is lib/sync-agent.sh and lib/_internal/platform.sh at the frozen
-// revision: source-structure constants (cd line numbers, the usage heredoc,
-// every platform.sh field) are pinned by reading the shell files, and the
-// behavioral semantics (symlink kinds, refusals, D3/D22/D24, banner/footer
-// framing) are pinned through the same entry points the CLI route uses.
+// The oracle is lib/sync-agent.sh at the frozen revision and, for the
+// platform.sh matrix, the frozen bundle testdata/platform_sh_golden.json
+// (lib/_internal/platform.sh @ f798526, blob c03817f1): source-structure
+// constants (cd line numbers, the usage heredoc) are pinned by reading the
+// shell file, and the behavioral semantics (symlink kinds, refusals, D3/D22/
+// D24, banner/footer framing) are pinned through the same entry points the CLI
+// route uses.
 // Python-dependent paths (standalone target resolution, the materialize
 // seams) are gated on python3 like the rest of the port's differentials.
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -223,28 +226,67 @@ func TestReadEnabledAgentsNormalizesLikeTomlRead(t *testing.T) {
 
 // ── Platform matrix ───────────────────────────────────────────────────────
 
-// platformShBlocks splits lib/_internal/platform.sh into per-agent case
-// blocks: "        claude)" starts a block that ends at the next agent line.
-func platformShBlocks(t *testing.T) map[string]string {
+// platformShGoldenFile is the frozen oracle for the per-agent case blocks of
+// lib/_internal/platform.sh at base f798526 (git blob c03817f1, captured with
+// the splitter `(?m)^        (\w+)\)$`, one record per block in source order).
+// The live shell file is gone, so the blocks the matrix test consumes live here.
+const platformShGoldenFile = "platform_sh_golden.json"
+
+// platformShGoldenNames is the hard-coded identity inventory of the frozen
+// platform.sh bundle: the agent case blocks in source order.
+var platformShGoldenNames = []string{
+	"claude", "cursor", "opencode", "codex", "copilot", "gemini", "pi", "omp",
+}
+
+// platformShGoldenCase is one frozen agent case block, verbatim.
+type platformShGoldenCase struct {
+	Agent string `json:"agent"`
+	Block string `json:"block"`
+}
+
+// platformShGolden is the shape of the frozen bundle.
+type platformShGolden struct {
+	Oracle map[string]string      `json:"oracle"`
+	Cases  []platformShGoldenCase `json:"cases"`
+}
+
+// loadPlatformShGolden validates the frozen oracle's metadata and agent
+// inventory before any comparison runs, then indexes the blocks by agent. A
+// missing bundle fails; it never skips.
+func loadPlatformShGolden(t *testing.T) map[string]string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "..", "lib", "_internal", "platform.sh"))
-	if err != nil {
-		t.Skipf("lib/_internal/platform.sh not available: %v", err)
-	}
-	src := string(data)
-	re := regexp.MustCompile(`(?m)^        (\w+)\)$`)
-	matches := re.FindAllStringSubmatchIndex(src, -1)
-	if len(matches) == 0 {
-		t.Fatalf("no agent case blocks found in platform.sh")
-	}
-	blocks := map[string]string{}
-	for i, m := range matches {
-		name := src[m[2]:m[3]]
-		end := len(src)
-		if i+1 < len(matches) {
-			end = matches[i+1][0]
+	raw := readGoldenBundle(t, platformShGoldenFile)
+	for _, leak := range []string{"/Users/", "/private/", "/var/folders"} {
+		if strings.Contains(string(raw), leak) {
+			t.Fatalf("frozen oracle %s leaks the host path segment %q", platformShGoldenFile, leak)
 		}
-		blocks[name] = src[m[1]:end]
+	}
+	var bundle platformShGolden
+	if err := json.Unmarshal(raw, &bundle); err != nil {
+		t.Fatalf("parse frozen oracle %s: %v", platformShGoldenFile, err)
+	}
+	for _, key := range []string{"source", "blob", "base", "driver", "note"} {
+		if bundle.Oracle[key] == "" {
+			t.Fatalf("frozen oracle %s carries no %s metadata", platformShGoldenFile, key)
+		}
+	}
+	if bundle.Oracle["source"] != "lib/_internal/platform.sh" {
+		t.Fatalf("frozen oracle %s names source %q, want lib/_internal/platform.sh", platformShGoldenFile, bundle.Oracle["source"])
+	}
+	names := make([]string, len(bundle.Cases))
+	for i, rec := range bundle.Cases {
+		names[i] = rec.Agent
+	}
+	validateGoldenIdentity(t, "platform.sh", names, platformShGoldenNames)
+	blocks := make(map[string]string, len(bundle.Cases))
+	for _, rec := range bundle.Cases {
+		// A frozen block runs from the end of its own agent line to the start of
+		// the next one; every block carries its own field echoes, so a capture
+		// sliced on the wrong boundaries fails here.
+		if !strings.Contains(rec.Block, `instructions_path)`) {
+			t.Fatalf("frozen case %q block carries no field echoes", rec.Agent)
+		}
+		blocks[rec.Agent] = rec.Block
 	}
 	return blocks
 }
@@ -253,7 +295,7 @@ func platformShBlocks(t *testing.T) map[string]string {
 // the Go table. Drift in the shell matrix must fail here instead of silently
 // breaking the fan-out.
 func TestAgentPlatformMatchesPlatformSh(t *testing.T) {
-	blocks := platformShBlocks(t)
+	blocks := loadPlatformShGolden(t)
 	fields := []string{
 		"instructions_path", "skills_dir", "mcp_config_path", "mcp_key",
 		"native", "commands_dir", "runtime_hooks_target",
