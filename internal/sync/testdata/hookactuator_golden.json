@@ -1,0 +1,302 @@
+{
+  "oracle": {
+    "driver": "read_recipe + _python_materialize_hook_script with load_lock / write_lock / warn / info sinks patched and a project-cache stub, over the scenario matrix below",
+    "note": "Frozen snapshot of the legacy hook actuation over the cases below, captured once, twice byte-identical. Every host-dependent path segment is the token <BASE>. Modes are frozen only where the fixture or the authority sets them explicitly (the write path's chmod 0755, the backup snapshot's chmod 0644 and the seeded destination's declared bits); no directory mode is frozen. Regenerating it needs a human decision.",
+    "python": "3.14.7",
+    "script": "lib/_internal/recipe-materialize.py"
+  },
+  "fixture": {
+    "hook_sha256": "f2c8311478518129959195834276dc7e02b1f5e249bda326943e4ad9af707e5d",
+    "project_root": "project",
+    "recipe_dir": "catalog/worktree-flow"
+  },
+  "cases": [
+    {
+      "name": "h1-fresh-write",
+      "input": {
+        "rel": "ai-specs/recipes/worktree-flow/hooks/h1-fresh-write.sh",
+        "script": "hooks/h1-fresh-write.sh",
+        "recipe_id": "worktree-flow",
+        "config": {
+          "gate_impl": "auto",
+          "gate_scope": "auto",
+          "repo_topology": "auto"
+        },
+        "refresh": false
+      },
+      "outcome": {
+        "wrote": true,
+        "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/hooks/h1-fresh-write.sh",
+        "record": {
+          "kind": "gate",
+          "policy": "auto",
+          "recipe": "worktree-flow",
+          "sha256": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+          "source": "hooks/h1-fresh-write.sh",
+          "target": "ai-specs/recipes/worktree-flow/hooks/h1-fresh-write.sh"
+        },
+        "disk_sha": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+        "mode": "755",
+        "backup": "",
+        "backup_sha": "",
+        "lines": [
+          "msg:✓ hook script ai-specs/recipes/worktree-flow/hooks/h1-fresh-write.sh"
+        ],
+        "refused": false
+      }
+    },
+    {
+      "name": "h2-managed-current",
+      "input": {
+        "rel": "ai-specs/recipes/worktree-flow/hooks/h2-managed-current.sh",
+        "script": "hooks/h2-managed-current.sh",
+        "recipe_id": "worktree-flow",
+        "config": {
+          "gate_impl": "auto",
+          "gate_scope": "auto",
+          "repo_topology": "auto"
+        },
+        "refresh": false,
+        "managed_sha": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+        "seed_sha256": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+        "seed_mode": "644"
+      },
+      "outcome": {
+        "wrote": false,
+        "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/hooks/h2-managed-current.sh",
+        "record": {
+          "kind": "gate",
+          "policy": "auto",
+          "recipe": "worktree-flow",
+          "sha256": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+          "source": "hooks/h2-managed-current.sh",
+          "target": "ai-specs/recipes/worktree-flow/hooks/h2-managed-current.sh"
+        },
+        "disk_sha": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+        "mode": "644",
+        "backup": "",
+        "backup_sha": "",
+        "lines": [
+          "msg:· hook skipped (current) ai-specs/recipes/worktree-flow/hooks/h2-managed-current.sh"
+        ],
+        "refused": false
+      }
+    },
+    {
+      "name": "h3-no-provenance",
+      "input": {
+        "rel": "ai-specs/recipes/worktree-flow/hooks/h3-no-provenance.sh",
+        "script": "hooks/h3-no-provenance.sh",
+        "recipe_id": "worktree-flow",
+        "config": {
+          "gate_impl": "auto",
+          "gate_scope": "auto",
+          "repo_topology": "auto"
+        },
+        "refresh": false,
+        "seed_sha256": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+        "seed_mode": "644"
+      },
+      "outcome": {
+        "wrote": false,
+        "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/hooks/h3-no-provenance.sh",
+        "record": null,
+        "disk_sha": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+        "mode": "644",
+        "backup": "",
+        "backup_sha": "",
+        "lines": [
+          "warn:hook ai-specs/recipes/worktree-flow/hooks/h3-no-provenance.sh has no recorded provenance; preserving existing bytes. A baseline is recorded only when the CLI renders the gate. Refresh with:\n  rm ai-specs/recipes/worktree-flow/hooks/h3-no-provenance.sh && ai-specs sync  (or: ai-specs sync --refresh-gates)",
+          "msg:· hook skipped (no provenance) ai-specs/recipes/worktree-flow/hooks/h3-no-provenance.sh"
+        ],
+        "refused": false
+      }
+    },
+    {
+      "name": "h4-user-modified",
+      "input": {
+        "rel": "ai-specs/recipes/worktree-flow/hooks/h4-user-modified.sh",
+        "script": "hooks/h4-user-modified.sh",
+        "recipe_id": "worktree-flow",
+        "config": {
+          "gate_impl": "auto",
+          "gate_scope": "auto",
+          "repo_topology": "auto"
+        },
+        "refresh": false,
+        "managed_sha": "4fadaefddc6e15d426938debf618de8e6dacdb8fe355e345cb112e5a8e9be968",
+        "seed_sha256": "6d2831615d1251d6b54a5532016c3b099d34dbd129a97acc6129fe974adb7982",
+        "seed_mode": "644"
+      },
+      "outcome": {
+        "wrote": false,
+        "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/hooks/h4-user-modified.sh",
+        "record": null,
+        "disk_sha": "6d2831615d1251d6b54a5532016c3b099d34dbd129a97acc6129fe974adb7982",
+        "mode": "644",
+        "backup": "",
+        "backup_sha": "",
+        "lines": [
+          "warn:hook ai-specs/recipes/worktree-flow/hooks/h4-user-modified.sh is user-modified; preserving existing bytes. Refresh with:\n  rm ai-specs/recipes/worktree-flow/hooks/h4-user-modified.sh && ai-specs sync  (or: ai-specs sync --refresh-gates)",
+          "msg:· hook skipped (user-modified) ai-specs/recipes/worktree-flow/hooks/h4-user-modified.sh"
+        ],
+        "refused": false
+      }
+    },
+    {
+      "name": "h5-managed-stale-refresh",
+      "input": {
+        "rel": "ai-specs/recipes/worktree-flow/hooks/h5-managed-stale-refresh.sh",
+        "script": "hooks/h5-managed-stale-refresh.sh",
+        "recipe_id": "worktree-flow",
+        "config": {
+          "gate_impl": "auto",
+          "gate_scope": "auto",
+          "repo_topology": "auto"
+        },
+        "refresh": false,
+        "managed_sha": "fb0f0daf02e26ab192ff3461ff345c130f9cd66a99f2099f50f16bbb3b49c3ad",
+        "seed_sha256": "fb0f0daf02e26ab192ff3461ff345c130f9cd66a99f2099f50f16bbb3b49c3ad",
+        "seed_mode": "644"
+      },
+      "outcome": {
+        "wrote": true,
+        "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/hooks/h5-managed-stale-refresh.sh",
+        "record": {
+          "kind": "gate",
+          "policy": "auto",
+          "recipe": "worktree-flow",
+          "sha256": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+          "source": "hooks/h5-managed-stale-refresh.sh",
+          "target": "ai-specs/recipes/worktree-flow/hooks/h5-managed-stale-refresh.sh"
+        },
+        "disk_sha": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+        "mode": "755",
+        "backup": "",
+        "backup_sha": "",
+        "lines": [
+          "msg:✓ hook refreshed (baseline matched) ai-specs/recipes/worktree-flow/hooks/h5-managed-stale-refresh.sh"
+        ],
+        "refused": false
+      }
+    },
+    {
+      "name": "h6-refresh-backup",
+      "input": {
+        "rel": "ai-specs/recipes/worktree-flow/hooks/h6-refresh-backup.sh",
+        "script": "hooks/h6-refresh-backup.sh",
+        "recipe_id": "worktree-flow",
+        "config": {
+          "gate_impl": "auto",
+          "gate_scope": "auto",
+          "repo_topology": "auto"
+        },
+        "refresh": true,
+        "seed_sha256": "73e715b456dc1ee129756f902a8cd2be2dce9ee2226a268e44ee4d31be7635e7",
+        "seed_mode": "644",
+        "backup_name": "73e715b456dc1ee129756f902a8cd2be2dce9ee2226a268e44ee4d31be7635e7.sh"
+      },
+      "outcome": {
+        "wrote": true,
+        "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/hooks/h6-refresh-backup.sh",
+        "record": {
+          "kind": "gate",
+          "policy": "auto",
+          "recipe": "worktree-flow",
+          "sha256": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+          "source": "hooks/h6-refresh-backup.sh",
+          "target": "ai-specs/recipes/worktree-flow/hooks/h6-refresh-backup.sh"
+        },
+        "disk_sha": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+        "mode": "755",
+        "backup": "<BASE>/cache/backups/gate/73e715b456dc1ee129756f902a8cd2be2dce9ee2226a268e44ee4d31be7635e7.sh",
+        "backup_sha": "73e715b456dc1ee129756f902a8cd2be2dce9ee2226a268e44ee4d31be7635e7",
+        "lines": [
+          "msg:✓ hook refreshed ai-specs/recipes/worktree-flow/hooks/h6-refresh-backup.sh"
+        ],
+        "refused": false
+      }
+    },
+    {
+      "name": "h7-refresh-rollback",
+      "input": {
+        "rel": "ai-specs/recipes/worktree-flow/hooks/h7-refresh-rollback.sh",
+        "script": "hooks/h7-refresh-rollback.sh",
+        "recipe_id": "worktree-flow",
+        "config": {
+          "gate_impl": "auto",
+          "gate_scope": "auto",
+          "repo_topology": "auto"
+        },
+        "refresh": true,
+        "seed_sha256": "73e715b456dc1ee129756f902a8cd2be2dce9ee2226a268e44ee4d31be7635e7",
+        "seed_mode": "400",
+        "backup_name": "73e715b456dc1ee129756f902a8cd2be2dce9ee2226a268e44ee4d31be7635e7.sh"
+      },
+      "outcome": {
+        "wrote": false,
+        "dest": "",
+        "record": null,
+        "disk_sha": "73e715b456dc1ee129756f902a8cd2be2dce9ee2226a268e44ee4d31be7635e7",
+        "mode": "400",
+        "backup": "",
+        "backup_sha": "",
+        "lines": [],
+        "refused": true
+      }
+    },
+    {
+      "name": "h8-symlink-guard",
+      "input": {
+        "rel": "ai-specs/recipes/worktree-flow/hooks/h8-symlink-guard.sh",
+        "script": "hooks/h8-symlink-guard.sh",
+        "recipe_id": "worktree-flow",
+        "config": {
+          "gate_impl": "auto",
+          "gate_scope": "auto",
+          "repo_topology": "auto"
+        },
+        "refresh": false,
+        "dest_kind": "symlink"
+      },
+      "outcome": {
+        "wrote": false,
+        "dest": "",
+        "record": null,
+        "disk_sha": "",
+        "mode": "",
+        "backup": "",
+        "backup_sha": "",
+        "lines": [],
+        "refused": true
+      }
+    },
+    {
+      "name": "h9-refresh-symlink-guard",
+      "input": {
+        "rel": "ai-specs/recipes/worktree-flow/hooks/h9-refresh-symlink-guard.sh",
+        "script": "hooks/h9-refresh-symlink-guard.sh",
+        "recipe_id": "worktree-flow",
+        "config": {
+          "gate_impl": "auto",
+          "gate_scope": "auto",
+          "repo_topology": "auto"
+        },
+        "refresh": true,
+        "dest_kind": "symlink",
+        "backup_name": "73e715b456dc1ee129756f902a8cd2be2dce9ee2226a268e44ee4d31be7635e7.sh"
+      },
+      "outcome": {
+        "wrote": false,
+        "dest": "",
+        "record": null,
+        "disk_sha": "",
+        "mode": "",
+        "backup": "",
+        "backup_sha": "",
+        "lines": [],
+        "refused": true
+      }
+    }
+  ]
+}
