@@ -1,0 +1,731 @@
+{
+  "cases": [
+    {
+      "name": "dep exists and vendored",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "[deps.\"vendored-skill\".skills.\"vendored-skill\"]\n\"SKILL.md\" = \"hash-vendored\"\n\n[deps.\"other-skill\".skills.\"other-skill\"]\n\"SKILL.md\" = \"hash-other\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill/SKILL.md",
+          "content": "---\nname: other-skill\n---\n# other-skill\n"
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill/SKILL.md",
+          "content": "---\nname: vendored-skill\n---\n# vendored-skill\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"vendored-skill\"\nsource = \"https://github.com/example/vendored.git\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"other-skill\"\nsource = \"https://github.com/example/other.git\"\nscope = [\"root\"]\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "  ✓ removed [[deps]] 'vendored-skill' from \u003cDIR\u003e/ai-specs/ai-specs.toml\n  ✓ pruned ai-specs/.deps/vendored-skill/\n  ✓ removed lock hashes for 'vendored-skill'\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[deps.\"other-skill\".skills.\"other-skill\"]\n\"SKILL.md\" = \"hash-other\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill/SKILL.md",
+          "content": "---\nname: other-skill\n---\n# other-skill\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"other-skill\"\nsource = \"https://github.com/example/other.git\"\nscope = [\"root\"]\n"
+        }
+      ]
+    },
+    {
+      "name": "dep exists but never vendored",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "[deps.\"other-skill\".skills.\"other-skill\"]\n\"SKILL.md\" = \"hash-other\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill/SKILL.md",
+          "content": "---\nname: other-skill\n---\n# other-skill\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"unsynced\"\n\n[[deps]]\nid = \"unsynced-skill\"\nsource = \"https://github.com/example/unsynced.git\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"other-skill\"\nsource = \"https://github.com/example/other.git\"\nscope = [\"root\"]\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "  ✓ removed [[deps]] 'unsynced-skill' from \u003cDIR\u003e/ai-specs/ai-specs.toml\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "[deps.\"other-skill\".skills.\"other-skill\"]\n\"SKILL.md\" = \"hash-other\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill/SKILL.md",
+          "content": "---\nname: other-skill\n---\n# other-skill\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"unsynced\"\n\n[[deps]]\nid = \"other-skill\"\nsource = \"https://github.com/example/other.git\"\nscope = [\"root\"]\n"
+        }
+      ]
+    },
+    {
+      "name": "dep does not exist",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "[deps.\"vendored-skill\".skills.\"vendored-skill\"]\n\"SKILL.md\" = \"hash-vendored\"\n\n[deps.\"other-skill\".skills.\"other-skill\"]\n\"SKILL.md\" = \"hash-other\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill/SKILL.md",
+          "content": "---\nname: other-skill\n---\n# other-skill\n"
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill/SKILL.md",
+          "content": "---\nname: vendored-skill\n---\n# vendored-skill\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"vendored-skill\"\nsource = \"https://github.com/example/vendored.git\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"other-skill\"\nsource = \"https://github.com/example/other.git\"\nscope = [\"root\"]\n"
+        }
+      ],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "  ✗ dep 'ghost-skill' not found in \u003cDIR\u003e/ai-specs/ai-specs.toml\n",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "[deps.\"vendored-skill\".skills.\"vendored-skill\"]\n\"SKILL.md\" = \"hash-vendored\"\n\n[deps.\"other-skill\".skills.\"other-skill\"]\n\"SKILL.md\" = \"hash-other\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill/SKILL.md",
+          "content": "---\nname: other-skill\n---\n# other-skill\n"
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill/SKILL.md",
+          "content": "---\nname: vendored-skill\n---\n# vendored-skill\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"vendored-skill\"\nsource = \"https://github.com/example/vendored.git\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"other-skill\"\nsource = \"https://github.com/example/other.git\"\nscope = [\"root\"]\n"
+        }
+      ]
+    },
+    {
+      "name": "missing id",
+      "input": [],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ERROR: missing skill id\nUsage: ai-specs skills remove \u003cid\u003e [path] [--help]\nRemove a vendored skill ([[deps]]) from ai-specs.toml.\n\nRemoves the [[deps]] block and prunes the vendored copy under\nai-specs/.deps/\u003cid\u003e/ (gitignored).\n\nArguments:\n  id      Skill identifier matching [[deps]].id\n  path    Target project root (default: current directory)\n",
+      "tree": []
+    },
+    {
+      "name": "help",
+      "input": [],
+      "rc": 0,
+      "stdout": "Usage: ai-specs skills remove \u003cid\u003e [path] [--help]\nRemove a vendored skill ([[deps]]) from ai-specs.toml.\n\nRemoves the [[deps]] block and prunes the vendored copy under\nai-specs/.deps/\u003cid\u003e/ (gitignored).\n\nArguments:\n  id      Skill identifier matching [[deps]].id\n  path    Target project root (default: current directory)\n",
+      "stderr": "",
+      "tree": []
+    },
+    {
+      "name": "unknown flag",
+      "input": [],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ERROR: unknown flag: --bogus\nRun 'ai-specs skills remove --help' for usage.\n",
+      "tree": []
+    },
+    {
+      "name": "third positional",
+      "input": [],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ERROR: unexpected positional argument: gamma\n",
+      "tree": []
+    },
+    {
+      "name": "only deps block",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[[deps]]\nid = \"only-skill\"\nsource = \"https://github.com/example/only.git\"\nscope = [\"root\"]\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "  ✓ removed [[deps]] 'only-skill' from \u003cDIR\u003e/ai-specs/ai-specs.toml\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml"
+        }
+      ]
+    },
+    {
+      "name": "manifest not found",
+      "input": [],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "ERROR: \u003cDIR\u003e/ai-specs/ai-specs.toml not found.\n",
+      "tree": []
+    },
+    {
+      "name": "invalid dep id",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "[deps.\"vendored-skill\".skills.\"vendored-skill\"]\n\"SKILL.md\" = \"hash-vendored\"\n\n[deps.\"other-skill\".skills.\"other-skill\"]\n\"SKILL.md\" = \"hash-other\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill/SKILL.md",
+          "content": "---\nname: other-skill\n---\n# other-skill\n"
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill/SKILL.md",
+          "content": "---\nname: vendored-skill\n---\n# vendored-skill\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"vendored-skill\"\nsource = \"https://github.com/example/vendored.git\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"other-skill\"\nsource = \"https://github.com/example/other.git\"\nscope = [\"root\"]\n"
+        }
+      ],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ERROR: refusing invalid dep id: '../escape'\n",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "[deps.\"vendored-skill\".skills.\"vendored-skill\"]\n\"SKILL.md\" = \"hash-vendored\"\n\n[deps.\"other-skill\".skills.\"other-skill\"]\n\"SKILL.md\" = \"hash-other\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill/SKILL.md",
+          "content": "---\nname: other-skill\n---\n# other-skill\n"
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill/SKILL.md",
+          "content": "---\nname: vendored-skill\n---\n# vendored-skill\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"vendored-skill\"\nsource = \"https://github.com/example/vendored.git\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"other-skill\"\nsource = \"https://github.com/example/other.git\"\nscope = [\"root\"]\n"
+        }
+      ]
+    },
+    {
+      "name": "positional after dashdash",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "[deps.\"vendored-skill\".skills.\"vendored-skill\"]\n\"SKILL.md\" = \"hash-vendored\"\n\n[deps.\"other-skill\".skills.\"other-skill\"]\n\"SKILL.md\" = \"hash-other\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill/SKILL.md",
+          "content": "---\nname: other-skill\n---\n# other-skill\n"
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill/SKILL.md",
+          "content": "---\nname: vendored-skill\n---\n# vendored-skill\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"vendored-skill\"\nsource = \"https://github.com/example/vendored.git\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"other-skill\"\nsource = \"https://github.com/example/other.git\"\nscope = [\"root\"]\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "  ✓ removed [[deps]] 'vendored-skill' from \u003cDIR\u003e/ai-specs/ai-specs.toml\n  ✓ pruned ai-specs/.deps/vendored-skill/\n  ✓ removed lock hashes for 'vendored-skill'\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[deps.\"other-skill\".skills.\"other-skill\"]\n\"SKILL.md\" = \"hash-other\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill/SKILL.md",
+          "content": "---\nname: other-skill\n---\n# other-skill\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"other-skill\"\nsource = \"https://github.com/example/other.git\"\nscope = [\"root\"]\n"
+        }
+      ]
+    },
+    {
+      "name": "target defaults to cwd",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "[deps.\"vendored-skill\".skills.\"vendored-skill\"]\n\"SKILL.md\" = \"hash-vendored\"\n\n[deps.\"other-skill\".skills.\"other-skill\"]\n\"SKILL.md\" = \"hash-other\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill/SKILL.md",
+          "content": "---\nname: other-skill\n---\n# other-skill\n"
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill/SKILL.md",
+          "content": "---\nname: vendored-skill\n---\n# vendored-skill\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"vendored-skill\"\nsource = \"https://github.com/example/vendored.git\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"other-skill\"\nsource = \"https://github.com/example/other.git\"\nscope = [\"root\"]\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "  ✓ removed [[deps]] 'vendored-skill' from \u003cDIR\u003e/ai-specs/ai-specs.toml\n  ✓ pruned ai-specs/.deps/vendored-skill/\n  ✓ removed lock hashes for 'vendored-skill'\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[deps.\"other-skill\".skills.\"other-skill\"]\n\"SKILL.md\" = \"hash-other\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill/SKILL.md",
+          "content": "---\nname: other-skill\n---\n# other-skill\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"other-skill\"\nsource = \"https://github.com/example/other.git\"\nscope = [\"root\"]\n"
+        }
+      ]
+    },
+    {
+      "name": "read-only manifest",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "[deps.\"vendored-skill\".skills.\"vendored-skill\"]\n\"SKILL.md\" = \"hash-vendored\"\n\n[deps.\"other-skill\".skills.\"other-skill\"]\n\"SKILL.md\" = \"hash-other\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill/SKILL.md",
+          "content": "---\nname: other-skill\n---\n# other-skill\n"
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill/SKILL.md",
+          "content": "---\nname: vendored-skill\n---\n# vendored-skill\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"vendored-skill\"\nsource = \"https://github.com/example/vendored.git\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"other-skill\"\nsource = \"https://github.com/example/other.git\"\nscope = [\"root\"]\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "  ✓ removed [[deps]] 'vendored-skill' from \u003cDIR\u003e/ai-specs/ai-specs.toml\n  ✓ pruned ai-specs/.deps/vendored-skill/\n  ✓ removed lock hashes for 'vendored-skill'\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[deps.\"other-skill\".skills.\"other-skill\"]\n\"SKILL.md\" = \"hash-other\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/other-skill/skills/other-skill/SKILL.md",
+          "content": "---\nname: other-skill\n---\n# other-skill\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"other-skill\"\nsource = \"https://github.com/example/other.git\"\nscope = [\"root\"]\n"
+        }
+      ]
+    },
+    {
+      "name": "missing path",
+      "input": [],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "\u003cROOT\u003e/lib/skills-remove.sh: line 58: cd: \u003cDIR\u003e/does-not-exist: No such file or directory\n",
+      "tree": []
+    }
+  ],
+  "oracle": {
+    "base": "233dcd2",
+    "note": "legacy `bash lib/skills-remove.sh` over the in-test fixture corpus; \u003cDIR\u003e is the project root (or the missing target's parent)",
+    "python": "3.14.7",
+    "scripts": {
+      "lib/skills-remove.sh": "8e56be3e74b2647b93791dd021c22ca9ab9578df"
+    }
+  }
+}
