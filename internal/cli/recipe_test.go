@@ -1,11 +1,14 @@
 package cli
 
 // GO-20 U6a (T1): differential for the native `ai-specs recipe list`.
-// Same discipline as skills_test.go's U5a table: the shell script
-// (`bash lib/recipe-list.sh <args>`) and the built binary (`<bin> recipe list
-// <args>`) run against the SAME project under one shared, pinned environment,
-// and stdout, stderr and the exit code must be byte for byte identical
-// (odd/tasks/go-20-u6-recipe.md S3/S4).
+// Same discipline as skills_test.go's U5a table: the built binary
+// (`<bin> recipe list <args>`) runs against the project and its stdout, stderr
+// and exit code must be byte for byte identical to the FROZEN legacy oracle of
+// testdata/recipe_list_golden.json (odd/tasks/go-20-u6-recipe.md S3/S4). The
+// legacy shell route (`bash lib/recipe-list.sh <args>`) itself is no longer
+// executed: GO-20 U2e T5 PR4a captured it once into four bundles (list, add,
+// remove, configure) before lib/ is deleted, so a missing bundle FAILS and
+// nothing in the converted tables shells out, reads lib/ or needs python3.
 //
 // Hermeticity: AI_SPECS_HOME is pinned to an isolated home built like
 // tests/_blackbox.py:isolated_home (install entries symlinked in, cache/ local
@@ -31,7 +34,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -104,32 +106,82 @@ enabled = false
 	return projTwo, projFilter, projNoManifest
 }
 
-// TestRecipeListDifferentialAgainstShell is the U6a oracle: same project, both
-// routes, byte-identical stdout/stderr/exit code over the case table below,
-// plus a tree snapshot proving neither leg writes anything (the verb is
-// read-only: no cache, no manifest, no ai-specs/ tree).
-func TestRecipeListDifferentialAgainstShell(t *testing.T) {
-	python3, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skipf("python3 unavailable (the shell leg parses TOML with it): %v", err)
-	}
-	// LOUD skip, same class as the U5a tables: recipe-list.py imports
-	// tomllib (Python ≥3.11) through toml-read, so on a machine whose python3
-	// is older the LEGACY route itself crashes and there is no oracle to
-	// compare against — an environment gap, never a port defect.
-	probe := exec.Command(python3, "-c", "import tomllib")
-	probe.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	if out, perr := probe.CombinedOutput(); perr != nil {
-		t.Skipf("python3 CANNOT import tomllib, so lib/recipe-list.sh cannot run and the differential oracle is unavailable — probe `python3 -c 'import tomllib'` said %v: %s (run with a Python ≥3.11 on PATH, e.g. PATH=/tmp/pybin:$PATH go test ./internal/cli/)", perr, out)
-	}
-	bin, root := smokeSetup(t)
-	script := filepath.Join(root, "lib", "recipe-list.sh")
-	if _, err := os.Stat(script); err != nil {
-		t.Skipf("legacy lib/recipe-list.sh unavailable: %v", err)
-	}
+// ── Frozen oracles (GO-20 U2e T5 PR4a S4) ──
+//
+// The four differential tables in this file used to run the legacy shell route
+// live as their oracle. lib/ is being deleted, so each family's legacy output
+// was captured ONCE into internal/cli/testdata/ (one bundle per script family)
+// and the tables now replay it: no bash, no python3, no lib/ read, and no
+// environment skip — a missing bundle FAILS. The bundle harness itself is
+// skills_test.go's (skillsLoadGolden, skillsTokenSet, skillsCheckCase, reused
+// read-only): same node shape, same input pinning, same tokenization.
+//
+// What a bundle freezes, per case, in capture order:
+//   - input: the pre-run project tree the fixture wrote, so fixture drift
+//     fails as input drift instead of an opaque output mismatch;
+//   - rc, stdout, stderr: the legacy exit code and both streams;
+//   - tree: the project tree the legacy route left behind.
+//
+// Trees are root-relative paths plus bytes: a directory as a bare path, a
+// symlink as its target, a regular file as its bytes. Permission bits are NOT
+// frozen: the fixtures are created with os.WriteFile under the process umask
+// and this package runs t.Parallel() tests that must not have the umask pinned
+// under them.
+//
+// Host paths never reach a bundle: each run's temporary project roots and cli
+// homes, and the checkout root (bash prefixes its own diagnostics with the
+// script path, Python its tracebacks), are tokenized (<DIR>, <HOME>, <ROOT>) in
+// the frozen stdout, stderr and file bytes, both as created and
+// symlink-resolved. The two valid→invalid refusals additionally normalize the
+// embedded parser detail to <parse detail> (ADR 0002: parse-error detail is
+// diagnostic; the message's framing stays byte-compared).
+//
+// A bundle also carries its oracle metadata: the python version that produced
+// it and the git blob id of every legacy script the family froze, at base
+// ac49e9f. Regenerating a bundle needs a human decision.
+const (
+	recipeListGoldenFile      = "recipe_list_golden.json"
+	recipeAddGoldenFile       = "recipe_add_golden.json"
+	recipeRemoveGoldenFile    = "recipe_remove_golden.json"
+	recipeConfigureGoldenFile = "recipe_configure_golden.json"
+)
 
+// recipeListGoldenCases is the hard-coded identity inventory of the frozen
+// list bundle: the table's own cases in capture order, then the deviation
+// record its own test reads. It is an independent oracle of coverage — kept in
+// the test, never derived from the bundle — so a bundle that is missing,
+// renamed, duplicated or reordered cannot validate silently.
+var recipeListGoldenCases = []string{
+	"two recipes enabled one in catalog one not",
+	"empty catalog",
+	"internal test recipe and dot dir filtered",
+	"no manifest",
+	"help",
+	"unknown flag",
+	"second positional",
+	"positional after dashdash",
+	"second positional after dashdash",
+	"target defaults to cwd",
+	"missing path",
+}
+
+// recipeListCase is one row of the list table: the home the verb reads, the
+// argv after `recipe list`, the working directory and the project the verb
+// enumerates (frozen as the case's input tree; "" for the flag-only cases).
+type recipeListCase struct {
+	name   string
+	home   string
+	args   []string
+	dir    string // "" → the shared scratch dir
+	target string // "" → the case has no project to freeze
+}
+
+// recipeListCorpus builds the homes and project shapes the list table runs and
+// returns both the table and the roots the read-only snapshot covers.
+func recipeListCorpus(t *testing.T, root string) (cases []recipeListCase, roots []string) {
+	t.Helper()
 	// Full isolated home: the repo's own catalogue through the symlink — the
-	// real recipes both legs must list identically.
+	// real recipes the port must list.
 	home := skillsListHome(t, root)
 	// A home with an EMPTY catalogue (isolated_home(catalog=False)'s shape).
 	emptyHome := skillsListHome(t, root, "catalog")
@@ -140,51 +192,65 @@ func TestRecipeListDifferentialAgainstShell(t *testing.T) {
 	// directory that must NOT reach the listing.
 	filterHome := recipeFixtureHome(t, root, "alpha", "test-fixture", ".hidden")
 	projTwo, projFilter, projNoManifest := recipeListFixtures(t)
-
-	type diffCase struct {
-		name string
-		home string
-		args []string // after `recipe list` (Go) / after the script name (bash)
-		dir  string   // working directory for both legs; "" → a fresh temp dir
+	cases = []recipeListCase{
+		{name: "two recipes enabled one in catalog one not", home: home,
+			args: []string{projTwo}, target: projTwo},
+		{name: "empty catalog", home: emptyHome, args: []string{projTwo}, target: projTwo},
+		{name: "internal test recipe and dot dir filtered", home: filterHome,
+			args: []string{projFilter}, target: projFilter},
+		{name: "no manifest", home: home, args: []string{projNoManifest}, target: projNoManifest},
+		{name: "help", home: home, args: []string{"--help"}},
+		{name: "unknown flag", home: home, args: []string{"--bogus"}},
+		{name: "second positional", home: home, args: []string{projTwo, "extra"}, target: projTwo},
+		{name: "positional after dashdash", home: home, args: []string{"--", projTwo}, target: projTwo},
+		{name: "second positional after dashdash", home: home,
+			args: []string{"--", "alpha", "beta"}},
+		{name: "target defaults to cwd", home: home, dir: projTwo, target: projTwo},
 	}
-	cases := []diffCase{
-		{"two recipes enabled one in catalog one not", home, []string{projTwo}, ""},
-		{"empty catalog", emptyHome, []string{projTwo}, ""},
-		{"internal test recipe and dot dir filtered", filterHome, []string{projFilter}, ""},
-		{"no manifest", home, []string{projNoManifest}, ""},
-		{"help", home, []string{"--help"}, ""},
-		{"unknown flag", home, []string{"--bogus"}, ""},
-		{"second positional", home, []string{projTwo, "extra"}, ""},
-		{"positional after dashdash", home, []string{"--", projTwo}, ""},
-		{"second positional after dashdash", home, []string{"--", "alpha", "beta"}, ""},
-		{"target defaults to cwd", home, nil, projTwo},
+	return cases, []string{home, emptyHome, filterHome, projTwo, projFilter, projNoManifest}
+}
+
+// TestRecipeListDifferentialAgainstShell is the U6a oracle: every case replays
+// the frozen legacy `bash lib/recipe-list.sh` run of
+// testdata/recipe_list_golden.json against the built binary on the same
+// project and asserts byte-identical stdout, byte-identical stderr and an
+// identical exit code, plus a tree snapshot proving the harness writes nothing
+// (the verb is read-only: no cache, no manifest, no ai-specs/ tree).
+func TestRecipeListDifferentialAgainstShell(t *testing.T) {
+	frozen := skillsLoadGolden(t, recipeListGoldenFile, recipeListGoldenCases)
+	bin, root := smokeSetup(t)
+	cases, roots := recipeListCorpus(t, root)
+	// The corpus and the leading inventory must agree case for case before
+	// anything is compared; the trailing record is the deviation case its own
+	// test reads.
+	if len(cases)+1 != len(recipeListGoldenCases) {
+		t.Fatalf("in-test corpus has %d cases, inventory %d", len(cases), len(recipeListGoldenCases))
+	}
+	for i, tc := range cases {
+		if tc.name != recipeListGoldenCases[i] {
+			t.Fatalf("corpus case %d is %q, inventory %q", i, tc.name, recipeListGoldenCases[i])
+		}
 	}
 
-	roots := []string{home, emptyHome, filterHome, projTwo, projFilter, projNoManifest}
 	before := skillsTreeSnapshot(t, roots...)
-
+	scratch := t.TempDir()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			rec, ok := frozen[tc.name]
+			if !ok {
+				t.Fatalf("no frozen record %q", tc.name)
+			}
 			dir := tc.dir
 			if dir == "" {
-				dir = t.TempDir()
+				dir = scratch
 			}
-			env := skillsListEnv(tc.home)
+			tokens := skillsTokenSet(dir, "<DIR>", tc.home, "<HOME>",
+				tc.target, "<DIR>", root, "<ROOT>")
+			input := tokens.tree(t, tc.target)
 
-			legOut, legErr, legCode := runOne("bash",
-				append([]string{script}, tc.args...), env, dir)
-			goOut, goErr, goCode := runOne(bin,
-				append([]string{"recipe", "list"}, tc.args...), env, dir)
-
-			if !bytes.Equal(goOut, legOut) {
-				t.Errorf("stdout mismatch:\n go:   %q\n bash: %q", goOut, legOut)
-			}
-			if !bytes.Equal(goErr, legErr) {
-				t.Errorf("stderr mismatch:\n go:   %q\n bash: %q", goErr, legErr)
-			}
-			if goCode != legCode {
-				t.Errorf("exit code mismatch: go = %d, bash = %d", goCode, legCode)
-			}
+			out, errOut, code := runOne(bin,
+				append([]string{"recipe", "list"}, tc.args...), skillsListEnv(tc.home), dir)
+			skillsCheckCase(t, rec, tokens, input, out, errOut, code, tokens.tree(t, tc.target))
 		})
 	}
 
@@ -239,18 +305,13 @@ func TestRecipeListNativeNeedsNoBashOrPython(t *testing.T) {
 // TestRecipeListMissingPathDeviation pins the frozen `cd` failure the way the
 // U5a table does: exit 1 with the `cd: <path>: <reason>` shape, WITHOUT
 // bash's own `lib/recipe-list.sh: line N: ` prefix (the S12/ADR 0002 class —
-// the shell's line-number noise is not fabricated). The legacy leg is checked
-// for the path and the strerror wording only, deliberately not byte-matched.
+// the shell's line-number noise is not fabricated). The legacy side is the
+// bundle's `missing path` record: bash's own wording is still visible there,
+// deliberately not byte-matched against the port.
 func TestRecipeListMissingPathDeviation(t *testing.T) {
-	root, err := locateRoot()
-	if err != nil {
-		t.Skipf("repo root not located: %v", err)
-	}
-	script := filepath.Join(root, "lib", "recipe-list.sh")
+	frozen := skillsLoadGolden(t, recipeListGoldenFile, recipeListGoldenCases)
 	home := t.TempDir()
-	env := skillsListEnv(home)
-	dir := t.TempDir()
-	missing := filepath.Join(dir, "does-not-exist")
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
 
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"recipe", "list", missing}, home, nil, &stdout, &stderr)
@@ -265,16 +326,22 @@ func TestRecipeListMissingPathDeviation(t *testing.T) {
 		t.Errorf("go stderr = %q, want %q", stderr.String(), want)
 	}
 
-	legOut, legErr, legCode := runOne("bash", []string{script, missing}, env, dir)
-	if legCode != 1 {
-		t.Errorf("bash exit = %d, want 1", legCode)
+	rec, ok := frozen["missing path"]
+	if !ok {
+		t.Fatal("no frozen record \"missing path\"")
 	}
-	if len(legOut) != 0 {
-		t.Errorf("bash stdout = %q, want empty", legOut)
+	if rec.RC != 1 {
+		t.Errorf("frozen legacy exit = %d, want 1", rec.RC)
 	}
-	for _, part := range []string{"cd:", missing, "No such file or directory"} {
-		if !strings.Contains(string(legErr), part) {
-			t.Errorf("bash stderr = %q, want it to contain %q", legErr, part)
+	if rec.Stdout != "" {
+		t.Errorf("frozen legacy stdout = %q, want empty", rec.Stdout)
+	}
+	// Legacy: bash's own cd diagnostic names the path. The
+	// `lib/recipe-list.sh: line N: ` prefix is a bash artifact, deliberately
+	// not matched.
+	for _, part := range []string{"cd:", "<DIR>/does-not-exist", "No such file or directory"} {
+		if !strings.Contains(rec.Stderr, part) {
+			t.Errorf("frozen legacy stderr = %q, want it to contain %q", rec.Stderr, part)
 		}
 	}
 }
@@ -448,35 +515,56 @@ func buildRecipeAddFixture(t *testing.T, name, proj string) {
 var recipeAddGuardDetailRE = regexp.MustCompile(
 	`(?s)invalid TOML manifest \(.*\)\. ai-specs\.toml was not modified\.`)
 
-// TestRecipeAddDifferentialAgainstShell is T2's oracle: same case table,
-// both routes, byte-identical stdout/stderr/exit code over twin projects,
-// plus identical resulting trees (the appended manifest is part of the
-// contract) and a CLI home proven untouched around the whole table.
-func TestRecipeAddDifferentialAgainstShell(t *testing.T) {
-	skillsOracle(t, "lib/recipe-add.sh")
-	bin, root := smokeSetup(t)
-	script := filepath.Join(root, "lib", "recipe-add.sh")
-	if _, err := os.Stat(script); err != nil {
-		t.Skipf("legacy lib/recipe-add.sh unavailable: %v", err)
-	}
+// recipeAddGuardDetail normalizes the port's side of that one difference: the
+// bundle freezes <parse detail> in place of the embedded parser message, and
+// the native streams are normalized the same way before they are compared.
+func recipeAddGuardDetail(b []byte) []byte {
+	return recipeAddGuardDetailRE.ReplaceAll(b,
+		[]byte("invalid TOML manifest (<parse detail>). ai-specs.toml was not modified."))
+}
 
-	// One shared home carrying the real lib (the wrapper execs
-	// python3 $AI_SPECS_HOME/lib/_internal/recipe-add.py) and a fixture
-	// catalogue as a REAL directory — every home here carries a catalogue so
-	// the resolver's module-path candidate is not byte-exercised (L3's
-	// deviation 3, unchanged by this slice).
-	home := recipeFixtureHome(t, root, "alpha", "test-fixture", "bad id")
+// recipeAddGoldenCases is the hard-coded identity inventory of the frozen add
+// bundle: the table's own cases in capture order, then the deviation record its
+// own test reads.
+var recipeAddGoldenCases = []string{
+	"catalog recipe added to a manifest without it",
+	"config recipe placeholder, listing and next steps",
+	"already enabled duplicate refused",
+	"id absent from the catalog",
+	"internal test recipe refused",
+	"catalog path keeps the id uncleaned",
+	"project not initialized",
+	"missing id",
+	"help",
+	"unknown flag",
+	"second positional",
+	"positional after dashdash",
+	"third positional after dashdash",
+	"target defaults to cwd",
+	"append over an invalid manifest restores the original",
+	"valid manifest, invalid append (space id) restores",
+	"missing path",
+}
+
+// recipeAddCase is one row of the add table: the manifest shape the twins used
+// to start from, the argv after `recipe add`, and the two flags that decide the
+// working directory and whether the project must stay byte-identical.
+type recipeAddCase struct {
+	name      string
+	fixture   string
+	args      []string // "<PROJ>" is replaced by the project root
+	cwdProj   bool     // run with cwd = the project dir
+	untouched bool     // the verb must leave the project byte-identical
+}
+
+// recipeAddCorpus builds the shared home (the fixture catalogue plus the rich
+// recipe) and returns the table the differential ran.
+func recipeAddCorpus(t *testing.T, root string) (cases []recipeAddCase, home string) {
+	t.Helper()
+	home = recipeFixtureHome(t, root, "alpha", "test-fixture", "bad id")
 	skillsWriteFile(t, filepath.Join(home, "catalog", "recipes", "cfg", "recipe.toml"),
 		recipeAddRichRecipe)
-
-	type diffCase struct {
-		name      string
-		fixture   string
-		args      []string // "<PROJ>" is replaced by each leg's project root
-		cwdProj   bool     // run each leg with cwd = its own project dir
-		untouched bool     // both legs must leave the project byte-identical
-	}
-	cases := []diffCase{
+	cases = []recipeAddCase{
 		// ── the write: the append, the placeholder, the listing, guidance ──
 		{name: "catalog recipe added to a manifest without it", fixture: "ok",
 			args: []string{"alpha", "<PROJ>"}},
@@ -511,79 +599,68 @@ func TestRecipeAddDifferentialAgainstShell(t *testing.T) {
 		{name: "valid manifest, invalid append (space id) restores", fixture: "ok",
 			args: []string{"bad id", "<PROJ>"}, untouched: true},
 	}
+	return cases, home
+}
 
+// TestRecipeAddDifferentialAgainstShell is T2's oracle: every case replays the
+// frozen legacy `bash lib/recipe-add.sh` run of testdata/recipe_add_golden.json
+// against the built binary on the same project and asserts byte-identical
+// stdout, stderr and exit code, plus an identical project tree (the appended
+// manifest bytes are the contract: S5 and the parity contract §3 placeholder
+// rendering) and a CLI home proven untouched around the whole table (recipe
+// add writes NOTHING in the home: no cache, no vendor). Cases the oracle left
+// untouched must be left untouched by the port too.
+//
+// The TTY legs are NOT exercised here: runOne captures both streams, so the
+// legacy leg took the non-TTY path Python itself takes (recipe-add.py:151's
+// `tty = sys.stdin.isatty() and sys.stdout.isatty()`). The TTY tail is native
+// and pinned by TestRecipeAddTailIsNativeOnATerminal.
+func TestRecipeAddDifferentialAgainstShell(t *testing.T) {
+	frozen := skillsLoadGolden(t, recipeAddGoldenFile, recipeAddGoldenCases)
+	bin, root := smokeSetup(t)
+	cases, home := recipeAddCorpus(t, root)
+	if len(cases)+1 != len(recipeAddGoldenCases) {
+		t.Fatalf("in-test corpus has %d cases, inventory %d", len(cases), len(recipeAddGoldenCases))
+	}
+	for i, tc := range cases {
+		if tc.name != recipeAddGoldenCases[i] {
+			t.Fatalf("corpus case %d is %q, inventory %q", i, tc.name, recipeAddGoldenCases[i])
+		}
+	}
+
+	env := skillsListEnv(home)
 	homeBefore := skillsTreeSnapshot(t, home)
 	scratch := t.TempDir()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dirA, dirB := t.TempDir(), t.TempDir()
-			projA, projB := filepath.Join(dirA, "proj"), filepath.Join(dirB, "proj")
-			buildRecipeAddFixture(t, tc.fixture, projA)
-			buildRecipeAddFixture(t, tc.fixture, projB)
-			beforeA := skillsProjectTree(t, projA)
-			beforeB := skillsProjectTree(t, projB)
+			rec, ok := frozen[tc.name]
+			if !ok {
+				t.Fatalf("no frozen record %q", tc.name)
+			}
+			proj := filepath.Join(t.TempDir(), "proj")
+			buildRecipeAddFixture(t, tc.fixture, proj)
+			tokens := skillsTokenSet(proj, "<DIR>", home, "<HOME>", root, "<ROOT>")
+			input := tokens.tree(t, proj)
 
-			legArgs := func(proj string) []string {
-				out := make([]string, 0, len(tc.args))
-				for _, a := range tc.args {
-					out = append(out, strings.ReplaceAll(a, "<PROJ>", proj))
-				}
-				return out
+			args := make([]string, 0, len(tc.args))
+			for _, a := range tc.args {
+				args = append(args, strings.ReplaceAll(a, "<PROJ>", proj))
 			}
-			dirLeg := func(proj string) string {
-				if tc.cwdProj {
-					return proj
-				}
-				return scratch
+			dir := scratch
+			if tc.cwdProj {
+				dir = proj
 			}
-			env := skillsListEnv(home)
-
-			legOut, legErr, legCode := runOne("bash",
-				append([]string{script}, legArgs(projA)...), env, dirLeg(projA))
-			goOut, goErr, goCode := runOne(bin,
-				append([]string{"recipe", "add"}, legArgs(projB)...), env, dirLeg(projB))
-
-			normalize := func(b []byte, proj string) string {
-				s := string(b)
-				// The shell resolves the cwd through getcwd (e.g. /var →
-				// /private/var on macOS) when a leg runs with cwd = project;
-				// replace the resolved spelling first so both spellings
-				// normalize to the same placeholder.
-				if resolved, err := filepath.EvalSymlinks(proj); err == nil && resolved != proj {
-					s = strings.ReplaceAll(s, resolved, "<PROJ>")
-				}
-				s = strings.ReplaceAll(s, proj, "<PROJ>")
-				return recipeAddGuardDetailRE.ReplaceAllString(s,
-					"invalid TOML manifest (<parse detail>). ai-specs.toml was not modified.")
-			}
-			if got, want := normalize(goOut, projB), normalize(legOut, projA); got != want {
-				t.Errorf("stdout mismatch:\n go:   %q\n bash: %q", got, want)
-			}
-			if got, want := normalize(goErr, projB), normalize(legErr, projA); got != want {
-				t.Errorf("stderr mismatch:\n go:   %q\n bash: %q", got, want)
-			}
-			if goCode != legCode {
-				t.Errorf("exit code mismatch: go = %d, bash = %d", goCode, legCode)
-			}
-
-			afterA := skillsProjectTree(t, projA)
-			afterB := skillsProjectTree(t, projB)
-			if !reflect.DeepEqual(afterA, afterB) {
-				t.Errorf("project trees diverge after the two legs:\n bash: %v\n go:   %v", afterA, afterB)
-			}
+			out, errOut, code := runOne(bin, append([]string{"recipe", "add"}, args...), env, dir)
+			skillsCheckCase(t, rec, tokens, input,
+				recipeAddGuardDetail(out), recipeAddGuardDetail(errOut), code, tokens.tree(t, proj))
 			if tc.untouched {
-				if !reflect.DeepEqual(beforeA, afterA) {
-					t.Errorf("bash leg mutated a project that must stay untouched:\n before %v\n after  %v", beforeA, afterA)
-				}
-				if !reflect.DeepEqual(beforeB, afterB) {
-					t.Errorf("go leg mutated a project that must stay untouched:\n before %v\n after  %v", beforeB, afterB)
-				}
+				skillsCompareNodes(t, "untouched project", tokens.tree(t, proj), input)
 			}
 		})
 	}
 
-	// The verb writes NOTHING in the CLI home — no cache, no vendor, no
-	// bytecode — so the snapshot must be fully unchanged.
+	// The verb writes NOTHING in the CLI home — no cache, no vendor — so the
+	// snapshot must be fully unchanged.
 	homeAfter := skillsTreeSnapshot(t, home)
 	if !reflect.DeepEqual(homeBefore, homeAfter) {
 		for key, marker := range homeAfter {
@@ -1163,18 +1240,12 @@ func TestRecipeAddNativeNeedsNoBashOrPython(t *testing.T) {
 // TestRecipeAddMissingPathDeviation pins the frozen `cd` failure the way the
 // U5a/U6a tables do: exit 1 with the `cd: <path>: <reason>` shape, WITHOUT
 // bash's own `lib/recipe-add.sh: line N: ` prefix (the S12/ADR 0002 class —
-// the shell's line-number noise is not fabricated). The legacy leg is checked
-// for the path and the strerror wording only, deliberately not byte-matched.
+// the shell's line-number noise is not fabricated). The legacy side is the
+// bundle's `missing path` record, deliberately not byte-matched.
 func TestRecipeAddMissingPathDeviation(t *testing.T) {
-	root, err := locateRoot()
-	if err != nil {
-		t.Skipf("repo root not located: %v", err)
-	}
-	script := filepath.Join(root, "lib", "recipe-add.sh")
+	frozen := skillsLoadGolden(t, recipeAddGoldenFile, recipeAddGoldenCases)
 	home := t.TempDir()
-	env := skillsListEnv(home)
-	dir := t.TempDir()
-	missing := filepath.Join(dir, "does-not-exist")
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
 
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"recipe", "add", "alpha", missing}, home, nil, &stdout, &stderr)
@@ -1189,16 +1260,19 @@ func TestRecipeAddMissingPathDeviation(t *testing.T) {
 		t.Errorf("go stderr = %q, want %q", stderr.String(), want)
 	}
 
-	legOut, legErr, legCode := runOne("bash", []string{script, "alpha", missing}, env, dir)
-	if legCode != 1 {
-		t.Errorf("bash exit = %d, want 1", legCode)
+	rec, ok := frozen["missing path"]
+	if !ok {
+		t.Fatal("no frozen record \"missing path\"")
 	}
-	if len(legOut) != 0 {
-		t.Errorf("bash stdout = %q, want empty", legOut)
+	if rec.RC != 1 {
+		t.Errorf("frozen legacy exit = %d, want 1", rec.RC)
 	}
-	for _, part := range []string{"cd:", missing, "No such file or directory"} {
-		if !strings.Contains(string(legErr), part) {
-			t.Errorf("bash stderr = %q, want it to contain %q", legErr, part)
+	if rec.Stdout != "" {
+		t.Errorf("frozen legacy stdout = %q, want empty", rec.Stdout)
+	}
+	for _, part := range []string{"cd:", "<DIR>/does-not-exist", "No such file or directory"} {
+		if !strings.Contains(rec.Stderr, part) {
+			t.Errorf("frozen legacy stderr = %q, want it to contain %q", rec.Stderr, part)
 		}
 	}
 }
@@ -1349,34 +1423,54 @@ func buildRecipeRemoveFixture(t *testing.T, name, proj string) {
 // parse-error detail after the frozen framing (ADR 0002 — parse-error detail
 // is diagnostic; internal/config's differential compares the prefix through
 // "invalid TOML:" the same way). Everything else of the message — the id,
-// the framing — is byte-compared, and so is the untouched manifest.
+// the framing — is byte-compared, and so is the untouched manifest. The
+// bundle freezes <parse detail>; the native streams are normalized the same
+// way before they are compared.
 var recipeRemoveGuardDetailRE = regexp.MustCompile(`(?s)would produce invalid TOML: .*`)
 
-// TestRecipeRemoveDifferentialAgainstShell is T3's oracle: same case table,
-// both routes, byte-identical stdout/stderr/exit code over twin projects,
-// plus identical resulting trees (manifest AND lock bytes are part of the
-// contract) and a CLI home proven untouched around the whole table.
-func TestRecipeRemoveDifferentialAgainstShell(t *testing.T) {
-	skillsOracle(t, "lib/recipe-remove.sh")
-	bin, root := smokeSetup(t)
-	script := filepath.Join(root, "lib", "recipe-remove.sh")
-	if _, err := os.Stat(script); err != nil {
-		t.Skipf("legacy lib/recipe-remove.sh unavailable: %v", err)
-	}
-	gate := skillsRemoveGateBinary(t)
-	home := skillsListHome(t, root)
-	env := skillsRemoveEnv(home, gate)
+// recipeRemoveGuardDetail applies that normalization to a native stream.
+func recipeRemoveGuardDetail(b []byte) []byte {
+	return recipeRemoveGuardDetailRE.ReplaceAll(b, []byte("would produce invalid TOML: <parse detail>"))
+}
 
-	type diffCase struct {
-		name        string
-		fixture     string
-		args        []string // "<PROJ>" is replaced by each leg's project root
-		cwdProj     bool     // run each leg with cwd = its own project dir
-		untouched   bool     // both legs must leave the project byte-identical
-		lockKept    bool     // the manifest changes, the lock must not
-		guardDetail bool     // normalize the embedded parse-error detail only
-	}
-	cases := []diffCase{
+// recipeRemoveGoldenCases is the hard-coded identity inventory of the frozen
+// remove bundle: the table's own cases in capture order, then the deviation
+// record its own test reads.
+var recipeRemoveGoldenCases = []string{
+	"recipe with config sub-table",
+	"recipe with lock entries",
+	"lock keeps another recipe's entries, not rewritten",
+	"recipe absent from manifest",
+	"manifest with no recipes tables",
+	"deletion breaking valid TOML refused",
+	"missing id",
+	"help",
+	"unknown flag",
+	"third positional",
+	"positional after dashdash",
+	"manifest not found",
+	"target defaults to cwd",
+	"missing path",
+}
+
+// recipeRemoveCase is one row of the remove table: the manifest/lock shape the
+// twins used to start from, the argv after `recipe remove`, the two run flags
+// and the lock-kept pin (a lock whose entries do not match must not be
+// rewritten).
+type recipeRemoveCase struct {
+	name      string
+	fixture   string
+	args      []string // "<PROJ>" is replaced by the project root
+	cwdProj   bool     // run with cwd = the project dir
+	untouched bool     // the verb must leave the project byte-identical
+	lockKept  bool     // the manifest changes, the lock must not
+}
+
+// recipeRemoveCorpus builds the shared home and returns the table.
+func recipeRemoveCorpus(t *testing.T, root string) (cases []recipeRemoveCase, home string) {
+	t.Helper()
+	home = skillsListHome(t, root)
+	cases = []recipeRemoveCase{
 		// ── the write: the segment surgery and the lock cleanup ──
 		{name: "recipe with config sub-table", fixture: "cfg",
 			args: []string{"alpha", "<PROJ>"}},
@@ -1390,7 +1484,7 @@ func TestRecipeRemoveDifferentialAgainstShell(t *testing.T) {
 		{name: "manifest with no recipes tables", fixture: "norecipes",
 			args: []string{"alpha", "<PROJ>"}, untouched: true},
 		{name: "deletion breaking valid TOML refused", fixture: "breaks",
-			args: []string{"foo", "<PROJ>"}, untouched: true, guardDetail: true},
+			args: []string{"foo", "<PROJ>"}, untouched: true},
 		// ── the wrapper's argument contract ──
 		{name: "missing id", fixture: "cfg", untouched: true},
 		{name: "help", fixture: "cfg", args: []string{"--help"}, untouched: true},
@@ -1404,93 +1498,74 @@ func TestRecipeRemoveDifferentialAgainstShell(t *testing.T) {
 		{name: "target defaults to cwd", fixture: "cfg",
 			args: []string{"alpha"}, cwdProj: true},
 	}
+	return cases, home
+}
 
+// TestRecipeRemoveDifferentialAgainstShell is T3's oracle: every case replays
+// the frozen legacy `bash lib/recipe-remove.sh` run of
+// testdata/recipe_remove_golden.json against the built binary on the same
+// project and asserts byte-identical stdout, stderr and exit code, plus an
+// identical resulting tree — manifest AND lock bytes are part of the contract
+// (S5: the segment surgery is config.RemoveRecipeSegments, already
+// differential-tested against recipe_remove_ref.py in internal/config; the
+// lock step is recipe-remove.sh:167-203 through internal/lock). Cases the
+// oracle left untouched must be left untouched by the port too. The CLI home
+// is snapshotted around the whole table: the verb writes NOTHING in it.
+func TestRecipeRemoveDifferentialAgainstShell(t *testing.T) {
+	frozen := skillsLoadGolden(t, recipeRemoveGoldenFile, recipeRemoveGoldenCases)
+	bin, root := smokeSetup(t)
+	cases, home := recipeRemoveCorpus(t, root)
+	if len(cases)+1 != len(recipeRemoveGoldenCases) {
+		t.Fatalf("in-test corpus has %d cases, inventory %d", len(cases), len(recipeRemoveGoldenCases))
+	}
+	for i, tc := range cases {
+		if tc.name != recipeRemoveGoldenCases[i] {
+			t.Fatalf("corpus case %d is %q, inventory %q", i, tc.name, recipeRemoveGoldenCases[i])
+		}
+	}
+
+	env := skillsRemoveEnv(home, "")
 	homeBefore := skillsTreeSnapshot(t, home)
 	scratch := t.TempDir()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dirA, dirB := t.TempDir(), t.TempDir()
-			projA, projB := filepath.Join(dirA, "proj"), filepath.Join(dirB, "proj")
-			buildRecipeRemoveFixture(t, tc.fixture, projA)
-			buildRecipeRemoveFixture(t, tc.fixture, projB)
-			beforeA := skillsProjectTree(t, projA)
-			beforeB := skillsProjectTree(t, projB)
-			readLock := func(proj string) []byte {
+			rec, ok := frozen[tc.name]
+			if !ok {
+				t.Fatalf("no frozen record %q", tc.name)
+			}
+			proj := filepath.Join(t.TempDir(), "proj")
+			buildRecipeRemoveFixture(t, tc.fixture, proj)
+			tokens := skillsTokenSet(proj, "<DIR>", home, "<HOME>", root, "<ROOT>")
+			input := tokens.tree(t, proj)
+			readLock := func() []byte {
 				data, err := os.ReadFile(filepath.Join(proj, "ai-specs", ".ai-specs.lock"))
 				if err != nil {
 					return nil
 				}
 				return data
 			}
-			lockA, lockB := readLock(projA), readLock(projB)
+			lockBefore := readLock()
 
-			legArgs := func(proj string) []string {
-				out := make([]string, 0, len(tc.args))
-				for _, a := range tc.args {
-					out = append(out, strings.ReplaceAll(a, "<PROJ>", proj))
-				}
-				return out
+			args := make([]string, 0, len(tc.args))
+			for _, a := range tc.args {
+				args = append(args, strings.ReplaceAll(a, "<PROJ>", proj))
 			}
-			dirLeg := func(proj string) string {
-				if tc.cwdProj {
-					return proj
-				}
-				return scratch
+			dir := scratch
+			if tc.cwdProj {
+				dir = proj
 			}
-
-			legOut, legErr, legCode := runOne("bash",
-				append([]string{script}, legArgs(projA)...), env, dirLeg(projA))
-			goOut, goErr, goCode := runOne(bin,
-				append([]string{"recipe", "remove"}, legArgs(projB)...), env, dirLeg(projB))
-
-			normalize := func(b []byte, proj string) string {
-				s := string(b)
-				// The shell resolves the cwd through getcwd (e.g. /var →
-				// /private/var on macOS) when a leg runs with cwd = project;
-				// replace the resolved spelling first so both spellings
-				// normalize to the same placeholder.
-				if resolved, err := filepath.EvalSymlinks(proj); err == nil && resolved != proj {
-					s = strings.ReplaceAll(s, resolved, "<PROJ>")
-				}
-				s = strings.ReplaceAll(s, proj, "<PROJ>")
-				if tc.guardDetail {
-					s = recipeRemoveGuardDetailRE.ReplaceAllString(s,
-						"would produce invalid TOML: <parse detail>")
-				}
-				return s
-			}
-			if got, want := normalize(goOut, projB), normalize(legOut, projA); got != want {
-				t.Errorf("stdout mismatch:\n go:   %q\n bash: %q", got, want)
-			}
-			if got, want := normalize(goErr, projB), normalize(legErr, projA); got != want {
-				t.Errorf("stderr mismatch:\n go:   %q\n bash: %q", got, want)
-			}
-			if goCode != legCode {
-				t.Errorf("exit code mismatch: go = %d, bash = %d", goCode, legCode)
-			}
-
-			afterA := skillsProjectTree(t, projA)
-			afterB := skillsProjectTree(t, projB)
-			if !reflect.DeepEqual(afterA, afterB) {
-				t.Errorf("project trees diverge after the two legs:\n bash: %v\n go:   %v", afterA, afterB)
-			}
+			out, errOut, code := runOne(bin, append([]string{"recipe", "remove"}, args...), env, dir)
+			skillsCheckCase(t, rec, tokens, input,
+				recipeRemoveGuardDetail(out), recipeRemoveGuardDetail(errOut), code, tokens.tree(t, proj))
 			if tc.untouched {
-				if !reflect.DeepEqual(beforeA, afterA) {
-					t.Errorf("bash leg mutated a project that must stay untouched:\n before %v\n after  %v", beforeA, afterA)
-				}
-				if !reflect.DeepEqual(beforeB, afterB) {
-					t.Errorf("go leg mutated a project that must stay untouched:\n before %v\n after  %v", beforeB, afterB)
-				}
+				skillsCompareNodes(t, "untouched project", tokens.tree(t, proj), input)
 			}
 			// The lock step must only REWRITE when something was removed
 			// (recipe-remove.sh:167-203): a lock whose entries do not match
 			// keeps its bytes, comment line included.
 			if tc.lockKept {
-				if got := readLock(projA); !bytes.Equal(got, lockA) {
-					t.Errorf("bash leg rewrote a lock that must stay untouched:\n before %q\n after  %q", lockA, got)
-				}
-				if got := readLock(projB); !bytes.Equal(got, lockB) {
-					t.Errorf("go leg rewrote a lock that must stay untouched:\n before %q\n after  %q", lockB, got)
+				if got := readLock(); !bytes.Equal(got, lockBefore) {
+					t.Errorf("the verb rewrote a lock that must stay untouched:\n before %q\n after  %q", lockBefore, got)
 				}
 			}
 		})
@@ -1543,18 +1618,11 @@ func TestRecipeRemoveNativeNeedsNoBashOrPython(t *testing.T) {
 // the U5a/U6a/U6b tables do: exit 1 with the `cd: <path>: <reason>` shape,
 // WITHOUT bash's own `lib/recipe-remove.sh: line N: ` prefix (the S12/ADR
 // 0002 class — the shell's line-number noise is not fabricated). The legacy
-// leg is checked for the path and the strerror wording only, deliberately not
-// byte-matched.
+// side is the bundle's `missing path` record, deliberately not byte-matched.
 func TestRecipeRemoveMissingPathDeviation(t *testing.T) {
-	root, err := locateRoot()
-	if err != nil {
-		t.Skipf("repo root not located: %v", err)
-	}
-	script := filepath.Join(root, "lib", "recipe-remove.sh")
+	frozen := skillsLoadGolden(t, recipeRemoveGoldenFile, recipeRemoveGoldenCases)
 	home := t.TempDir()
-	env := skillsListEnv(home)
-	dir := t.TempDir()
-	missing := filepath.Join(dir, "does-not-exist")
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
 
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"recipe", "remove", "alpha", missing}, home, nil, &stdout, &stderr)
@@ -1569,16 +1637,19 @@ func TestRecipeRemoveMissingPathDeviation(t *testing.T) {
 		t.Errorf("go stderr = %q, want %q", stderr.String(), want)
 	}
 
-	legOut, legErr, legCode := runOne("bash", []string{script, "alpha", missing}, env, dir)
-	if legCode != 1 {
-		t.Errorf("bash exit = %d, want 1", legCode)
+	rec, ok := frozen["missing path"]
+	if !ok {
+		t.Fatal("no frozen record \"missing path\"")
 	}
-	if len(legOut) != 0 {
-		t.Errorf("bash stdout = %q, want empty", legOut)
+	if rec.RC != 1 {
+		t.Errorf("frozen legacy exit = %d, want 1", rec.RC)
 	}
-	for _, part := range []string{"cd:", missing, "No such file or directory"} {
-		if !strings.Contains(string(legErr), part) {
-			t.Errorf("bash stderr = %q, want it to contain %q", legErr, part)
+	if rec.Stdout != "" {
+		t.Errorf("frozen legacy stdout = %q, want empty", rec.Stdout)
+	}
+	for _, part := range []string{"cd:", "<DIR>/does-not-exist", "No such file or directory"} {
+		if !strings.Contains(rec.Stderr, part) {
+			t.Errorf("frozen legacy stderr = %q, want it to contain %q", rec.Stderr, part)
 		}
 	}
 }
@@ -1595,18 +1666,16 @@ func TestRecipeRemoveMissingPathDeviation(t *testing.T) {
 // PROJECT_OWNED_KEYS routing) and a snapshot of the CLI home around the whole
 // table (the verb writes NOTHING in the home).
 //
-// Env pins: isolated AI_SPECS_HOME (lib symlinked so the legacy arm runs,
-// VERSION symlinked so both legs print the same installed preflight), the
-// fixture catalogue as a REAL directory, WORKTREE_GATE_BIN pinned to a
-// freshly built worktree-gate (skillsRemoveEnv + skillsRemoveGateBinary, the
-// U5b pattern): recipe-config-write.py writes through the gate's
-// `--write-recipe-config` bridge, and with no pin it fails open with a
-// GO_RECIPE_CONFIG_BRIDGE_FALLBACK stderr line the native leg never prints —
-// the byte comparison would measure the fail-open bridge instead of the verb.
-// LC_ALL=C, PYTHONDONTWRITEBYTECODE=1, the LOUD tomllib probe (skillsOracle;
-// run with PATH=/tmp/pybin:$PATH). --sync is NOT in this table: it runs the
-// real sync spine, whose writes would measure sync instead of this verb; the
-// leg is pinned separately over a STUB front door below.
+// Env pins: isolated AI_SPECS_HOME carrying the VERSION file and the fixture
+// catalogue as a REAL directory, LC_ALL=C and PYTHONDONTWRITEBYTECODE=1. The
+// bundle was captured with WORKTREE_GATE_BIN pinned to a freshly built
+// worktree-gate (the U5b pattern): recipe-config-write.py writes through the
+// gate's `--write-recipe-config` bridge, and with no pin the legacy leg fails
+// open with a GO_RECIPE_CONFIG_BRIDGE_FALLBACK stderr line the native leg
+// never prints. The native leg needs neither lib/ nor the gate. --sync is NOT
+// in this table: it runs the real sync spine, whose writes would measure sync
+// instead of this verb; the leg is pinned separately over a STUB front door
+// below.
 
 // recipeConfigureFixtureRecipe is the catalogue fixture for the table:
 // standard fields of every kind (string, enum, integer, boolean), the
@@ -1725,39 +1794,71 @@ enabled = true
 	}
 }
 
-// TestRecipeConfigureDifferentialAgainstScript is T4's oracle: same case
-// table, both routes, byte-identical stdout/stderr/exit code over twin
-// projects, plus identical resulting trees (manifest bytes are the contract)
-// and a CLI home proven untouched around the whole table.
-func TestRecipeConfigureDifferentialAgainstScript(t *testing.T) {
-	skillsOracle(t, "lib/recipe.sh configure (lib/_internal/recipe-configure.py)")
-	bin, root := smokeSetup(t)
-	recipeScript := filepath.Join(root, "lib", "recipe.sh")
-	pyScript := filepath.Join(root, "lib", "_internal", "recipe-configure.py")
-	if _, err := os.Stat(recipeScript); err != nil {
-		t.Skipf("legacy lib/recipe.sh unavailable: %v", err)
-	}
-	if _, err := os.Stat(pyScript); err != nil {
-		t.Skipf("legacy lib/_internal/recipe-configure.py unavailable: %v", err)
-	}
-	gate := skillsRemoveGateBinary(t)
-	home := recipeFixtureHome(t, root, "alpha")
+// recipeConfigureGoldenCases is the hard-coded identity inventory of the
+// frozen configure bundle: the table's own cases in capture order, then the
+// --sync leg's records (over the stub front door) that their own test reads.
+var recipeConfigureGoldenCases = []string{
+	"inspect with config",
+	"inspect recipe without config block",
+	"inspect recipe absent from manifest",
+	"inspect json",
+	"inspect defaults to cwd",
+	"mcp present is sorted, not declaration order",
+	"interleaved positional fills the path slot",
+	"set inline scalar key",
+	"set str fallback raw value",
+	"set nested dotted key",
+	"set structured table key",
+	"repo_topology lands in project",
+	"json set report",
+	"unchanged value is a no-op",
+	"invalid enum value",
+	"unknown config key",
+	"dry-run writes nothing",
+	"tool pin blocks",
+	"ignore-cli-version bypasses the pin",
+	"missing recipe",
+	"missing manifest",
+	"help",
+	"help at COLUMNS=60",
+	"unknown flag",
+	"missing recipe_id",
+	"inspect with set conflict",
+	"neither inspect nor set",
+	"ambiguous abbreviation",
+	"set without a value",
+	"positional after dashdash",
+	"sync fails: partial with the failed step",
+	"sync ok, doctor not ok: failed verification",
+	"sync and doctor ok: parsed summary, status ok",
+	"doctor prints no summary: unparsed verify, still ok",
+	"sync with --ignore-cli-version passes the flag through",
+}
+
+// recipeConfigureCase is one row of the configure table: the manifest shape,
+// the argv after `recipe configure`, the run flags and the optional COLUMNS
+// pin for the width-sensitive help case.
+type recipeConfigureCase struct {
+	name      string
+	fixture   string // "" → no project directory is created
+	args      []string
+	cwdProj   bool
+	untouched bool
+	columns   string
+}
+
+// recipeConfigureCorpus builds the shared home (the fixture catalogue) and
+// returns the table the differential ran.
+func recipeConfigureCorpus(t *testing.T, root string) (cases []recipeConfigureCase, home string) {
+	t.Helper()
+	home = recipeFixtureHome(t, root, "alpha")
 	skillsWriteFile(t, filepath.Join(home, "catalog", "recipes", "cfg", "recipe.toml"),
 		recipeConfigureFixtureRecipe)
 	// B-001's fixture: a second recipe whose [[provides.mcp]] presets are
-	// declared out of sorted order (written before the home snapshot below).
+	// declared out of sorted order.
 	skillsWriteFile(t, filepath.Join(home, "catalog", "recipes", "mcporder", "recipe.toml"),
 		recipeConfigureMCPFixtureRecipe)
-
-	type diffCase struct {
-		name      string
-		fixture   string   // "" → no project directory is created
-		args      []string // "<PROJ>" is replaced by each leg's project root
-		cwdProj   bool     // run each leg with cwd = its own project dir
-		untouched bool     // both legs must leave the project byte-identical
-		columns   string   // COLUMNS pin for the width-sensitive cases
-	}
-	cases := []diffCase{
+	cases = []recipeConfigureCase{
 		// ── --inspect: with config, without config, absent, compact JSON ──
 		{name: "inspect with config", fixture: "cfg",
 			args: []string{"cfg", "<PROJ>", "--inspect"}, untouched: true},
@@ -1777,9 +1878,8 @@ func TestRecipeConfigureDifferentialAgainstScript(t *testing.T) {
 			args: []string{"mcporder", "<PROJ>", "--inspect"}, untouched: true},
 		// L6 doc correction (a): the interleaved trailing positional
 		// (`cfg --inspect /path`) is accepted by Python 3.14 — the reference
-		// this differential runs on (PATH=/tmp/pybin) — and by the port;
-		// Python 3.11 rejects it with `unrecognized arguments` exit 2, so
-		// running this case against ≤3.11 fails on the recorded divergence.
+		// the oracle was captured on — and by the port; Python 3.11 rejects it
+		// with `unrecognized arguments` exit 2, a recorded divergence.
 		{name: "interleaved positional fills the path slot", fixture: "cfg",
 			args: []string{"cfg", "--inspect", "<PROJ>"}, untouched: true},
 		// ── --set: inline, dotted, structured, project-owned ──
@@ -1833,81 +1933,67 @@ func TestRecipeConfigureDifferentialAgainstScript(t *testing.T) {
 		{name: "positional after dashdash", fixture: "cfg",
 			args: []string{"--", "cfg", "<PROJ>", "--inspect"}, untouched: true},
 	}
+	return cases, home
+}
 
+// TestRecipeConfigureDifferentialAgainstScript is T4's oracle: every case
+// replays the frozen legacy `bash lib/recipe.sh configure`
+// (lib/_internal/recipe-configure.py) run of
+// testdata/recipe_configure_golden.json against the built binary on the same
+// project and asserts byte-identical stdout, stderr and exit code, plus an
+// identical project tree (manifest bytes are the contract: S5 and the
+// PROJECT_OWNED_KEYS routing) and a CLI home proven untouched around the whole
+// table (the verb writes NOTHING in the home).
+func TestRecipeConfigureDifferentialAgainstScript(t *testing.T) {
+	frozen := skillsLoadGolden(t, recipeConfigureGoldenFile, recipeConfigureGoldenCases)
+	bin, root := smokeSetup(t)
+	cases, home := recipeConfigureCorpus(t, root)
+	if len(cases)+len(recipeConfigureSyncCases) != len(recipeConfigureGoldenCases) {
+		t.Fatalf("in-test corpus has %d cases, inventory %d",
+			len(cases)+len(recipeConfigureSyncCases), len(recipeConfigureGoldenCases))
+	}
+	baseEnv := skillsRemoveEnv(home, "")
 	homeBefore := skillsTreeSnapshot(t, home)
 	scratch := t.TempDir()
-	for _, tc := range cases {
+	for i, tc := range cases {
+		if tc.name != recipeConfigureGoldenCases[i] {
+			t.Fatalf("corpus case %d is %q, inventory %q", i, tc.name, recipeConfigureGoldenCases[i])
+		}
 		t.Run(tc.name, func(t *testing.T) {
-			dirA, dirB := t.TempDir(), t.TempDir()
-			projA, projB := filepath.Join(dirA, "proj"), filepath.Join(dirB, "proj")
+			rec, ok := frozen[tc.name]
+			if !ok {
+				t.Fatalf("no frozen record %q", tc.name)
+			}
+			proj := filepath.Join(t.TempDir(), "proj")
 			if tc.fixture != "" {
-				buildRecipeConfigureFixture(t, tc.fixture, projA)
-				buildRecipeConfigureFixture(t, tc.fixture, projB)
+				buildRecipeConfigureFixture(t, tc.fixture, proj)
 			}
-			beforeA := skillsProjectTree(t, projA)
-			beforeB := skillsProjectTree(t, projB)
+			tokens := skillsTokenSet(proj, "<DIR>", home, "<HOME>", root, "<ROOT>")
+			input := tokens.tree(t, proj)
 
-			legArgs := func(proj string) []string {
-				out := make([]string, 0, len(tc.args))
-				for _, a := range tc.args {
-					out = append(out, strings.ReplaceAll(a, "<PROJ>", proj))
-				}
-				return out
+			args := make([]string, 0, len(tc.args))
+			for _, a := range tc.args {
+				args = append(args, strings.ReplaceAll(a, "<PROJ>", proj))
 			}
-			dirLeg := func(proj string) string {
-				if tc.cwdProj {
-					return proj
-				}
-				return scratch
+			dir := scratch
+			if tc.cwdProj {
+				dir = proj
 			}
-			env := skillsRemoveEnv(home, gate)
+			env := baseEnv
 			if tc.columns != "" {
-				env = append(env, "COLUMNS="+tc.columns)
+				env = append(append([]string{}, baseEnv...), "COLUMNS="+tc.columns)
 			}
-
-			legOut, legErr, legCode := runOne("bash",
-				append([]string{recipeScript, "configure"}, legArgs(projA)...), env, dirLeg(projA))
-			goOut, goErr, goCode := runOne(bin,
-				append([]string{"recipe", "configure"}, legArgs(projB)...), env, dirLeg(projB))
-
-			normalize := func(b []byte, proj string) string {
-				s := string(b)
-				// Python's Path.resolve() prints the realpath spelling of the
-				// project root inside `manifest not found:`; normalize both
-				// spellings of each leg's own root.
-				if resolved, err := filepath.EvalSymlinks(proj); err == nil && resolved != proj {
-					s = strings.ReplaceAll(s, resolved, "<PROJ>")
-				}
-				return strings.ReplaceAll(s, proj, "<PROJ>")
-			}
-			if got, want := normalize(goOut, projB), normalize(legOut, projA); got != want {
-				t.Errorf("stdout mismatch:\n go:   %q\n bash: %q", got, want)
-			}
-			if got, want := normalize(goErr, projB), normalize(legErr, projA); got != want {
-				t.Errorf("stderr mismatch:\n go:   %q\n bash: %q", got, want)
-			}
-			if goCode != legCode {
-				t.Errorf("exit code mismatch: go = %d, bash = %d", goCode, legCode)
-			}
-
-			afterA := skillsProjectTree(t, projA)
-			afterB := skillsProjectTree(t, projB)
-			if !reflect.DeepEqual(afterA, afterB) {
-				t.Errorf("project trees diverge after the two legs:\n bash: %v\n go:   %v", afterA, afterB)
-			}
+			out, errOut, code := runOne(bin,
+				append([]string{"recipe", "configure"}, args...), env, dir)
+			skillsCheckCase(t, rec, tokens, input, out, errOut, code, tokens.tree(t, proj))
 			if tc.untouched {
-				if !reflect.DeepEqual(beforeA, afterA) {
-					t.Errorf("bash leg mutated a project that must stay untouched:\n before %v\n after  %v", beforeA, afterA)
-				}
-				if !reflect.DeepEqual(beforeB, afterB) {
-					t.Errorf("go leg mutated a project that must stay untouched:\n before %v\n after  %v", beforeB, afterB)
-				}
+				skillsCompareNodes(t, "untouched project", tokens.tree(t, proj), input)
 			}
 		})
 	}
 
-	// The verb writes NOTHING in the CLI home (no cache, no vendor, no
-	// bytecode): the snapshot around the whole table must be unchanged.
+	// The verb writes NOTHING in the CLI home (no cache, no vendor): the
+	// snapshot around the whole table must be unchanged.
 	if after := skillsTreeSnapshot(t, home); !reflect.DeepEqual(homeBefore, after) {
 		t.Errorf("the verb wrote into the CLI home:\n before %v\n after  %v", homeBefore, after)
 	}
@@ -1921,35 +2007,81 @@ func TestRecipeConfigureDifferentialAgainstScript(t *testing.T) {
 // line names sync.failed_step, the last `Summary: N OK, N INFO, N WARN, N
 // ERROR` line becomes verify (see runRecipeConfigure's section header for the
 // seam decision). Exercising it against the real sync spine would measure
-// sync's own writes and doctor's own diagnostics instead of this verb, so
-// both legs spawn the SAME STUB front door here: identical commands, env and
-// exit codes, different report plumbing — and the Python reference and the
-// native port must still agree byte for byte on stdout, stderr, exit code and
-// the written manifest.
-func TestRecipeConfigureSyncLegDifferential(t *testing.T) {
-	skillsOracle(t, "lib/recipe.sh configure (lib/_internal/recipe-configure.py)")
-	bin, root := smokeSetup(t)
-	recipeScript := filepath.Join(root, "lib", "recipe.sh")
-	if _, err := os.Stat(recipeScript); err != nil {
-		t.Skipf("legacy lib/recipe.sh unavailable: %v", err)
-	}
-	gate := skillsRemoveGateBinary(t)
+// sync's own writes and doctor's own diagnostics instead of this verb, so the
+// legacy leg and the port both spawn a STUB front door with identical
+// commands, env and exit codes — and the port must still reproduce the frozen
+// legacy stdout, stderr, exit code and written manifest byte for byte.
 
-	// The stub home: lib symlinked (recipe.sh's configure arm resolves the
-	// script through AI_SPECS_HOME), bin/ai-specs replaced by a controlled
-	// stub, the fixture catalogue seeded as a real directory. No VERSION file
-	// (installed = "unknown" is fine: the manifest carries no [tool] policy).
+// recipeConfigureSyncCase is one row of the --sync table: the stub's env pins,
+// the verb's own flag, the expected exit code and the report substrings that
+// stay native assertions.
+type recipeConfigureSyncCase struct {
+	name        string
+	env         []string
+	ignore      bool // --ignore-cli-version on the verb's own argv
+	wantExit    int
+	wantContent []string
+}
+
+// recipeConfigureSyncCases is the table; its names are the trailing records of
+// recipeConfigureGoldenCases.
+var recipeConfigureSyncCases = []recipeConfigureSyncCase{
+	{name: "sync fails: partial with the failed step",
+		env:      []string{"STUB_SYNC_EXIT=1"},
+		wantExit: 1,
+		wantContent: []string{
+			`"status": "partial"`, `"ran": true`, `"exit_code": 1`,
+			`"failed_step": "recipes"`, `"lock_stamped": false`,
+			"sync failed; previous writes were not rolled back and lock CLI version was not stamped",
+		}},
+	{name: "sync ok, doctor not ok: failed verification",
+		env:      []string{"STUB_DOCTOR_EXIT=1", "STUB_DOCTOR_SUMMARY=" + recipeConfigureSyncSummary},
+		wantExit: 1,
+		wantContent: []string{
+			`"status": "failed"`, `"lock_stamped": true`, `"doctor_exit": 1`,
+			`"parsed": true`, `"doctor verification failed"`,
+		}},
+	{name: "sync and doctor ok: parsed summary, status ok",
+		env:      []string{"STUB_DOCTOR_SUMMARY=" + recipeConfigureSyncSummary},
+		wantExit: 0,
+		wantContent: []string{
+			`"status": "ok"`, `"doctor_exit": 0`, `"parsed": true`,
+			`"ok": 1`, `"info": 0`, `"warn": 0`, `"error": 0`,
+		}},
+	{name: "doctor prints no summary: unparsed verify, still ok",
+		env:      nil,
+		wantExit: 0,
+		wantContent: []string{
+			`"status": "ok"`, `"doctor_exit": 0`, `"parsed": false`,
+			"\"ok\": null",
+		}},
+	// A-002/B-004: no case used to combine --sync with
+	// --ignore-cli-version, so the flag's trip through the sync argv was
+	// unpinned. The stub requires it as the THIRD argument.
+	{name: "sync with --ignore-cli-version passes the flag through",
+		env: []string{"STUB_DOCTOR_SUMMARY=" + recipeConfigureSyncSummary}, ignore: true,
+		wantExit: 0,
+		wantContent: []string{
+			`"status": "ok"`, `"ignore_cli_version": true`,
+			`"exit_code": 0`, `"lock_stamped": true`,
+		}},
+}
+
+const recipeConfigureSyncSummary = "Summary: 1 OK, 0 INFO, 0 WARN, 0 ERROR"
+
+// recipeConfigureSyncHome builds the stub home the --sync leg runs against:
+// bin/ai-specs replaced by a controlled stub and the fixture catalogue seeded
+// as a real directory. No lib/ (the native port needs none) and no VERSION file
+// (installed = "unknown" is fine: the manifest carries no [tool] policy).
+func recipeConfigureSyncHome(t *testing.T) string {
+	t.Helper()
 	home := t.TempDir()
-	if err := os.Symlink(filepath.Join(root, "lib"), filepath.Join(home, "lib")); err != nil {
-		t.Fatal(err)
-	}
 	// B-004/A-002 (dual-blind review): the stub asserts the FULL spawn
 	// contract, not just `$1` — invoked binary path, cwd (the resolved
 	// project root), the argv root positional and the flag presence — and
 	// records every violation in $STUB_CONTRACT_LOG before exiting 90, so a
 	// leg that spawns the wrong command fails on its log AND on the pinned
-	// exit codes even if BOTH legs violated identically (a shared wrong
-	// answer would otherwise still byte-match).
+	// exit codes.
 	skillsWriteFile(t, filepath.Join(home, "bin", "ai-specs"), `#!/bin/sh
 contract_fail() {
   echo "$1" >> "${STUB_CONTRACT_LOG:-/dev/null}"
@@ -1991,64 +2123,38 @@ exit 0
 	recipeSeedCatalog(t, home, "cfg")
 	skillsWriteFile(t, filepath.Join(home, "catalog", "recipes", "cfg", "recipe.toml"),
 		recipeConfigureFixtureRecipe)
+	return home
+}
 
-	type syncCase struct {
-		name        string
-		env         []string
-		ignore      bool // --ignore-cli-version on the verb's own argv
-		wantExit    int
-		wantContent []string // substrings the report must carry (both legs)
+// TestRecipeConfigureSyncLegDifferential replays the frozen legacy `bash
+// lib/recipe.sh configure … --sync` records of
+// testdata/recipe_configure_golden.json against the built binary and keeps the
+// native assertions the live twin comparison carried: the front-door spawn
+// contract, the expected exit code and the report substrings.
+func TestRecipeConfigureSyncLegDifferential(t *testing.T) {
+	frozen := skillsLoadGolden(t, recipeConfigureGoldenFile, recipeConfigureGoldenCases)
+	bin, root := smokeSetup(t)
+	home := recipeConfigureSyncHome(t)
+	inventory := recipeConfigureGoldenCases[len(recipeConfigureGoldenCases)-len(recipeConfigureSyncCases):]
+	for i, tc := range recipeConfigureSyncCases {
+		if tc.name != inventory[i] {
+			t.Fatalf("sync case %d is %q, inventory %q", i, tc.name, inventory[i])
+		}
 	}
-	const summary = "Summary: 1 OK, 0 INFO, 0 WARN, 0 ERROR"
-	cases := []syncCase{
-		{name: "sync fails: partial with the failed step",
-			env:      []string{"STUB_SYNC_EXIT=1"},
-			wantExit: 1,
-			wantContent: []string{
-				`"status": "partial"`, `"ran": true`, `"exit_code": 1`,
-				`"failed_step": "recipes"`, `"lock_stamped": false`,
-				"sync failed; previous writes were not rolled back and lock CLI version was not stamped",
-			}},
-		{name: "sync ok, doctor not ok: failed verification",
-			env:      []string{"STUB_DOCTOR_EXIT=1", "STUB_DOCTOR_SUMMARY=" + summary},
-			wantExit: 1,
-			wantContent: []string{
-				`"status": "failed"`, `"lock_stamped": true`, `"doctor_exit": 1`,
-				`"parsed": true`, `"doctor verification failed"`,
-			}},
-		{name: "sync and doctor ok: parsed summary, status ok",
-			env:      []string{"STUB_DOCTOR_SUMMARY=" + summary},
-			wantExit: 0,
-			wantContent: []string{
-				`"status": "ok"`, `"doctor_exit": 0`, `"parsed": true`,
-				`"ok": 1`, `"info": 0`, `"warn": 0`, `"error": 0`,
-			}},
-		{name: "doctor prints no summary: unparsed verify, still ok",
-			env:      nil,
-			wantExit: 0,
-			wantContent: []string{
-				`"status": "ok"`, `"doctor_exit": 0`, `"parsed": false`,
-				"\"ok\": null",
-			}},
-		// A-002/B-004: no case used to combine --sync with
-		// --ignore-cli-version, so the flag's trip through the sync argv was
-		// unpinned. The stub now requires it as the THIRD argument.
-		{name: "sync with --ignore-cli-version passes the flag through",
-			env: []string{"STUB_DOCTOR_SUMMARY=" + summary}, ignore: true,
-			wantExit: 0,
-			wantContent: []string{
-				`"status": "ok"`, `"ignore_cli_version": true`,
-				`"exit_code": 0`, `"lock_stamped": true`,
-			}},
-	}
-	baseEnv := skillsRemoveEnv(home, gate)
+
+	baseEnv := skillsRemoveEnv(home, "")
 	homeBefore := skillsTreeSnapshot(t, home)
-	for _, tc := range cases {
+	for _, tc := range recipeConfigureSyncCases {
 		t.Run(tc.name, func(t *testing.T) {
-			dirA, dirB := t.TempDir(), t.TempDir()
-			projA, projB := filepath.Join(dirA, "proj"), filepath.Join(dirB, "proj")
-			buildRecipeConfigureFixture(t, "cfg", projA)
-			buildRecipeConfigureFixture(t, "cfg", projB)
+			rec, ok := frozen[tc.name]
+			if !ok {
+				t.Fatalf("no frozen record %q", tc.name)
+			}
+			dir := t.TempDir()
+			proj := filepath.Join(dir, "proj")
+			buildRecipeConfigureFixture(t, "cfg", proj)
+			tokens := skillsTokenSet(dir, "<DIR>", proj, "<DIR>", home, "<HOME>", root, "<ROOT>")
+			input := tokens.tree(t, proj)
 
 			env := append([]string{}, baseEnv...)
 			env = append(env, tc.env...)
@@ -2056,73 +2162,35 @@ exit 0
 			if tc.ignore {
 				ignoreVal = "1"
 			}
-			logA := filepath.Join(dirA, "front-door-contract.log")
-			logB := filepath.Join(dirB, "front-door-contract.log")
-			// The contract expectation is per leg: each leg's own project root
-			// (resolved, like both callers resolve it) and its own log.
-			envFor := func(proj, contractLog string) []string {
-				out := append([]string{}, env...)
-				resolved := proj
-				if r, err := filepath.EvalSymlinks(proj); err == nil && r != proj {
-					resolved = r
-				}
-				return append(out,
-					"STUB_EXPECT_BIN="+filepath.Join(home, "bin", "ai-specs"),
-					"STUB_EXPECT_ROOT="+resolved,
-					"STUB_EXPECT_IGNORE="+ignoreVal,
-					"STUB_CONTRACT_LOG="+contractLog)
+			resolved := proj
+			if r, err := filepath.EvalSymlinks(proj); err == nil && r != proj {
+				resolved = r
 			}
-			args := func(proj string) []string {
-				out := []string{"cfg", proj, "--sync"}
-				if tc.ignore {
-					out = append(out, "--ignore-cli-version")
-				}
-				return append(out, "--set", "retries=7")
+			log := filepath.Join(dir, "front-door-contract.log")
+			env = append(env,
+				"STUB_EXPECT_BIN="+filepath.Join(home, "bin", "ai-specs"),
+				"STUB_EXPECT_ROOT="+resolved,
+				"STUB_EXPECT_IGNORE="+ignoreVal,
+				"STUB_CONTRACT_LOG="+log)
+			args := []string{"cfg", proj, "--sync"}
+			if tc.ignore {
+				args = append(args, "--ignore-cli-version")
 			}
-			legOut, legErr, legCode := runOne("bash",
-				append([]string{recipeScript, "configure"}, args(projA)...), envFor(projA, logA), dirA)
-			goOut, goErr, goCode := runOne(bin,
-				append([]string{"recipe", "configure"}, args(projB)...), envFor(projB, logB), dirB)
-			for _, leg := range []struct {
-				name string
-				log  string
-			}{
-				{"bash", logA},
-				{"go", logB},
-			} {
-				if data, rerr := os.ReadFile(leg.log); rerr == nil && len(data) > 0 {
-					t.Errorf("%s leg violated the front-door contract (binary path/cwd/argv):\n%s",
-						leg.name, data)
-				}
-			}
+			args = append(args, "--set", "retries=7")
 
-			normalize := func(b []byte, proj string) string {
-				s := string(b)
-				if resolved, err := filepath.EvalSymlinks(proj); err == nil && resolved != proj {
-					s = strings.ReplaceAll(s, resolved, "<PROJ>")
-				}
-				return strings.ReplaceAll(s, proj, "<PROJ>")
+			out, errOut, code := runOne(bin,
+				append([]string{"recipe", "configure"}, args...), env, dir)
+			if data, rerr := os.ReadFile(log); rerr == nil && len(data) > 0 {
+				t.Errorf("the leg violated the front-door contract (binary path/cwd/argv):\n%s", data)
 			}
-			if got, want := normalize(goOut, projB), normalize(legOut, projA); got != want {
-				t.Errorf("stdout mismatch:\n go:   %q\n bash: %q", got, want)
-			}
-			if got, want := normalize(goErr, projB), normalize(legErr, projA); got != want {
-				t.Errorf("stderr mismatch:\n go:   %q\n bash: %q", got, want)
-			}
-			if goCode != legCode || goCode != tc.wantExit {
-				t.Errorf("exit code mismatch: go = %d, bash = %d, want %d",
-					goCode, legCode, tc.wantExit)
+			skillsCheckCase(t, rec, tokens, input, out, errOut, code, tokens.tree(t, proj))
+			if code != tc.wantExit {
+				t.Errorf("exit = %d, want %d", code, tc.wantExit)
 			}
 			for _, want := range tc.wantContent {
-				if !strings.Contains(string(goOut), want) {
-					t.Errorf("report missing %q:\n%s", want, goOut)
+				if !strings.Contains(string(out), want) {
+					t.Errorf("report missing %q:\n%s", want, out)
 				}
-			}
-			// The write phase ran identically before the leg: same manifest bytes.
-			afterA := skillsProjectTree(t, projA)
-			afterB := skillsProjectTree(t, projB)
-			if !reflect.DeepEqual(afterA, afterB) {
-				t.Errorf("project trees diverge:\n bash: %v\n go:   %v", afterA, afterB)
 			}
 		})
 	}
