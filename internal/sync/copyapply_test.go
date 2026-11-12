@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"ai-specs.dev/ai-specs/internal/projectcache"
 	"ai-specs.dev/worktree-gate/shared"
 )
 
@@ -353,8 +354,42 @@ func TestCopyApplyExecutor(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// T3: Python-oracle differential + plan->apply boundary composition
+// Frozen Python-oracle differential + plan->apply boundary composition
 // ---------------------------------------------------------------------------
+
+// The legacy live leg drove the real Python copy entry points the materialize
+// loop calls (materialize_bundled_skill, materialize_command, materialize_doc)
+// with the bridge sink (go_apply_copy) replaced by a recorder, and compared the
+// recorded kind/id/src/dest items with the native PlanCopyItems. It was
+// captured once into testdata/copyapply_golden.json: the fixture catalog the
+// leg built, and the single case's ids, the cache roots Python resolved and the
+// recorded items.
+//
+// The payload carries host-dependent segments only as tokens: the temporary
+// base directory as <BASE> and the per-project cache key directory (a sha256 of
+// the project's absolute path) as <CACHE>. Modes are not frozen at all: the
+// fixture files are written by the shared helpers whose modes follow the
+// process umask, and this package also runs t.Parallel() tests that must not
+// have the process umask pinned under them. A run of this test under
+// `umask 077` proves it.
+//
+// The test never execs python3 or reads lib/. The golden is a snapshot:
+// regenerating it needs a human decision.
+const copyApplyGoldenFile = "copyapply_golden.json"
+
+// copyApplyGoldenCases is the hard-coded identity inventory of the frozen
+// bundle: the exact case names in capture order. It is an independent oracle
+// of coverage — kept in the test, never derived from the bundle — so a bundle
+// that is missing, renamed, duplicated or reordered cannot validate silently.
+var copyApplyGoldenCases = []string{
+	"one recipe with a bundled skill, a dependency skill, a command and a doc",
+}
+
+// The two tokens every host-dependent path segment is frozen as.
+const (
+	copyApplyBaseToken  = "<BASE>"
+	copyApplyCacheToken = "<CACHE>"
+)
 
 // copyPlanItem is the four-field projection both sides compare: kind, id, src
 // and dest. The command envelope's commands_dir rides along but is not part of
@@ -366,81 +401,177 @@ type copyPlanItem struct {
 	Dest string `json:"dest"`
 }
 
-// copyOracleResult is the JSON copyPlanOracle emits.
-type copyOracleResult struct {
-	Roots struct {
-		RecipeSkillsRoot string `json:"recipe_skills_root"`
-		CommandsDir      string `json:"commands_dir"`
-		ProjectRoot      string `json:"project_root"`
-	} `json:"roots"`
-	Items []copyPlanItem `json:"items"`
+// copyApplyFrozenRoots is the three caller-resolved cache roots in tokenized
+// form.
+type copyApplyFrozenRoots struct {
+	RecipeSkillsRoot string `json:"recipe_skills_root"`
+	CommandsDir      string `json:"commands_dir"`
+	ProjectRoot      string `json:"project_root"`
 }
 
-// copyPlanOracle drives the REAL Python copy entry points the materialize loop
-// calls (materialize_bundled_skill, materialize_command, materialize_doc) in
-// the same per-recipe order: bundled skills, commands, then docs. It replaces
-// only the bridge sink (go_apply_copy) with a recorder, so the kind/id/src/dest
-// Python would actually send are captured without copying anything, and it
-// no-ops the lock write so the oracle stays read-only. It prints the cache
-// roots it resolved plus the recorded items as one JSON object.
-//
-// Entry points used: read_recipe, materialize_bundled_skill,
-// materialize_command, materialize_doc, _load_project_cache()'s
-// recipe_skills_root and commands_dir. Two monkeypatches isolate the plan:
-// go_apply_copy records the sent items instead of copying, and write_lock is a
-// no-op so the oracle writes no lock file.
-const copyPlanOracle = `
-import contextlib, importlib.util, io, json, sys
-from pathlib import Path
+// copyApplyNode is one frozen catalog node: a directory by path only, or a
+// regular file by path and bytes.
+type copyApplyNode struct {
+	Path    string `json:"path"`
+	Dir     bool   `json:"dir,omitempty"`
+	Content string `json:"content,omitempty"`
+}
 
-spec = importlib.util.spec_from_file_location("copy_plan_oracle", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = mod
-spec.loader.exec_module(mod)
+// copyApplyFrozenCase is the frozen record of the one case the live leg graded.
+type copyApplyFrozenCase struct {
+	Name  string               `json:"name"`
+	IDs   []string             `json:"ids"`
+	Roots copyApplyFrozenRoots `json:"roots"`
+	Items []copyPlanItem       `json:"items"`
+}
 
-catalog = Path(sys.argv[2])
-project_root = Path(sys.argv[3])
-cli_home = Path(sys.argv[4])
-ids = json.loads(sys.argv[5])
+// copyApplyGolden is the frozen bundle: oracle provenance, the catalog the case
+// ran over and the per-case record.
+type copyApplyGolden struct {
+	Oracle  map[string]string     `json:"oracle"`
+	Catalog []copyApplyNode       `json:"catalog"`
+	Cases   []copyApplyFrozenCase `json:"cases"`
+}
 
-recorded = []
+// copyApplyCatalog writes the fixture catalog the live leg built and returns the
+// three roots: one recipe declaring a bundled skill, a non-bundled dependency
+// skill, a command and a doc, with the real source files Python's doc path
+// pre-checks. base is the already-resolved temp base, so every derived path
+// shares one space with the frozen payload.
+func copyApplyCatalog(t *testing.T, base string) (catalog, projectRoot, cliHome string) {
+	t.Helper()
+	catalog = filepath.Join(base, "catalog")
+	projectRoot = filepath.Join(base, "project")
+	cliHome = filepath.Join(base, "home")
+	writeSyncCatalogRecipe(t, catalog, "alpha", syncRecipeHeader("alpha", "Alpha")+`
+[[provides.skills]]
+id = "alpha-skill"
+source = "bundled"
 
-def _record(items):
-    for item in items:
-        recorded.append({
-            "kind": item["kind"],
-            "id": item["id"],
-            "src": item["src"],
-            "dest": item["dest"],
-        })
-    return [{"id": item["id"], "status": "ok"} for item in items]
+[[provides.skills]]
+id = "alpha-dep"
+source = "dep"
+url = "https://example.invalid/x.git"
 
-mod.go_apply_copy = _record
-mod.write_lock = lambda *args, **kwargs: None
+[[provides.commands]]
+id = "alpha-cmd"
+path = "commands/alpha.md"
 
-sink = io.StringIO()
-with contextlib.redirect_stdout(sink):
-    for rid in ids:
-        recipe = mod.read_recipe(catalog, rid)
-        recipe_dir = catalog / rid
-        for skill in recipe.skills:
-            if skill.source == "bundled":
-                mod.materialize_bundled_skill(recipe_dir, skill.id, project_root, rid, cli_home=cli_home)
-        for cmd in recipe.commands:
-            mod.materialize_command(recipe_dir, cmd, project_root, cli_home=cli_home)
-        for doc in recipe.docs:
-            mod.materialize_doc(recipe_dir, doc, project_root, rid)
+[[provides.docs]]
+source = "README.md"
+target = "ai-specs/recipes/alpha/README.md"
+`)
+	writeCopyFixtureFile(t, filepath.Join(catalog, "alpha", "skills", "alpha-skill", "SKILL.md"), "skill body")
+	writeCopyFixtureFile(t, filepath.Join(catalog, "alpha", "commands", "alpha.md"), "command body")
+	writeCopyFixtureFile(t, filepath.Join(catalog, "alpha", "README.md"), "doc body")
+	return catalog, projectRoot, cliHome
+}
 
-pc = mod._load_project_cache()
-print(json.dumps({
-    "roots": {
-        "recipe_skills_root": str(pc.recipe_skills_root(project_root, cli_home=cli_home)),
-        "commands_dir": str(pc.commands_dir(project_root, cli_home=cli_home)),
-        "project_root": str(project_root),
-    },
-    "items": recorded,
-}))
-`
+// copyApplyTree lists one tree as sorted root-relative nodes: a directory by
+// path and a regular file by path and bytes. Modes are omitted because they
+// follow the process umask.
+func copyApplyTree(t *testing.T, root string) []copyApplyNode {
+	t.Helper()
+	out := []copyApplyNode{}
+	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return &os.PathError{Op: "snapshot", Path: path, Err: os.ErrInvalid}
+		}
+		if info.IsDir() {
+			out = append(out, copyApplyNode{Path: filepath.ToSlash(rel), Dir: true})
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		out = append(out, copyApplyNode{Path: filepath.ToSlash(rel), Content: string(data)})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	return out
+}
+
+// compareCopyApplyCatalog requires identical node inventories: the same paths
+// in the same order, the same kind and the same bytes.
+func compareCopyApplyCatalog(t *testing.T, label string, got, want []copyApplyNode) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s: %d nodes, want %d\n native = %v\n frozen = %v", label, len(got), len(want), got, want)
+	}
+	for i := range want {
+		if got[i].Path != want[i].Path || got[i].Dir != want[i].Dir {
+			t.Fatalf("%s: node %d is %+v, want %+v", label, i, got[i], want[i])
+		}
+		if got[i].Content != want[i].Content {
+			t.Fatalf("%s: %s bytes differ:\n native = %q\n frozen = %q", label, want[i].Path, got[i].Content, want[i].Content)
+		}
+	}
+}
+
+// tokenizeCopyApply replaces the two host-dependent path segments with their
+// frozen tokens, so both sides compare in the golden's host-independent space:
+// the per-project cache key directory (a sha256 of the project's absolute path)
+// as <CACHE> and the temporary base directory as <BASE>. The cache key is the
+// cache root's last element only, so the rest of the cache shape stays frozen;
+// it is replaced first because it lives under the base.
+func tokenizeCopyApply(text, base, cacheRoot string) string {
+	text = strings.ReplaceAll(text, cacheRoot, filepath.Join(filepath.Dir(cacheRoot), copyApplyCacheToken))
+	return strings.ReplaceAll(text, base, copyApplyBaseToken)
+}
+
+// loadCopyApplyGolden reads the frozen bundle and validates its identity
+// inventory, its oracle metadata and the tokenized shape of every frozen path
+// before any comparison runs.
+func loadCopyApplyGolden(t *testing.T) copyApplyGolden {
+	t.Helper()
+	var golden copyApplyGolden
+	if err := json.Unmarshal(readGoldenBundle(t, copyApplyGoldenFile), &golden); err != nil {
+		t.Fatalf("parse frozen oracle %s: %v", copyApplyGoldenFile, err)
+	}
+	for _, key := range []string{"python", "script", "driver"} {
+		if golden.Oracle[key] == "" {
+			t.Fatalf("frozen oracle %s carries no %s metadata", copyApplyGoldenFile, key)
+		}
+	}
+	names := make([]string, len(golden.Cases))
+	for i, rec := range golden.Cases {
+		names[i] = rec.Name
+		if len(rec.Items) == 0 {
+			t.Fatalf("frozen record %q carries no items", rec.Name)
+		}
+		// Every host-dependent segment is a token: a capture that leaked an
+		// absolute path cannot validate here.
+		paths := []string{rec.Roots.RecipeSkillsRoot, rec.Roots.CommandsDir, rec.Roots.ProjectRoot}
+		for _, item := range rec.Items {
+			paths = append(paths, item.Src, item.Dest)
+		}
+		for _, path := range paths {
+			if !strings.HasPrefix(path, copyApplyBaseToken+"/") {
+				t.Fatalf("frozen record %q path %q must start with %s/", rec.Name, path, copyApplyBaseToken)
+			}
+		}
+	}
+	for _, node := range golden.Catalog {
+		if filepath.IsAbs(node.Path) || strings.HasPrefix(node.Path, "..") {
+			t.Fatalf("frozen catalog path %q must be root-relative", node.Path)
+		}
+	}
+	validateGoldenIdentity(t, "copyapply", names, copyApplyGoldenCases)
+	return golden
+}
 
 // planToCopyItems projects the native plan onto the four compared fields.
 func planToCopyItems(items []shared.CopyItem) []copyPlanItem {
@@ -462,95 +593,86 @@ func writeCopyFixtureFile(t *testing.T, path, body string) {
 	}
 }
 
-// TestCopyApplyPythonDifferential compares the real native derivation against
-// the real Python derivation (testdata-free: the driver above drives
-// recipe-materialize.py) for one recipe with a bundled skill, a non-bundled
-// dep skill, a command and a doc. Both sides must produce the same kind, id,
-// src and dest in the same order: 3 items, with the dep skill absent on both
-// sides, so an empty comparison cannot pass. The Python side reports the cache
-// roots it resolved; the native plan runs over exactly those roots.
+// TestCopyApplyPythonDifferential pins PlanCopyItems against the frozen record
+// of the real Python copy entry points (materialize_bundled_skill,
+// materialize_command, materialize_doc) for one recipe with a bundled skill, a
+// non-bundled dep skill, a command and a doc. The frozen roots are the cache
+// roots Python resolved; the native plan derives today's roots through the same
+// mirrored helpers, so that derivation is pinned too. Both sides must produce
+// the same kind, id, src and dest in the same order: 3 items, with the dep
+// skill absent on both sides, so an empty comparison cannot pass.
 func TestCopyApplyPythonDifferential(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := filepath.Join(t.TempDir(), "copy_plan_oracle.py")
-	if err := os.WriteFile(driver, []byte(copyPlanOracle), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	base := t.TempDir()
-	catalog := filepath.Join(base, "catalog")
-	projectRoot := filepath.Join(base, "project")
-	cliHome := filepath.Join(base, "home")
-	writeSyncCatalogRecipe(t, catalog, "alpha", syncRecipeHeader("alpha", "Alpha")+`
-[[provides.skills]]
-id = "alpha-skill"
-source = "bundled"
-
-[[provides.skills]]
-id = "alpha-dep"
-source = "dep"
-url = "https://example.invalid/x.git"
-
-[[provides.commands]]
-id = "alpha-cmd"
-path = "commands/alpha.md"
-
-[[provides.docs]]
-source = "README.md"
-target = "ai-specs/recipes/alpha/README.md"
-`)
-	// Real sources: the doc needs a file for Python's pre-bridge is_file check;
-	// the others make the fixture realistic and feed the boundary composition.
-	writeCopyFixtureFile(t, filepath.Join(catalog, "alpha", "skills", "alpha-skill", "SKILL.md"), "skill body")
-	writeCopyFixtureFile(t, filepath.Join(catalog, "alpha", "commands", "alpha.md"), "command body")
-	writeCopyFixtureFile(t, filepath.Join(catalog, "alpha", "README.md"), "doc body")
-
+	golden := loadCopyApplyGolden(t)
 	ids := []string{"alpha"}
-	idsJSON, err := json.Marshal(ids)
-	if err != nil {
-		t.Fatal(err)
+	if len(golden.Cases) != len(copyApplyGoldenCases) {
+		t.Fatalf("frozen bundle has %d cases, inventory %d", len(golden.Cases), len(copyApplyGoldenCases))
 	}
-	raw := runSyncPythonOracle(t, python, driver, authority, catalog, projectRoot, cliHome, string(idsJSON))
-	var ref copyOracleResult
-	if err := json.Unmarshal([]byte(raw), &ref); err != nil {
-		t.Fatalf("parse oracle JSON: %v\nraw: %s", err, raw)
+	rec := golden.Cases[0]
+
+	// The base is resolved up front so every fixture path and every derived root
+	// shares one space (macOS resolves /var to /private/var).
+	base := projectcache.ResolvePath(t.TempDir())
+	catalog, projectRoot, cliHome := copyApplyCatalog(t, base)
+	// The fixture the freeze was captured from is an input of the payload: a
+	// drifted catalog fails here, not as an opaque payload mismatch.
+	compareCopyApplyCatalog(t, "catalog input", copyApplyTree(t, catalog), golden.Catalog)
+
+	if !reflect.DeepEqual(rec.IDs, ids) {
+		t.Fatalf("%s: frozen ids %v, corpus %v", rec.Name, rec.IDs, ids)
 	}
 
-	// Non-vacuity on the Python side: 3 items, all three kinds, no dep skill.
-	if len(ref.Items) != 3 {
-		t.Fatalf("python oracle planned %d item(s), want 3: %#v", len(ref.Items), ref.Items)
+	// The frozen roots are the ones the legacy authority resolved; the native
+	// caller derives today's roots through the same mirrored helpers.
+	roots := CopyRoots{
+		RecipeSkillsRoot: projectcache.RecipeSkillsRoot(projectRoot, cliHome),
+		CommandsDir:      projectcache.CommandsDir(projectRoot, cliHome),
+		ProjectRoot:      projectRoot,
 	}
-	refKinds := map[string]bool{}
-	for _, item := range ref.Items {
-		refKinds[item.Kind] = true
+	cacheRoot := projectcache.CacheRoot(projectRoot, cliHome)
+	tokenize := func(text string) string { return tokenizeCopyApply(text, base, cacheRoot) }
+
+	gotRoots := copyApplyFrozenRoots{
+		RecipeSkillsRoot: tokenize(roots.RecipeSkillsRoot),
+		CommandsDir:      tokenize(roots.CommandsDir),
+		ProjectRoot:      tokenize(roots.ProjectRoot),
+	}
+	if gotRoots != rec.Roots {
+		t.Fatalf("cache roots diverge\n--- go ---\n%+v\n--- frozen ---\n%+v", gotRoots, rec.Roots)
+	}
+
+	// Non-vacuity on the frozen side: 3 items, all three kinds, no dep skill.
+	if len(rec.Items) != 3 {
+		t.Fatalf("the frozen authority recorded %d item(s), want 3: %#v", len(rec.Items), rec.Items)
+	}
+	frozenKinds := map[string]bool{}
+	for _, item := range rec.Items {
+		frozenKinds[item.Kind] = true
 		if item.ID == "alpha-dep" {
 			t.Fatalf("the non-bundled dep skill must not be planned: %#v", item)
 		}
 	}
 	for _, kind := range []string{"bundled-skill", "command", "doc"} {
-		if !refKinds[kind] {
-			t.Fatalf("python oracle is missing kind %q: %#v", kind, ref.Items)
+		if !frozenKinds[kind] {
+			t.Fatalf("the frozen record is missing kind %q: %#v", kind, rec.Items)
 		}
 	}
 
-	roots := CopyRoots{
-		RecipeSkillsRoot: ref.Roots.RecipeSkillsRoot,
-		CommandsDir:      ref.Roots.CommandsDir,
-		ProjectRoot:      ref.Roots.ProjectRoot,
-	}
 	got := planToCopyItems(PlanCopyItems(catalog, ids, roots))
 
 	// Non-vacuity on the native side too, before the equality check.
 	if len(got) != 3 {
 		t.Fatalf("native plan produced %d item(s), want 3: %#v", len(got), got)
 	}
-	for _, item := range got {
+	for i, item := range got {
 		if item.ID == "alpha-dep" {
 			t.Fatalf("the non-bundled dep skill must not be planned: %#v", item)
 		}
+		got[i].Src = tokenize(item.Src)
+		got[i].Dest = tokenize(item.Dest)
 	}
 
-	if !reflect.DeepEqual(got, ref.Items) {
-		t.Fatalf("copy plan diverges\n--- go ---\n%#v\n--- python ---\n%#v", got, ref.Items)
+	if !reflect.DeepEqual(got, rec.Items) {
+		t.Fatalf("copy plan diverges\n--- go ---\n%#v\n--- frozen ---\n%#v", got, rec.Items)
 	}
 }
 
