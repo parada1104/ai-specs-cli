@@ -1,0 +1,43 @@
+{
+  "oracle": {
+    "base": "epic/go-single-binary f798526",
+    "blob": "c03817f17be904ec1839b0081f2cf5e41d9b0107",
+    "driver": "go splitter `(?m)^        (\\w+)\\)$` over the shell file, one record per agent case block in source order",
+    "note": "Frozen snapshot of the per-agent case blocks of lib/_internal/platform.sh at base f798526 (git blob c03817f1), captured once, twice byte-identical. The record inventory is the hard-coded list in syncagent_test.go; capturing again needs a human decision. No host path is frozen.",
+    "source": "lib/_internal/platform.sh"
+  },
+  "cases": [
+    {
+      "agent": "claude",
+      "block": "\n            case \"$field\" in\n                instructions_path) echo \"CLAUDE.md\" ;;\n                skills_dir)        echo \".claude/skills\" ;;\n                agents_dir)        echo \".claude/agents\" ;;\n                mcp_config_path)   echo \".mcp.json\" ;;\n                mcp_key)           echo \"mcpServers\" ;;\n                native)            echo \"false\" ;;\n                commands_dir)      echo \".claude/commands\" ;;\n                runtime_hooks_target) echo \".claude/settings.json\" ;;\n                *) return 1 ;;\n            esac\n            ;;\n"
+    },
+    {
+      "agent": "cursor",
+      "block": "\n            # Cursor reads AGENTS.md natively at root; skills load from\n            # .cursor/skills/ (symlinked to resolved-skills on sync).\n            case \"$field\" in\n                instructions_path) echo \"\" ;;\n                skills_dir)        echo \".cursor/skills\" ;;\n                agents_dir)        echo \"\" ;;\n                mcp_config_path)   echo \".cursor/mcp.json\" ;;\n                mcp_key)           echo \"mcpServers\" ;;\n                native)            echo \"true\" ;;\n                commands_dir)      echo \".cursor/commands\" ;;\n                runtime_hooks_target) echo \".cursor/hooks.json\" ;;\n                *) return 1 ;;\n            esac\n            ;;\n"
+    },
+    {
+      "agent": "opencode",
+      "block": "\n            # OpenCode reads AGENTS.md natively and supports project-local\n            # skills/commands under .opencode/.\n            case \"$field\" in\n                instructions_path) echo \"\" ;;\n                skills_dir)        echo \".opencode/skills\" ;;\n                agents_dir)        echo \"\" ;;\n                mcp_config_path)   echo \"opencode.json\" ;;\n                mcp_key)           echo \"mcp\" ;;\n                native)            echo \"true\" ;;\n                commands_dir)      echo \".opencode/commands\" ;;\n                runtime_hooks_target) echo \".opencode/plugin\" ;;\n                *) return 1 ;;\n            esac\n            ;;\n"
+    },
+    {
+      "agent": "codex",
+      "block": "\n            # Codex reads AGENTS.md natively at root; no native skill dir.\n            case \"$field\" in\n                instructions_path) echo \"\" ;;\n                skills_dir)        echo \"\" ;;\n                agents_dir)        echo \"\" ;;\n                mcp_config_path)   echo \".codex/config.toml\" ;;\n                mcp_key)           echo \"mcp_servers\" ;;\n                native)            echo \"true\" ;;\n                commands_dir)      echo \"\" ;;  # codex has no slash commands\n                runtime_hooks_target) echo \"\" ;;\n                *) return 1 ;;\n            esac\n            ;;\n"
+    },
+    {
+      "agent": "copilot",
+      "block": "\n            case \"$field\" in\n                instructions_path) echo \".github/copilot-instructions.md\" ;;\n                skills_dir)        echo \"\" ;;  # no skills dir nativo\n                agents_dir)        echo \"\" ;;\n                mcp_config_path)   echo \"\" ;;  # no MCP nativo\n                mcp_key)           echo \"\" ;;\n                native)            echo \"true\" ;;\n                commands_dir)      echo \"\" ;;  # copilot has no slash commands\n                runtime_hooks_target) echo \"\" ;;\n                *) return 1 ;;\n            esac\n            ;;\n"
+    },
+    {
+      "agent": "gemini",
+      "block": "\n            case \"$field\" in\n                instructions_path) echo \"GEMINI.md\" ;;\n                skills_dir)        echo \".gemini/skills\" ;;\n                agents_dir)        echo \".gemini/agents\" ;;\n                mcp_config_path)   echo \".gemini/settings.json\" ;;\n                mcp_key)           echo \"mcpServers\" ;;\n                native)            echo \"false\" ;;\n                commands_dir)      echo \"\" ;;  # gemini has no slash commands\n                runtime_hooks_target) echo \"\" ;;\n                *) return 1 ;;\n            esac\n            ;;\n"
+    },
+    {
+      "agent": "pi",
+      "block": "\n            # Pi (pi.dev) — reads AGENTS.md natively, uses .mcp.json with mcpServers.\n            case \"$field\" in\n                instructions_path) echo \"\" ;;\n                skills_dir)        echo \".pi/skills\" ;;\n                agents_dir)        echo \"\" ;;\n                mcp_config_path)   echo \".mcp.json\" ;;\n                mcp_key)           echo \"mcpServers\" ;;\n                native)            echo \"true\" ;;\n                commands_dir)      echo \"\" ;;  # pi has no slash commands\n                runtime_hooks_target) echo \".pi/extensions\" ;;\n                *) return 1 ;;\n            esac\n            ;;\n"
+    },
+    {
+      "agent": "omp",
+      "block": "\n            # Oh My Pi (can1357/oh-my-pi) — Rust pi fork; .omp/ root.\n            # instructions_path is its NATIVE (highest-priority) provider slot:\n            # sync symlinks .omp/AGENTS.md → root AGENTS.md. Relying on the root\n            # standalone AGENTS.md alone is fragile — omp's agents-md provider is\n            # lowest priority and any .claude/.gemini/.github instruction file\n            # would shadow it. KEY DELTAS vs pi: populated commands_dir and a\n            # dedicated mcp path.\n            case \"$field\" in\n                instructions_path)    echo \".omp/AGENTS.md\" ;;\n                skills_dir)           echo \".omp/skills\" ;;\n                agents_dir)           echo \"\" ;;\n                mcp_config_path)      echo \".omp/mcp.json\" ;;   # dedicated; avoids .mcp.json clash with pi\n                mcp_key)              echo \"mcpServers\" ;;\n                native)               echo \"true\" ;;\n                commands_dir)         echo \".omp/commands\" ;;   # KEY DELTA vs pi (\"\")\n                runtime_hooks_target) echo \".omp/extensions\" ;;\n                *) return 1 ;;\n            esac\n            ;;\n        *)\n            return 1\n            ;;\n    esac\n}\n"
+    }
+  ]
+}
