@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"ai-specs.dev/worktree-gate/shared"
@@ -408,6 +409,447 @@ func TestNativeMergeConfigDatetimeIsABoundary(t *testing.T) {
 			wantErr := `manifest "starts" value: ` + wantMsg
 			if err.Error() != wantErr {
 				t.Fatalf("native error = %q, want %q", err.Error(), wantErr)
+			}
+		})
+	}
+}
+
+// ── Retired Python bridge coverage (GO-20 U2e T5 PR4a S5) ───────────────────
+//
+// tests/test_merge_config_bridge.py pinned the --plan-merge-config transport and
+// the temporary Python authority. Both die with lib/ and the bridge flag (PR4b),
+// so the surviving rules it also asserted are pinned here, against the native
+// authority, with the expectations taken verbatim from the Python assertions.
+// The frozen differential above cannot carry them: it only records the case
+// matrix captured once from Python.
+
+// mergeConfigPlanRecipe renders a fixture recipe around the shared header.
+func mergeConfigPlanRecipe(sections string) string {
+	return syncRecipeHeader("alpha", "Alpha") + "\n" + sections
+}
+
+// mergeConfigPlanManifest renders a fixture manifest whose [recipes.alpha.config]
+// carries the given pairs (empty for no config table).
+func mergeConfigPlanManifest(pairs string) string {
+	body := "[recipes.alpha]\nenabled = true\n"
+	if pairs != "" {
+		body += "\n[recipes.alpha.config]\n" + pairs
+	}
+	return body
+}
+
+// mergeConfigPlanned runs the native authority over one fixture recipe/manifest
+// pair and returns the shared result.
+func mergeConfigPlanned(t *testing.T, recipe, manifest string) shared.MergeConfigResult {
+	t.Helper()
+	_, _, recipePath, manifestPath := mergeConfigFixture(t, "alpha", recipe, manifest)
+	got, err := PlanMergeConfig(MergeConfigRequest{RecipePath: recipePath, ManifestPath: manifestPath, RecipeID: "alpha"})
+	if err != nil {
+		t.Fatalf("PlanMergeConfig: %v", err)
+	}
+	return got
+}
+
+// overCapReconcileManifest declares the reconcile table with 33 expectation
+// entries (the retired Python test's list-over-cap input).
+func overCapReconcileManifest() string {
+	var b strings.Builder
+	b.WriteString(mergeConfigPlanManifest("board_id = \"abc\"\n"))
+	b.WriteString("\n[recipes.alpha.config.reconcile]\n")
+	for i := 0; i < 33; i++ {
+		fmt.Fprintf(&b, "\n[[recipes.alpha.config.reconcile.expectations]]\nevent = \"e%d\"\n", i)
+	}
+	return b.String()
+}
+
+// TestNativeMergeConfigPlanMatrix pins the decision matrix the retired Python
+// bridge test asserted beyond the frozen differential: falsy defaults, the
+// required-before-enum order, the gate_impl special message, the gate_scope
+// fallbacks, unknown-key warning order, warnings before a semantic error, the
+// structured table rules, and Python's value rendering in enum errors.
+func TestNativeMergeConfigPlanMatrix(t *testing.T) {
+	const falsyDefaults = "" +
+		"[config.flag]\nrequired = false\ntype = \"bool\"\ndefault = false\n\n" +
+		"[config.count]\nrequired = false\ntype = \"integer\"\ndefault = 0\n\n" +
+		"[config.label]\nrequired = false\ntype = \"string\"\ndefault = \"\"\n\n" +
+		"[config.size]\nrequired = false\ntype = \"integer\"\ndefault = 30\n\n" +
+		"[config.board_id]\nrequired = true\ntype = \"string\"\n"
+	const requiredAndEnum = "" +
+		"[config.board_id]\nrequired = true\ntype = \"string\"\n\n" +
+		"[config.gate_mode]\nrequired = false\ntype = \"string\"\nenum = [\"always\", \"ask\", \"off\"]\n"
+	const gateImpl = "[config.gate_impl]\nrequired = false\ntype = \"string\"\ndefault = \"auto\"\nenum = [\"auto\", \"go\"]\n"
+	const gateScope = "[config.gate_scope]\nrequired = false\ntype = \"string\"\ndefault = \"auto\"\n"
+	const otherField = "[config.other]\nrequired = false\ntype = \"string\"\n"
+	const reconcile = "" +
+		"[config.board_id]\nrequired = true\ntype = \"string\"\n\n" +
+		"[config.reconcile]\nscope_field = \"board_id\"\nmax_age_seconds = 900\n"
+	const shape = "[config.shape]\nrequired = false\ntype = \"string\"\nenum = [\"ok\"]\n"
+	const ratio = "[config.ratio]\nrequired = false\ntype = \"float\"\nenum = [\"0.5\"]\n"
+
+	cases := []struct {
+		name         string
+		recipe       string
+		manifest     string
+		wantConfig   string
+		wantWarnings []string
+		wantError    string
+	}{
+		{
+			name:         "falsy defaults are selected and overridden in declaration order",
+			recipe:       mergeConfigPlanRecipe(falsyDefaults),
+			manifest:     mergeConfigPlanManifest("flag = true\ncount = 7\nlabel = \"x\"\nboard_id = \"abc\"\n"),
+			wantConfig:   `{"flag": true, "count": 7, "label": "x", "size": 30, "board_id": "abc"}`,
+			wantWarnings: []string{},
+		},
+		{
+			name:         "false zero and empty defaults apply when the manifest omits them",
+			recipe:       mergeConfigPlanRecipe(falsyDefaults),
+			manifest:     mergeConfigPlanManifest("board_id = \"abc\"\n"),
+			wantConfig:   `{"flag": false, "count": 0, "label": "", "size": 30, "board_id": "abc"}`,
+			wantWarnings: []string{},
+		},
+		{
+			name:         "the required error precedes an enum error",
+			recipe:       mergeConfigPlanRecipe(requiredAndEnum),
+			manifest:     mergeConfigPlanManifest("gate_mode = \"rust\"\n"),
+			wantWarnings: []string{},
+			wantError:    "recipe 'Alpha': missing required config field 'board_id'",
+		},
+		{
+			name:         "gate_impl rejection keeps its special message",
+			recipe:       mergeConfigPlanRecipe(gateImpl),
+			manifest:     mergeConfigPlanManifest("gate_impl = \"bash\"\n"),
+			wantWarnings: []string{},
+			wantError:    "invalid gate_impl 'bash'; bash has been removed; allowed: auto | go",
+		},
+		{
+			name:         "empty gate_scope resolves to auto",
+			recipe:       mergeConfigPlanRecipe(gateScope),
+			manifest:     mergeConfigPlanManifest("gate_scope = \"\"\n"),
+			wantConfig:   `{"gate_scope": "auto"}`,
+			wantWarnings: []string{},
+		},
+		{
+			name:         "whitespace gate_scope resolves to auto",
+			recipe:       mergeConfigPlanRecipe(gateScope),
+			manifest:     mergeConfigPlanManifest("gate_scope = \"   \"\n"),
+			wantConfig:   `{"gate_scope": "auto"}`,
+			wantWarnings: []string{},
+		},
+		{
+			name:         "false gate_scope resolves to auto",
+			recipe:       mergeConfigPlanRecipe(gateScope),
+			manifest:     mergeConfigPlanManifest("gate_scope = false\n"),
+			wantConfig:   `{"gate_scope": "auto"}`,
+			wantWarnings: []string{},
+		},
+		{
+			name:         "zero gate_scope resolves to auto",
+			recipe:       mergeConfigPlanRecipe(gateScope),
+			manifest:     mergeConfigPlanManifest("gate_scope = 0\n"),
+			wantConfig:   `{"gate_scope": "auto"}`,
+			wantWarnings: []string{},
+		},
+		{
+			name:         "a truthy gate_scope override wins",
+			recipe:       mergeConfigPlanRecipe(gateScope),
+			manifest:     mergeConfigPlanManifest("gate_scope = \"manifest\"\n"),
+			wantConfig:   `{"gate_scope": "manifest"}`,
+			wantWarnings: []string{},
+		},
+		{
+			name:         "an undeclared gate_scope is only an unknown key",
+			recipe:       mergeConfigPlanRecipe(otherField),
+			manifest:     mergeConfigPlanManifest("gate_scope = \"\"\n"),
+			wantConfig:   `{}`,
+			wantWarnings: []string{"recipe 'Alpha': unknown config key 'gate_scope' in manifest (ignored)"},
+		},
+		{
+			name:       "unknown keys warn in manifest order",
+			recipe:     mergeConfigPlanRecipe("[config.board_id]\nrequired = true\ntype = \"string\"\n"),
+			manifest:   mergeConfigPlanManifest("zz_last = 1\nboard_id = \"abc\"\naa_first = 2\n"),
+			wantConfig: `{"board_id": "abc"}`,
+			wantWarnings: []string{
+				"recipe 'Alpha': unknown config key 'zz_last' in manifest (ignored)",
+				"recipe 'Alpha': unknown config key 'aa_first' in manifest (ignored)",
+			},
+		},
+		{
+			name:         "the unknown-key warning precedes a semantic error",
+			recipe:       mergeConfigPlanRecipe("[config.board_id]\nrequired = true\ntype = \"string\"\n"),
+			manifest:     mergeConfigPlanManifest("unknown = 1\n"),
+			wantWarnings: []string{"recipe 'Alpha': unknown config key 'unknown' in manifest (ignored)"},
+			wantError:    "recipe 'Alpha': missing required config field 'board_id'",
+		},
+		{
+			name:     "a declared structured table is carried through verbatim",
+			recipe:   mergeConfigPlanRecipe(reconcile),
+			manifest: mergeConfigPlanManifest("board_id = \"abc\"\n") + "\n[recipes.alpha.config.reconcile]\nscope_field = \"board_id\"\nmax_age_seconds = 900\n\n[[recipes.alpha.config.reconcile.expectations]]\nevent = \"delivery\"\nproperty = \"list\"\nconfig_field = \"default_list\"\n",
+			wantConfig: `{"board_id": "abc", "reconcile": {"scope_field": "board_id", "max_age_seconds": 900, ` +
+				`"expectations": [{"event": "delivery", "property": "list", "config_field": "default_list"}]}}`,
+			wantWarnings: []string{},
+		},
+		{
+			name:         "a structured unknown sub-key is rejected",
+			recipe:       mergeConfigPlanRecipe(reconcile),
+			manifest:     mergeConfigPlanManifest("board_id = \"abc\"\nreconcile = { scope_field = \"a\", bogus = 1 }\n"),
+			wantWarnings: []string{},
+			wantError:    "recipe 'Alpha': invalid config field 'reconcile': [config.reconcile]: unknown key 'bogus'",
+		},
+		{
+			name:         "a nested structured type error names the index",
+			recipe:       mergeConfigPlanRecipe(reconcile),
+			manifest:     mergeConfigPlanManifest("board_id = \"abc\"\nreconcile = { expectations = [{ event = 5 }] }\n"),
+			wantWarnings: []string{},
+			wantError:    "recipe 'Alpha': invalid config field 'reconcile': [config.reconcile].expectations[0].event: expected string, got int",
+		},
+		{
+			name:         "a structured bool is not an integer",
+			recipe:       mergeConfigPlanRecipe(reconcile),
+			manifest:     mergeConfigPlanManifest("board_id = \"abc\"\nreconcile = { max_age_seconds = true }\n"),
+			wantWarnings: []string{},
+			wantError:    "recipe 'Alpha': invalid config field 'reconcile': [config.reconcile].max_age_seconds: expected integer, got bool",
+		},
+		{
+			name:         "a structured list over the cap is rejected",
+			recipe:       mergeConfigPlanRecipe(reconcile),
+			manifest:     overCapReconcileManifest(),
+			wantWarnings: []string{},
+			wantError:    "recipe 'Alpha': invalid config field 'reconcile': [config.reconcile].expectations: expected at most 32 entries, got 33",
+		},
+		{
+			name:         "a structured non-table value is rejected",
+			recipe:       mergeConfigPlanRecipe(reconcile),
+			manifest:     mergeConfigPlanManifest("board_id = \"abc\"\nreconcile = \"nope\"\n"),
+			wantWarnings: []string{},
+			wantError:    "recipe 'Alpha': invalid config field 'reconcile': [config.reconcile]: expected table, got str",
+		},
+		{
+			name:         "floats render as Python repr in the enum error",
+			recipe:       mergeConfigPlanRecipe(ratio),
+			manifest:     mergeConfigPlanManifest("ratio = 0.1\n"),
+			wantWarnings: []string{},
+			wantError:    "recipe 'Alpha': config field 'ratio' value '0.1' is invalid; allowed: 0.5",
+		},
+		{
+			name:         "negative zero renders as Python repr in the enum error",
+			recipe:       mergeConfigPlanRecipe(ratio),
+			manifest:     mergeConfigPlanManifest("ratio = -0.0\n"),
+			wantWarnings: []string{},
+			wantError:    "recipe 'Alpha': config field 'ratio' value '-0.0' is invalid; allowed: 0.5",
+		},
+		{
+			name:         "a large float renders in scientific form in the enum error",
+			recipe:       mergeConfigPlanRecipe(ratio),
+			manifest:     mergeConfigPlanManifest("ratio = 1e30\n"),
+			wantWarnings: []string{},
+			wantError:    "recipe 'Alpha': config field 'ratio' value '1e+30' is invalid; allowed: 0.5",
+		},
+		{
+			name:         "a container renders as Python repr in the enum error",
+			recipe:       mergeConfigPlanRecipe(shape),
+			manifest:     mergeConfigPlanManifest("shape = { x = [1, \"two\"] }\n"),
+			wantWarnings: []string{},
+			wantError:    "recipe 'Alpha': config field 'shape' value '{'x': [1, 'two']}' is invalid; allowed: ok",
+		},
+		{
+			name:         "an apostrophe switches the repr to double quotes",
+			recipe:       mergeConfigPlanRecipe(shape),
+			manifest:     mergeConfigPlanManifest("shape = [\"a'b\"]\n"),
+			wantWarnings: []string{},
+			wantError:    "recipe 'Alpha': config field 'shape' value '[\"a'b\"]' is invalid; allowed: ok",
+		},
+		{
+			name:         "an apostrophe inside a table value switches to double quotes",
+			recipe:       mergeConfigPlanRecipe(shape),
+			manifest:     mergeConfigPlanManifest("shape = { k = \"o'clock\" }\n"),
+			wantWarnings: []string{},
+			wantError:    "recipe 'Alpha': config field 'shape' value '{'k': \"o'clock\"}' is invalid; allowed: ok",
+		},
+		{
+			name:         "a control character escapes as xNN in the repr",
+			recipe:       mergeConfigPlanRecipe(shape),
+			manifest:     mergeConfigPlanManifest("shape = [\"a\\u0001b\"]\n"),
+			wantWarnings: []string{},
+			wantError:    "recipe 'Alpha': config field 'shape' value '['a\\x01b']' is invalid; allowed: ok",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mergeConfigPlanned(t, tc.recipe, tc.manifest)
+			if !reflect.DeepEqual(got.Warnings, tc.wantWarnings) {
+				t.Fatalf("warnings = %#v, want %#v", got.Warnings, tc.wantWarnings)
+			}
+			if got.Error != tc.wantError {
+				t.Fatalf("error = %q, want %q", got.Error, tc.wantError)
+			}
+			if tc.wantConfig == "" {
+				return
+			}
+			want, err := shared.DecodeOrdered([]byte(tc.wantConfig))
+			if err != nil {
+				t.Fatalf("decode want config %s: %v", tc.wantConfig, err)
+			}
+			if !orderedEqual(got.Config, want) {
+				raw, _ := json.Marshal(got.Config)
+				t.Fatalf("config mismatch:\n got: %s\nwant: %s", raw, tc.wantConfig)
+			}
+		})
+	}
+}
+
+// TestNativeMergeConfigRealCatalogSchema pins the shipped catalog schemas through
+// the native authority: the retired Python bridge test asserted that the real
+// worktree-flow and plan-build recipes merge to their declared defaults, accept
+// overrides, and reject an out-of-enum value.
+func TestNativeMergeConfigRealCatalogSchema(t *testing.T) {
+	realRecipe := func(id string) string {
+		return filepath.Join("..", "..", "catalog", "recipes", id, "recipe.toml")
+	}
+	realManifest := func(t *testing.T, id, pairs string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "ai-specs", "ai-specs.toml")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(mergeConfigPlanManifestFor(id, pairs)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	plan := func(t *testing.T, id, pairs string) shared.MergeConfigResult {
+		t.Helper()
+		got, err := PlanMergeConfig(MergeConfigRequest{
+			RecipePath:   realRecipe(id),
+			ManifestPath: realManifest(t, id, pairs),
+			RecipeID:     id,
+		})
+		if err != nil {
+			t.Fatalf("PlanMergeConfig(%s): %v", id, err)
+		}
+		return got
+	}
+
+	t.Run("worktree-flow declares its shipped defaults", func(t *testing.T) {
+		got := plan(t, "worktree-flow", "")
+		if got.Error != "" {
+			t.Fatalf("error = %q, want none", got.Error)
+		}
+		for key, want := range map[string]string{
+			"worktrees_dir":      `".worktrees"`,
+			"gate_impl":          `"auto"`,
+			"auto_remove_merged": "true",
+		} {
+			value, present := got.Config.Get(key)
+			if !present {
+				t.Fatalf("config has no %q: %s", key, mergeConfigRaw(t, got))
+			}
+			raw, _ := json.Marshal(value)
+			if string(raw) != want {
+				t.Fatalf("config[%q] = %s, want %s", key, raw, want)
+			}
+		}
+	})
+
+	t.Run("worktree-flow applies overrides and warns once", func(t *testing.T) {
+		got := plan(t, "worktree-flow", "gate_mode = \"ask\"\nworktrees_dir = \"custom\"\ngate_scope = \"   \"\nmystery = 1\n")
+		for key, want := range map[string]string{
+			"gate_mode":     `"ask"`,
+			"worktrees_dir": `"custom"`,
+			"gate_scope":    `"auto"`,
+		} {
+			value, present := got.Config.Get(key)
+			if !present {
+				t.Fatalf("config has no %q: %s", key, mergeConfigRaw(t, got))
+			}
+			raw, _ := json.Marshal(value)
+			if string(raw) != want {
+				t.Fatalf("config[%q] = %s, want %s", key, raw, want)
+			}
+		}
+		if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "mystery") {
+			t.Fatalf("warnings = %#v, want one warning naming mystery", got.Warnings)
+		}
+	})
+
+	t.Run("worktree-flow rejects the removed bash gate_impl", func(t *testing.T) {
+		got := plan(t, "worktree-flow", "gate_impl = \"bash\"\n")
+		if want := "invalid gate_impl 'bash'; bash has been removed; allowed: auto | go"; got.Error != want {
+			t.Fatalf("error = %q, want %q", got.Error, want)
+		}
+	})
+
+	t.Run("plan-build-flow carries its enum default and rejects a stranger", func(t *testing.T) {
+		got := plan(t, "plan-build-flow", "")
+		if want := `{"artifact_store_default":"openspec"}`; mergeConfigRaw(t, got) != want {
+			t.Fatalf("config = %s, want %s", mergeConfigRaw(t, got), want)
+		}
+		got = plan(t, "plan-build-flow", "artifact_store_default = \"both\"\n")
+		if want := `{"artifact_store_default":"both"}`; mergeConfigRaw(t, got) != want {
+			t.Fatalf("config = %s, want %s", mergeConfigRaw(t, got), want)
+		}
+		got = plan(t, "plan-build-flow", "artifact_store_default = \"vault\"\n")
+		if !strings.Contains(got.Error, "allowed:") {
+			t.Fatalf("error = %q, want the allowed-values message", got.Error)
+		}
+	})
+}
+
+// mergeConfigPlanManifestFor renders a manifest for the given recipe id.
+func mergeConfigPlanManifestFor(id, pairs string) string {
+	body := "[recipes." + id + "]\nenabled = true\n"
+	if pairs != "" {
+		body += "\n[recipes." + id + ".config]\n" + pairs
+	}
+	return body
+}
+
+// mergeConfigRaw renders a result's config as compact JSON.
+func mergeConfigRaw(t *testing.T, got shared.MergeConfigResult) string {
+	t.Helper()
+	raw, err := json.Marshal(got.Config)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	return string(raw)
+}
+
+// TestNativeMergeConfigTimeAndNestedDatetimeAreBoundaries pins the two
+// non-JSON value shapes the retired Python bridge test reached through its
+// fallback (which kept the typed value): a local TOML time, and a datetime
+// nested inside a table. The native authority rejects both at the envelope
+// boundary with Python's serialization message, so no unserializable value can
+// silently survive the merge.
+func TestNativeMergeConfigTimeAndNestedDatetimeAreBoundaries(t *testing.T) {
+	cases := []struct {
+		name     string
+		recipe   string
+		manifest string
+		wantErr  string
+	}{
+		{
+			name:     "local time",
+			recipe:   mergeConfigPlanRecipe("[config.starts]\nrequired = false\ntype = \"string\"\n"),
+			manifest: mergeConfigPlanManifest("starts = 03:04:05\n"),
+			wantErr:  `manifest "starts" value: Object of type time is not JSON serializable`,
+		},
+		{
+			name:     "datetime nested in a table",
+			recipe:   mergeConfigPlanRecipe("[config.blob]\nrequired = false\ntype = \"string\"\n"),
+			manifest: mergeConfigPlanManifest("blob = { when = [2024-01-02T03:04:05] }\n"),
+			wantErr:  `manifest "blob" value: Object of type datetime is not JSON serializable`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, recipePath, manifestPath := mergeConfigFixture(t, "alpha", tc.recipe, tc.manifest)
+			_, err := PlanMergeConfig(MergeConfigRequest{RecipePath: recipePath, ManifestPath: manifestPath, RecipeID: "alpha"})
+			if err == nil {
+				t.Fatalf("PlanMergeConfig accepted the non-JSON value")
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("native error = %q, want %q", err.Error(), tc.wantErr)
 			}
 		})
 	}
