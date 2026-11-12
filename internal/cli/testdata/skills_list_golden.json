@@ -1,0 +1,464 @@
+{
+  "oracle": {
+    "base": "233dcd2",
+    "note": "legacy `bash lib/skills-list.sh` over the in-test fixture corpus; \u003cDIR\u003e is the target project root, \u003cHOME\u003e the isolated cli home",
+    "python": "3.14.7",
+    "scripts": {
+      "lib/skills-list.sh": "031e174bf4ef867efb971f26529c9aa5e6056865"
+    }
+  },
+  "cases": [
+    {
+      "name": "two deps one vendored",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill/SKILL.md",
+          "content": "---\nname: vendored-skill\ndescription: Vendored description\n---\n# vendored-skill\n\nBody.\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"vendored-skill\"\nsource = \"https://github.com/example/vendored.git\"\nref = \"v1.2.3\"\npath = \"nested\"\nlicense = \"MIT\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"unsynced-skill\"\nsource = \"https://github.com/example/unsynced.git\"\nrev = \"deadbeef\"\nscope = [\"root\"]\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "=== ai-specs skills list ===\nProject: \u003cDIR\u003e\n\n── Registered deps ([[deps]]) ──\n  vendored-skill\n    source:     https://github.com/example/vendored.git\n    subdir:     nested\n    ref:        v1.2.3\n    status:     ✓ installed\n    license:    MIT\n\n  unsynced-skill\n    source:     https://github.com/example/unsynced.git\n    ref:        deadbeef\n    status:     ✗ not synced\n\n\n── Bundled skills (CLI-shipped) ──\n  cached-skill\n    Bundled description\n\n── Local skills (ai-specs/skills/) ──\n  (not found)\n\n── Available catalog skills (catalog/skills/) ──\n  context-precedence\n    \u003e\n  testing-foundation\n    \u003e\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill/SKILL.md",
+          "content": "---\nname: vendored-skill\ndescription: Vendored description\n---\n# vendored-skill\n\nBody.\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"vendored-skill\"\nsource = \"https://github.com/example/vendored.git\"\nref = \"v1.2.3\"\npath = \"nested\"\nlicense = \"MIT\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"unsynced-skill\"\nsource = \"https://github.com/example/unsynced.git\"\nrev = \"deadbeef\"\nscope = [\"root\"]\n"
+        }
+      ]
+    },
+    {
+      "name": "no manifest",
+      "input": [],
+      "rc": 0,
+      "stdout": "=== ai-specs skills list ===\nProject: \u003cDIR\u003e\n\n── Registered deps ([[deps]]) ──\n  (ai-specs.toml not found — run 'ai-specs init' first)\n\n── Bundled skills (CLI-shipped) ──\n  (none)\n\n── Local skills (ai-specs/skills/) ──\n  (not found)\n\n── Available catalog skills (catalog/skills/) ──\n  context-precedence\n    \u003e\n  testing-foundation\n    \u003e\n",
+      "stderr": "",
+      "tree": []
+    },
+    {
+      "name": "local skills with and without SKILL.md",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"local-skills\"\n"
+        },
+        {
+          "path": "ai-specs/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/skills/bare-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/skills/local-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/skills/local-skill/SKILL.md",
+          "content": "---\nname: local-skill\ndescription: A local skill description\n---\n# local-skill\n\nBody.\n"
+        },
+        {
+          "path": "ai-specs/skills/skill-creator",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/skills/skill-creator/SKILL.md",
+          "content": "---\nname: skill-creator\ndescription: Bundled id, excluded from local\n---\n# skill-creator\n\nBody.\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "=== ai-specs skills list ===\nProject: \u003cDIR\u003e\n\n── Registered deps ([[deps]]) ──\n  (none)\n\n── Bundled skills (CLI-shipped) ──\n  (none)\n\n── Local skills (ai-specs/skills/) ──\n  bare-skill  (no SKILL.md)\n  local-skill\n    A local skill description\n\n── Available catalog skills (catalog/skills/) ──\n  context-precedence\n    \u003e\n  testing-foundation\n    \u003e\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"local-skills\"\n"
+        },
+        {
+          "path": "ai-specs/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/skills/bare-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/skills/local-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/skills/local-skill/SKILL.md",
+          "content": "---\nname: local-skill\ndescription: A local skill description\n---\n# local-skill\n\nBody.\n"
+        },
+        {
+          "path": "ai-specs/skills/skill-creator",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/skills/skill-creator/SKILL.md",
+          "content": "---\nname: skill-creator\ndescription: Bundled id, excluded from local\n---\n# skill-creator\n\nBody.\n"
+        }
+      ]
+    },
+    {
+      "name": "local skills fallback bundled ids",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"local-skills\"\n"
+        },
+        {
+          "path": "ai-specs/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/skills/bare-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/skills/local-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/skills/local-skill/SKILL.md",
+          "content": "---\nname: local-skill\ndescription: A local skill description\n---\n# local-skill\n\nBody.\n"
+        },
+        {
+          "path": "ai-specs/skills/skill-creator",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/skills/skill-creator/SKILL.md",
+          "content": "---\nname: skill-creator\ndescription: Bundled id, excluded from local\n---\n# skill-creator\n\nBody.\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "=== ai-specs skills list ===\nProject: \u003cDIR\u003e\n\n── Registered deps ([[deps]]) ──\n  (none)\n\n── Bundled skills (CLI-shipped) ──\n  (none)\n\n── Local skills (ai-specs/skills/) ──\n  bare-skill  (no SKILL.md)\n  local-skill\n    A local skill description\n\n── Available catalog skills (catalog/skills/) ──\n  context-precedence\n    \u003e\n  testing-foundation\n    \u003e\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"local-skills\"\n"
+        },
+        {
+          "path": "ai-specs/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/skills/bare-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/skills/local-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/skills/local-skill/SKILL.md",
+          "content": "---\nname: local-skill\ndescription: A local skill description\n---\n# local-skill\n\nBody.\n"
+        },
+        {
+          "path": "ai-specs/skills/skill-creator",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/skills/skill-creator/SKILL.md",
+          "content": "---\nname: skill-creator\ndescription: Bundled id, excluded from local\n---\n# skill-creator\n\nBody.\n"
+        }
+      ]
+    },
+    {
+      "name": "help",
+      "input": [],
+      "rc": 0,
+      "stdout": "Usage: ai-specs skills list [path] [--help]\nList vendored ([[deps]]) and local skills for a project.\n\nShows:\n  - Installed deps from ai-specs.toml\n  - Bundled skills (CLI-shipped) present in ai-specs/skills/\n  - Local skills in ai-specs/skills/ (excluding vendored + bundled)\n  - Available catalog skills shipped with the CLI\n",
+      "stderr": "",
+      "tree": []
+    },
+    {
+      "name": "unknown flag",
+      "input": [],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ERROR: unknown flag: --bogus\nRun 'ai-specs skills list --help' for usage.\n",
+      "tree": []
+    },
+    {
+      "name": "second positional",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill/SKILL.md",
+          "content": "---\nname: vendored-skill\ndescription: Vendored description\n---\n# vendored-skill\n\nBody.\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"vendored-skill\"\nsource = \"https://github.com/example/vendored.git\"\nref = \"v1.2.3\"\npath = \"nested\"\nlicense = \"MIT\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"unsynced-skill\"\nsource = \"https://github.com/example/unsynced.git\"\nrev = \"deadbeef\"\nscope = [\"root\"]\n"
+        }
+      ],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ERROR: unexpected positional argument: extra\n",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill/SKILL.md",
+          "content": "---\nname: vendored-skill\ndescription: Vendored description\n---\n# vendored-skill\n\nBody.\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"vendored-skill\"\nsource = \"https://github.com/example/vendored.git\"\nref = \"v1.2.3\"\npath = \"nested\"\nlicense = \"MIT\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"unsynced-skill\"\nsource = \"https://github.com/example/unsynced.git\"\nrev = \"deadbeef\"\nscope = [\"root\"]\n"
+        }
+      ]
+    },
+    {
+      "name": "positional after dashdash",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill/SKILL.md",
+          "content": "---\nname: vendored-skill\ndescription: Vendored description\n---\n# vendored-skill\n\nBody.\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"vendored-skill\"\nsource = \"https://github.com/example/vendored.git\"\nref = \"v1.2.3\"\npath = \"nested\"\nlicense = \"MIT\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"unsynced-skill\"\nsource = \"https://github.com/example/unsynced.git\"\nrev = \"deadbeef\"\nscope = [\"root\"]\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "=== ai-specs skills list ===\nProject: \u003cDIR\u003e\n\n── Registered deps ([[deps]]) ──\n  vendored-skill\n    source:     https://github.com/example/vendored.git\n    subdir:     nested\n    ref:        v1.2.3\n    status:     ✓ installed\n    license:    MIT\n\n  unsynced-skill\n    source:     https://github.com/example/unsynced.git\n    ref:        deadbeef\n    status:     ✗ not synced\n\n\n── Bundled skills (CLI-shipped) ──\n  cached-skill\n    Bundled description\n\n── Local skills (ai-specs/skills/) ──\n  (not found)\n\n── Available catalog skills (catalog/skills/) ──\n  context-precedence\n    \u003e\n  testing-foundation\n    \u003e\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill/SKILL.md",
+          "content": "---\nname: vendored-skill\ndescription: Vendored description\n---\n# vendored-skill\n\nBody.\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"vendored-skill\"\nsource = \"https://github.com/example/vendored.git\"\nref = \"v1.2.3\"\npath = \"nested\"\nlicense = \"MIT\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"unsynced-skill\"\nsource = \"https://github.com/example/unsynced.git\"\nrev = \"deadbeef\"\nscope = [\"root\"]\n"
+        }
+      ]
+    },
+    {
+      "name": "second positional after dashdash",
+      "input": [],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ERROR: unexpected positional argument: beta\n",
+      "tree": []
+    },
+    {
+      "name": "target defaults to cwd",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill/SKILL.md",
+          "content": "---\nname: vendored-skill\ndescription: Vendored description\n---\n# vendored-skill\n\nBody.\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"vendored-skill\"\nsource = \"https://github.com/example/vendored.git\"\nref = \"v1.2.3\"\npath = \"nested\"\nlicense = \"MIT\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"unsynced-skill\"\nsource = \"https://github.com/example/unsynced.git\"\nrev = \"deadbeef\"\nscope = [\"root\"]\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "=== ai-specs skills list ===\nProject: \u003cDIR\u003e\n\n── Registered deps ([[deps]]) ──\n  vendored-skill\n    source:     https://github.com/example/vendored.git\n    subdir:     nested\n    ref:        v1.2.3\n    status:     ✓ installed\n    license:    MIT\n\n  unsynced-skill\n    source:     https://github.com/example/unsynced.git\n    ref:        deadbeef\n    status:     ✗ not synced\n\n\n── Bundled skills (CLI-shipped) ──\n  cached-skill\n    Bundled description\n\n── Local skills (ai-specs/skills/) ──\n  (not found)\n\n── Available catalog skills (catalog/skills/) ──\n  context-precedence\n    \u003e\n  testing-foundation\n    \u003e\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/vendored-skill/skills/vendored-skill/SKILL.md",
+          "content": "---\nname: vendored-skill\ndescription: Vendored description\n---\n# vendored-skill\n\nBody.\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-deps\"\n\n[[deps]]\nid = \"vendored-skill\"\nsource = \"https://github.com/example/vendored.git\"\nref = \"v1.2.3\"\npath = \"nested\"\nlicense = \"MIT\"\nscope = [\"root\"]\n\n[[deps]]\nid = \"unsynced-skill\"\nsource = \"https://github.com/example/unsynced.git\"\nrev = \"deadbeef\"\nscope = [\"root\"]\n"
+        }
+      ]
+    },
+    {
+      "name": "missing path",
+      "input": [],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "\u003cROOT\u003e/lib/skills-list.sh: line 48: cd: \u003cDIR\u003e/does-not-exist: No such file or directory\n",
+      "tree": []
+    }
+  ]
+}
