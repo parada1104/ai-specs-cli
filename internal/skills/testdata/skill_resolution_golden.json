@@ -1,0 +1,50 @@
+{
+  "oracle": {
+    "entry": "collect_skills",
+    "python": "3.14.7",
+    "script": "lib/_internal/skill-resolution.py"
+  },
+  "cases": [
+    {
+      "name": "four-tiers-duplicates",
+      "tree": [
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.bundled/skills/bundledonly/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.bundled/skills/shared/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.deps/dep-b/skills/depcache/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.deps/dep-b/skills/shared/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.recipe/rec-a/skills/recipeonly/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.recipe/rec-a/skills/shared/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.recipe/rec-b/skills/shared/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <ROOT>/ai-specs/.deps/dep-a/skills/deponly/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <ROOT>/ai-specs/skills/localonly/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <ROOT>/ai-specs/skills/shared/SKILL.md"
+      ],
+      "skills": {
+        "bundledonly": {
+          "source": "bundled",
+          "path": "<CACHE>/.bundled/skills/bundledonly"
+        },
+        "depcache": {
+          "source": "dep",
+          "path": "<CACHE>/.deps/dep-b/skills/depcache"
+        },
+        "deponly": {
+          "source": "dep",
+          "path": "<ROOT>/ai-specs/.deps/dep-a/skills/deponly"
+        },
+        "localonly": {
+          "source": "local",
+          "path": "<ROOT>/ai-specs/skills/localonly"
+        },
+        "recipeonly": {
+          "source": "recipe",
+          "path": "<CACHE>/.recipe/rec-a/skills/recipeonly"
+        },
+        "shared": {
+          "source": "local",
+          "path": "<ROOT>/ai-specs/skills/shared"
+        }
+      }
+    }
+  ]
+}

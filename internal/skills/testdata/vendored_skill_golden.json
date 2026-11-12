@@ -1,0 +1,243 @@
+{
+  "oracle": {
+    "entry": "from_dep+render_skill_markdown",
+    "python": "3.14.7",
+    "script": "lib/_internal/skill_contract.py"
+  },
+  "cases": [
+    {
+      "name": "minimal",
+      "inputs": [
+        "f8930769882001fa02a6f4b9884f2a78624d6f031304e079475a75259b3210cc  dep.toml",
+        "92eed17314ecc52a7cf26d678a263703a938c11bbacbf186bb0c868fd594bbd6  SKILL.md"
+      ],
+      "out": "---\nname: my-dep\ndescription: >\n  Does things\nlicense: Unknown\nmetadata:\n  author: \"upstream\"\n  version: \"1.0\"\n  source: \"https://x/y.git\"\n  scope: [root]\n---\n\n# Body\ntext\n",
+      "error": ""
+    },
+    {
+      "name": "full-metadata",
+      "inputs": [
+        "39fc047abc25fb397edea815227f09069ceb803ef6bb1373138eafe2433a6da3  dep.toml",
+        "92eed17314ecc52a7cf26d678a263703a938c11bbacbf186bb0c868fd594bbd6  SKILL.md"
+      ],
+      "out": "---\nname: my-dep\ndescription: >\n  Does things. Vendored from Acme \"Tools\" \\ (see metadata.source)\nlicense: MIT\nmetadata:\n  author: \"Acme \\\"Tools\\\" \\\\\"\n  version: \"2.1.0-rc.1\"\n  source: \"https://x/y.git\"\n  vendor_attribution: \"Acme \\\"Tools\\\" \\\\\"\n  scope: [root, ui]\n  auto_invoke:\n    - \"When a \\\"quote\\\" appears\"\n    - \"Second\"\n---\n\n# Body\ntext\n",
+      "error": ""
+    },
+    {
+      "name": "scalar-scope-and-auto",
+      "inputs": [
+        "437aac6b355bebd9750e70d3b256bd529277a91cd357c7bfb195b47b9e8ee6e4  dep.toml",
+        "92eed17314ecc52a7cf26d678a263703a938c11bbacbf186bb0c868fd594bbd6  SKILL.md"
+      ],
+      "out": "---\nname: d\ndescription: >\n  Does things\nlicense: Unknown\nmetadata:\n  author: \"upstream\"\n  version: \"1.0\"\n  source: \"s\"\n  scope: [root]\n  auto_invoke:\n    - \"Phrase\"\n---\n\n# Body\ntext\n",
+      "error": ""
+    },
+    {
+      "name": "empty-lists-fall-back",
+      "inputs": [
+        "8fc34c9a7849f2aa1946d4e84b31a853a0c0357697557c5e03ce59b26d3f9dc8  dep.toml",
+        "92eed17314ecc52a7cf26d678a263703a938c11bbacbf186bb0c868fd594bbd6  SKILL.md"
+      ],
+      "out": "---\nname: d\ndescription: >\n  Does things\nlicense: Unknown\nmetadata:\n  author: \"upstream\"\n  version: \"1.0\"\n  source: \"s\"\n  scope: [root]\n---\n\n# Body\ntext\n",
+      "error": ""
+    },
+    {
+      "name": "no-frontmatter-upstream",
+      "inputs": [
+        "1e5a4a8f297e638b425ab0271ee14db6e65907409572087059705abd8c64b585  dep.toml",
+        "c18ab61722e3e3b700cfc3058453ce57aaf36494c6ee1d69079ea577d4e0a085  SKILL.md"
+      ],
+      "out": "---\nname: d\ndescription: >\n  Vendored skill: d\nlicense: Unknown\nmetadata:\n  author: \"upstream\"\n  version: \"1.0\"\n  source: \"s\"\n  scope: [root]\n---\n\njust a body\n",
+      "error": ""
+    },
+    {
+      "name": "empty-upstream",
+      "inputs": [
+        "1e5a4a8f297e638b425ab0271ee14db6e65907409572087059705abd8c64b585  dep.toml",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  SKILL.md"
+      ],
+      "out": "---\nname: d\ndescription: >\n  Vendored skill: d\nlicense: Unknown\nmetadata:\n  author: \"upstream\"\n  version: \"1.0\"\n  source: \"s\"\n  scope: [root]\n---\n",
+      "error": ""
+    },
+    {
+      "name": "list-description",
+      "inputs": [
+        "1e5a4a8f297e638b425ab0271ee14db6e65907409572087059705abd8c64b585  dep.toml",
+        "6faa940b1f444857d91c6bb6b34816022e91c90ac7682acc561593de04fc17b7  SKILL.md"
+      ],
+      "out": "---\nname: d\ndescription: >\n  ['a', 'b']\nlicense: Unknown\nmetadata:\n  author: \"upstream\"\n  version: \"1.0\"\n  source: \"s\"\n  scope: [root]\n---\n\nbody\n",
+      "error": ""
+    },
+    {
+      "name": "attribution-only",
+      "inputs": [
+        "dac79b50af37d96bf73de731ea2575e0ac15e5c6d6fd17145f732485805cf444  dep.toml",
+        "0fc546b8ed5e764567c0e4741a000a75b08f184b4c5155c481dc70d50ad7cc87  SKILL.md"
+      ],
+      "out": "---\nname: d\ndescription: >\n  Vendored from Org (see metadata.source)\nlicense: Unknown\nmetadata:\n  author: \"Org\"\n  version: \"1.0\"\n  source: \"s\"\n  vendor_attribution: \"Org\"\n  scope: [root]\n---\n",
+      "error": ""
+    },
+    {
+      "name": "description-trailing-dots",
+      "inputs": [
+        "dac79b50af37d96bf73de731ea2575e0ac15e5c6d6fd17145f732485805cf444  dep.toml",
+        "07d0b363ee81a613fffdb917b33c45a9c667d59b308763f066eedca6e442741a  SKILL.md"
+      ],
+      "out": "---\nname: d\ndescription: >\n  Ends here. Vendored from Org (see metadata.source)\nlicense: Unknown\nmetadata:\n  author: \"Org\"\n  version: \"1.0\"\n  source: \"s\"\n  vendor_attribution: \"Org\"\n  scope: [root]\n---\n\nb\n",
+      "error": ""
+    },
+    {
+      "name": "numeric-version",
+      "inputs": [
+        "b4f2ef8b26fc86fb86db23b2e6e32b74fab44a9ea30fb6b5b47bbe7fc709c58b  dep.toml",
+        "92eed17314ecc52a7cf26d678a263703a938c11bbacbf186bb0c868fd594bbd6  SKILL.md"
+      ],
+      "out": "---\nname: d\ndescription: >\n  Does things\nlicense: Unknown\nmetadata:\n  author: \"upstream\"\n  version: \"2.5\"\n  source: \"s\"\n  scope: [root]\n---\n\n# Body\ntext\n",
+      "error": ""
+    },
+    {
+      "name": "int-version-invalid",
+      "inputs": [
+        "5ca8ace96ecc174d2bd1211a83753e01593cdd9f6a808f51249d7412d85b93d1  dep.toml",
+        "92eed17314ecc52a7cf26d678a263703a938c11bbacbf186bb0c868fd594bbd6  SKILL.md"
+      ],
+      "out": "",
+      "error": "metadata.version: must look like a semantic version (for example `1.0` or `1.0.0`)"
+    },
+    {
+      "name": "numeric-license",
+      "inputs": [
+        "36e411983e194ba07fb830d489fe889fad62374b4063d06eaad63b45ba9cb2ee  dep.toml",
+        "92eed17314ecc52a7cf26d678a263703a938c11bbacbf186bb0c868fd594bbd6  SKILL.md"
+      ],
+      "out": "---\nname: d\ndescription: >\n  Does things\nlicense: 7\nmetadata:\n  author: \"upstream\"\n  version: \"1.0\"\n  source: \"s\"\n  scope: [root]\n---\n\n# Body\ntext\n",
+      "error": ""
+    },
+    {
+      "name": "bool-false-license",
+      "inputs": [
+        "923cd855db3250e7093ab5cb20ea02fc727bd235d41dc2b88b5cb7d61841794d  dep.toml",
+        "92eed17314ecc52a7cf26d678a263703a938c11bbacbf186bb0c868fd594bbd6  SKILL.md"
+      ],
+      "out": "---\nname: d\ndescription: >\n  Does things\nlicense: Unknown\nmetadata:\n  author: \"upstream\"\n  version: \"1.0\"\n  source: \"s\"\n  scope: [root]\n---\n\n# Body\ntext\n",
+      "error": ""
+    },
+    {
+      "name": "bad-id",
+      "inputs": [
+        "3fa7c7f46bc351aead74263539f1ba02710f068ec871ccb7519df44c1cca9e0f  dep.toml",
+        "92eed17314ecc52a7cf26d678a263703a938c11bbacbf186bb0c868fd594bbd6  SKILL.md"
+      ],
+      "out": "",
+      "error": "name: must be lowercase kebab-case"
+    },
+    {
+      "name": "missing-id",
+      "inputs": [
+        "24c708e5bc20c4ccac8d81e0a9b835e1dd6b42b8b8bea1d7132c0e51c0d492b4  dep.toml",
+        "92eed17314ecc52a7cf26d678a263703a938c11bbacbf186bb0c868fd594bbd6  SKILL.md"
+      ],
+      "out": "",
+      "error": "id: is required"
+    },
+    {
+      "name": "blank-source",
+      "inputs": [
+        "2945ebdae1645e333a2fa2d5fe5e7bc826c954508935199d734ba7d9cef18573  dep.toml",
+        "92eed17314ecc52a7cf26d678a263703a938c11bbacbf186bb0c868fd594bbd6  SKILL.md"
+      ],
+      "out": "",
+      "error": "source: is required"
+    },
+    {
+      "name": "non-string-source",
+      "inputs": [
+        "989250fa88b1dc1e7b0319b3ccc8f22194f356cef8e480f5e9b2858a7a4092ab  dep.toml",
+        "92eed17314ecc52a7cf26d678a263703a938c11bbacbf186bb0c868fd594bbd6  SKILL.md"
+      ],
+      "out": "",
+      "error": "source: must be a string"
+    },
+    {
+      "name": "bad-version",
+      "inputs": [
+        "f13a975d6bef47468a9f1a598d6cda76f59597003608eadca1ea4705a58326b9  dep.toml",
+        "92eed17314ecc52a7cf26d678a263703a938c11bbacbf186bb0c868fd594bbd6  SKILL.md"
+      ],
+      "out": "",
+      "error": "metadata.version: must look like a semantic version (for example `1.0` or `1.0.0`)"
+    },
+    {
+      "name": "scope-non-list",
+      "inputs": [
+        "8e6db982f2799b39f03c288e86cd6b0c31a80cea75f38268e7ef3b47e3d1f5ba  dep.toml",
+        "92eed17314ecc52a7cf26d678a263703a938c11bbacbf186bb0c868fd594bbd6  SKILL.md"
+      ],
+      "out": "",
+      "error": "metadata.scope: must be a YAML list of strings"
+    },
+    {
+      "name": "scope-non-string-item",
+      "inputs": [
+        "dd2edea2adf284a7998ba117b204d3de1295b9bc2d8be99fa5e8efba1ecd0b81  dep.toml",
+        "92eed17314ecc52a7cf26d678a263703a938c11bbacbf186bb0c868fd594bbd6  SKILL.md"
+      ],
+      "out": "",
+      "error": "metadata.scope: must contain only strings"
+    },
+    {
+      "name": "scope-empty-item",
+      "inputs": [
+        "b381223bcc278dae6249dbda88a3e3e1936937e57397331ebffee9510bc371db  dep.toml",
+        "92eed17314ecc52a7cf26d678a263703a938c11bbacbf186bb0c868fd594bbd6  SKILL.md"
+      ],
+      "out": "",
+      "error": "metadata.scope: must not contain empty items"
+    },
+    {
+      "name": "bad-upstream-frontmatter",
+      "inputs": [
+        "1e5a4a8f297e638b425ab0271ee14db6e65907409572087059705abd8c64b585  dep.toml",
+        "d200633077461c44244af95a3be2695dc5dfe5fea1da34d2b42a21ba251c70a9  SKILL.md"
+      ],
+      "out": "",
+      "error": "frontmatter: unexpected indentation"
+    },
+    {
+      "name": "description-dot-space-tail",
+      "inputs": [
+        "1e5a4a8f297e638b425ab0271ee14db6e65907409572087059705abd8c64b585  dep.toml",
+        "cac3454d3bd27dee9177a51911a88266ba457386c9d5c14d104f69fd38e5b163  SKILL.md"
+      ],
+      "out": "---\nname: d\ndescription: >\n  Ends\nlicense: Unknown\nmetadata:\n  author: \"upstream\"\n  version: \"1.0\"\n  source: \"s\"\n  scope: [root]\n---\n\nb\n",
+      "error": ""
+    },
+    {
+      "name": "python-only-space",
+      "inputs": [
+        "43f394cf7750a3aecc16c6ec7f4df444c04bcce9a1a4fbe0261fcfd425b8b1a8  dep.toml",
+        "0fc546b8ed5e764567c0e4741a000a75b08f184b4c5155c481dc70d50ad7cc87  SKILL.md"
+      ],
+      "out": "---\nname: d\ndescription: >\n  Vendored from Org (see metadata.source)\nlicense: Unknown\nmetadata:\n  author: \"Org\"\n  version: \"1.0\"\n  source: \"s\"\n  vendor_attribution: \"Org\"\n  scope: [root]\n---\n",
+      "error": ""
+    },
+    {
+      "name": "multiline-attribution-frozen",
+      "inputs": [
+        "a7ee9e1556931469e8200bd6262d278aacdef84867f97e60ffbdac06c1923668  dep.toml",
+        "92eed17314ecc52a7cf26d678a263703a938c11bbacbf186bb0c868fd594bbd6  SKILL.md"
+      ],
+      "out": "---\nname: d\ndescription: >\n  Does things. Vendored from Line one\nline two (see metadata.source)\nlicense: Unknown\nmetadata:\n  author: \"Line one\nline two\"\n  version: \"1.0\"\n  source: \"s\"\n  vendor_attribution: \"Line one\nline two\"\n  scope: [root]\n---\n\n# Body\ntext\n",
+      "error": ""
+    },
+    {
+      "name": "unicode-space-strip",
+      "inputs": [
+        "915368c7b2d7b51b4dd28bc70ee6da0d4a0cf2d5e8e433ddddf7b447bd4d3524  dep.toml",
+        "9f046503a09d2bafba80400cdf79f3b04c8ed45dcacc3b2b1b8b899133954ffe  SKILL.md"
+      ],
+      "out": "---\nname: d\ndescription: >\n  Hi. Vendored from Org (see metadata.source)\nlicense: Unknown\nmetadata:\n  author: \"Org\"\n  version: \"1.0\"\n  source: \"s\"\n  vendor_attribution: \"Org\"\n  scope: [root]\n---\n\nb\n",
+      "error": ""
+    }
+  ]
+}

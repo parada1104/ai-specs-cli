@@ -1,41 +1,73 @@
 package skills
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/toml"
 )
 
-// vendoredOracle runs the REAL skill_contract.from_dep + render_skill_markdown
-// over deps[0] of a TOML file (tomllib, as vendor-skills.py's load_deps does)
-// and an upstream SKILL.md text.
-const vendoredOracle = `
-import importlib.util, json, sys, tomllib
-spec = importlib.util.spec_from_file_location("skill_contract_oracle", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-with open(sys.argv[2], "rb") as f:
-    dep = tomllib.load(f)["deps"][0]
-upstream = open(sys.argv[3], encoding="utf-8").read()
-try:
-    out = {"out": mod.render_skill_markdown(mod.from_dep(dep, upstream))}
-except mod.SkillContractError as exc:
-    out = {"error": str(exc)}
-print(json.dumps(out))
-`
+// The legacy vendored-skill oracle (lib/_internal/skill_contract.py from_dep +
+// render_skill_markdown over deps[0] of a TOML file, loaded with tomllib as
+// vendor-skills.py does) was captured once into
+// testdata/vendored_skill_golden.json. The test never execs python3 or reads
+// lib/. The golden is a snapshot: regenerating it needs a human decision.
 
-func TestVendoredSkillMarkdownDifferential(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	script := legacyModule(t, "skill_contract.py")
+const vendoredSkillGoldenPath = "testdata/vendored_skill_golden.json"
 
+type frozenVendoredCase struct {
+	Name   string   `json:"name"`
+	Inputs []string `json:"inputs"`
+	Out    string   `json:"out"`
+	Error  string   `json:"error"`
+}
+
+type frozenVendored struct {
+	Oracle map[string]any       `json:"oracle"`
+	Cases  []frozenVendoredCase `json:"cases"`
+}
+
+// expectedVendoredGoldenCases is the independent inventory of the frozen
+// bundle: deleting, duplicating or reordering a golden case fails before any
+// comparison runs.
+var expectedVendoredGoldenCases = []string{
+	"minimal",
+	"full-metadata",
+	"scalar-scope-and-auto",
+	"empty-lists-fall-back",
+	"no-frontmatter-upstream",
+	"empty-upstream",
+	"list-description",
+	"attribution-only",
+	"description-trailing-dots",
+	"numeric-version",
+	"int-version-invalid",
+	"numeric-license",
+	"bool-false-license",
+	"bad-id",
+	"missing-id",
+	"blank-source",
+	"non-string-source",
+	"bad-version",
+	"scope-non-list",
+	"scope-non-string-item",
+	"scope-empty-item",
+	"bad-upstream-frontmatter",
+	"description-dot-space-tail",
+	"python-only-space",
+	"multiline-attribution-frozen",
+	"unicode-space-strip",
+}
+
+type vendoredCase struct{ name, dep, upstream string }
+
+func vendoredCases() []vendoredCase {
 	full := "---\nname: up\ndescription: Does things. Trigger: when asked.\n---\n\n\n# Body\ntext\n"
-	cases := []struct{ name, dep, upstream string }{
+	return []vendoredCase{
 		{"minimal", `id = "my-dep"` + "\n" + `source = "https://x/y.git"`, full},
 		{"full-metadata", `id = "my-dep"
 source = "https://x/y.git"
@@ -85,22 +117,72 @@ vendor_attribution = "Line one\nline two"`, full},
 source = "s"
 vendor_attribution = "\u00a0Org\u2003"`, "---\ndescription: \u3000Hi\u00a0\n---\nb\n"},
 	}
+}
 
-	for _, tc := range cases {
+// corpusInputs pins the exact bytes a case feeds the oracle: the dep.toml the
+// test writes and the upstream SKILL.md text.
+func corpusInputs(t *testing.T, dir string) []string {
+	t.Helper()
+	lines := make([]string, 0, 2)
+	for _, name := range []string{"dep.toml", "SKILL.md"} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("read corpus input %s: %v", name, err)
+		}
+		sum := sha256.Sum256(data)
+		lines = append(lines, hex.EncodeToString(sum[:])+"  "+name)
+	}
+	return lines
+}
+
+func loadVendoredGolden(t *testing.T) frozenVendored {
+	t.Helper()
+	raw, err := os.ReadFile(vendoredSkillGoldenPath)
+	if err != nil {
+		t.Fatalf("read frozen oracle %s: %v", vendoredSkillGoldenPath, err)
+	}
+	var golden frozenVendored
+	if err := json.Unmarshal(raw, &golden); err != nil {
+		t.Fatalf("decode frozen oracle %s: %v", vendoredSkillGoldenPath, err)
+	}
+	return golden
+}
+
+// TestVendoredSkillMarkdownDifferential compares the Go port with the frozen
+// legacy oracle over every dep/upstream pair: rendered markdown, or the exact
+// SkillContractError message.
+func TestVendoredSkillMarkdownDifferential(t *testing.T) {
+	golden := loadVendoredGolden(t)
+	corpus := vendoredCases()
+
+	if len(corpus) != len(expectedVendoredGoldenCases) {
+		t.Fatalf("in-test corpus has %d cases, inventory %d", len(corpus), len(expectedVendoredGoldenCases))
+	}
+	if len(golden.Cases) != len(expectedVendoredGoldenCases) {
+		t.Fatalf("frozen oracle has %d cases, inventory %d", len(golden.Cases), len(expectedVendoredGoldenCases))
+	}
+	seen := map[string]bool{}
+	for i, want := range expectedVendoredGoldenCases {
+		if seen[want] {
+			t.Fatalf("inventory lists %q twice", want)
+		}
+		seen[want] = true
+		if golden.Cases[i].Name != want || corpus[i].name != want {
+			t.Fatalf("case %d: golden %q, corpus %q, inventory %q", i, golden.Cases[i].Name, corpus[i].name, want)
+		}
+	}
+
+	for i, tc := range corpus {
 		t.Run(tc.name, func(t *testing.T) {
+			frozen := golden.Cases[i]
 			dir := t.TempDir()
 			depPath := filepath.Join(dir, "dep.toml")
-			upPath := filepath.Join(dir, "SKILL.md")
 			writeFileT(t, depPath, "[[deps]]\n"+tc.dep+"\n")
-			writeFileT(t, upPath, tc.upstream)
+			writeFileT(t, filepath.Join(dir, "SKILL.md"), tc.upstream)
 
-			raw := runPythonStdout(t, "-c", vendoredOracle, script, depPath, upPath)
-			var legacy struct {
-				Out   *string `json:"out"`
-				Error *string `json:"error"`
-			}
-			if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
-				t.Fatalf("decode oracle: %v\n%s", err, raw)
+			gotInputs := corpusInputs(t, dir)
+			if len(gotInputs) != len(frozen.Inputs) || gotInputs[0] != frozen.Inputs[0] || gotInputs[1] != frozen.Inputs[1] {
+				t.Fatalf("%s: frozen inputs differ from the corpus: frozen %v, corpus %v", tc.name, frozen.Inputs, gotInputs)
 			}
 
 			data, err := os.ReadFile(depPath)
@@ -114,15 +196,17 @@ vendor_attribution = "\u00a0Org\u2003"`, "---\ndescription: \u3000Hi\u00a0\n---\
 			deps, _ := doc.Tables("deps")
 			got, gotErr := VendoredSkillMarkdown(deps[0], tc.upstream)
 
-			switch {
-			case legacy.Error != nil:
-				if gotErr == nil || gotErr.Error() != *legacy.Error {
-					t.Fatalf("error: port %v (out %q), legacy %q", gotErr, got, *legacy.Error)
+			if frozen.Error != "" {
+				if gotErr == nil || gotErr.Error() != frozen.Error {
+					t.Fatalf("error: port %v (out %q), legacy %q", gotErr, got, frozen.Error)
 				}
-			case gotErr != nil:
-				t.Fatalf("port error %v, legacy out %q", gotErr, *legacy.Out)
-			case got != *legacy.Out:
-				t.Fatalf("markdown:\n port   %q\n legacy %q", got, *legacy.Out)
+				return
+			}
+			if gotErr != nil {
+				t.Fatalf("port error %v, legacy out %q", gotErr, frozen.Out)
+			}
+			if got != frozen.Out {
+				t.Fatalf("markdown:\n port   %q\n legacy %q", got, frozen.Out)
 			}
 		})
 	}
