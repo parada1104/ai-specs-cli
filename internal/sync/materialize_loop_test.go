@@ -54,7 +54,6 @@ type materializeLoopScenario struct {
 	resolvedHooksOut  bool
 	refreshGates      bool
 	lockManaged       map[string]string // target -> sha256, seeded into the lock
-	addLibSymlink     bool              // provide <home>/lib -> repo lib for delegations
 }
 
 func materializeLoopRecipeBody(id, name, extra string) materializeLoopRecipe {
@@ -110,8 +109,12 @@ func materializeLoopProvision(t *testing.T, sc materializeLoopScenario, home, pr
 }
 
 // materializeLoopWriteStatic writes the parts of the scenario that survive both
-// legs: the catalog, the lib symlink the delegations resolve through, and the
-// dep source.
+// legs: the catalog and the dep source. The Python legs the bundle was
+// captured from also resolved delegations through <home>/lib, so the capture
+// harness symlinked the repo's lib/ in; the native legs never read <home>/lib
+// (only the diagnostic path spells below name it), so the fixture is not
+// reproduced here and every scenario runs identically with the repo lib/
+// absent.
 func materializeLoopWriteStatic(t *testing.T, sc materializeLoopScenario, home string) {
 	t.Helper()
 	for id, recipe := range sc.recipes {
@@ -131,15 +134,6 @@ func materializeLoopWriteStatic(t *testing.T, sc materializeLoopScenario, home s
 			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 				t.Fatalf("write recipe file %s: %v", rel, err)
 			}
-		}
-	}
-	if sc.addLibSymlink {
-		repoLib, err := filepath.Abs(filepath.Join("..", "..", "lib"))
-		if err != nil {
-			t.Fatalf("resolve repo lib: %v", err)
-		}
-		if err := os.Symlink(repoLib, filepath.Join(home, "lib")); err != nil {
-			t.Fatalf("symlink lib: %v", err)
 		}
 	}
 	for rel, content := range sc.depSource {
@@ -517,11 +511,10 @@ url = "__DEP_SRC__"
 			resolvedHooksOut: true,
 		},
 		{
-			name:          "dep skill through the documented delegation",
-			recipes:       map[string]materializeLoopRecipe{"alpha": depRecipe},
-			manifest:      "[recipes.alpha]\nenabled = true\n",
-			addLibSymlink: true,
-			depSource:     map[string]string{"SKILL.md": "# dep1\n\nbody\n", "assets/x.txt": "x\n"},
+			name:      "dep skill through the documented delegation",
+			recipes:   map[string]materializeLoopRecipe{"alpha": depRecipe},
+			manifest:  "[recipes.alpha]\nenabled = true\n",
+			depSource: map[string]string{"SKILL.md": "# dep1\n\nbody\n", "assets/x.txt": "x\n"},
 		},
 		{
 			name:         "execute_hooks failure fails the sync with the fatal line",
@@ -530,11 +523,10 @@ url = "__DEP_SRC__"
 			recipeMCPOut: false,
 		},
 		{
-			name:          "worktree-flow gate acquisition degrades offline",
-			recipes:       map[string]materializeLoopRecipe{"worktree-flow": gateRecipe},
-			manifest:      "[recipes.worktree-flow]\nenabled = true\n",
-			addLibSymlink: true,
-			recipeMCPOut:  true,
+			name:         "worktree-flow gate acquisition degrades offline",
+			recipes:      map[string]materializeLoopRecipe{"worktree-flow": gateRecipe},
+			manifest:     "[recipes.worktree-flow]\nenabled = true\n",
+			recipeMCPOut: true,
 		},
 	}
 }

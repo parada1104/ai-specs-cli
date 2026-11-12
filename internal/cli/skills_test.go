@@ -20,17 +20,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"slices"
 	"sort"
 	"strings"
-	"sync"
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/projectcache"
@@ -647,11 +644,10 @@ func tailOf(s string, n int) string {
 
 // skillsRemoveEnv is skillsListEnv's pinning plus a WORKTREE_GATE_BIN pin (a
 // freshly built worktree-gate, or "" to strip any inherited value). It is
-// shared read-only with recipe_test.go, whose live shell legs write their lock
-// through the gate's `--write-lock` bridge; the frozen skills tables only ever
-// pass "", because the bundles were captured with the bridge pinned and the
-// native legs never print its fail-open GO_LOCK_WRITE_BRIDGE_FALLBACK warning
-// (same rationale as internal/sync/materialize_test.go).
+// shared read-only with recipe_test.go; every caller passes "" because the
+// bundles were captured with the bridge pinned and the native legs never print
+// its fail-open GO_LOCK_WRITE_BRIDGE_FALLBACK warning (same rationale as
+// internal/sync/materialize_test.go).
 func skillsRemoveEnv(home, gate string) []string {
 	env := skillsListEnv(home)
 	out := env[:0]
@@ -665,68 +661,6 @@ func skillsRemoveEnv(home, gate string) []string {
 		out = append(out, "WORKTREE_GATE_BIN="+gate)
 	}
 	return out
-}
-
-var (
-	skillsRemoveGateOnce sync.Once
-	skillsRemoveGatePath string
-	skillsRemoveGateErr  error
-)
-
-// skillsRemoveGateBinary builds the worktree-gate binary once per test run
-// (the gate module ships no external dependencies, so the build needs no
-// network) and returns its path. An unavailable build skips LOUDLY: without
-// the pinned bridge the shell leg's lock write is the fail-open fallback and
-// no byte comparison of the lock step is possible.
-func skillsRemoveGateBinary(t *testing.T) string {
-	t.Helper()
-	skillsRemoveGateOnce.Do(func() {
-		module, err := filepath.Abs(filepath.Join("..", "..", "catalog", "recipes", "worktree-flow", "gate"))
-		if err != nil {
-			skillsRemoveGateErr = err
-			return
-		}
-		dir, err := os.MkdirTemp("", "skills-remove-gate-")
-		if err != nil {
-			skillsRemoveGateErr = err
-			return
-		}
-		out := filepath.Join(dir, "worktree-gate")
-		cmd := exec.Command("go", "build", "-o", out, ".")
-		cmd.Dir = module
-		cmd.Env = os.Environ()
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			skillsRemoveGateErr = fmt.Errorf("go build worktree-gate: %v: %s", err, stderr.String())
-			return
-		}
-		skillsRemoveGatePath = out
-	})
-	if skillsRemoveGateErr != nil {
-		t.Skipf("worktree-gate build unavailable (the shell leg's lock write needs it pinned through WORKTREE_GATE_BIN): %v", skillsRemoveGateErr)
-	}
-	return skillsRemoveGatePath
-}
-
-// skillsOracle skips LOUDLY when python3 cannot import tomllib: the legacy
-// script's manifest and lock heredocs import it (Python ≥3.11), so on a
-// machine whose python3 is older the LEGACY route itself crashes and there is
-// no oracle to compare against — an environment gap, never a port defect.
-// Same probe, same message shape as the U5a table; script names the legacy
-// route this differential runs. Shared read-only with recipe_test.go, whose
-// live differentials still run the shell legs.
-func skillsOracle(t *testing.T, script string) {
-	t.Helper()
-	python3, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skipf("python3 unavailable (the shell leg parses TOML with it): %v", err)
-	}
-	probe := exec.Command(python3, "-c", "import tomllib")
-	probe.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	if out, perr := probe.CombinedOutput(); perr != nil {
-		t.Skipf("python3 CANNOT import tomllib, so %s cannot run and the differential oracle is unavailable — probe `python3 -c 'import tomllib'` said %v: %s (run with a Python ≥3.11 on PATH, e.g. PATH=/tmp/pybin:$PATH go test ./internal/cli/)", script, perr, out)
-	}
 }
 
 // The fixture manifests and locks the remove cases start from.
@@ -808,18 +742,6 @@ func buildRemoveFixture(t *testing.T, name, proj string) {
 	default:
 		t.Fatalf("unknown remove fixture %q", name)
 	}
-}
-
-// skillsProjectTree snapshots a project and rebases the keys on the project
-// root, so two twin projects in different temp dirs compare directly. Shared
-// read-only with recipe_test.go, whose twin-project differentials still use it.
-func skillsProjectTree(t *testing.T, proj string) map[string]string {
-	t.Helper()
-	out := map[string]string{}
-	for key, marker := range skillsTreeSnapshot(t, proj) {
-		out[strings.TrimPrefix(key, proj+string(filepath.Separator))] = marker
-	}
-	return out
 }
 
 // skillsRemoveGoldenCases is the hard-coded identity inventory of the frozen
