@@ -1,9 +1,8 @@
 package sync
 
 import (
-	"bytes"
+	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -130,34 +129,79 @@ func TestBriefRenderPolicyMissingFile(t *testing.T) {
 	}
 }
 
-// runPythonBriefPolicy runs the REAL brief-render-policy.py and returns its
-// stdout, stderr and exit code — the oracle for the native policy core.
-func runPythonBriefPolicy(t *testing.T, root, tomlPath string, validate bool) (string, string, int) {
+// The legacy brief-render-policy.py oracle was captured once into
+// testdata/briefpolicy_golden.json: per case and per mode, the exit code and
+// stdout byte for byte, plus the legacy stderr text with the temporary
+// directory tokenized as <DIR> (the only host-dependent part of the payload).
+// The test never execs python3 or reads lib/. The golden is a snapshot:
+// regenerating it needs a human decision.
+const briefPolicyGoldenFile = "briefpolicy_golden.json"
+
+// briefPolicyGoldenCases is the hard-coded identity inventory of the frozen
+// bundle: the exact case names in capture order. It is an independent oracle of
+// coverage — kept in the test, never derived from the bundle — so a bundle that
+// is missing, renamed, duplicated or reordered cannot validate silently.
+var briefPolicyGoldenCases = []string{
+	"missing brief table",
+	"render true",
+	"render false",
+	"invalid type",
+	"bad toml",
+	"missing manifest",
+}
+
+// briefPolicyGoldenModes is the per-case record order: the default gate first,
+// then --validate.
+var briefPolicyGoldenModes = []string{"default", "validate"}
+
+// briefPolicyGoldenMode is one frozen legacy invocation: exit code, stdout and
+// stderr exactly as brief-render-policy.py produced them.
+type briefPolicyGoldenMode struct {
+	Mode   string `json:"mode"`
+	RC     int    `json:"rc"`
+	Stdout string `json:"stdout"`
+	Stderr string `json:"stderr"`
+}
+
+// briefPolicyGoldenCase is one frozen manifest the sync gate can meet, with the
+// manifest pinned so input drift fails as input drift.
+type briefPolicyGoldenCase struct {
+	Name     string                  `json:"name"`
+	Manifest string                  `json:"manifest"`
+	Missing  bool                    `json:"missing"`
+	Modes    []briefPolicyGoldenMode `json:"modes"`
+}
+
+// loadBriefPolicyGolden reads the frozen bundle and validates its identity
+// inventory and oracle metadata before any comparison runs.
+func loadBriefPolicyGolden(t *testing.T) []briefPolicyGoldenCase {
 	t.Helper()
-	script := filepath.Join(root, "lib", "_internal", "brief-render-policy.py")
-	args := []string{script, tomlPath}
-	if validate {
-		args = append(args, "--validate")
+	var bundle struct {
+		Oracle map[string]string       `json:"oracle"`
+		Cases  []briefPolicyGoldenCase `json:"cases"`
 	}
-	cmd := exec.Command("python3", args...)
-	var out, errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	rc := 0
-	if err := cmd.Run(); err != nil {
-		exitErr, ok := err.(*exec.ExitError)
-		if !ok {
-			t.Fatalf("run brief-render-policy.py: %v", err)
+	if err := json.Unmarshal(readGoldenBundle(t, briefPolicyGoldenFile), &bundle); err != nil {
+		t.Fatalf("parse frozen oracle %s: %v", briefPolicyGoldenFile, err)
+	}
+	if bundle.Oracle["python"] == "" {
+		t.Fatalf("frozen oracle %s carries no python version metadata", briefPolicyGoldenFile)
+	}
+	names := make([]string, len(bundle.Cases))
+	for i, rec := range bundle.Cases {
+		names[i] = rec.Name
+		if len(rec.Modes) != len(briefPolicyGoldenModes) {
+			t.Fatalf("frozen record %q has %d modes, want %d", rec.Name, len(rec.Modes), len(briefPolicyGoldenModes))
 		}
-		rc = exitErr.ExitCode()
 	}
-	return out.String(), errBuf.String(), rc
+	validateGoldenIdentity(t, "briefpolicy", names, briefPolicyGoldenCases)
+	return bundle.Cases
 }
 
 // TestBriefRenderPolicyDifferential compares the native policy core against the
-// REAL brief-render-policy.py for every fixture the sync gate can meet: a
-// missing [brief] table, render = true, render = false, an invalid type, bad
-// TOML, and a missing manifest. Exit code and stdout must match byte for byte.
+// frozen legacy oracle for every fixture the sync gate can meet: a missing
+// [brief] table, render = true, render = false, an invalid type, bad TOML, and a
+// missing manifest, each through the default and the --validate mode. Exit code
+// and stdout must match byte for byte.
 //
 // stderr is compared only as a class, not byte-wise: the two interpreters word
 // the underlying error differently (Python's `[Errno 2] ...` / tomllib message
@@ -165,10 +209,7 @@ func runPythonBriefPolicy(t *testing.T, root, tomlPath string, validate bool) (s
 // the contract sync observes — the exit code is ignored and the gate is the
 // stdout verdict alone (D3). Recorded, not fixed, like L6's parse divergence.
 func TestBriefRenderPolicyDifferential(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	root := gitignoreRepoRoot(t)
+	frozen := loadBriefPolicyGolden(t)
 
 	cases := []struct {
 		name     string
@@ -183,12 +224,25 @@ func TestBriefRenderPolicyDifferential(t *testing.T) {
 		{name: "missing manifest", missing: true},
 	}
 
-	for _, tc := range cases {
-		for _, validate := range []bool{false, true} {
-			mode := "default"
-			if validate {
-				mode = "validate"
+	if len(cases) != len(briefPolicyGoldenCases) {
+		t.Fatalf("in-test corpus has %d cases, inventory %d", len(cases), len(briefPolicyGoldenCases))
+	}
+
+	for i, tc := range cases {
+		if tc.name != briefPolicyGoldenCases[i] {
+			t.Fatalf("corpus case %d is %q, inventory %q", i, tc.name, briefPolicyGoldenCases[i])
+		}
+		rec := frozen[i]
+		if rec.Missing != tc.missing || rec.Manifest != tc.manifest {
+			t.Fatalf("frozen inputs differ from the corpus for %q:\n--- frozen ---\nmissing=%t %q\n--- corpus ---\nmissing=%t %q",
+				tc.name, rec.Missing, rec.Manifest, tc.missing, tc.manifest)
+		}
+		for j, mode := range briefPolicyGoldenModes {
+			want := rec.Modes[j]
+			if want.Mode != mode {
+				t.Fatalf("frozen record %q mode %d is %q, want %q", tc.name, j, want.Mode, mode)
 			}
+			validate := mode == "validate"
 			t.Run(tc.name+"/"+mode, func(t *testing.T) {
 				path := filepath.Join(t.TempDir(), "ai-specs.toml")
 				if !tc.missing {
@@ -197,25 +251,22 @@ func TestBriefRenderPolicyDifferential(t *testing.T) {
 					}
 				}
 
-				wantOut, wantErr, wantRC := runPythonBriefPolicy(t, root, path, validate)
 				gotOut, gotErr, gotRC := goBriefPolicy(t, path, validate)
 
-				if gotRC != wantRC {
-					t.Errorf("rc: go=%d python=%d (stderr go=%q python=%q)", gotRC, wantRC, gotErr, wantErr)
+				if gotRC != want.RC {
+					t.Errorf("rc: go=%d frozen=%d (frozen stderr %q)", gotRC, want.RC, want.Stderr)
 				}
-				if gotOut != wantOut {
-					t.Errorf("stdout:\n  go: %q\npython: %q", gotOut, wantOut)
+				if gotOut != want.Stdout {
+					t.Errorf("stdout:\n  go: %q\nfrozen: %q", gotOut, want.Stdout)
 				}
 				// stderr: both empty on success; on failure both report one
 				// `error: ` line whose wording the interpreters differ on.
-				if wantErr == "" {
+				if want.Stderr == "" {
 					if gotErr != "" {
-						t.Errorf("stderr: go=%q, python=%q (want empty)", gotErr, wantErr)
+						t.Errorf("stderr: go=%q, want empty (frozen %q)", gotErr, want.Stderr)
 					}
-				} else {
-					if !strings.HasPrefix(gotErr, "error: ") || !strings.HasPrefix(wantErr, "error: ") {
-						t.Errorf("stderr shape:\n  go: %q\npython: %q", gotErr, wantErr)
-					}
+				} else if !strings.HasPrefix(gotErr, "error: ") {
+					t.Errorf("stderr shape:\n  go: %q\nfrozen: %q", gotErr, want.Stderr)
 				}
 				// The policy only reads: the manifest must be untouched.
 				if !tc.missing {
