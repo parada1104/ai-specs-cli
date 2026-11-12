@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"ai-specs.dev/ai-specs/internal/toml"
 	"ai-specs.dev/worktree-gate/shared"
 )
 
@@ -206,4 +208,61 @@ default = "build"
 			t.Fatalf("empty plan JSON = %s (%v), want []", b, err)
 		}
 	})
+}
+
+// TestStampReconcileDefaultsWarnsPerRecipeAndContinues pins the native writer
+// failure contract: a manifest write that refuses for ONE recipe warns once,
+// verbatim, naming the recipe by its [recipe].name, and the remaining planned
+// stamps still land. The stamp step never fails the sync. This is the native
+// twin of the retired Python bridge's per-recipe writer-failure case (an
+// injected OSError there; here the writer's own multiline refusal for beta).
+func TestStampReconcileDefaultsWarnsPerRecipeAndContinues(t *testing.T) {
+	catalog := t.TempDir()
+	writeSyncCatalogRecipe(t, catalog, "alpha", materializeReconcileRecipe("alpha", "Alpha"))
+	writeSyncCatalogRecipe(t, catalog, "beta", materializeReconcileRecipe("beta", "Beta"))
+
+	manifestPath := filepath.Join(t.TempDir(), "ai-specs", "ai-specs.toml")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// beta's stamped `reconcile` key already holds a multiline value, which the
+	// shared writer refuses to replace; alpha is a plain first stamp.
+	seed := "[recipes.alpha]\nenabled = true\n\n[recipes.beta]\nenabled = true\n\n" +
+		"[recipes.beta.config]\nreconcile = \"\"\"stale\nmultiline\n\"\"\"\n"
+	if err := os.WriteFile(manifestPath, []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := stampReconcileDefaults(manifestPath, catalog, []string{"alpha", "beta"}, &stderr); err != nil {
+		t.Fatalf("a per-recipe writer failure must never fail the stamp step: %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("the stamp step prints nothing on stdout, got %q", stdout.String())
+	}
+	wantWarning := "  ! recipe 'Beta': reconcile defaults not stamped (RuntimeError: cannot replace multiline value for key 'reconcile')\n"
+	if got := stderr.String(); got != wantWarning {
+		t.Errorf("stderr = %q, want %q", got, wantWarning)
+	}
+
+	final, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(final), "reconcile = \"\"\"stale\nmultiline\n\"\"\"") {
+		t.Errorf("the refused recipe's own bytes must survive untouched:\n%s", final)
+	}
+	manifest, err := toml.Parse(final)
+	if err != nil {
+		t.Fatalf("parse stamped manifest: %v", err)
+	}
+	recipes, _ := manifest.Table("recipes")
+	alpha, _ := recipes.Table("alpha")
+	config, _ := alpha.Table("config")
+	if got, _ := config.Get("workflow"); got != "feature" {
+		t.Errorf("alpha workflow = %v, want the surviving stamp's feature", got)
+	}
+	if got, _ := config.Get("base_branch"); got != "main" {
+		t.Errorf("alpha base_branch = %v, want the surviving stamp's main", got)
+	}
 }
