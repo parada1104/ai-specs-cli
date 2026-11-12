@@ -2,13 +2,15 @@ package sync
 
 // Contract tests for the native sync-agent fan-out port (epic [Go 07.S15]).
 //
-// The oracle is lib/sync-agent.sh at the frozen revision and, for the
-// platform.sh matrix, the frozen bundle testdata/platform_sh_golden.json
-// (lib/_internal/platform.sh @ f798526, blob c03817f1): source-structure
-// constants (cd line numbers, the usage heredoc) are pinned by reading the
-// shell file, and the behavioral semantics (symlink kinds, refusals, D3/D22/
-// D24, banner/footer framing) are pinned through the same entry points the CLI
-// route uses.
+// The oracle is lib/sync-agent.sh at the frozen revision: its source-structure
+// facts (the two cd line numbers and the usage heredoc) live in the frozen
+// bundle testdata/sync_agent_sh_golden.json (lib/sync-agent.sh @ fba37a4, blob
+// 9c6c4133), and the platform.sh matrix reads the frozen bundle
+// testdata/platform_sh_golden.json (lib/_internal/platform.sh @ f798526, blob
+// c03817f1). No test reads lib/ live, so deleting the shell tree cannot turn a
+// pin into a silent skip. The behavioral semantics (symlink kinds, refusals,
+// D3/D22/D24, banner/footer framing) are pinned through the same entry points
+// the CLI route uses.
 // Python-dependent paths (standalone target resolution, the materialize
 // seams) are gated on python3 like the rest of the port's differentials.
 
@@ -28,38 +30,95 @@ import (
 
 // ── Source-structure pins ─────────────────────────────────────────────────
 
-func syncAgentScript(t *testing.T) string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "..", "lib", "sync-agent.sh"))
-	if err != nil {
-		t.Skipf("lib/sync-agent.sh not available: %v", err)
+// syncAgentShGoldenFile is the frozen oracle for the source-structure facts of
+// lib/sync-agent.sh at base fba37a4 (git blob 9c6c4133): the two cd statements
+// with the 1-based line bash reports, and the byte-exact usage heredoc body.
+// The shell file is deleted in PR4b, so the facts the pins consume live here.
+const syncAgentShGoldenFile = "sync_agent_sh_golden.json"
+
+// syncAgentShGoldenPinNames is the hard-coded identity inventory of the frozen
+// sync-agent.sh bundle: the two cd statements and the usage heredoc.
+var syncAgentShGoldenPinNames = []string{
+	"cd_line_target", "cd_line_source", "usage_heredoc",
+}
+
+// syncAgentShGoldenPin is one frozen fact: a cd statement with its line, or
+// the usage heredoc body.
+type syncAgentShGoldenPin struct {
+	Name   string `json:"name"`
+	Needle string `json:"needle,omitempty"`
+	Line   int    `json:"line,omitempty"`
+	Text   string `json:"text,omitempty"`
+}
+
+// carriesItsOwnPayload says whether the pin holds the facts its name promises:
+// a cd pin freezes its statement and line, the usage pin the heredoc body.
+func (p syncAgentShGoldenPin) carriesItsOwnPayload() bool {
+	if p.Name == "usage_heredoc" {
+		return p.Text != "" && p.Needle == "" && p.Line == 0
 	}
-	return string(data)
+	return p.Needle != "" && p.Line > 0 && p.Text == ""
+}
+
+// syncAgentShGolden is the shape of the frozen bundle.
+type syncAgentShGolden struct {
+	Oracle map[string]string      `json:"oracle"`
+	Pins   []syncAgentShGoldenPin `json:"pins"`
+}
+
+// loadSyncAgentShGolden validates the frozen oracle's metadata and pin
+// inventory before any comparison runs, then indexes the pins by name. A
+// missing bundle fails; it never skips.
+func loadSyncAgentShGolden(t *testing.T) map[string]syncAgentShGoldenPin {
+	t.Helper()
+	raw := readGoldenBundle(t, syncAgentShGoldenFile)
+	for _, leak := range []string{"/Users/", "/private/", "/var/folders"} {
+		if strings.Contains(string(raw), leak) {
+			t.Fatalf("frozen oracle %s leaks the host path segment %q", syncAgentShGoldenFile, leak)
+		}
+	}
+	var bundle syncAgentShGolden
+	if err := json.Unmarshal(raw, &bundle); err != nil {
+		t.Fatalf("parse frozen oracle %s: %v", syncAgentShGoldenFile, err)
+	}
+	for _, key := range []string{"source", "blob", "base", "driver", "note"} {
+		if bundle.Oracle[key] == "" {
+			t.Fatalf("frozen oracle %s carries no %s metadata", syncAgentShGoldenFile, key)
+		}
+	}
+	if bundle.Oracle["source"] != "lib/sync-agent.sh" {
+		t.Fatalf("frozen oracle %s names source %q, want lib/sync-agent.sh", syncAgentShGoldenFile, bundle.Oracle["source"])
+	}
+	names := make([]string, len(bundle.Pins))
+	for i, pin := range bundle.Pins {
+		names[i] = pin.Name
+	}
+	validateGoldenIdentity(t, "sync-agent.sh", names, syncAgentShGoldenPinNames)
+	pins := make(map[string]syncAgentShGoldenPin, len(bundle.Pins))
+	for _, pin := range bundle.Pins {
+		// A record missing its own payload is a capture mistake, not an oracle.
+		if !pin.carriesItsOwnPayload() {
+			t.Fatalf("frozen pin %q carries the wrong payload shape", pin.Name)
+		}
+		pins[pin.Name] = pin
+	}
+	return pins
 }
 
 // TestSyncAgentCDLineMatchesShellSource pins the two cd line numbers bash
 // reports in its failing-cd diagnostic (lib/sync-agent.sh:108/:110).
 func TestSyncAgentCDLineMatchesShellSource(t *testing.T) {
-	src := syncAgentScript(t)
+	pins := loadSyncAgentShGolden(t)
 	for _, tc := range []struct {
-		name   string
-		needle string
-		pin    int
+		name string
+		pin  int
 	}{
-		{"target", `TARGET_PATH="$(cd "$TARGET_PATH" && pwd)"`, syncAgentCDLineTarget},
-		{"source", `SOURCE_ROOT="$(cd "$SOURCE_ROOT" && pwd)"`, syncAgentCDLineSource},
+		{"cd_line_target", syncAgentCDLineTarget},
+		{"cd_line_source", syncAgentCDLineSource},
 	} {
-		found := 0
-		for i, line := range strings.Split(src, "\n") {
-			if strings.Contains(line, tc.needle) {
-				found = i + 1
-			}
-		}
-		if found == 0 {
-			t.Fatalf("%s: could not locate the cd statement in lib/sync-agent.sh", tc.name)
-		}
-		if found != tc.pin {
-			t.Errorf("%s: pinned line %d, but lib/sync-agent.sh:%d has the statement", tc.name, tc.pin, found)
+		frozen := pins[tc.name]
+		if frozen.Line != tc.pin {
+			t.Errorf("%s: pinned line %d, but the frozen lib/sync-agent.sh:%d carries %s", tc.name, tc.pin, frozen.Line, frozen.Needle)
 		}
 	}
 }
@@ -67,19 +126,9 @@ func TestSyncAgentCDLineMatchesShellSource(t *testing.T) {
 // TestSyncAgentUsageMatchesShellHeredoc pins the byte-exact usage() body to
 // the quoted heredoc in lib/sync-agent.sh.
 func TestSyncAgentUsageMatchesShellHeredoc(t *testing.T) {
-	src := syncAgentScript(t)
-	start := strings.Index(src, "<<'EOF'\n")
-	if start < 0 {
-		t.Fatalf("usage heredoc not found in lib/sync-agent.sh")
-	}
-	body := src[start+len("<<'EOF'\n"):]
-	end := strings.Index(body, "\nEOF\n")
-	if end < 0 {
-		t.Fatalf("usage heredoc terminator not found in lib/sync-agent.sh")
-	}
-	want := body[:end+1] // include the trailing newline of the last line
-	if syncAgentUsage != want {
-		t.Errorf("syncAgentUsage drifts from the lib/sync-agent.sh heredoc\n--- pinned heredoc ---\n%s--- go constant ---\n%s", want, syncAgentUsage)
+	pin := loadSyncAgentShGolden(t)["usage_heredoc"]
+	if syncAgentUsage != pin.Text {
+		t.Errorf("syncAgentUsage drifts from the frozen lib/sync-agent.sh heredoc\n--- pinned heredoc ---\n%s--- go constant ---\n%s", pin.Text, syncAgentUsage)
 	}
 }
 
