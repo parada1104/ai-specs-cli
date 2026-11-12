@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -238,6 +239,11 @@ func loadFlattenGolden(t *testing.T) frozenFlatten {
 // that the port replaces with one "error:" line, so stderr is not frozen
 // there). Inputs are pinned by a manifest so corpus drift fails as input drift.
 func TestFlattenDifferential(t *testing.T) {
+	// The frozen snapshot carries the modes the run creates (umask-derived), so
+	// pin the process umask: umask is process-wide, and no test here is parallel.
+	old := syscall.Umask(0o022)
+	t.Cleanup(func() { syscall.Umask(old) })
+
 	golden := loadFlattenGolden(t)
 	corpus := flattenCases()
 
