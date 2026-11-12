@@ -13,9 +13,9 @@ package sync
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -394,70 +394,180 @@ func TestEnvScaffoldWarningsSortedAndNonFatal(t *testing.T) {
 	}
 }
 
-// Differential against the Python authority: twin workspaces with the same
-// manifest and the same catalog, one driven by
-// `python3 lib/_internal/env_scaffold.py <root>` and one by the native step,
-// compared on exit code, stdout, stderr and the produced file bytes.
-func TestEnvScaffoldMatchesPythonAuthority(t *testing.T) {
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skipf("python3 not available: %v", err)
-	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatalf("repo root: %v", err)
-	}
-	authority := filepath.Join(repoRoot, "lib", "_internal", "env_scaffold.py")
-	if _, err := os.Stat(authority); err != nil {
-		t.Skipf("env_scaffold.py not available under %s: %v", repoRoot, err)
-	}
+// The legacy env_scaffold.py main() oracle was captured once into
+// testdata/envscaffold_golden.json: per fixture, the fixture inputs, the exit
+// code, stdout (the `Wrote <path>` line, with the temporary project root
+// tokenized as <ROOT>) and the produced file bytes under root-relative paths.
+// The test never execs python3 or reads lib/. The golden is a snapshot:
+// regenerating it needs a human decision.
+const envScaffoldGoldenFile = "envscaffold_golden.json"
 
-	rootA, homeA := newEnvScaffoldWorkspace(t, "env-fixture", envFixtureRecipe, true)
-	rootB, homeB := newEnvScaffoldWorkspace(t, "env-fixture", envFixtureRecipe, true)
+// envScaffoldGoldenCases is the hard-coded identity inventory of the frozen
+// bundle: the exact case names in capture order. It is an independent oracle of
+// coverage — kept in the test, never derived from the bundle — so a bundle that
+// is missing, renamed, duplicated or reordered cannot validate silently.
+var envScaffoldGoldenCases = []string{
+	"presets recipe enabled",
+}
 
-	// Python route: the module reads its catalog from AI_SPECS_HOME, exactly
-	// like the sync child environment pins it.
-	cmd := exec.Command(python, authority, rootA)
-	cmd.Env = append(
-		dropEnv(dropEnv(os.Environ(), "AI_SPECS_HOME"), "PYTHONDONTWRITEBYTECODE"),
-		"AI_SPECS_HOME="+homeA,
-		"PYTHONDONTWRITEBYTECODE=1",
-	)
-	var pyOut, pyErr bytes.Buffer
-	cmd.Stdout = &pyOut
-	cmd.Stderr = &pyErr
-	pyRC := runExitCode(cmd, &pyErr, python)
+// envScaffoldGoldenFiles is the hard-coded inventory of what the step writes:
+// the example template and the root .envrc, in sorted root-relative order. A
+// file the step stops producing, or starts producing, fails here.
+var envScaffoldGoldenFiles = []string{".envrc", "ai-specs.env.example"}
 
-	// Native route.
-	goRC, goOut, goErr := runEnvStep(t, rootB, homeB)
+// envScaffoldGoldenFile is one frozen produced file, pinned as a root-relative
+// path plus its bytes.
+type envScaffoldGoldenFileRecord struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
 
-	resA := envEvalPath(t, rootA)
-	resB := envEvalPath(t, rootB)
-	// The two roots differ only in path; normalize the Python stdout's
-	// resolved root to the Go side's resolved root before comparing.
-	wantOut := strings.ReplaceAll(pyOut.String(), resA, resB)
+// envScaffoldGoldenCase is one frozen fixture: the inputs pinned so drift fails
+// as input drift, plus the legacy exit code, stdout, stderr and produced files.
+// No file mode or mtime is frozen: the payload carries neither.
+type envScaffoldGoldenCase struct {
+	Name       string                        `json:"name"`
+	RecipeID   string                        `json:"recipe_id"`
+	RecipeBody string                        `json:"recipe_body"`
+	Enabled    bool                          `json:"enabled"`
+	Manifest   string                        `json:"manifest"`
+	RC         int                           `json:"rc"`
+	Stdout     string                        `json:"stdout"`
+	Stderr     string                        `json:"stderr"`
+	Files      []envScaffoldGoldenFileRecord `json:"files"`
+}
 
-	if pyRC != goRC {
-		t.Errorf("exit code: python = %d, go = %d", pyRC, goRC)
+// loadEnvScaffoldGolden reads the frozen bundle and validates its identity
+// inventory, its oracle metadata and the root-relative shape of every frozen
+// path before any comparison runs.
+func loadEnvScaffoldGolden(t *testing.T) []envScaffoldGoldenCase {
+	t.Helper()
+	var bundle struct {
+		Oracle map[string]string       `json:"oracle"`
+		Cases  []envScaffoldGoldenCase `json:"cases"`
 	}
-	if goOut != wantOut {
-		t.Errorf("stdout: go = %q, python = %q", goOut, wantOut)
+	if err := json.Unmarshal(readGoldenBundle(t, envScaffoldGoldenFile), &bundle); err != nil {
+		t.Fatalf("parse frozen oracle %s: %v", envScaffoldGoldenFile, err)
 	}
-	if goErr != pyErr.String() {
-		t.Errorf("stderr: go = %q, python = %q", goErr, pyErr.String())
+	if bundle.Oracle["python"] == "" {
+		t.Fatalf("frozen oracle %s carries no python version metadata", envScaffoldGoldenFile)
 	}
-	for _, name := range []string{"ai-specs.env.example", ".envrc"} {
-		pyBytes, err := os.ReadFile(filepath.Join(rootA, name))
+	names := make([]string, len(bundle.Cases))
+	for i, rec := range bundle.Cases {
+		names[i] = rec.Name
+		for _, file := range rec.Files {
+			if filepath.IsAbs(file.Path) || strings.HasPrefix(file.Path, "..") {
+				t.Fatalf("frozen record %q file path %q must be root-relative", rec.Name, file.Path)
+			}
+		}
+	}
+	validateGoldenIdentity(t, "envscaffold", names, envScaffoldGoldenCases)
+	return bundle.Cases
+}
+
+// envScaffoldProducedFiles lists, as sorted root-relative paths, the files the
+// step wrote under root. The manifest is the fixture's own input — frozen
+// separately as the case's "manifest" — so it is not a produced file.
+func envScaffoldProducedFiles(t *testing.T, root string) []string {
+	t.Helper()
+	paths := make([]string, 0, len(envScaffoldGoldenFiles))
+	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
 		if err != nil {
-			t.Fatalf("python-produced %s: %v", name, err)
+			return err
 		}
-		goBytes, err := os.ReadFile(filepath.Join(rootB, name))
-		if err != nil {
-			t.Fatalf("go-produced %s: %v", name, err)
+		rel = filepath.ToSlash(rel)
+		if rel != "ai-specs/ai-specs.toml" {
+			paths = append(paths, rel)
 		}
-		if !bytes.Equal(goBytes, pyBytes) {
-			t.Errorf("%s differs:\npython:\n%q\ngo:\n%q", name, string(pyBytes), string(goBytes))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	slices.Sort(paths)
+	return paths
+}
+
+// TestEnvScaffoldDifferential compares the native env step against the frozen
+// legacy oracle for the fixture the step's differential used: a project whose
+// manifest enables a presets-bearing catalog recipe. Exit code, stdout and
+// stderr must match the frozen bytes, and the produced example and root .envrc
+// must match the frozen file bytes with nothing else written.
+//
+// stdout carries the only host-dependent value in the payload, the resolved
+// project root in `Wrote <root>/ai-specs.env.example`; it is tokenized as
+// <ROOT> on both sides before the byte comparison.
+func TestEnvScaffoldDifferential(t *testing.T) {
+	frozen := loadEnvScaffoldGolden(t)
+
+	cases := []struct {
+		name       string
+		recipeID   string
+		recipeBody string
+		enabled    bool
+	}{
+		{name: "presets recipe enabled", recipeID: "env-fixture", recipeBody: envFixtureRecipe, enabled: true},
+	}
+
+	if len(cases) != len(envScaffoldGoldenCases) {
+		t.Fatalf("in-test corpus has %d cases, inventory %d", len(cases), len(envScaffoldGoldenCases))
+	}
+
+	for i, tc := range cases {
+		if tc.name != envScaffoldGoldenCases[i] {
+			t.Fatalf("corpus case %d is %q, inventory %q", i, tc.name, envScaffoldGoldenCases[i])
 		}
+		rec := frozen[i]
+		if rec.RecipeID != tc.recipeID || rec.RecipeBody != tc.recipeBody || rec.Enabled != tc.enabled {
+			t.Fatalf("frozen inputs differ from the corpus for %q:\n--- frozen ---\nrecipe=%q enabled=%t body=%q\n--- corpus ---\nrecipe=%q enabled=%t body=%q",
+				tc.name, rec.RecipeID, rec.Enabled, rec.RecipeBody, tc.recipeID, tc.enabled, tc.recipeBody)
+		}
+
+		t.Run(tc.name, func(t *testing.T) {
+			root, home := newEnvScaffoldWorkspace(t, tc.recipeID, tc.recipeBody, tc.enabled)
+			// The workspace helper's manifest is a frozen input too, so a change
+			// to the fixture fails as input drift instead of a payload mismatch.
+			if got := envBody(t, filepath.Join(root, "ai-specs", "ai-specs.toml")); got != rec.Manifest {
+				t.Fatalf("frozen manifest differs from the workspace for %q:\n--- frozen ---\n%q\n--- corpus ---\n%q",
+					tc.name, rec.Manifest, got)
+			}
+
+			goRC, goOut, goErr := runEnvStep(t, root, home)
+
+			if goRC != rec.RC {
+				t.Errorf("exit code: native = %d, frozen = %d (frozen stderr %q)", goRC, rec.RC, rec.Stderr)
+			}
+			if got := strings.ReplaceAll(goOut, envEvalPath(t, root), "<ROOT>"); got != rec.Stdout {
+				t.Errorf("stdout mismatch:\n native = %q\n frozen = %q", got, rec.Stdout)
+			}
+			if goErr != rec.Stderr {
+				t.Errorf("stderr mismatch:\n native = %q\n frozen = %q", goErr, rec.Stderr)
+			}
+
+			// The step writes exactly the frozen files, byte for byte.
+			produced := envScaffoldProducedFiles(t, root)
+			if !slices.Equal(produced, envScaffoldGoldenFiles) {
+				t.Fatalf("produced files = %v, want %v", produced, envScaffoldGoldenFiles)
+			}
+			if len(rec.Files) != len(envScaffoldGoldenFiles) {
+				t.Fatalf("frozen record %q has %d files, want %d", tc.name, len(rec.Files), len(envScaffoldGoldenFiles))
+			}
+			for j, want := range rec.Files {
+				if want.Path != envScaffoldGoldenFiles[j] {
+					t.Fatalf("frozen file %d is %q, want %q", j, want.Path, envScaffoldGoldenFiles[j])
+				}
+				if got := envBody(t, filepath.Join(root, filepath.FromSlash(want.Path))); got != want.Content {
+					t.Errorf("%s bytes differ:\n native = %q\n frozen = %q", want.Path, got, want.Content)
+				}
+			}
+		})
 	}
 }
 
