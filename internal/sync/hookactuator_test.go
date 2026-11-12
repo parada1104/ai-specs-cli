@@ -367,8 +367,8 @@ func TestMaterializeHookStateParity(t *testing.T) {
 		t.Run(sc.name, func(t *testing.T) {
 			got := sc.run(t)
 			want := *sc.want
-			// Dest and Backup identity are asserted against the real Python
-			// authority by TestMaterializeHookPythonDifferential; this
+			// Dest and Backup identity are asserted against the frozen Python
+			// oracle by TestMaterializeHookFrozenDifferential; this
 			// fixture-only check compares the decision fields and bytes.
 			got.Dest, want.Dest = "", ""
 			got.Backup, want.Backup = "", ""
