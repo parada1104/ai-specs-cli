@@ -1,176 +1,171 @@
 package doctor
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"reflect"
 	"testing"
 
+	"ai-specs.dev/ai-specs/internal/projectcache"
 	"ai-specs.dev/ai-specs/internal/toml"
 )
 
 // This file pins the ported policy helpers against the legacy Python modules
-// they replace, using the same differential discipline as
-// internal/config/differential_test.go. Each test skips when python3 or the
-// legacy module is unavailable.
+// they replace. The evaluate_cli_version oracle (lib/_internal/cli_version.py)
+// was captured once into testdata/cliversion_golden.json; the test never execs
+// python3 or reads lib/. The golden is a snapshot: regenerating it needs a
+// human decision.
 
-func repoRoot(t *testing.T) string {
+const cliVersionGoldenPath = "testdata/cliversion_golden.json"
+
+type cliVersionCase struct {
+	name      string
+	installed string
+	tomlSrc   string
+	lockMeta  map[string]string
+}
+
+type cliVersionResult struct {
+	Severity string `json:"severity"`
+	Name     string `json:"name"`
+	Message  string `json:"message"`
+}
+
+type cliVersionGoldenCase struct {
+	Name      string            `json:"name"`
+	Installed string            `json:"installed"`
+	TOML      string            `json:"toml"`
+	LockMeta  map[string]string `json:"lock_meta"`
+	Result    cliVersionResult  `json:"result"`
+}
+
+type cliVersionGolden struct {
+	Oracle map[string]any         `json:"oracle"`
+	Cases  []cliVersionGoldenCase `json:"cases"`
+}
+
+var emptyLockMeta = map[string]string{}
+
+// cliVersionCases covers every branch of the evaluate_cli_version policy matrix.
+var cliVersionCases = []cliVersionCase{
+	{"no-pin-no-lock", "1.2.3", "", emptyLockMeta},
+	{"no-pin-unknown-installed", "unknown", "", emptyLockMeta},
+	{"no-pin-synced", "1.2.3", "", map[string]string{"cli_version": "1.2.3", "synced_at": "2024-01-01T00:00:00Z"}},
+	{"no-pin-stale", "1.2.4", "", map[string]string{"cli_version": "1.2.3"}},
+	{"no-pin-synced-at-only", "1.2.3", "", map[string]string{"synced_at": "2024-01-01T00:00:00Z"}},
+	{"pin-exact-ok-no-lock", "1.2.3", "[tool]\nversion = \"1.2.3\"\n", emptyLockMeta},
+	{"pin-exact-ok-synced", "1.2.3", "[tool]\nversion = \"1.2.3\"\n", map[string]string{"cli_version": "1.2.3"}},
+	{"pin-exact-stale-sync", "1.2.3", "[tool]\nversion = \"1.2.3\"\n", map[string]string{"cli_version": "1.2.0"}},
+	{"pin-exact-mismatch", "1.2.3", "[tool]\nversion = \"2.0.0\"\n", emptyLockMeta},
+	{"pin-exact-unknown-installed", "unknown", "[tool]\nversion = \"1.2.3\"\n", emptyLockMeta},
+	{"pin-min-ok", "1.2.3", "[tool]\nmin_version = \"1.0.0\"\n", emptyLockMeta},
+	{"pin-min-below", "0.9.0", "[tool]\nmin_version = \"1.0.0\"\n", emptyLockMeta},
+	{"pin-min-equal", "1.0.0", "[tool]\nmin_version = \"1.0.0\"\n", emptyLockMeta},
+	{"pin-both", "1.2.3", "[tool]\nversion = \"1.2.3\"\nmin_version = \"1.0.0\"\n", emptyLockMeta},
+	{"pin-empty-string", "1.2.3", "[tool]\nversion = \"\"\n", emptyLockMeta},
+	{"pin-whitespace-string", "1.2.3", "[tool]\nversion = \"  \"\n", emptyLockMeta},
+	{"pin-non-string", "1.2.3", "[tool]\nversion = 5\n", emptyLockMeta},
+	{"pin-policy-exact", "1.2.3", "[tool]\nversion = \"1.2.3\"\npolicy = \"exact\"\n", emptyLockMeta},
+	{"pin-policy-bogus", "1.2.3", "[tool]\nversion = \"1.2.3\"\npolicy = \"bogus\"\n", emptyLockMeta},
+	{"pin-policy-wrong-kind", "1.2.3", "[tool]\nmin_version = \"1.0.0\"\npolicy = \"exact\"\n", emptyLockMeta},
+	{"policy-without-pin", "1.2.3", "[tool]\npolicy = \"exact\"\n", emptyLockMeta},
+	{"tool-not-a-table", "1.2.3", "tool = 5\n", emptyLockMeta},
+	{"tool-empty", "1.2.3", "[tool]\n", emptyLockMeta},
+	{"tool-empty-inline", "1.2.3", "tool = {}\n", emptyLockMeta},
+	{"prerelease-below-pin", "1.0.0-rc.1", "[tool]\nversion = \"1.0.0\"\n", emptyLockMeta},
+	{"prerelease-above-min", "1.0.0", "[tool]\nmin_version = \"1.0.0-rc.1\"\n", emptyLockMeta},
+	{"build-metadata", "1.2.3+build.5", "[tool]\nversion = \"1.2.3+build.5\"\n", emptyLockMeta},
+	{"junk-installed-no-pin", "not-a-version", "", emptyLockMeta},
+}
+
+// expectedCLIVersionGoldenCases is the independent inventory of the frozen
+// bundle: deleting, duplicating or reordering a golden case fails before any
+// comparison runs.
+var expectedCLIVersionGoldenCases = []string{
+	"no-pin-no-lock", "no-pin-unknown-installed", "no-pin-synced", "no-pin-stale",
+	"no-pin-synced-at-only", "pin-exact-ok-no-lock", "pin-exact-ok-synced",
+	"pin-exact-stale-sync", "pin-exact-mismatch", "pin-exact-unknown-installed",
+	"pin-min-ok", "pin-min-below", "pin-min-equal", "pin-both", "pin-empty-string",
+	"pin-whitespace-string", "pin-non-string", "pin-policy-exact", "pin-policy-bogus",
+	"pin-policy-wrong-kind", "policy-without-pin", "tool-not-a-table", "tool-empty",
+	"tool-empty-inline", "prerelease-below-pin", "prerelease-above-min",
+	"build-metadata", "junk-installed-no-pin",
+}
+
+func evaluateCLIVersionCase(t *testing.T, tc cliVersionCase) cliVersionResult {
 	t.Helper()
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
+	var table *toml.Table
+	if tc.tomlSrc != "" {
+		parsed, err := toml.Parse([]byte(tc.tomlSrc))
+		if err != nil {
+			t.Fatalf("%s: internal/toml.Parse: %v", tc.name, err)
 		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("no go.mod above %s", dir)
-		}
-		dir = parent
+		table = parsed
 	}
+	severity, name, message := evaluateCLIVersion(tc.installed, table, tc.lockMeta)
+	return cliVersionResult{severity.String(), name, message}
 }
 
-func runPython(t *testing.T, args ...string) string {
+func loadCLIVersionGolden(t *testing.T) cliVersionGolden {
 	t.Helper()
-	python, err := exec.LookPath("python3")
+	raw, err := os.ReadFile(cliVersionGoldenPath)
 	if err != nil {
-		t.Skip("python3 unavailable")
+		t.Fatalf("read frozen oracle %s: %v", cliVersionGoldenPath, err)
 	}
-	cmd := exec.Command(python, args...)
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("python3 %s: %v\n%s", args[0], err, out)
+	var golden cliVersionGolden
+	if err := json.Unmarshal(raw, &golden); err != nil {
+		t.Fatalf("decode frozen oracle %s: %v", cliVersionGoldenPath, err)
 	}
-	return string(out)
+	return golden
 }
-
-func legacyModule(t *testing.T, name string) string {
-	t.Helper()
-	path := filepath.Join(repoRoot(t), "lib", "_internal", name)
-	if _, err := os.Stat(path); err != nil {
-		t.Skipf("legacy %s unavailable: %v", name, err)
-	}
-	return path
-}
-
-const cliVersionOracle = `
-import importlib.util, json, sys, tomllib
-spec = importlib.util.spec_from_file_location("cli_version_oracle", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = mod
-spec.loader.exec_module(mod)
-out = []
-for case in json.loads(sys.argv[2]):
-    src = case.get("toml") or ""
-    manifest = tomllib.loads(src) if src else {}
-    severity, name, message = mod.evaluate_cli_version(
-        installed=case["installed"], manifest=manifest, lock_meta=case["lock_meta"]
-    )
-    out.append({"severity": severity, "name": name, "message": message})
-print(json.dumps(out))
-`
 
 // TestDifferentialCLIVersion compares the ported evaluate_cli_version with the
-// legacy oracle across every branch of the policy matrix.
+// frozen legacy oracle across every branch of the policy matrix.
 func TestDifferentialCLIVersion(t *testing.T) {
-	script := legacyModule(t, "cli_version.py")
-	empty := map[string]string{}
-	cases := []struct {
-		name      string
-		installed string
-		tomlSrc   string
-		lockMeta  map[string]string
-	}{
-		{"no-pin-no-lock", "1.2.3", "", empty},
-		{"no-pin-unknown-installed", "unknown", "", empty},
-		{"no-pin-synced", "1.2.3", "", map[string]string{"cli_version": "1.2.3", "synced_at": "2024-01-01T00:00:00Z"}},
-		{"no-pin-stale", "1.2.4", "", map[string]string{"cli_version": "1.2.3"}},
-		{"no-pin-synced-at-only", "1.2.3", "", map[string]string{"synced_at": "2024-01-01T00:00:00Z"}},
-		{"pin-exact-ok-no-lock", "1.2.3", "[tool]\nversion = \"1.2.3\"\n", empty},
-		{"pin-exact-ok-synced", "1.2.3", "[tool]\nversion = \"1.2.3\"\n", map[string]string{"cli_version": "1.2.3"}},
-		{"pin-exact-stale-sync", "1.2.3", "[tool]\nversion = \"1.2.3\"\n", map[string]string{"cli_version": "1.2.0"}},
-		{"pin-exact-mismatch", "1.2.3", "[tool]\nversion = \"2.0.0\"\n", empty},
-		{"pin-exact-unknown-installed", "unknown", "[tool]\nversion = \"1.2.3\"\n", empty},
-		{"pin-min-ok", "1.2.3", "[tool]\nmin_version = \"1.0.0\"\n", empty},
-		{"pin-min-below", "0.9.0", "[tool]\nmin_version = \"1.0.0\"\n", empty},
-		{"pin-min-equal", "1.0.0", "[tool]\nmin_version = \"1.0.0\"\n", empty},
-		{"pin-both", "1.2.3", "[tool]\nversion = \"1.2.3\"\nmin_version = \"1.0.0\"\n", empty},
-		{"pin-empty-string", "1.2.3", "[tool]\nversion = \"\"\n", empty},
-		{"pin-whitespace-string", "1.2.3", "[tool]\nversion = \"  \"\n", empty},
-		{"pin-non-string", "1.2.3", "[tool]\nversion = 5\n", empty},
-		{"pin-policy-exact", "1.2.3", "[tool]\nversion = \"1.2.3\"\npolicy = \"exact\"\n", empty},
-		{"pin-policy-bogus", "1.2.3", "[tool]\nversion = \"1.2.3\"\npolicy = \"bogus\"\n", empty},
-		{"pin-policy-wrong-kind", "1.2.3", "[tool]\nmin_version = \"1.0.0\"\npolicy = \"exact\"\n", empty},
-		{"policy-without-pin", "1.2.3", "[tool]\npolicy = \"exact\"\n", empty},
-		{"tool-not-a-table", "1.2.3", "tool = 5\n", empty},
-		{"tool-empty", "1.2.3", "[tool]\n", empty},
-		{"tool-empty-inline", "1.2.3", "tool = {}\n", empty},
-		{"prerelease-below-pin", "1.0.0-rc.1", "[tool]\nversion = \"1.0.0\"\n", empty},
-		{"prerelease-above-min", "1.0.0", "[tool]\nmin_version = \"1.0.0-rc.1\"\n", empty},
-		{"build-metadata", "1.2.3+build.5", "[tool]\nversion = \"1.2.3+build.5\"\n", empty},
-		{"junk-installed-no-pin", "not-a-version", "", empty},
+	golden := loadCLIVersionGolden(t)
+
+	if len(cliVersionCases) != len(expectedCLIVersionGoldenCases) {
+		t.Fatalf("in-test corpus has %d cases, inventory %d", len(cliVersionCases), len(expectedCLIVersionGoldenCases))
+	}
+	if len(golden.Cases) != len(expectedCLIVersionGoldenCases) {
+		t.Fatalf("frozen oracle has %d cases, inventory %d", len(golden.Cases), len(expectedCLIVersionGoldenCases))
+	}
+	seen := map[string]bool{}
+	for i, want := range expectedCLIVersionGoldenCases {
+		if seen[want] {
+			t.Fatalf("inventory lists %q twice", want)
+		}
+		seen[want] = true
+		if golden.Cases[i].Name != want || cliVersionCases[i].name != want {
+			t.Fatalf("case %d: golden %q, corpus %q, inventory %q", i, golden.Cases[i].Name, cliVersionCases[i].name, want)
+		}
 	}
 
-	type result struct {
-		Severity string `json:"severity"`
-		Name     string `json:"name"`
-		Message  string `json:"message"`
-	}
-	port := make([]result, 0, len(cases))
-	payload := make([]map[string]any, 0, len(cases))
-	for _, tc := range cases {
-		var table *toml.Table
-		if tc.tomlSrc != "" {
-			parsed, err := toml.Parse([]byte(tc.tomlSrc))
-			if err != nil {
-				t.Fatalf("%s: internal/toml.Parse: %v", tc.name, err)
-			}
-			table = parsed
+	for i, tc := range cliVersionCases {
+		frozen := golden.Cases[i]
+		if frozen.Installed != tc.installed || frozen.TOML != tc.tomlSrc || !reflect.DeepEqual(frozen.LockMeta, tc.lockMeta) {
+			t.Errorf("%s: frozen inputs %+v differ from corpus %+v", tc.name, frozen, tc)
+			continue
 		}
-		severity, name, message := evaluateCLIVersion(tc.installed, table, tc.lockMeta)
-		port = append(port, result{severity.String(), name, message})
-		payload = append(payload, map[string]any{
-			"installed": tc.installed,
-			"toml":      tc.tomlSrc,
-			"lock_meta": tc.lockMeta,
-		})
-	}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("marshal cases: %v", err)
-	}
-	var legacy []result
-	if err := json.Unmarshal([]byte(runPython(t, "-c", cliVersionOracle, script, string(encoded))), &legacy); err != nil {
-		t.Fatalf("decode oracle output: %v", err)
-	}
-	if len(legacy) != len(cases) {
-		t.Fatalf("oracle returned %d results for %d cases", len(legacy), len(cases))
-	}
-	for i, tc := range cases {
-		if legacy[i] != port[i] {
-			t.Errorf("%s:\n legacy %+v\n port   %+v", tc.name, legacy[i], port[i])
+		if got := evaluateCLIVersionCase(t, tc); got != frozen.Result {
+			t.Errorf("%s:\n legacy %+v\n port   %+v", tc.name, frozen.Result, got)
 		}
 	}
 }
 
-const cacheKeyOracle = `
-import importlib.util, json, sys
-from pathlib import Path
-spec = importlib.util.spec_from_file_location("project_cache_oracle", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = mod
-spec.loader.exec_module(mod)
-print(json.dumps([mod.cache_key(Path(p)) for p in json.loads(sys.argv[2])]))
-`
-
-// TestDifferentialCacheKey compares the ported cache_key with project-cache.py,
-// which also pins resolvePy against Path.resolve() on real paths.
+// TestDifferentialCacheKey pins doctor's cacheKey for real paths. The legacy
+// project-cache.py output hashes the absolute resolved TempDir, so it is
+// host-dependent and cannot be frozen; cacheKey delegates to
+// projectcache.CacheKey, whose "/" value and ResolvePath-vs-realpath semantics
+// are frozen in internal/projectcache. This test pins the derivation for the
+// same paths the live differential used.
 func TestDifferentialCacheKey(t *testing.T) {
-	script := legacyModule(t, "project-cache.py")
+	if got := cacheKey("/"); got != "8a5edab28263-project" {
+		t.Errorf("cacheKey(\"/\") = %q, want frozen %q", got, "8a5edab28263-project")
+	}
 	dir := t.TempDir()
 	paths := []string{
 		dir,
@@ -181,20 +176,15 @@ func TestDifferentialCacheKey(t *testing.T) {
 		filepath.Join(dir, "ñandú"),
 		"/tmp",
 	}
-	encoded, err := json.Marshal(paths)
-	if err != nil {
-		t.Fatalf("marshal paths: %v", err)
-	}
-	var legacy []string
-	if err := json.Unmarshal([]byte(runPython(t, "-c", cacheKeyOracle, script, string(encoded))), &legacy); err != nil {
-		t.Fatalf("decode oracle output: %v", err)
-	}
-	if len(legacy) != len(paths) {
-		t.Fatalf("oracle returned %d results for %d paths", len(legacy), len(paths))
-	}
-	for i, p := range paths {
-		if got := cacheKey(p); got != legacy[i] {
-			t.Errorf("cacheKey(%q) = %q, legacy %q", p, got, legacy[i])
+	for _, p := range paths {
+		resolved := projectcache.ResolvePath(p)
+		sum := sha256.Sum256([]byte(resolved))
+		want := hex.EncodeToString(sum[:])[:12] + "-" + projectcache.SanitizeBasename(filepath.Base(resolved))
+		if got := cacheKey(p); got != want {
+			t.Errorf("cacheKey(%q) = %q, want %q", p, got, want)
 		}
+	}
+	if cacheKey(filepath.Join(dir, "sub", "..")) != cacheKey(dir) {
+		t.Errorf("cacheKey must resolve %q to the same key as %q", filepath.Join(dir, "sub", ".."), dir)
 	}
 }

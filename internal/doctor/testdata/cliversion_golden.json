@@ -1,0 +1,328 @@
+{
+  "oracle": {
+    "function": "evaluate_cli_version",
+    "module": "lib/_internal/cli_version.py",
+    "python": "3.14.7"
+  },
+  "cases": [
+    {
+      "name": "no-pin-no-lock",
+      "installed": "1.2.3",
+      "toml": "",
+      "lock_meta": {},
+      "result": {
+        "severity": "INFO",
+        "name": "cli-version",
+        "message": "installed 1.2.3, no [tool] pin, last sync unknown — run ai-specs sync"
+      }
+    },
+    {
+      "name": "no-pin-unknown-installed",
+      "installed": "unknown",
+      "toml": "",
+      "lock_meta": {},
+      "result": {
+        "severity": "INFO",
+        "name": "cli-version",
+        "message": "installed unknown, no [tool] pin, last sync unknown — run ai-specs sync"
+      }
+    },
+    {
+      "name": "no-pin-synced",
+      "installed": "1.2.3",
+      "toml": "",
+      "lock_meta": {
+        "cli_version": "1.2.3",
+        "synced_at": "2024-01-01T00:00:00Z"
+      },
+      "result": {
+        "severity": "OK",
+        "name": "cli-version",
+        "message": "installed 1.2.3, no [tool] pin, last sync 1.2.3"
+      }
+    },
+    {
+      "name": "no-pin-stale",
+      "installed": "1.2.4",
+      "toml": "",
+      "lock_meta": {
+        "cli_version": "1.2.3"
+      },
+      "result": {
+        "severity": "WARN",
+        "name": "cli-version",
+        "message": "installed 1.2.4, no [tool] pin, last sync 1.2.3 — run ai-specs sync"
+      }
+    },
+    {
+      "name": "no-pin-synced-at-only",
+      "installed": "1.2.3",
+      "toml": "",
+      "lock_meta": {
+        "synced_at": "2024-01-01T00:00:00Z"
+      },
+      "result": {
+        "severity": "INFO",
+        "name": "cli-version",
+        "message": "installed 1.2.3, no [tool] pin, last sync unknown — run ai-specs sync"
+      }
+    },
+    {
+      "name": "pin-exact-ok-no-lock",
+      "installed": "1.2.3",
+      "toml": "[tool]\nversion = \"1.2.3\"\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "OK",
+        "name": "cli-version",
+        "message": "installed 1.2.3, pinned 1.2.3, last sync unknown"
+      }
+    },
+    {
+      "name": "pin-exact-ok-synced",
+      "installed": "1.2.3",
+      "toml": "[tool]\nversion = \"1.2.3\"\n",
+      "lock_meta": {
+        "cli_version": "1.2.3"
+      },
+      "result": {
+        "severity": "OK",
+        "name": "cli-version",
+        "message": "installed 1.2.3, pinned 1.2.3, last sync 1.2.3"
+      }
+    },
+    {
+      "name": "pin-exact-stale-sync",
+      "installed": "1.2.3",
+      "toml": "[tool]\nversion = \"1.2.3\"\n",
+      "lock_meta": {
+        "cli_version": "1.2.0"
+      },
+      "result": {
+        "severity": "WARN",
+        "name": "cli-version",
+        "message": "installed 1.2.3, pinned 1.2.3, last sync 1.2.0"
+      }
+    },
+    {
+      "name": "pin-exact-mismatch",
+      "installed": "1.2.3",
+      "toml": "[tool]\nversion = \"2.0.0\"\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "ERROR",
+        "name": "cli-version",
+        "message": "installed CLI 1.2.3 does not match pinned 2.0.0 (run ai-specs upgrade or adjust [tool] in ai-specs.toml)"
+      }
+    },
+    {
+      "name": "pin-exact-unknown-installed",
+      "installed": "unknown",
+      "toml": "[tool]\nversion = \"1.2.3\"\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "ERROR",
+        "name": "cli-version",
+        "message": "installed CLI version is unknown (run ai-specs upgrade or adjust [tool] in ai-specs.toml)"
+      }
+    },
+    {
+      "name": "pin-min-ok",
+      "installed": "1.2.3",
+      "toml": "[tool]\nmin_version = \"1.0.0\"\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "OK",
+        "name": "cli-version",
+        "message": "installed 1.2.3, pinned 1.0.0, last sync unknown"
+      }
+    },
+    {
+      "name": "pin-min-below",
+      "installed": "0.9.0",
+      "toml": "[tool]\nmin_version = \"1.0.0\"\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "ERROR",
+        "name": "cli-version",
+        "message": "installed CLI 0.9.0 is below minimum 1.0.0 (run ai-specs upgrade or adjust [tool] in ai-specs.toml)"
+      }
+    },
+    {
+      "name": "pin-min-equal",
+      "installed": "1.0.0",
+      "toml": "[tool]\nmin_version = \"1.0.0\"\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "OK",
+        "name": "cli-version",
+        "message": "installed 1.0.0, pinned 1.0.0, last sync unknown"
+      }
+    },
+    {
+      "name": "pin-both",
+      "installed": "1.2.3",
+      "toml": "[tool]\nversion = \"1.2.3\"\nmin_version = \"1.0.0\"\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "ERROR",
+        "name": "cli-version",
+        "message": "cannot set both [tool].version and [tool].min_version"
+      }
+    },
+    {
+      "name": "pin-empty-string",
+      "installed": "1.2.3",
+      "toml": "[tool]\nversion = \"\"\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "ERROR",
+        "name": "cli-version",
+        "message": "[tool].version must be a non-empty string"
+      }
+    },
+    {
+      "name": "pin-whitespace-string",
+      "installed": "1.2.3",
+      "toml": "[tool]\nversion = \"  \"\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "ERROR",
+        "name": "cli-version",
+        "message": "[tool].version must be a non-empty string"
+      }
+    },
+    {
+      "name": "pin-non-string",
+      "installed": "1.2.3",
+      "toml": "[tool]\nversion = 5\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "ERROR",
+        "name": "cli-version",
+        "message": "[tool].version must be a non-empty string"
+      }
+    },
+    {
+      "name": "pin-policy-exact",
+      "installed": "1.2.3",
+      "toml": "[tool]\nversion = \"1.2.3\"\npolicy = \"exact\"\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "OK",
+        "name": "cli-version",
+        "message": "installed 1.2.3, pinned 1.2.3, last sync unknown"
+      }
+    },
+    {
+      "name": "pin-policy-bogus",
+      "installed": "1.2.3",
+      "toml": "[tool]\nversion = \"1.2.3\"\npolicy = \"bogus\"\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "ERROR",
+        "name": "cli-version",
+        "message": "unknown [tool].policy: 'bogus'"
+      }
+    },
+    {
+      "name": "pin-policy-wrong-kind",
+      "installed": "1.2.3",
+      "toml": "[tool]\nmin_version = \"1.0.0\"\npolicy = \"exact\"\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "ERROR",
+        "name": "cli-version",
+        "message": "unknown [tool].policy: 'exact'"
+      }
+    },
+    {
+      "name": "policy-without-pin",
+      "installed": "1.2.3",
+      "toml": "[tool]\npolicy = \"exact\"\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "ERROR",
+        "name": "cli-version",
+        "message": "[tool].policy requires [tool].version or [tool].min_version"
+      }
+    },
+    {
+      "name": "tool-not-a-table",
+      "installed": "1.2.3",
+      "toml": "tool = 5\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "ERROR",
+        "name": "cli-version",
+        "message": "invalid [tool] table"
+      }
+    },
+    {
+      "name": "tool-empty",
+      "installed": "1.2.3",
+      "toml": "[tool]\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "INFO",
+        "name": "cli-version",
+        "message": "installed 1.2.3, no [tool] pin, last sync unknown — run ai-specs sync"
+      }
+    },
+    {
+      "name": "tool-empty-inline",
+      "installed": "1.2.3",
+      "toml": "tool = {}\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "INFO",
+        "name": "cli-version",
+        "message": "installed 1.2.3, no [tool] pin, last sync unknown — run ai-specs sync"
+      }
+    },
+    {
+      "name": "prerelease-below-pin",
+      "installed": "1.0.0-rc.1",
+      "toml": "[tool]\nversion = \"1.0.0\"\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "ERROR",
+        "name": "cli-version",
+        "message": "installed CLI 1.0.0-rc.1 does not match pinned 1.0.0 (run ai-specs upgrade or adjust [tool] in ai-specs.toml)"
+      }
+    },
+    {
+      "name": "prerelease-above-min",
+      "installed": "1.0.0",
+      "toml": "[tool]\nmin_version = \"1.0.0-rc.1\"\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "OK",
+        "name": "cli-version",
+        "message": "installed 1.0.0, pinned 1.0.0-rc.1, last sync unknown"
+      }
+    },
+    {
+      "name": "build-metadata",
+      "installed": "1.2.3+build.5",
+      "toml": "[tool]\nversion = \"1.2.3+build.5\"\n",
+      "lock_meta": {},
+      "result": {
+        "severity": "OK",
+        "name": "cli-version",
+        "message": "installed 1.2.3+build.5, pinned 1.2.3+build.5, last sync unknown"
+      }
+    },
+    {
+      "name": "junk-installed-no-pin",
+      "installed": "not-a-version",
+      "toml": "",
+      "lock_meta": {},
+      "result": {
+        "severity": "INFO",
+        "name": "cli-version",
+        "message": "installed not-a-version, no [tool] pin, last sync unknown — run ai-specs sync"
+      }
+    }
+  ]
+}
