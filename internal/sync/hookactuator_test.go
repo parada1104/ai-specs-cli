@@ -13,7 +13,8 @@ package sync
 // gate-baseline record payload for the caller; S14 owns the lock write and the
 // caller diagnostics.
 //
-// T4's Python-oracle differential lives at the bottom of this file.
+// The frozen Python-oracle payload for the T4 differential lives at the bottom
+// of this file and in testdata/hookactuator_golden.json.
 
 import (
 	"encoding/json"
@@ -97,19 +98,20 @@ type hkOutcome struct {
 	Refused   bool              `json:"refused"`
 }
 
-// hkScenario is one hook actuation scenario. The json-tagged fields go to the
-// Python oracle; the unexported fields drive the native fixture.
+// hkScenario is one hook actuation scenario: the request fields the authority
+// reads, the pre-existing destination the case seeds and the outcome the
+// fixture-only parity test expects.
 type hkScenario struct {
 	name        string
-	Rel         string         `json:"rel"`
-	ProjectRoot string         `json:"project_root"`
-	RecipeDir   string         `json:"recipe_dir"`
-	RecipeID    string         `json:"recipe_id"`
-	Script      string         `json:"script"`
-	Config      map[string]any `json:"config,omitempty"`
-	Refresh     bool           `json:"refresh,omitempty"`
-	ManagedSHA  string         `json:"managed_sha,omitempty"`
-	BackupPath  string         `json:"backup_path,omitempty"`
+	Rel         string
+	ProjectRoot string
+	RecipeDir   string
+	RecipeID    string
+	Script      string
+	Config      map[string]any
+	Refresh     bool
+	ManagedSHA  string
+	BackupPath  string
 
 	want     *hkOutcome
 	destSeed []byte
@@ -509,138 +511,236 @@ func TestMaterializeHookRefreshRollback(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// T4: Python-oracle differential
+// Frozen Python-oracle payload
 // ---------------------------------------------------------------------------
 
-// hkOracle drives the REAL Python hook authority — the historical body
-// _python_materialize_hook_script that the Go-bridge dispatcher falls back to
-// (recipe-materialize.py:2233). It patches only the lock and print sinks:
-// load_lock returns the scenario's prepared lock, write_lock captures it (after
-// the real set_gate_baseline upserts it), warn records the exact warning
-// strings, and the project-cache stub returns the harness-computed immutable
-// backup path so no real CLI cache is touched. The outcome is path-independent
-// and byte-comparable to the native hkOutcome.
-const hkOracle = `
-import contextlib, copy, hashlib, importlib.util, io, json, stat, sys
-from pathlib import Path
-from types import SimpleNamespace
-
-spec = importlib.util.spec_from_file_location("hook_outcome_oracle", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = mod
-spec.loader.exec_module(mod)
-
-scenarios = json.loads(Path(sys.argv[2]).read_text())
-
-def sha(data):
-    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
-
-class CacheStub:
-    def __init__(self, path):
-        self.path = path
-    def gate_backup_path(self, project_root, rel, digest, cli_home=None):
-        return Path(self.path)
-
-results = []
-for sc in scenarios:
-    project_root = Path(sc["project_root"])
-    recipe_dir = Path(sc["recipe_dir"])
-    base = str(project_root.parent)
-
-    def project(s):
-        return s.replace("//" + base.lstrip("/"), "<//BASE>").replace(base, "<BASE>")
-
-    dest = project_root / sc["rel"]
-    before = dest.read_bytes() if dest.is_file() else None
-    key = sc["rel"]
-    lock = {"managed": {}}
-    if sc.get("managed_sha"):
-        lock["managed"][key] = {"sha256": sc["managed_sha"]}
-    captured, lines = {}, []
-    mod.load_lock = lambda p, _l=lock: _l
-    mod.write_lock = lambda p, l, _c=captured: _c.__setitem__("lock", copy.deepcopy(l))
-    mod.warn = lambda msg, _lines=lines: _lines.append("warn:" + msg)
-    mod.info = lambda msg, _lines=lines: _lines.append("info:" + msg)
-    mod._load_project_cache = lambda _p=sc.get("backup_path", ""): CacheStub(_p)
-    backup = Path(sc["backup_path"]) if sc.get("backup_path") else None
-    stdout, error = io.StringIO(), None
-    try:
-        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
-            hook = SimpleNamespace(script=sc["script"])
-            mod._python_materialize_hook_script(
-                recipe_dir, hook, project_root, sc["recipe_id"],
-                sc.get("config"), None, sc.get("refresh", False),
-            )
-    except Exception as exc:  # noqa: BLE001
-        error = str(exc)
-    for line in stdout.getvalue().splitlines():
-        if line.startswith("    "):
-            lines.append("msg:" + line[4:])
-    after = dest.read_bytes() if dest.is_file() else None
-    entry = (captured.get("lock") or {}).get("managed", {}).get(key)
-    if entry is not None:
-        entry = {"target": key, **entry}
-    backup_sha = ""
-    backup_present = backup is not None and backup.is_file()
-    if backup_present:
-        backup_sha = sha(backup.read_bytes())
-    results.append({
-        "wrote": before != after,
-        "dest": project(str(dest)) if error is None else "",
-        "record": entry,
-        "disk_sha": sha(after) if after is not None else "",
-        "mode": format(stat.S_IMODE(dest.stat().st_mode), "o") if dest.exists() else "",
-        "backup": project(str(backup)) if backup_present else "",
-        "backup_sha": backup_sha,
-        "lines": [project(line) for line in lines],
-        "refused": error is not None,
-    })
-print(json.dumps(results, sort_keys=True))
-`
-
-// TestMaterializeHookPythonDifferential compares the native outcomes against
-// the real Python hook authority over the full state matrix. Both sides start
-// from byte-identical fixtures under different roots and must agree on wrote,
+// The legacy live leg drove the REAL Python hook authority — the historical
+// body _python_materialize_hook_script the Go-bridge dispatcher falls back to
+// (recipe-materialize.py:2233) — patching only the lock and print sinks:
+// load_lock returned the scenario's prepared lock, write_lock captured it after
+// the real set_gate_baseline upserted it, warn/info recorded the exact emitted
+// lines, and the project-cache stub returned the harness-computed immutable
+// backup path, so no real CLI cache was touched. It ran the scenario matrix the
+// native fixture builds and compared the projected outcome of each case.
+//
+// That comparison is frozen in testdata/hookactuator_golden.json: per case the
+// input projection the fixture drove and the outcome Python produced (wrote,
 // destination identity, record fields, bytes and mode on disk, the refresh
-// backup, every emitted line, and whether the call refused.
-func TestMaterializeHookPythonDifferential(t *testing.T) {
-	python, authority := syncPythonAuthority(t)
-	driver := filepath.Join(t.TempDir(), "hk_oracle.py")
-	if err := os.WriteFile(driver, []byte(hkOracle), 0o600); err != nil {
-		t.Fatal(err)
-	}
+// backup, every emitted line and whether the call refused).
+//
+// The payload is host-independent: the legacy driver replaced each fixture's
+// temp root with <BASE> on both sides, and the fixture seeds every mode the
+// outcome asserts (the shared write path chmods 0755, the backup snapshot 0644
+// and a seeded destination its declared bits), so no mode follows the process
+// umask and no directory mode is frozen at all. A run of this test under
+// `umask 077` proves it.
+//
+// The test never execs python3 or reads lib/. The golden is a snapshot:
+// regenerating it needs a human decision.
+const hookActuatorGoldenFile = "hookactuator_golden.json"
 
-	nativeBase := t.TempDir()
-	pythonBase := t.TempDir()
-	nativeScenarios := hkBuildScenarios(t, nativeBase)
-	pythonScenarios := hkBuildScenarios(t, pythonBase)
-	if len(nativeScenarios) == 0 || len(nativeScenarios) != len(pythonScenarios) {
-		t.Fatalf("scenario builders disagree: %d vs %d", len(nativeScenarios), len(pythonScenarios))
-	}
+// hkRollbackCase is the one case the fixture builder only adds for a non-root
+// euid: a root process cannot be denied a write by file mode.
+const hkRollbackCase = "h7-refresh-rollback"
 
-	got := make([]hkOutcome, 0, len(nativeScenarios))
+// hookActuatorGoldenCases is the hard-coded identity inventory of the frozen
+// bundle: the exact case names in capture order. It is an independent oracle
+// of coverage — kept in the test, never derived from the bundle — so a bundle
+// that is missing, renamed, duplicated or reordered cannot validate silently.
+var hookActuatorGoldenCases = []string{
+	"h1-fresh-write",
+	"h2-managed-current",
+	"h3-no-provenance",
+	"h4-user-modified",
+	"h5-managed-stale-refresh",
+	"h6-refresh-backup",
+	hkRollbackCase,
+	"h8-symlink-guard",
+	"h9-refresh-symlink-guard",
+}
+
+// hkBaseToken is the token every host-dependent path segment is frozen as.
+const hkBaseToken = "<BASE>"
+
+// hkFrozenInput is the frozen input projection of one case: the request fields
+// the authority reads plus the fixture state the case seeded. A drifted fixture
+// fails on this, before any outcome is compared, instead of appearing as an
+// opaque payload mismatch.
+type hkFrozenInput struct {
+	Rel        string            `json:"rel"`
+	Script     string            `json:"script"`
+	RecipeID   string            `json:"recipe_id"`
+	Config     map[string]string `json:"config"`
+	Refresh    bool              `json:"refresh"`
+	ManagedSHA string            `json:"managed_sha,omitempty"`
+	SeedSHA256 string            `json:"seed_sha256,omitempty"`
+	SeedMode   string            `json:"seed_mode,omitempty"`
+	DestKind   string            `json:"dest_kind,omitempty"`
+	BackupName string            `json:"backup_name,omitempty"`
+}
+
+// hkFrozenCase is the frozen record of one case: its name, the input projection
+// its fixture drove and the outcome the Python authority produced.
+type hkFrozenCase struct {
+	Name    string        `json:"name"`
+	Input   hkFrozenInput `json:"input"`
+	Outcome hkOutcome     `json:"outcome"`
+}
+
+// hookActuatorGolden is the frozen bundle: oracle provenance, the shared
+// fixture layout the cases ran over and the per-case records.
+type hookActuatorGolden struct {
+	Oracle  map[string]string `json:"oracle"`
+	Fixture map[string]string `json:"fixture"`
+	Cases   []hkFrozenCase    `json:"cases"`
+}
+
+// hkInputOf projects one scenario onto the frozen input surface.
+func hkInputOf(sc *hkScenario) hkFrozenInput {
+	in := hkFrozenInput{
+		Rel: sc.Rel, Script: sc.Script, RecipeID: sc.RecipeID,
+		Config:  make(map[string]string, len(sc.Config)),
+		Refresh: sc.Refresh, ManagedSHA: sc.ManagedSHA, DestKind: sc.destKind,
+	}
+	for key, value := range sc.Config {
+		if text, ok := value.(string); ok {
+			in.Config[key] = text
+		}
+	}
+	if sc.destSeed != nil {
+		in.SeedSHA256 = shared.Sha256Bytes(sc.destSeed)
+		mode := sc.destMode
+		if mode == 0 {
+			mode = 0o644
+		}
+		in.SeedMode = fmt.Sprintf("%o", mode.Perm())
+	}
+	if sc.BackupPath != "" {
+		in.BackupName = filepath.Base(sc.BackupPath)
+	}
+	return in
+}
+
+// hkFixtureLayout projects the fixture the cases ran over onto the frozen
+// layout surface: the hook source bytes every case wrote and the three roots
+// relative to the temp base.
+func hkFixtureLayout(t *testing.T, base string, sc *hkScenario) map[string]string {
+	t.Helper()
+	rel := func(path string) string {
+		s, err := filepath.Rel(base, path)
+		if err != nil {
+			t.Fatalf("fixture path %s is not under the base: %v", path, err)
+		}
+		return filepath.ToSlash(s)
+	}
+	return map[string]string{
+		"hook_sha256":  shared.Sha256Bytes([]byte(hkHookSource)),
+		"recipe_dir":   rel(sc.RecipeDir),
+		"project_root": rel(sc.ProjectRoot),
+	}
+}
+
+// loadHookActuatorGolden reads the frozen bundle and validates its identity
+// inventory, its oracle metadata, its fixture layout and the tokenized shape of
+// every frozen path before any comparison runs.
+func loadHookActuatorGolden(t *testing.T) hookActuatorGolden {
+	t.Helper()
+	raw := readGoldenBundle(t, hookActuatorGoldenFile)
+	// A capture that leaked a host path cannot validate here.
+	for _, leak := range []string{"/Users/", "/private/", "/var/folders"} {
+		if strings.Contains(string(raw), leak) {
+			t.Fatalf("frozen oracle %s leaks the host path segment %q", hookActuatorGoldenFile, leak)
+		}
+	}
+	var golden hookActuatorGolden
+	if err := json.Unmarshal(raw, &golden); err != nil {
+		t.Fatalf("parse frozen oracle %s: %v", hookActuatorGoldenFile, err)
+	}
+	for _, key := range []string{"python", "script", "driver"} {
+		if golden.Oracle[key] == "" {
+			t.Fatalf("frozen oracle %s carries no %s metadata", hookActuatorGoldenFile, key)
+		}
+	}
+	for _, key := range []string{"hook_sha256", "recipe_dir", "project_root"} {
+		if golden.Fixture[key] == "" {
+			t.Fatalf("frozen oracle %s carries no fixture %s", hookActuatorGoldenFile, key)
+		}
+	}
+	for _, key := range []string{"recipe_dir", "project_root"} {
+		if path := golden.Fixture[key]; filepath.IsAbs(path) || strings.HasPrefix(path, "..") {
+			t.Fatalf("frozen fixture %s %q must be root-relative", key, path)
+		}
+	}
+	names := make([]string, len(golden.Cases))
+	for i, rec := range golden.Cases {
+		names[i] = rec.Name
+		if rec.Input.Rel == "" || rec.Input.Script == "" || rec.Input.RecipeID == "" {
+			t.Fatalf("frozen case %q carries an incomplete input projection", rec.Name)
+		}
+		// Every host-dependent segment is a token: a capture that leaked an
+		// absolute path cannot validate here.
+		for _, path := range []string{rec.Outcome.Dest, rec.Outcome.Backup} {
+			if path != "" && !strings.HasPrefix(path, hkBaseToken+"/") {
+				t.Fatalf("frozen case %q path %q must start with %s/", rec.Name, path, hkBaseToken)
+			}
+		}
+	}
+	validateGoldenIdentity(t, "hookactuator", names, hookActuatorGoldenCases)
+	return golden
+}
+
+// TestMaterializeHookFrozenDifferential pins the native outcomes against the
+// frozen record of the real Python hook authority over the full state matrix:
+// fresh write, managed_current backfill, no-provenance preserve, user-modified
+// preserve, managed-stale refresh, refresh backup, refresh rollback and both
+// symlink refusals. Both sides must agree on wrote, destination identity,
+// record fields, bytes and mode on disk, the refresh backup, every emitted line
+// and whether the call refused.
+func TestMaterializeHookFrozenDifferential(t *testing.T) {
+	golden := loadHookActuatorGolden(t)
+
+	base := t.TempDir()
+	nativeScenarios := hkBuildScenarios(t, base)
+	byName := make(map[string]*hkScenario, len(nativeScenarios))
 	for i := range nativeScenarios {
-		got = append(got, nativeScenarios[i].run(t))
+		sc := &nativeScenarios[i]
+		if _, seen := byName[sc.name]; seen {
+			t.Fatalf("the fixture builder produced the case %q twice", sc.name)
+		}
+		byName[sc.name] = sc
 	}
-	for i := range pythonScenarios {
-		pythonScenarios[i].prepare(t)
+	if layout := hkFixtureLayout(t, base, &nativeScenarios[0]); !reflect.DeepEqual(layout, golden.Fixture) {
+		t.Fatalf("fixture layout diverges\n--- go ---\n%+v\n--- frozen ---\n%+v", layout, golden.Fixture)
 	}
 
-	specPath := filepath.Join(t.TempDir(), "scenarios.json")
-	spec, err := json.Marshal(pythonScenarios)
-	if err != nil {
-		t.Fatal(err)
+	// The frozen order is the coverage order: a bundle that drops, duplicates
+	// or reorders a case cannot match here. A root euid cannot be denied a
+	// write by file mode, so the fixture builder omits that one case there.
+	want := make([]hkFrozenCase, 0, len(golden.Cases))
+	for _, rec := range golden.Cases {
+		if _, ok := byName[rec.Name]; !ok {
+			if os.Geteuid() == 0 && rec.Name == hkRollbackCase {
+				continue
+			}
+			t.Fatalf("frozen case %q has no native scenario", rec.Name)
+		}
+		want = append(want, rec)
 	}
-	if err := os.WriteFile(specPath, spec, 0o600); err != nil {
-		t.Fatal(err)
+	if len(byName) != len(want) {
+		t.Fatalf("the fixture builder produced %d case(s), the frozen bundle records %d", len(byName), len(want))
 	}
-	raw := runSyncPythonOracle(t, python, driver, authority, specPath)
-	var want []hkOutcome
-	if err := json.Unmarshal([]byte(raw), &want); err != nil {
-		t.Fatalf("parse oracle JSON: %v\nraw: %s", err, raw)
-	}
-	if len(want) != len(got) {
-		t.Fatalf("oracle returned %d outcome(s), want %d", len(want), len(got))
+
+	got := make([]hkOutcome, 0, len(want))
+	frozen := make([]hkOutcome, 0, len(want))
+	for _, rec := range want {
+		sc := byName[rec.Name]
+		// The frozen inputs are an input of the payload: a drifted fixture
+		// fails here, not as an opaque outcome mismatch.
+		if input := hkInputOf(sc); !reflect.DeepEqual(input, rec.Input) {
+			t.Fatalf("case %q input diverges\n--- go ---\n%+v\n--- frozen ---\n%+v", rec.Name, input, rec.Input)
+		}
+		got = append(got, sc.run(t))
+		frozen = append(frozen, rec.Outcome)
 	}
 
 	// Non-vacuity: both sides really wrote, recorded, warned, refused and
@@ -659,19 +759,20 @@ func TestMaterializeHookPythonDifferential(t *testing.T) {
 			return tdCountHK(os, func(o hkOutcome) bool { return o.BackupSHA != "" }) > 0
 		}},
 	} {
-		if !marker.any(want) {
-			t.Fatalf("oracle outcomes are missing %s: %#v", marker.name, want)
+		if !marker.any(frozen) {
+			t.Fatalf("frozen outcomes are missing %s: %#v", marker.name, frozen)
 		}
 		if !marker.any(got) {
 			t.Fatalf("native outcomes are missing %s: %#v", marker.name, got)
 		}
 	}
 
-	for i := range got {
-		if !reflect.DeepEqual(got[i], want[i]) {
-			t.Fatalf("scenario %d (%s) diverges\n--- go ---\n%#v\n--- python ---\n%#v",
-				i, nativeScenarios[i].name, got[i], want[i])
-		}
+	for i, rec := range want {
+		t.Run(rec.Name, func(t *testing.T) {
+			if !reflect.DeepEqual(got[i], rec.Outcome) {
+				t.Fatalf("outcome diverges\n--- go ---\n%#v\n--- frozen ---\n%#v", got[i], rec.Outcome)
+			}
+		})
 	}
 }
 
