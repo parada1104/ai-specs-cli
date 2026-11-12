@@ -67,6 +67,27 @@ func TestCheckTagConflicts(t *testing.T) {
 			recipes: nil,
 			want:    []TagConflict{},
 		},
+		{
+			// The retired Python bridge fixture (tests/test_tag_conflict_bridge.py): warning
+			// and fatal graded together, first-seen tag order, a tag declared twice per
+			// recipe still deduplicating to one id per peer.
+			name: "four tag groups keep first-seen order and mixed severities",
+			recipes: []RecipeTagMetadata{
+				{ID: "alpha", Tags: []string{"vcs", "flow"}, ConflictsWith: []string{"beta"}},
+				{ID: "beta", Tags: []string{"flow", "vcs"}},
+				{ID: "pair-x", Tags: []string{"color"}},
+				{ID: "pair-y", Tags: []string{"color"}},
+				{ID: "solo", Tags: []string{"solo-tag"}},
+				{ID: "dup", Tags: []string{"self-tag", "self-tag"}},
+				{ID: "dup-peer", Tags: []string{"self-tag", "self-tag"}},
+			},
+			want: []TagConflict{
+				tagConflictOf("vcs", "fatal", "alpha", "beta"),
+				tagConflictOf("flow", "fatal", "alpha", "beta"),
+				tagConflictOf("color", "warning", "pair-x", "pair-y"),
+				tagConflictOf("self-tag", "warning", "dup", "dup-peer"),
+			},
+		},
 	}
 
 	for _, tc := range cases {
