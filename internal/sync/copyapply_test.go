@@ -14,6 +14,7 @@ package sync
 // this file.
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/projectcache"
+	"ai-specs.dev/ai-specs/internal/schema"
 	"ai-specs.dev/worktree-gate/shared"
 )
 
@@ -793,6 +795,92 @@ url = "https://example.invalid/x.git"
 		}
 		if len(results) != 0 {
 			t.Fatalf("ApplyCopyItems(empty plan) = %#v, want empty", results)
+		}
+	})
+}
+
+// TestCopyApplyCallSites pins the native copy call sites the retired Python
+// bridge's contract tests covered through the gate flag: the exact
+// missing-source message per kind, and the command warn condition (dest
+// exists AND differs) with the confirmation print either way. The shared
+// decision owns the overwrite flag (gate/shared/copyapply.go), so these cases
+// drive the internal/sync call sites that consume it.
+func TestCopyApplyCallSites(t *testing.T) {
+	base := t.TempDir()
+	recipeDir := filepath.Join(base, "catalog", "alpha")
+	roots := CopyRoots{RecipeSkillsRoot: filepath.Join(base, "cache", ".recipe")}
+	lockPath := filepath.Join(base, "project", "ai-specs", ".ai-specs.lock")
+	newRequest := func() (materializeArtifactRequest, *bytes.Buffer, *bytes.Buffer) {
+		var stdout, stderr bytes.Buffer
+		return materializeArtifactRequest{
+			ProjectRoot: filepath.Join(base, "project"),
+			AISpecsHome: filepath.Join(base, "home"),
+			CatalogDir:  filepath.Join(base, "catalog"),
+			Recipe:      materializeRecipe{ID: "alpha", Enabled: true},
+			Stdout:      &stdout,
+			Stderr:      &stderr,
+		}, &stdout, &stderr
+	}
+
+	t.Run("bundled skill missing source is fatal with python's message", func(t *testing.T) {
+		req, stdout, _ := newRequest()
+		skill := &schema.SkillRef{ID: "no-such-skill", Source: "bundled"}
+		err := materializeBundledSkill(req, recipeDir, lockPath, roots, skill)
+		want := "bundled skill not found: " + filepath.Join(recipeDir, "skills", "no-such-skill")
+		if err == nil || err.Error() != want {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
+		if stdout.Len() != 0 {
+			t.Errorf("a fatal missing source prints no confirmation, got %q", stdout.String())
+		}
+	})
+
+	t.Run("command missing source is fatal with python's message", func(t *testing.T) {
+		req, stdout, _ := newRequest()
+		cmd := &schema.CommandRef{ID: "deploy", Path: "commands/missing.md"}
+		err := materializeCommandArtifact(req, recipeDir, roots, cmd)
+		want := "command source not found: " + filepath.Join(recipeDir, "commands", "missing.md")
+		if err == nil || err.Error() != want {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
+		if stdout.Len() != 0 {
+			t.Errorf("a fatal missing source prints no confirmation, got %q", stdout.String())
+		}
+	})
+
+	t.Run("fresh command dest copies without an overwrite warning", func(t *testing.T) {
+		writeCopyFixtureFile(t, filepath.Join(recipeDir, "commands", "deploy.md"), "deploy steps v2")
+		req, stdout, stderr := newRequest()
+		roots := CopyRoots{CommandsDir: filepath.Join(base, "fresh", "commands")}
+		cmd := &schema.CommandRef{ID: "deploy", Path: "commands/deploy.md"}
+		if err := materializeCommandArtifact(req, recipeDir, roots, cmd); err != nil {
+			t.Fatalf("materializeCommandArtifact: %v", err)
+		}
+		if got, want := stdout.String(), "    ✓ command deploy\n"; got != want {
+			t.Errorf("stdout = %q, want %q", got, want)
+		}
+		if got := stderr.String(); got != "" {
+			t.Errorf("stderr = %q, want no warning for a fresh dest", got)
+		}
+		dest := filepath.Join(roots.CommandsDir, "deploy.md")
+		if body, err := os.ReadFile(dest); err != nil || string(body) != "deploy steps v2" {
+			t.Fatalf("dest = %q (%v), want the copied source bytes", body, err)
+		}
+	})
+
+	t.Run("identical command dest does not warn", func(t *testing.T) {
+		roots := CopyRoots{CommandsDir: filepath.Join(base, "identical", "commands")}
+		writeCopyFixtureFile(t, filepath.Join(roots.CommandsDir, "deploy.md"), "deploy steps v2")
+		req, stdout, stderr := newRequest()
+		cmd := &schema.CommandRef{ID: "deploy", Path: "commands/deploy.md"}
+		if err := materializeCommandArtifact(req, recipeDir, roots, cmd); err != nil {
+			t.Fatalf("materializeCommandArtifact: %v", err)
+		}
+		if got, want := stdout.String(), "    ✓ command deploy\n"; got != want {
+			t.Errorf("stdout = %q, want %q", got, want)
+		}
+		if got := stderr.String(); got != "" {
+			t.Errorf("stderr = %q, want no warning for an identical dest", got)
 		}
 	})
 }

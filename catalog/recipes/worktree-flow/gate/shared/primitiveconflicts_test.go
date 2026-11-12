@@ -128,6 +128,27 @@ func TestCheckPrimitiveConflicts(t *testing.T) {
 			recipes: nil,
 			want:    []PrimitiveConflict{},
 		},
+		{
+			// The shipped tests/fixtures/recipes catalog run in one grade: one
+			// conflicting pair per primitive kind plus the enabled order the
+			// fixture is enabled in. Severity is always fatal, the recipes carry
+			// [recipe].name values (never the TOML ids), and the kind order is
+			// skill -> command -> mcp.
+			name: "the shipped fixture catalog grades skill then command then mcp",
+			recipes: []RecipePrimitives{
+				recipePrimitivesOf("test-conflict-a", "Test Conflict A", []string{"shared-skill"}, nil, nil),
+				recipePrimitivesOf("test-conflict-b", "Test Conflict B", []string{"shared-skill"}, nil, nil),
+				recipePrimitivesOf("test-cmd-conflict-a", "Test Cmd Conflict A", nil, []string{"shared-cmd"}, nil),
+				recipePrimitivesOf("test-cmd-conflict-b", "Test Cmd Conflict B", nil, []string{"shared-cmd"}, nil),
+				recipePrimitivesOf("test-mcp-conflict-a", "Test MCP Conflict A", nil, nil, []string{"shared-mcp"}),
+				recipePrimitivesOf("test-mcp-conflict-b", "Test MCP Conflict B", nil, nil, []string{"shared-mcp"}),
+			},
+			want: []PrimitiveConflict{
+				primitiveConflictOf("skill", "shared-skill", "Test Conflict A", "Test Conflict B"),
+				primitiveConflictOf("command", "shared-cmd", "Test Cmd Conflict A", "Test Cmd Conflict B"),
+				primitiveConflictOf("mcp", "shared-mcp", "Test MCP Conflict A", "Test MCP Conflict B"),
+			},
+		},
 	}
 
 	for _, tc := range cases {
