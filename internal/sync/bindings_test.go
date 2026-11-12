@@ -469,3 +469,39 @@ func TestNativeResolveBindingsResolutionErrorNeverWrites(t *testing.T) {
 		t.Fatalf("witness written after a resolution error: %v", err)
 	}
 }
+
+// TestNativeResolveBindingsNoWriteOptIn pins the read-only call shape the retired
+// tests/test_binding_bridge.py asserted (its
+// test_read_only_resolution_never_writes_the_witness): resolving bindings without
+// the write opt-in — the doctor/derived-config shape used by
+// internal/sync/resolvedconfigonly.go and briefview.go — never persists a witness,
+// even inside a Git repository where the write would otherwise succeed.
+//
+// The retired file's other half,
+// test_write_opt_in_without_a_project_root_never_defaults_to_cwd, is NOT ported:
+// it pinned the Python adapter's own guard. The shared core deliberately defaults
+// the witness root to the process cwd for the gate flag ("The root defaults to
+// cwd", catalog/recipes/worktree-flow/gate/bindings.go:95), so
+// shared.GitCommonDir("") resolves the cwd's repository; every native
+// write-capable call site (materialize.go:155/:196) passes the project root it
+// owns, and the two read-only sites pass no write opt-in at all.
+func TestNativeResolveBindingsNoWriteOptIn(t *testing.T) {
+	catalog := t.TempDir()
+	writeSyncCatalogRecipe(t, catalog, "alpha", syncRecipeHeader("alpha", "alpha")+bindingsCapTable("tracker"))
+
+	root := bindingsGitRepo(t)
+	got := ResolveBindings(BindingRequest{
+		EnabledRecipeIDs: []string{"alpha"},
+		CatalogDir:       catalog,
+		ProjectRoot:      root,
+	})
+	if !reflect.DeepEqual(got.Bindings, map[string]string{"tracker": "alpha"}) {
+		t.Fatalf("bindings = %#v, want the resolution", got.Bindings)
+	}
+	if len(got.Warnings) != 0 {
+		t.Fatalf("warnings = %#v, want none", got.Warnings)
+	}
+	if _, err := os.Stat(bindingsWitnessPath(t, root)); !os.IsNotExist(err) {
+		t.Fatalf("witness written without the write opt-in: %v", err)
+	}
+}
