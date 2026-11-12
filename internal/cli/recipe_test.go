@@ -108,7 +108,7 @@ enabled = false
 
 // ── Frozen oracles (GO-20 U2e T5 PR4a S4) ──
 //
-// The four differential tables in this file used to run the legacy shell route
+// The six differential tables in this file used to run the legacy shell route
 // live as their oracle. lib/ is being deleted, so each family's legacy output
 // was captured ONCE into internal/cli/testdata/ (one bundle per script family)
 // and the tables now replay it: no bash, no python3, no lib/ read, and no
@@ -144,6 +144,8 @@ const (
 	recipeAddGoldenFile       = "recipe_add_golden.json"
 	recipeRemoveGoldenFile    = "recipe_remove_golden.json"
 	recipeConfigureGoldenFile = "recipe_configure_golden.json"
+	recipeConfigGoldenFile    = "recipe_config_golden.json"
+	recipeDispatchGoldenFile  = "recipe_dispatch_golden.json"
 )
 
 // recipeListGoldenCases is the hard-coded identity inventory of the frozen
@@ -1293,12 +1295,11 @@ func TestRecipeAddMissingPathDeviation(t *testing.T) {
 // snapshot of the CLI home around the whole table (the verb writes NOTHING
 // in the home).
 //
-// The shell leg's lock write goes through lock.py's worktree-gate bridge,
-// so WORKTREE_GATE_BIN is pinned to a freshly built gate binary
-// (skillsRemoveEnv + skillsRemoveGateBinary, the U5b pattern): with no pin
-// the bridge fails open with a GO_LOCK_WRITE_BRIDGE_FALLBACK warning on
-// stderr that the native leg never prints, and the byte comparison would
-// measure the fail-open bridge instead of the verb.
+// The legacy leg's lock write went through lock.py's worktree-gate bridge, so
+// WORKTREE_GATE_BIN was pinned to a freshly built gate binary when the bundle
+// was captured (the U5b pattern): with no pin the bridge fails open with a
+// GO_LOCK_WRITE_BRIDGE_FALLBACK warning on stderr that the native leg never
+// prints. The replay passes "" and the frozen lock bytes stay compared.
 
 // The manifest shapes: a recipe with a config sub-table (and a sibling whose
 // multi-line string with blank lines must survive byte-for-byte, D2's class),
@@ -2403,66 +2404,106 @@ func configureRecipesFixtures(t *testing.T) (projInit, projNoManifest string) {
 	return projInit, projNoManifest
 }
 
-// TestConfigureRecipesDifferentialAgainstShell is the U6e byte-parity net for
-// configure-recipes' NON-TTY paths: both legs are pipes, so the legacy route
-// reaches exactly the wrapper loop, the manifest guard and config_wizard
-// main's TTY gate — the gate message and exit 3, the guard message and exit
-// 1, the usage and both exit-2 usage errors. The interactive loop is NOT in
-// this table (it needs a terminal neither leg gets here); it is in-process,
-// pinned by TestConfigureRecipesFlow below. A tree snapshot proves the whole
-// table writes nothing.
-func TestConfigureRecipesDifferentialAgainstShell(t *testing.T) {
-	skillsOracle(t, "lib/recipe-config.sh")
-	bin, root := smokeSetup(t)
-	script := filepath.Join(root, "lib", "recipe-config.sh")
-	if _, err := os.Stat(script); err != nil {
-		t.Skipf("legacy lib/recipe-config.sh unavailable: %v", err)
-	}
+// recipeConfigGoldenCases is the hard-coded identity inventory of the frozen
+// configure-recipes bundle: the table's own cases in capture order, then the
+// deviation record its own test reads. It is an independent oracle of coverage
+// — kept in the test, never derived from the bundle — so a bundle that is
+// missing, renamed, duplicated or reordered cannot validate silently.
+var recipeConfigGoldenCases = []string{
+	"help",
+	"short help",
+	"unknown flag",
+	"second positional",
+	"positional after dashdash",
+	"missing manifest",
+	"initialized project off the TTY",
+	"target defaults to cwd off the TTY",
+	"missing path",
+}
 
+// recipeConfigCase is one row of the configure-recipes table: the home the
+// verb reads, the argv after `configure-recipes`, the working directory and
+// the project the verb touches (frozen as the case's input tree; "" for the
+// flag-only cases).
+type recipeConfigCase struct {
+	name   string
+	home   string
+	args   []string
+	dir    string // "" → the shared scratch dir
+	target string // "" → the case has no project to freeze
+}
+
+// recipeConfigCorpus builds the home and project shapes the configure-recipes
+// table runs and returns both the table and the roots the read-only snapshot
+// covers.
+func recipeConfigCorpus(t *testing.T, root string) (cases []recipeConfigCase, roots []string) {
+	t.Helper()
 	home := skillsListHome(t, root)
 	projInit, projNoManifest := configureRecipesFixtures(t)
-
-	type diffCase struct {
-		name string
-		args []string // after `configure-recipes` (Go) / after the script name (bash)
-		dir  string   // working directory for both legs; "" → a fresh temp dir
+	cases = []recipeConfigCase{
+		{name: "help", home: home, args: []string{"--help"}},
+		{name: "short help", home: home, args: []string{"-h"}},
+		{name: "unknown flag", home: home, args: []string{"--bogus"}},
+		{name: "second positional", home: home,
+			args: []string{projInit, "extra"}, target: projInit},
+		{name: "positional after dashdash", home: home,
+			args: []string{"--", projInit}, target: projInit},
+		{name: "missing manifest", home: home,
+			args: []string{projNoManifest}, target: projNoManifest},
+		{name: "initialized project off the TTY", home: home,
+			args: []string{projInit}, target: projInit},
+		{name: "target defaults to cwd off the TTY", home: home,
+			dir: projInit, target: projInit},
 	}
-	cases := []diffCase{
-		{"help", []string{"--help"}, ""},
-		{"short help", []string{"-h"}, ""},
-		{"unknown flag", []string{"--bogus"}, ""},
-		{"second positional", []string{projInit, "extra"}, ""},
-		{"positional after dashdash", []string{"--", projInit}, ""},
-		{"missing manifest", []string{projNoManifest}, ""},
-		{"initialized project off the TTY", []string{projInit}, ""},
-		{"target defaults to cwd off the TTY", nil, projInit},
+	return cases, []string{home, projInit, projNoManifest}
+}
+
+// TestConfigureRecipesDifferentialAgainstShell is the U6e byte-parity net for
+// configure-recipes' NON-TTY paths: every case replays the frozen legacy `bash
+// lib/recipe-config.sh` run of testdata/recipe_config_golden.json against the
+// built binary on the same project and asserts byte-identical stdout,
+// byte-identical stderr and an identical exit code. Both legs were pipes, so
+// the frozen legacy route reached exactly the wrapper loop, the manifest guard
+// and config_wizard main's TTY gate — the gate message and exit 3, the guard
+// message and exit 1, the usage and both exit-2 usage errors. The interactive
+// loop is NOT in this table (it needs a terminal neither leg gets); it is
+// in-process, pinned by TestConfigureRecipesFlow below. A tree snapshot proves
+// the whole table writes nothing.
+func TestConfigureRecipesDifferentialAgainstShell(t *testing.T) {
+	frozen := skillsLoadGolden(t, recipeConfigGoldenFile, recipeConfigGoldenCases)
+	bin, root := smokeSetup(t)
+	cases, roots := recipeConfigCorpus(t, root)
+	// The corpus and the leading inventory must agree case for case before
+	// anything is compared; the trailing record is the deviation case its own
+	// test reads.
+	if len(cases)+1 != len(recipeConfigGoldenCases) {
+		t.Fatalf("in-test corpus has %d cases, inventory %d", len(cases), len(recipeConfigGoldenCases))
+	}
+	for i, tc := range cases {
+		if tc.name != recipeConfigGoldenCases[i] {
+			t.Fatalf("corpus case %d is %q, inventory %q", i, tc.name, recipeConfigGoldenCases[i])
+		}
 	}
 
-	roots := []string{home, projInit, projNoManifest}
 	before := skillsTreeSnapshot(t, roots...)
-
+	scratch := t.TempDir()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			rec, ok := frozen[tc.name]
+			if !ok {
+				t.Fatalf("no frozen record %q", tc.name)
+			}
 			dir := tc.dir
 			if dir == "" {
-				dir = t.TempDir()
+				dir = scratch
 			}
-			env := skillsListEnv(home)
+			tokens := skillsTokenSet(dir, "<DIR>", tc.home, "<HOME>",
+				tc.target, "<DIR>", root, "<ROOT>")
+			input := tokens.tree(t, tc.target)
 
-			legOut, legErr, legCode := runOne("bash",
-				append([]string{script}, tc.args...), env, dir)
-			goOut, goErr, goCode := runOne(bin,
-				append([]string{"configure-recipes"}, tc.args...), env, dir)
-
-			if !bytes.Equal(goOut, legOut) {
-				t.Errorf("stdout mismatch:\n go:   %q\n bash: %q", goOut, legOut)
-			}
-			if !bytes.Equal(goErr, legErr) {
-				t.Errorf("stderr mismatch:\n go:   %q\n bash: %q", goErr, legErr)
-			}
-			if goCode != legCode {
-				t.Errorf("exit code mismatch: go = %d, bash = %d", goCode, legCode)
-			}
+			out, errOut, code := runOne(bin,
+				append([]string{"configure-recipes"}, tc.args...), skillsListEnv(tc.home), dir)
+			skillsCheckCase(t, rec, tokens, input, out, errOut, code, tokens.tree(t, tc.target))
 		})
 	}
 
@@ -2541,16 +2582,12 @@ func TestConfigureRecipesNativeNeedsNoBashOrPython(t *testing.T) {
 // TestConfigureRecipesMissingPathDeviation pins the frozen `cd` failure the
 // way the U5a/U6a tables do: exit 1 with the `cd: <path>: <reason>` shape,
 // WITHOUT bash's own `lib/recipe-config.sh: line N: ` prefix (the S12/ADR
-// 0002 class). The legacy leg is checked for the path and the strerror
-// wording only, deliberately not byte-matched.
+// 0002 class). The legacy side is the bundle's `missing path` record: bash's
+// own wording is still visible there, deliberately not byte-matched against
+// the port.
 func TestConfigureRecipesMissingPathDeviation(t *testing.T) {
-	root, err := locateRoot()
-	if err != nil {
-		t.Skipf("repo root not located: %v", err)
-	}
-	script := filepath.Join(root, "lib", "recipe-config.sh")
+	frozen := skillsLoadGolden(t, recipeConfigGoldenFile, recipeConfigGoldenCases)
 	home := t.TempDir()
-	env := skillsListEnv(home)
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "does-not-exist")
 
@@ -2567,33 +2604,52 @@ func TestConfigureRecipesMissingPathDeviation(t *testing.T) {
 		t.Errorf("go stderr = %q, want %q", stderr.String(), want)
 	}
 
-	legOut, legErr, legCode := runOne("bash", []string{script, missing}, env, dir)
-	if legCode != 1 {
-		t.Errorf("bash exit = %d, want 1", legCode)
+	rec, ok := frozen["missing path"]
+	if !ok {
+		t.Fatal("no frozen record \"missing path\"")
 	}
-	if len(legOut) != 0 {
-		t.Errorf("bash stdout = %q, want empty", legOut)
+	if rec.RC != 1 {
+		t.Errorf("frozen legacy exit = %d, want 1", rec.RC)
 	}
-	for _, part := range []string{"cd:", missing, "No such file or directory"} {
-		if !strings.Contains(string(legErr), part) {
-			t.Errorf("bash stderr = %q, want it to contain %q", legErr, part)
+	if rec.Stdout != "" {
+		t.Errorf("frozen legacy stdout = %q, want empty", rec.Stdout)
+	}
+	// Legacy: bash's own cd diagnostic names the path. The
+	// `lib/recipe-config.sh: line N: ` prefix is a bash artifact, deliberately
+	// not matched.
+	for _, part := range []string{"cd:", "<DIR>/does-not-exist", "No such file or directory"} {
+		if !strings.Contains(rec.Stderr, part) {
+			t.Errorf("frozen legacy stderr = %q, want it to contain %q", rec.Stderr, part)
 		}
 	}
 }
 
-// TestRecipeDispatcherDifferentialAgainstShell byte-compares lib/recipe.sh's
-// OWN dispatcher arms against the native route: --help/-h/help on stdout
-// (exit 0), the bare `recipe` on stderr (exit 2), unknown subcommands (the
-// two lines, exit 1), and `recipe init` with its missing id — since GO-20
-// U7-2 the Go verb owns both the brief and the wrapper grammar, so this table
-// pins the native grammar against the legacy shell wrapper byte for byte.
+// recipeDispatcherGoldenCases is the hard-coded identity inventory of the
+// frozen dispatcher bundle: the table's cases in capture order. It is an
+// independent oracle of coverage — kept in the test, never derived from the
+// bundle — so a bundle that is missing, renamed, duplicated or reordered
+// cannot validate silently.
+var recipeDispatcherGoldenCases = []string{
+	"help flag",
+	"short help flag",
+	"help word",
+	"bare recipe",
+	"unknown subcommand",
+	"unknown flag as subcommand",
+	"near miss of a real subcommand",
+	"init without its id",
+}
+
+// TestRecipeDispatcherDifferentialAgainstShell replays the frozen legacy `bash
+// lib/recipe.sh` run of testdata/recipe_dispatch_golden.json against the built
+// binary: --help/-h/help on stdout (exit 0), the bare `recipe` on stderr (exit
+// 2), unknown subcommands (the two lines, exit 1), and `recipe init` with its
+// missing id — since GO-20 U7-2 the Go verb owns both the brief and the
+// wrapper grammar, so this table pins the native grammar against the legacy
+// shell wrapper byte for byte.
 func TestRecipeDispatcherDifferentialAgainstShell(t *testing.T) {
-	skillsOracle(t, "lib/recipe.sh")
+	frozen := skillsLoadGolden(t, recipeDispatchGoldenFile, recipeDispatcherGoldenCases)
 	bin, root := smokeSetup(t)
-	script := filepath.Join(root, "lib", "recipe.sh")
-	if _, err := os.Stat(script); err != nil {
-		t.Skipf("legacy lib/recipe.sh unavailable: %v", err)
-	}
 	home := skillsListHome(t, root)
 
 	cases := []struct {
@@ -2609,25 +2665,27 @@ func TestRecipeDispatcherDifferentialAgainstShell(t *testing.T) {
 		{"near miss of a real subcommand", []string{"listx"}},
 		{"init without its id", []string{"init"}},
 	}
+	if len(cases) != len(recipeDispatcherGoldenCases) {
+		t.Fatalf("in-test corpus has %d cases, inventory %d", len(cases), len(recipeDispatcherGoldenCases))
+	}
+	for i, tc := range cases {
+		if tc.name != recipeDispatcherGoldenCases[i] {
+			t.Fatalf("corpus case %d is %q, inventory %q", i, tc.name, recipeDispatcherGoldenCases[i])
+		}
+	}
+
+	scratch := t.TempDir()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			env := skillsListEnv(home)
+			rec, ok := frozen[tc.name]
+			if !ok {
+				t.Fatalf("no frozen record %q", tc.name)
+			}
+			tokens := skillsTokenSet(scratch, "<DIR>", home, "<HOME>", root, "<ROOT>")
 
-			legOut, legErr, legCode := runOne("bash",
-				append([]string{script}, tc.args...), env, dir)
-			goOut, goErr, goCode := runOne(bin,
-				append([]string{"recipe"}, tc.args...), env, dir)
-
-			if !bytes.Equal(goOut, legOut) {
-				t.Errorf("stdout mismatch:\n go:   %q\n bash: %q", goOut, legOut)
-			}
-			if !bytes.Equal(goErr, legErr) {
-				t.Errorf("stderr mismatch:\n go:   %q\n bash: %q", goErr, legErr)
-			}
-			if goCode != legCode {
-				t.Errorf("exit code mismatch: go = %d, bash = %d", goCode, legCode)
-			}
+			out, errOut, code := runOne(bin,
+				append([]string{"recipe"}, tc.args...), skillsListEnv(home), scratch)
+			skillsCheckCase(t, rec, tokens, nil, out, errOut, code, nil)
 		})
 	}
 }
