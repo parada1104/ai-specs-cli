@@ -2,11 +2,14 @@ package changelog
 
 import (
 	"bytes"
-	"errors"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -329,29 +332,83 @@ func TestRunCLINothingToReport(t *testing.T) {
 	}
 }
 
-// --- differential: Go RunCLI vs `python3 lib/_internal/changelog.py` ---
+// --- frozen oracle: Go RunCLI vs the captured `lib/_internal/changelog.py` ---
 
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatalf("resolve repo root: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		t.Fatalf("repo root %s does not contain go.mod: %v", root, err)
-	}
-	return root
+// The legacy differential used to exec python3 over this corpus on every run.
+// RunCLI's output is a pure function of the changelog text and the
+// (current, new, --notices) arguments — no clock, no host path, no directory
+// name — so the legacy output was captured once into
+// testdata/changelog_golden.json. The test never execs python3 and never reads
+// lib/. The golden is a snapshot: regenerating it needs a human decision.
+
+const changelogGoldenPath = "testdata/changelog_golden.json"
+
+// realChangelogPath is a frozen copy of the repository CHANGELOG.md the oracle
+// was captured from. Freezing the text keeps the golden valid as CHANGELOG.md
+// keeps evolving, and the pinned corpus manifest still ties that text to the
+// captured inputs.
+const realChangelogPath = "testdata/real_changelog.md"
+
+type frozenInvocation struct {
+	Current string `json:"current"`
+	New     string `json:"new"`
+	Notices bool   `json:"notices"`
+	Exit    int    `json:"exit"`
+	Stdout  string `json:"stdout"`
 }
 
-func TestDifferentialCLI(t *testing.T) {
-	root := repoRoot(t)
-	pyScript := filepath.Join(root, "lib", "_internal", "changelog.py")
-	if _, err := os.Stat(pyScript); err != nil {
-		t.Fatalf("python reference missing: %v", err)
-	}
-	realChangelog, err := os.ReadFile(filepath.Join(root, "CHANGELOG.md"))
+type frozenChangelogCase struct {
+	Name string             `json:"name"`
+	Runs []frozenInvocation `json:"runs"`
+}
+
+type frozenChangelog struct {
+	Oracle map[string]any        `json:"oracle"`
+	Corpus []string              `json:"corpus"`
+	Cases  []frozenChangelogCase `json:"cases"`
+}
+
+// expectedChangelogGoldenCases is the independent inventory of the frozen
+// bundle: deleting, duplicating or reordering a golden case fails before any
+// comparison runs.
+var expectedChangelogGoldenCases = []string{
+	"sample",
+	"empty",
+	"noheadings",
+	"malformed",
+	"nodate",
+	"endash",
+	"dupes",
+	"fenced",
+	"noticefence",
+	"markup",
+	"longbody",
+	"unreleasedonly",
+	"crlf",
+	"real",
+}
+
+// changelogPairs is the (current, new) grid every corpus entry is run against,
+// doubled over with and without --notices.
+var changelogPairs = [][2]string{
+	{"0.20.0", "0.22.0"},
+	{"0.21.0", "0.22.0"},
+	{"0.22.0", "0.22.0"},
+	{"0.22.0", "0.21.0"},
+	{"not-a-version", "0.22.0"},
+	{"0.20.1", "0.21.0"},
+	{"0.19.0", "0.22.0"},
+	{"1.0.0", "2.0.0"},
+	{"0.0.0", "9.9.9"},
+}
+
+type changelogCorpusCase struct{ name, text string }
+
+func differentialCorpus(t *testing.T) []changelogCorpusCase {
+	t.Helper()
+	realChangelog, err := os.ReadFile(realChangelogPath)
 	if err != nil {
-		t.Fatalf("read repo changelog: %v", err)
+		t.Fatalf("read frozen real changelog %s: %v", realChangelogPath, err)
 	}
 
 	longBody := "## [1.0.0] — 2026-01-01\n\n### Added\n"
@@ -359,7 +416,7 @@ func TestDifferentialCLI(t *testing.T) {
 		longBody += "- bullet number " + string(rune('a'+i)) + " that runs a bit long and has no sentence break\n"
 	}
 
-	corpus := []struct{ name, text string }{
+	return []changelogCorpusCase{
 		{"sample", sample},
 		{"empty", ""},
 		{"noheadings", "no headings at all"},
@@ -375,60 +432,120 @@ func TestDifferentialCLI(t *testing.T) {
 		{"crlf", strings.ReplaceAll(sample, "\n", "\r\n")},
 		{"real", string(realChangelog)},
 	}
-	pairs := [][2]string{
-		{"0.20.0", "0.22.0"},
-		{"0.21.0", "0.22.0"},
-		{"0.22.0", "0.22.0"},
-		{"0.22.0", "0.21.0"},
-		{"not-a-version", "0.22.0"},
-		{"0.20.1", "0.21.0"},
-		{"0.19.0", "0.22.0"},
-		{"1.0.0", "2.0.0"},
-		{"0.0.0", "9.9.9"},
+}
+
+// changelogCorpusManifest pins the corpus inputs the oracle was captured from
+// as sorted "sha256  <case>.md" lines, so corpus drift fails as input drift
+// instead of an opaque payload mismatch.
+func changelogCorpusManifest(t *testing.T, dir string, corpus []changelogCorpusCase) []string {
+	t.Helper()
+	lines := make([]string, 0, len(corpus))
+	for _, entry := range corpus {
+		rel := entry.name + ".md"
+		data, err := os.ReadFile(filepath.Join(dir, rel))
+		if err != nil {
+			t.Fatalf("manifest %s: %v", rel, err)
+		}
+		sum := sha256.Sum256(data)
+		lines = append(lines, fmt.Sprintf("%s  %s", hex.EncodeToString(sum[:]), rel))
+	}
+	sort.Strings(lines)
+	return lines
+}
+
+func loadChangelogGolden(t *testing.T) frozenChangelog {
+	t.Helper()
+	raw, err := os.ReadFile(changelogGoldenPath)
+	if err != nil {
+		t.Fatalf("read frozen oracle %s: %v", changelogGoldenPath, err)
+	}
+	var golden frozenChangelog
+	if err := json.Unmarshal(raw, &golden); err != nil {
+		t.Fatalf("decode frozen oracle %s: %v", changelogGoldenPath, err)
+	}
+	return golden
+}
+
+// TestDifferentialCLI compares the Go port of the changelog CLI with the frozen
+// legacy oracle over the whole corpus and the whole (current, new, --notices)
+// grid: exit code, stdout, and empty stderr. Inputs are pinned by a corpus
+// manifest and the runs are pinned by their arguments; a missing golden fails.
+func TestDifferentialCLI(t *testing.T) {
+	golden := loadChangelogGolden(t)
+	corpus := differentialCorpus(t)
+
+	if len(corpus) != len(expectedChangelogGoldenCases) {
+		t.Fatalf("in-test corpus has %d cases, inventory %d", len(corpus), len(expectedChangelogGoldenCases))
+	}
+	if len(golden.Cases) != len(expectedChangelogGoldenCases) {
+		t.Fatalf("frozen oracle has %d cases, inventory %d", len(golden.Cases), len(expectedChangelogGoldenCases))
+	}
+	seen := map[string]bool{}
+	for i, want := range expectedChangelogGoldenCases {
+		if seen[want] {
+			t.Fatalf("inventory lists %q twice", want)
+		}
+		seen[want] = true
+		if golden.Cases[i].Name != want || corpus[i].name != want {
+			t.Fatalf("case %d: golden %q, corpus %q, inventory %q", i, golden.Cases[i].Name, corpus[i].name, want)
+		}
 	}
 
 	tmp := t.TempDir()
-	compared := 0
+	paths := make(map[string]string, len(corpus))
 	for _, entry := range corpus {
 		path := filepath.Join(tmp, entry.name+".md")
 		if err := os.WriteFile(path, []byte(entry.text), 0o644); err != nil {
 			t.Fatalf("write fixture: %v", err)
 		}
-		for _, pair := range pairs {
+		paths[entry.name] = path
+	}
+
+	gotCorpus := changelogCorpusManifest(t, tmp, corpus)
+	if strings.Join(gotCorpus, "\n") != strings.Join(golden.Corpus, "\n") {
+		t.Fatalf("frozen inputs differ from the corpus:\n--- frozen ---\n%s\n--- corpus ---\n%s",
+			strings.Join(golden.Corpus, "\n"), strings.Join(gotCorpus, "\n"))
+	}
+
+	compared := 0
+	for i, entry := range corpus {
+		runs := golden.Cases[i].Runs
+		if want := len(changelogPairs) * 2; len(runs) != want {
+			t.Fatalf("%s: frozen run count %d, corpus grid %d", entry.name, len(runs), want)
+		}
+		path := paths[entry.name]
+		k := 0
+		for _, pair := range changelogPairs {
 			for _, notices := range []bool{false, true} {
-				args := []string{pyScript, path, pair[0], pair[1]}
-				goArgs := []string{"changelog.py", path, pair[0], pair[1]}
+				frozen := runs[k]
+				k++
+				if frozen.Current != pair[0] || frozen.New != pair[1] || frozen.Notices != notices {
+					t.Fatalf("%s: frozen run %d is %v notices=%v, corpus %v notices=%v",
+						entry.name, k-1, [2]string{frozen.Current, frozen.New}, frozen.Notices, pair, notices)
+				}
+				args := []string{"changelog.py", path, pair[0], pair[1]}
 				if notices {
 					args = append(args, "--notices")
-					goArgs = append(goArgs, "--notices")
 				}
-				cmd := exec.Command("python3", args...)
-				var pyOut, pyErr bytes.Buffer
-				cmd.Stdout, cmd.Stderr = &pyOut, &pyErr
-				runErr := cmd.Run()
-				pyCode := 0
-				if runErr != nil {
-					var ee *exec.ExitError
-					if !errors.As(runErr, &ee) {
-						t.Fatalf("python3 %v: %v", args, runErr)
-					}
-					pyCode = ee.ExitCode()
+				var out, errOut bytes.Buffer
+				code := RunCLI(args, &out, &errOut)
+				if code != frozen.Exit {
+					t.Errorf("%s %v notices=%v: exit go=%d legacy=%d", entry.name, pair, notices, code, frozen.Exit)
 				}
-				var goOut, goErr bytes.Buffer
-				goCode := RunCLI(goArgs, &goOut, &goErr)
-				if goCode != pyCode {
-					t.Errorf("%s %v notices=%v: exit go=%d python=%d", entry.name, pair, notices, goCode, pyCode)
-				}
-				if goOut.String() != pyOut.String() {
-					t.Errorf("%s %v notices=%v: stdout mismatch\n go:     %q\n python: %q", entry.name, pair, notices, goOut.String(), pyOut.String())
+				if out.String() != frozen.Stdout {
+					t.Errorf("%s %v notices=%v: stdout mismatch\n go:     %q\n legacy: %q", entry.name, pair, notices, out.String(), frozen.Stdout)
 					continue
+				}
+				if errOut.Len() != 0 {
+					t.Errorf("%s %v notices=%v: stderr = %q, legacy wrote none", entry.name, pair, notices, errOut.String())
 				}
 				compared++
 			}
 		}
 	}
-	t.Logf("differential changelog CLI: compared %d invocations", compared)
-	if compared < 200 {
-		t.Fatalf("only %d invocations compared — corpus unexpectedly small", compared)
+
+	if want := len(expectedChangelogGoldenCases) * len(changelogPairs) * 2; compared != want {
+		t.Fatalf("compared %d invocations, want %d", compared, want)
 	}
+	t.Logf("differential changelog CLI: compared %d invocations against the frozen oracle", compared)
 }
