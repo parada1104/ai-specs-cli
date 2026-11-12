@@ -1,0 +1,75 @@
+{
+  "oracle": {
+    "driver": "read_recipe + materialize_bundled_skill / materialize_command / materialize_doc with go_apply_copy replaced by a recorder and write_lock a no-op",
+    "note": "Frozen snapshot of the legacy materialize copy call sites over the catalog and case below, captured once. The host-dependent segments are tokens: <BASE> is the temporary base directory the fixture was built under and <CACHE> is the per-project cache key directory (a sha256 of the project's absolute path). No mode, clock or host path is frozen. Regenerating it needs a human decision.",
+    "python": "3.14.7",
+    "script": "lib/_internal/recipe-materialize.py"
+  },
+  "catalog": [
+    {
+      "path": "alpha",
+      "dir": true
+    },
+    {
+      "path": "alpha/README.md",
+      "content": "doc body"
+    },
+    {
+      "path": "alpha/commands",
+      "dir": true
+    },
+    {
+      "path": "alpha/commands/alpha.md",
+      "content": "command body"
+    },
+    {
+      "path": "alpha/recipe.toml",
+      "content": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[[provides.skills]]\nid = \"alpha-skill\"\nsource = \"bundled\"\n\n[[provides.skills]]\nid = \"alpha-dep\"\nsource = \"dep\"\nurl = \"https://example.invalid/x.git\"\n\n[[provides.commands]]\nid = \"alpha-cmd\"\npath = \"commands/alpha.md\"\n\n[[provides.docs]]\nsource = \"README.md\"\ntarget = \"ai-specs/recipes/alpha/README.md\"\n"
+    },
+    {
+      "path": "alpha/skills",
+      "dir": true
+    },
+    {
+      "path": "alpha/skills/alpha-skill",
+      "dir": true
+    },
+    {
+      "path": "alpha/skills/alpha-skill/SKILL.md",
+      "content": "skill body"
+    }
+  ],
+  "cases": [
+    {
+      "name": "one recipe with a bundled skill, a dependency skill, a command and a doc",
+      "ids": [
+        "alpha"
+      ],
+      "roots": {
+        "recipe_skills_root": "<BASE>/home/cache/projects/<CACHE>/.recipe",
+        "commands_dir": "<BASE>/home/cache/projects/<CACHE>/commands",
+        "project_root": "<BASE>/project"
+      },
+      "items": [
+        {
+          "kind": "bundled-skill",
+          "id": "alpha-skill",
+          "src": "<BASE>/catalog/alpha/skills/alpha-skill",
+          "dest": "<BASE>/home/cache/projects/<CACHE>/.recipe/alpha/skills/alpha-skill"
+        },
+        {
+          "kind": "command",
+          "id": "alpha-cmd",
+          "src": "<BASE>/catalog/alpha/commands/alpha.md",
+          "dest": "<BASE>/home/cache/projects/<CACHE>/commands/alpha-cmd.md"
+        },
+        {
+          "kind": "doc",
+          "id": "ai-specs/recipes/alpha/README.md",
+          "src": "<BASE>/catalog/alpha/README.md",
+          "dest": "<BASE>/project/ai-specs/recipes/alpha/README.md"
+        }
+      ]
+    }
+  ]
+}
