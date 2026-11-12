@@ -1,0 +1,135 @@
+{
+  "oracle": {
+    "entry": "main",
+    "python": "3.14.7",
+    "script": "lib/_internal/rules-inventory.py"
+  },
+  "cases": [
+    {
+      "name": "empty",
+      "compare_stderr": false,
+      "exit": 0,
+      "tree": [],
+      "stdout": "{\n  \"schema_version\": 1,\n  \"mode\": \"B\",\n  \"target\": \"<ROOT>\",\n  \"classification_is_suggestion\": true,\n  \"sources\": {\n    \"cursor_rules\": [],\n    \"cursorrules\": {\n      \"status\": \"absent\"\n    },\n    \"agents_md_sections\": [],\n    \"agents_md_present\": false,\n    \"manifest\": {\n      \"present\": false\n    },\n    \"resolved_skills\": [],\n    \"recipe_catalog\": [\n      \"worktree-flow\",\n      \"git-pr-flow\",\n      \"session-context\",\n      \"tdd-flow\",\n      \"trello-mcp-workflow\",\n      \"vault-canonical-store\"\n    ],\n    \"atl_registry\": {\n      \"present\": false,\n      \"skill_ids\": []\n    }\n  },\n  \"summary\": {\n    \"cursor_rules\": 0,\n    \"cursorrules\": 0,\n    \"agents_md_sections\": 0\n  },\n  \"stack_hints\": [],\n  \"recommendations\": {\n    \"init\": \"ai-specs init\",\n    \"default_recipes\": [\n      \"session-context\"\n    ],\n    \"brief_hint\": \"Draft a runtime-brief [brief] section in AGENTS.md after init.\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "name": "cursor-agents-manifest",
+      "compare_stderr": false,
+      "exit": 0,
+      "tree": [
+        "7f6c47ed3748989fd349da90dadc67e1e9bc3106895ac71e1a4d830fc327e631  <ROOT>/.cursor/rules/alpha.mdc",
+        "cfaab92649df07f5bf8b0ecb78033e604c1bf87066dacf4420b2ba8746d88879  <ROOT>/.cursor/rules/nested/beta.mdc",
+        "e4e85b9df06d51c92427fa280d2ff3fb460f0dd2f5656093a687f569b16aa32d  <ROOT>/.cursorrules",
+        "5c52ce6afadb555df99a3bb77a9238c735b53aae904755035d3f48f7ba79f3e1  <ROOT>/AGENTS.md",
+        "abbfbdfc5f53062667c03e8304f7940182087b168f04fe17f00c13d2bcfa8c73  <ROOT>/ai-specs/ai-specs.toml"
+      ],
+      "stdout": "{\n  \"schema_version\": 1,\n  \"mode\": \"A\",\n  \"target\": \"<ROOT>\",\n  \"classification_is_suggestion\": true,\n  \"sources\": {\n    \"cursor_rules\": [\n      {\n        \"path\": \".cursor/rules/alpha.mdc\",\n        \"body_excerpt\": \"# Heading\\nBody about pull request and worktree.\",\n        \"candidate_recipes\": [\n          \"worktree-flow\",\n          \"git-pr-flow\"\n        ],\n        \"already_resolved\": false,\n        \"classification\": \"enable_recipe\",\n        \"description\": \"Deploy workflow rules\",\n        \"globs\": [\n          \"**/*.ts\"\n        ],\n        \"always_apply\": true\n      },\n      {\n        \"path\": \".cursor/rules/nested/beta.mdc\",\n        \"body_excerpt\": \"old project rules to deprecate\",\n        \"candidate_recipes\": [],\n        \"already_resolved\": false,\n        \"classification\": \"deprecate_rule_file\",\n        \"description\": \"Legacy notes\",\n        \"always_apply\": false\n      }\n    ],\n    \"cursorrules\": [\n      {\n        \"path\": \".cursorrules\",\n        \"body_excerpt\": \"Always use the trello board and the vault.\",\n        \"candidate_recipes\": [\n          \"trello-mcp-workflow\",\n          \"vault-canonical-store\"\n        ],\n        \"already_resolved\": false,\n        \"classification\": \"enable_recipe\"\n      }\n    ],\n    \"agents_md_sections\": [\n      {\n        \"path\": \"AGENTS.md\",\n        \"body_excerpt\": \"Intro paragraph.\",\n        \"candidate_recipes\": [],\n        \"already_resolved\": false,\n        \"classification\": \"keep_in_brief\",\n        \"heading\": \"Runtime Brief\"\n      },\n      {\n        \"path\": \"AGENTS.md\",\n        \"body_excerpt\": \"Run tests with worktree skill here.\\n\\n~~~sh\\n# not a heading\\necho hi\\n~~~\",\n        \"candidate_recipes\": [\n          \"worktree-flow\"\n        ],\n        \"already_resolved\": false,\n        \"classification\": \"enable_recipe\",\n        \"heading\": \"Build\"\n      },\n      {\n        \"path\": \"AGENTS.md\",\n        \"body_excerpt\": \"Ship the pull request.\",\n        \"candidate_recipes\": [\n          \"git-pr-flow\"\n        ],\n        \"already_resolved\": false,\n        \"classification\": \"enable_recipe\",\n        \"heading\": \"Deploy\"\n      }\n    ],\n    \"agents_md_present\": true,\n    \"manifest\": {\n      \"present\": true,\n      \"enabled_agents\": [\n        \"claude\",\n        \"pi\"\n      ],\n      \"recipes\": [\n        \"worktree-flow\"\n      ],\n      \"has_runtime_brief\": true\n    },\n    \"resolved_skills\": [],\n    \"recipe_catalog\": [\n      \"worktree-flow\",\n      \"git-pr-flow\",\n      \"session-context\",\n      \"tdd-flow\",\n      \"trello-mcp-workflow\",\n      \"vault-canonical-store\"\n    ],\n    \"atl_registry\": {\n      \"present\": false,\n      \"skill_ids\": []\n    }\n  },\n  \"summary\": {\n    \"cursor_rules\": 2,\n    \"cursorrules\": 1,\n    \"agents_md_sections\": 3\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "name": "manifest-widened-bigint",
+      "compare_stderr": false,
+      "exit": 0,
+      "tree": [
+        "5f258d88b52e0c6d89b876bda8c9643cdea4361988473805031fb0ec2b97c041  <ROOT>/ai-specs/ai-specs.toml"
+      ],
+      "stdout": "{\n  \"schema_version\": 1,\n  \"mode\": \"B\",\n  \"target\": \"<ROOT>\",\n  \"classification_is_suggestion\": true,\n  \"sources\": {\n    \"cursor_rules\": [],\n    \"cursorrules\": {\n      \"status\": \"absent\"\n    },\n    \"agents_md_sections\": [],\n    \"agents_md_present\": false,\n    \"manifest\": {\n      \"present\": true,\n      \"enabled_agents\": [\n        \"claude\",\n        123456789012345678901234567890\n      ],\n      \"recipes\": [],\n      \"has_runtime_brief\": false\n    },\n    \"resolved_skills\": [],\n    \"recipe_catalog\": [\n      \"worktree-flow\",\n      \"git-pr-flow\",\n      \"session-context\",\n      \"tdd-flow\",\n      \"trello-mcp-workflow\",\n      \"vault-canonical-store\"\n    ],\n    \"atl_registry\": {\n      \"present\": false,\n      \"skill_ids\": []\n    }\n  },\n  \"summary\": {\n    \"cursor_rules\": 0,\n    \"cursorrules\": 0,\n    \"agents_md_sections\": 0\n  },\n  \"stack_hints\": [],\n  \"recommendations\": {\n    \"init\": \"ai-specs init\",\n    \"default_recipes\": [\n      \"session-context\"\n    ],\n    \"brief_hint\": \"Draft a runtime-brief [brief] section in AGENTS.md after init.\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "name": "manifest-float-widened",
+      "compare_stderr": false,
+      "exit": 0,
+      "tree": [
+        "a34335b57b5c59460724201ce184fe2819b71f7d9532ce9e457c2d3e17c4969a  <ROOT>/ai-specs/ai-specs.toml"
+      ],
+      "stdout": "{\n  \"schema_version\": 1,\n  \"mode\": \"B\",\n  \"target\": \"<ROOT>\",\n  \"classification_is_suggestion\": true,\n  \"sources\": {\n    \"cursor_rules\": [],\n    \"cursorrules\": {\n      \"status\": \"absent\"\n    },\n    \"agents_md_sections\": [],\n    \"agents_md_present\": false,\n    \"manifest\": {\n      \"present\": true,\n      \"enabled_agents\": [\n        2.5,\n        2.0,\n        0.0001,\n        1e-05,\n        1e+16,\n        1e+22,\n        Infinity,\n        -Infinity,\n        NaN\n      ],\n      \"recipes\": [],\n      \"has_runtime_brief\": false\n    },\n    \"resolved_skills\": [],\n    \"recipe_catalog\": [\n      \"worktree-flow\",\n      \"git-pr-flow\",\n      \"session-context\",\n      \"tdd-flow\",\n      \"trello-mcp-workflow\",\n      \"vault-canonical-store\"\n    ],\n    \"atl_registry\": {\n      \"present\": false,\n      \"skill_ids\": []\n    }\n  },\n  \"summary\": {\n    \"cursor_rules\": 0,\n    \"cursorrules\": 0,\n    \"agents_md_sections\": 0\n  },\n  \"stack_hints\": [],\n  \"recommendations\": {\n    \"init\": \"ai-specs init\",\n    \"default_recipes\": [\n      \"session-context\"\n    ],\n    \"brief_hint\": \"Draft a runtime-brief [brief] section in AGENTS.md after init.\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "name": "manifest-datetime",
+      "compare_stderr": true,
+      "exit": 1,
+      "tree": [
+        "ca5eabd4df33ad21ad059d19f4c15d5f03571a2539ba99f1846afcc870b9793c  <ROOT>/ai-specs/ai-specs.toml"
+      ],
+      "stdout": "",
+      "stderr": "ERROR: Object of type datetime is not JSON serializable\n"
+    },
+    {
+      "name": "mode-b-stack-hints",
+      "compare_stderr": false,
+      "exit": 0,
+      "tree": [
+        "29dd8991a2e14105a193d2657dc742f5eab836f658ba46eff82b57a000dbc93b  <ROOT>/.atl/skill-registry.md",
+        "fc4a3fdfa1b8230e721b7eaada825923cc3b4219dee283230bcec3f6be74c274  <ROOT>/go.mod",
+        "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356  <ROOT>/package-lock.json",
+        "e80449e766348120fd4ee8c6a9d56136692b54d7f6b478cf09ff4d90dab659c9  <ROOT>/pyproject.toml"
+      ],
+      "stdout": "{\n  \"schema_version\": 1,\n  \"mode\": \"B\",\n  \"target\": \"<ROOT>\",\n  \"classification_is_suggestion\": true,\n  \"sources\": {\n    \"cursor_rules\": [],\n    \"cursorrules\": {\n      \"status\": \"absent\"\n    },\n    \"agents_md_sections\": [],\n    \"agents_md_present\": false,\n    \"manifest\": {\n      \"present\": false\n    },\n    \"resolved_skills\": [],\n    \"recipe_catalog\": [\n      \"worktree-flow\",\n      \"git-pr-flow\",\n      \"session-context\",\n      \"tdd-flow\",\n      \"trello-mcp-workflow\",\n      \"vault-canonical-store\"\n    ],\n    \"atl_registry\": {\n      \"present\": true,\n      \"skill_ids\": [\n        \"atl-only\",\n        \"worktree-flow\"\n      ]\n    }\n  },\n  \"summary\": {\n    \"cursor_rules\": 0,\n    \"cursorrules\": 0,\n    \"agents_md_sections\": 0\n  },\n  \"stack_hints\": [\n    \"node\",\n    \"python\",\n    \"go\"\n  ],\n  \"recommendations\": {\n    \"init\": \"ai-specs init\",\n    \"default_recipes\": [\n      \"session-context\",\n      \"worktree-flow\",\n      \"tdd-flow\",\n      \"git-pr-flow\"\n    ],\n    \"brief_hint\": \"Draft a runtime-brief [brief] section in AGENTS.md after init.\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "name": "manifest-parse-error",
+      "compare_stderr": false,
+      "exit": 0,
+      "tree": [
+        "177c66fd972bf4f231d4ba9d88e51755bbfa61fd6fd8ff66f6f62aa3d91e6121  <ROOT>/AGENTS.md",
+        "2e8062944bdab19766e066b02a69f432374fd63f7e67e591cec69e5be809b703  <ROOT>/ai-specs/ai-specs.toml"
+      ],
+      "stdout": "{\n  \"schema_version\": 1,\n  \"mode\": \"A\",\n  \"target\": \"<ROOT>\",\n  \"classification_is_suggestion\": true,\n  \"sources\": {\n    \"cursor_rules\": [],\n    \"cursorrules\": {\n      \"status\": \"absent\"\n    },\n    \"agents_md_sections\": [\n      {\n        \"path\": \"AGENTS.md\",\n        \"body_excerpt\": \"keep this project rule.\",\n        \"candidate_recipes\": [],\n        \"already_resolved\": false,\n        \"classification\": \"keep_in_brief\",\n        \"heading\": \"Project Rules\"\n      }\n    ],\n    \"agents_md_present\": true,\n    \"manifest\": {\n      \"present\": true,\n      \"parse_error\": true\n    },\n    \"resolved_skills\": [],\n    \"recipe_catalog\": [\n      \"worktree-flow\",\n      \"git-pr-flow\",\n      \"session-context\",\n      \"tdd-flow\",\n      \"trello-mcp-workflow\",\n      \"vault-canonical-store\"\n    ],\n    \"atl_registry\": {\n      \"present\": false,\n      \"skill_ids\": []\n    }\n  },\n  \"summary\": {\n    \"cursor_rules\": 0,\n    \"cursorrules\": 0,\n    \"agents_md_sections\": 1\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "name": "recipes-list-and-monolithic-agents",
+      "compare_stderr": false,
+      "exit": 0,
+      "tree": [
+        "b8c8da4ed9ed509325926c0c494ff1d9fefcdbfdd9f10a119ad8753c471fc8f6  <ROOT>/AGENTS.md",
+        "a6220f48841a155070ab813de47f454e48d90f0cefa8bd2c9d9747e96c2edd2c  <ROOT>/ai-specs/ai-specs.toml"
+      ],
+      "stdout": "{\n  \"schema_version\": 1,\n  \"mode\": \"A\",\n  \"target\": \"<ROOT>\",\n  \"classification_is_suggestion\": true,\n  \"sources\": {\n    \"cursor_rules\": [],\n    \"cursorrules\": {\n      \"status\": \"absent\"\n    },\n    \"agents_md_sections\": [\n      {\n        \"path\": \"AGENTS.md\",\n        \"body_excerpt\": \"Just a simple runtime brief paragraph with no headings.\",\n        \"candidate_recipes\": [],\n        \"already_resolved\": false,\n        \"classification\": \"create_local_skill\"\n      }\n    ],\n    \"agents_md_present\": true,\n    \"manifest\": {\n      \"present\": true,\n      \"enabled_agents\": [],\n      \"recipes\": [\n        \"worktree-flow\",\n        \"tdd-flow\"\n      ],\n      \"has_runtime_brief\": true\n    },\n    \"resolved_skills\": [],\n    \"recipe_catalog\": [\n      \"worktree-flow\",\n      \"git-pr-flow\",\n      \"session-context\",\n      \"tdd-flow\",\n      \"trello-mcp-workflow\",\n      \"vault-canonical-store\"\n    ],\n    \"atl_registry\": {\n      \"present\": false,\n      \"skill_ids\": []\n    }\n  },\n  \"summary\": {\n    \"cursor_rules\": 0,\n    \"cursorrules\": 0,\n    \"agents_md_sections\": 1\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "name": "agents-heading-depths",
+      "compare_stderr": false,
+      "exit": 0,
+      "tree": [
+        "9aca6a1c700811b48a085b35e6a677f93fcfcac341e1e93beb9fbbcec7f5ce2b  <ROOT>/AGENTS.md"
+      ],
+      "stdout": "{\n  \"schema_version\": 1,\n  \"mode\": \"A\",\n  \"target\": \"<ROOT>\",\n  \"classification_is_suggestion\": true,\n  \"sources\": {\n    \"cursor_rules\": [],\n    \"cursorrules\": {\n      \"status\": \"absent\"\n    },\n    \"agents_md_sections\": [\n      {\n        \"path\": \"AGENTS.md\",\n        \"body_excerpt\": \"body one\",\n        \"candidate_recipes\": [],\n        \"already_resolved\": false,\n        \"classification\": \"create_local_skill\",\n        \"heading\": \"One\"\n      },\n      {\n        \"path\": \"AGENTS.md\",\n        \"body_excerpt\": \"body two\",\n        \"candidate_recipes\": [],\n        \"already_resolved\": false,\n        \"classification\": \"create_local_skill\",\n        \"heading\": \"Two\"\n      },\n      {\n        \"path\": \"AGENTS.md\",\n        \"body_excerpt\": \"body three\\n#### Four\\nnot a heading\",\n        \"candidate_recipes\": [],\n        \"already_resolved\": false,\n        \"classification\": \"create_local_skill\",\n        \"heading\": \"Three\"\n      }\n    ],\n    \"agents_md_present\": true,\n    \"manifest\": {\n      \"present\": false\n    },\n    \"resolved_skills\": [],\n    \"recipe_catalog\": [\n      \"worktree-flow\",\n      \"git-pr-flow\",\n      \"session-context\",\n      \"tdd-flow\",\n      \"trello-mcp-workflow\",\n      \"vault-canonical-store\"\n    ],\n    \"atl_registry\": {\n      \"present\": false,\n      \"skill_ids\": []\n    }\n  },\n  \"summary\": {\n    \"cursor_rules\": 0,\n    \"cursorrules\": 0,\n    \"agents_md_sections\": 3\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "name": "mdc-scalar-globs-and-snake-always",
+      "compare_stderr": false,
+      "exit": 0,
+      "tree": [
+        "2a3a68c146991f797d5860407965854df3ef71356178f0546706fa382a810494  <ROOT>/.cursor/rules/x.mdc",
+        "57874d2172aa144bb5849df2157d14c635e83bf91d36fc192d48bc639eb72562  <ROOT>/.cursor/rules/y.mdc"
+      ],
+      "stdout": "{\n  \"schema_version\": 1,\n  \"mode\": \"A\",\n  \"target\": \"<ROOT>\",\n  \"classification_is_suggestion\": true,\n  \"sources\": {\n    \"cursor_rules\": [\n      {\n        \"path\": \".cursor/rules/x.mdc\",\n        \"body_excerpt\": \"body x\",\n        \"candidate_recipes\": [],\n        \"already_resolved\": false,\n        \"classification\": \"create_local_skill\",\n        \"globs\": [\n          \"**/*.py\"\n        ],\n        \"always_apply\": true\n      },\n      {\n        \"path\": \".cursor/rules/y.mdc\",\n        \"body_excerpt\": \"body y\",\n        \"candidate_recipes\": [],\n        \"already_resolved\": false,\n        \"classification\": \"create_local_skill\",\n        \"description\": \"Empty globs\",\n        \"globs\": [\n          \"\"\n        ],\n        \"always_apply\": false\n      }\n    ],\n    \"cursorrules\": {\n      \"status\": \"absent\"\n    },\n    \"agents_md_sections\": [],\n    \"agents_md_present\": false,\n    \"manifest\": {\n      \"present\": false\n    },\n    \"resolved_skills\": [],\n    \"recipe_catalog\": [\n      \"worktree-flow\",\n      \"git-pr-flow\",\n      \"session-context\",\n      \"tdd-flow\",\n      \"trello-mcp-workflow\",\n      \"vault-canonical-store\"\n    ],\n    \"atl_registry\": {\n      \"present\": false,\n      \"skill_ids\": []\n    }\n  },\n  \"summary\": {\n    \"cursor_rules\": 2,\n    \"cursorrules\": 0,\n    \"agents_md_sections\": 0\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "name": "skills-cache-atl",
+      "compare_stderr": true,
+      "exit": 0,
+      "tree": [
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.bundled/skills/bundled-skill/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.bundled/skills/local-skill/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.deps/dep-a/skills/dep-skill/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.recipe/rec-a/skills/recipe-skill/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.recipe/rec-b/skills/recipe-skill/SKILL.md",
+        "68a6887b160187abf0815029ae8bf9314e67bc4803986b989b3b31bfc294d378  <ROOT>/.atl/skill-registry.md",
+        "a4cbfd7d2c9586d1ecd9fd39eb4d9f15ada0c2d64135c53f0945798ecb42f444  <ROOT>/.cursor/rules/atl.mdc",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <ROOT>/ai-specs/skills/local-skill/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <ROOT>/ai-specs/skills/worktree-flow/SKILL.md"
+      ],
+      "stdout": "{\n  \"schema_version\": 1,\n  \"mode\": \"A\",\n  \"target\": \"<ROOT>\",\n  \"classification_is_suggestion\": true,\n  \"sources\": {\n    \"cursor_rules\": [\n      {\n        \"path\": \".cursor/rules/atl.mdc\",\n        \"body_excerpt\": \"Sync trello cards in a worktree.\",\n        \"candidate_recipes\": [\n          \"worktree-flow\",\n          \"trello-mcp-workflow\"\n        ],\n        \"already_resolved\": true,\n        \"classification\": \"already_in_atl\",\n        \"description\": \"Trello sync rules\",\n        \"always_apply\": false\n      }\n    ],\n    \"cursorrules\": {\n      \"status\": \"absent\"\n    },\n    \"agents_md_sections\": [],\n    \"agents_md_present\": false,\n    \"manifest\": {\n      \"present\": false\n    },\n    \"resolved_skills\": [\n      {\n        \"id\": \"bundled-skill\",\n        \"source\": \"bundled\"\n      },\n      {\n        \"id\": \"dep-skill\",\n        \"source\": \"dep\"\n      },\n      {\n        \"id\": \"local-skill\",\n        \"source\": \"local\"\n      },\n      {\n        \"id\": \"recipe-skill\",\n        \"source\": \"recipe\"\n      },\n      {\n        \"id\": \"worktree-flow\",\n        \"source\": \"local\"\n      }\n    ],\n    \"recipe_catalog\": [\n      \"worktree-flow\",\n      \"git-pr-flow\",\n      \"session-context\",\n      \"tdd-flow\",\n      \"trello-mcp-workflow\",\n      \"vault-canonical-store\"\n    ],\n    \"atl_registry\": {\n      \"present\": true,\n      \"skill_ids\": [\n        \"recipe-skill\",\n        \"trello-mcp-workflow\"\n      ]\n    }\n  },\n  \"summary\": {\n    \"cursor_rules\": 1,\n    \"cursorrules\": 0,\n    \"agents_md_sections\": 0\n  }\n}\n",
+      "stderr": "  ! skill 'recipe-skill' found in multiple recipes; using first-seen from 'rec-a'\n"
+    }
+  ]
+}
