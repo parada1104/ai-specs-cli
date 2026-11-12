@@ -12,13 +12,17 @@ package sync
 // testdata/hooksrunner_golden.json (captured once from the real Python module via
 // testdata/hooksrunner_ref.py, PR2-B S9) and requires the marker file bytes, the
 // raised error string and the captured info/warning lines scenario by scenario.
+//
+// The two regex-divergence tests compare against the frozen snapshot of the
+// standard-library Python re.fullmatch verdicts in
+// testdata/hooksrunner_re_golden.json (GO-20 U2e T5 PR4a S4), so they never run
+// an interpreter and never read lib/.
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -387,138 +391,232 @@ func TestRecipeHooksErrorStrings(t *testing.T) {
 	}
 }
 
-// pythonFullMatchStatus runs Python's real re.fullmatch and reports "Y"/"N"/
-// "ERR" (compiled, matched / compiled, no match / re.error).
-func pythonFullMatchStatus(t *testing.T, python, pattern, value string) string {
-	t.Helper()
-	const script = "import re,sys\ntry:\n m=re.fullmatch(sys.argv[1],sys.argv[2])\nexcept re.error:\n print('ERR')\nelse:\n print('Y' if m else 'N')\n"
-	out, err := exec.Command(python, "-c", script, pattern, value).Output()
-	if err != nil {
-		t.Fatalf("python fullmatch %q: %v", pattern, err)
+// hooksREGoldenFile is the frozen snapshot of the standard-library Python
+// re.fullmatch verdicts for the (pattern, input) corpus below. Python's re is
+// the authority the native runner mirrors through hooksFullMatch, so the
+// RE2/Python gap is pinned against frozen verdicts and never a live interpreter.
+const hooksREGoldenFile = "hooksrunner_re_golden.json"
+
+// The three observable Python re.fullmatch outcomes.
+const (
+	hooksREMatch   = "Y"   // compiled and matched
+	hooksRENoMatch = "N"   // compiled and did not match
+	hooksREError   = "ERR" // re.error
+)
+
+// hooksRECase is one (pattern, input) pair of the divergence corpus. The corpus
+// is the hard-coded, independent inventory of case names: the frozen bundle is
+// validated against it before any native assertion runs.
+//
+// Its two suffixes read as "<pattern, input> -> frozen Python verdict".
+type hooksRECase struct {
+	Name    string
+	Pattern string
+	Input   string
+}
+
+// hooksREGoldenCase is one frozen record of testdata/hooksrunner_re_golden.json.
+type hooksREGoldenCase struct {
+	Name    string `json:"name"`
+	Pattern string `json:"pattern"`
+	Input   string `json:"input"`
+	Verdict string `json:"verdict"`
+}
+
+// hooksREGolden is the shape of the frozen bundle.
+type hooksREGolden struct {
+	Oracle map[string]string   `json:"oracle"`
+	Cases  []hooksREGoldenCase `json:"cases"`
+}
+
+// (1) Python compiles these; RE2 does not, so the native runner returns a
+// compile error instead of Python's match result.
+var hooksRECompileCases = []hooksRECase{
+	{"compile/backreference", `(a)\1`, "ab"},
+	{"compile/named backreference", `(?P<x>a)(?P=x)`, "ab"},
+	{"compile/lookahead", `a(?=b)`, "ab"},
+	{"compile/negative lookahead", `a(?!b)`, "ab"},
+	{"compile/lookbehind", `(?<=a)b`, "ab"},
+	{"compile/negative lookbehind", `(?<!a)b`, "ab"},
+}
+
+// (2) Both compile, but Python matches a Unicode character RE2's ASCII-only
+// class misses.
+var hooksREClassCases = []hooksRECase{
+	{"class/digit class", `\d`, "\u0663"}, // ARABIC-INDIC DIGIT THREE
+	{"class/word class", `\w`, "\u00e9"},  // LATIN SMALL LETTER E WITH ACUTE
+	{"class/space class", `\s`, "\u00a0"}, // NO-BREAK SPACE
+}
+
+// (3) The fail-open mirror of (2): Python's \W \S \D and \B are Unicode-aware,
+// but RE2's are ASCII-only, so for a non-ASCII value RE2 MATCHES where Python
+// does NOT. (4) adds RE2-only syntax Python cannot accept or reads differently:
+// `\p{L}` makes Python raise re.error (bad escape \p), and `[[:alpha:]]` is a
+// POSIX class in RE2 but a literal character set in Python. In every case Python
+// does not match while the native runner does, so the native path is the
+// permissive, fail-open one: it validates a pattern/value pair the Python
+// authority rejects.
+var hooksREFailOpenCases = []hooksRECase{
+	{"failopen/non-word class", `\W`, "\u00e9"},  // LATIN SMALL LETTER E WITH ACUTE is a \w char in Python
+	{"failopen/non-space class", `\S`, "\u00a0"}, // NO-BREAK SPACE is a \s char in Python
+	{"failopen/non-digit class", `\D`, "\u0663"}, // ARABIC-INDIC DIGIT THREE is a \d char in Python
+	{"failopen/non-boundary", `\B.`, "\u00e9"},   // \B before a non-ASCII letter differs: Python has no boundary there
+	{"failopen/unicode property", `\p{L}`, "a"},  // Python raises re.error (bad escape \p)
+	{"failopen/posix class", `[[:alpha:]]`, "a"}, // POSIX class in RE2, literal character set in Python
+}
+
+// (5) The fail-closed side: constructs the real Python engine accepts but RE2
+// cannot compile, so the native runner returns a compile error and fails sync
+// where Python validates the value.
+var hooksREPythonOnlyCases = []hooksRECase{
+	{"unicode escape", `\u0041`, "A"},
+	{"end-of-text escape", `a\Z`, "a"},
+	{"possessive quantifier", `a*+`, "aaa"},
+	{"atomic group", `(?>a)`, "a"},
+	{"comment group", `(?#x)a`, "a"},
+	{"conditional", `(a)?(?(1)b|c)`, "c"},
+}
+
+// hooksREDollarCases is the one asymmetry: Python matches $ just before a
+// trailing newline, while the native \A(?:...)\z wrapper does not, because Go's
+// $ (without (?m)) anchors only at the very end of the text.
+var hooksREDollarCases = []hooksRECase{
+	{"dollar before trailing newline", "a$\n", "a\n"},
+}
+
+// hooksRECases is the corpus in capture order: the hard-coded inventory the
+// frozen bundle must carry, case by case and in this order.
+func hooksRECases() []hooksRECase {
+	var all []hooksRECase
+	for _, group := range [][]hooksRECase{
+		hooksRECompileCases, hooksREClassCases, hooksREFailOpenCases,
+		hooksREPythonOnlyCases, hooksREDollarCases,
+	} {
+		all = append(all, group...)
 	}
-	return strings.TrimSpace(string(out))
+	return all
+}
+
+// hooksREVerdictCounts pins the shape of the frozen verdicts: a flattened bundle
+// (every case "Y", or "ERR") fails before any native assertion runs.
+var hooksREVerdictCounts = map[string]int{hooksREMatch: 10, hooksRENoMatch: 11, hooksREError: 1}
+
+// loadHooksREGolden reads testdata/hooksrunner_re_golden.json and validates its
+// oracle metadata, case identity, order, frozen inputs and verdict shape before
+// any comparison runs. A missing bundle fails; it never skips.
+func loadHooksREGolden(t *testing.T) map[string]hooksREGoldenCase {
+	t.Helper()
+	raw := readGoldenBundle(t, hooksREGoldenFile)
+	// A capture that leaked a host path cannot validate here.
+	for _, leak := range []string{"/Users/", "/private/", "/var/folders"} {
+		if strings.Contains(string(raw), leak) {
+			t.Fatalf("frozen oracle %s leaks the host path segment %q", hooksREGoldenFile, leak)
+		}
+	}
+	var bundle hooksREGolden
+	if err := json.Unmarshal(raw, &bundle); err != nil {
+		t.Fatalf("parse frozen oracle %s: %v", hooksREGoldenFile, err)
+	}
+	for _, key := range []string{"python", "module", "driver", "note"} {
+		if bundle.Oracle[key] == "" {
+			t.Fatalf("frozen oracle %s carries no %s metadata", hooksREGoldenFile, key)
+		}
+	}
+	corpus := hooksRECases()
+	names := make([]string, len(bundle.Cases))
+	for i, rec := range bundle.Cases {
+		names[i] = rec.Name
+	}
+	wantNames := make([]string, len(corpus))
+	for i, tc := range corpus {
+		wantNames[i] = tc.Name
+	}
+	validateGoldenIdentity(t, "hooksrunner re", names, wantNames)
+
+	verdicts := map[string]int{}
+	golden := make(map[string]hooksREGoldenCase, len(bundle.Cases))
+	for i, rec := range bundle.Cases {
+		// The frozen inputs must equal the in-test corpus, so fixture drift
+		// fails as an input divergence instead of an opaque verdict mismatch.
+		if rec.Pattern != corpus[i].Pattern || rec.Input != corpus[i].Input {
+			t.Fatalf("frozen case %q input diverges: frozen (%q, %q), corpus (%q, %q)",
+				rec.Name, rec.Pattern, rec.Input, corpus[i].Pattern, corpus[i].Input)
+		}
+		switch rec.Verdict {
+		case hooksREMatch, hooksRENoMatch, hooksREError:
+		default:
+			t.Fatalf("frozen case %q has verdict %q, want Y, N or ERR", rec.Name, rec.Verdict)
+		}
+		verdicts[rec.Verdict]++
+		golden[rec.Name] = rec
+	}
+	for _, verdict := range []string{hooksREMatch, hooksRENoMatch, hooksREError} {
+		if verdicts[verdict] != hooksREVerdictCounts[verdict] {
+			t.Fatalf("frozen oracle has %d %s verdicts, want %d", verdicts[verdict], verdict, hooksREVerdictCounts[verdict])
+		}
+	}
+	return golden
+}
+
+// frozenHooksRECase looks up one frozen verdict by case name.
+func frozenHooksRECase(t *testing.T, golden map[string]hooksREGoldenCase, name string) hooksREGoldenCase {
+	t.Helper()
+	rec, ok := golden[name]
+	if !ok {
+		t.Fatalf("frozen record %q missing", name)
+	}
+	return rec
 }
 
 // TestRecipeHooksRegexEngineDivergence records the RE2/Python gap the brief
 // calls out. Go regexp is RE2, so the native runner diverges from Python in two
 // named ways: Python-valid constructs RE2 cannot compile at all, and the \d \w
 // \s classes that are Unicode-aware in Python but ASCII-only in RE2. The
-// divergence is pinned here, never claimed as parity.
+// divergence is pinned against the frozen Python verdicts, never claimed as
+// parity.
 func TestRecipeHooksRegexEngineDivergence(t *testing.T) {
-	python, _ := syncPythonAuthority(t)
+	golden := loadHooksREGolden(t)
 
-	// (1) Python compiles these; RE2 does not, so the runner returns a compile
-	// error instead of Python's match result.
-	compileCases := []struct {
-		name    string
-		pattern string
-	}{
-		{"backreference", `(a)\1`},
-		{"named backreference", `(?P<x>a)(?P=x)`},
-		{"lookahead", `a(?=b)`},
-		{"negative lookahead", `a(?!b)`},
-		{"lookbehind", `(?<=a)b`},
-		{"negative lookbehind", `(?<!a)b`},
-	}
-	for _, tc := range compileCases {
-		t.Run("compile/"+tc.name, func(t *testing.T) {
-			if got := pythonFullMatchStatus(t, python, tc.pattern, "ab"); got == "ERR" {
-				t.Fatalf("python re rejected %q, so the recorded divergence no longer holds (status %s)", tc.pattern, got)
+	for _, tc := range hooksRECompileCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			ref := frozenHooksRECase(t, golden, tc.Name)
+			if ref.Verdict == hooksREError {
+				t.Fatalf("frozen verdict says python re rejected %q, so the recorded divergence no longer holds", tc.Pattern)
 			}
-			if _, err := hooksFullMatch(tc.pattern, "ab"); err == nil {
-				t.Fatalf("Go regexp compiled %q; the recorded divergence changed", tc.pattern)
+			if _, err := hooksFullMatch(tc.Pattern, tc.Input); err == nil {
+				t.Fatalf("Go regexp compiled %q; the recorded divergence changed", tc.Pattern)
 			}
 		})
 	}
 
-	// (2) Both compile, but Python matches a Unicode character RE2's ASCII-only
-	// class misses.
-	unicodeCases := []struct {
-		name    string
-		pattern string
-		value   string
-	}{
-		{"digit class", `\d`, "\u0663"}, // ARABIC-INDIC DIGIT THREE
-		{"word class", `\w`, "\u00e9"},  // LATIN SMALL LETTER E WITH ACUTE
-		{"space class", `\s`, "\u00a0"}, // NO-BREAK SPACE
-	}
-	for _, tc := range unicodeCases {
-		t.Run("class/"+tc.name, func(t *testing.T) {
-			if got := pythonFullMatchStatus(t, python, tc.pattern, tc.value); got != "Y" {
-				t.Fatalf("python no longer matches %q against %q (status %s)", tc.pattern, tc.value, got)
+	for _, tc := range hooksREClassCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			ref := frozenHooksRECase(t, golden, tc.Name)
+			if ref.Verdict != hooksREMatch {
+				t.Fatalf("frozen verdict says python no longer matches %q against %q (verdict %s)", tc.Pattern, tc.Input, ref.Verdict)
 			}
-			matched, err := hooksFullMatch(tc.pattern, tc.value)
+			matched, err := hooksFullMatch(tc.Pattern, tc.Input)
 			if err != nil {
-				t.Fatalf("Go regexp failed to compile %q: %v", tc.pattern, err)
+				t.Fatalf("Go regexp failed to compile %q: %v", tc.Pattern, err)
 			}
 			if matched {
-				t.Fatalf("Go regexp now matches %q against %q; the recorded divergence changed", tc.pattern, tc.value)
+				t.Fatalf("Go regexp now matches %q against %q; the recorded divergence changed", tc.Pattern, tc.Input)
 			}
 		})
 	}
 
-	// (3) The fail-open mirror of (2): Python's \W \S \D and \B are
-	// Unicode-aware, but RE2's are ASCII-only, so for a non-ASCII value RE2
-	// MATCHES where Python does NOT. Python therefore raises the mismatch
-	// error while the native runner accepts the value and lets sync continue.
-	// Here the permissive side is the native one, so the native path is
-	// fail-open for these constructs: it validates a pattern/value pair that
-	// the Python authority rejects.
-	failOpenClasses := []struct {
-		name    string
-		pattern string
-		value   string
-	}{
-		{"non-word class", `\W`, "\u00e9"},  // LATIN SMALL LETTER E WITH ACUTE is a \w char in Python
-		{"non-space class", `\S`, "\u00a0"}, // NO-BREAK SPACE is a \s char in Python
-		{"non-digit class", `\D`, "\u0663"}, // ARABIC-INDIC DIGIT THREE is a \d char in Python
-		{"non-boundary", `\B.`, "\u00e9"},   // \B before a non-ASCII letter differs: Python has no boundary there
-	}
-	for _, tc := range failOpenClasses {
-		t.Run("failopen/"+tc.name, func(t *testing.T) {
-			if got := pythonFullMatchStatus(t, python, tc.pattern, tc.value); got != "N" {
-				t.Fatalf("python now matches %q against %q (status %s); the recorded fail-open divergence changed", tc.pattern, tc.value, got)
+	for _, tc := range hooksREFailOpenCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			ref := frozenHooksRECase(t, golden, tc.Name)
+			if ref.Verdict == hooksREMatch {
+				t.Fatalf("frozen verdict says python now matches %q against %q; the recorded fail-open divergence changed", tc.Pattern, tc.Input)
 			}
-			matched, err := hooksFullMatch(tc.pattern, tc.value)
+			matched, err := hooksFullMatch(tc.Pattern, tc.Input)
 			if err != nil {
-				t.Fatalf("Go regexp failed to compile %q: %v", tc.pattern, err)
+				t.Fatalf("Go regexp failed to compile %q: %v", tc.Pattern, err)
 			}
 			if !matched {
-				t.Fatalf("Go regexp no longer matches %q against %q; the recorded fail-open divergence changed", tc.pattern, tc.value)
-			}
-		})
-	}
-
-	// (4) RE2-only syntax that Python cannot accept or reads differently. In
-	// both shapes RE2 matches the value while Python fails, so the native path
-	// is again the permissive, fail-open one: `\p{L}` makes Python raise
-	// re.error (bad escape \p), and `[[:alpha:]]` is a POSIX class in RE2 but a
-	// literal character set in Python (Python emits a FutureWarning and does not
-	// match "a").
-	re2Only := []struct {
-		name    string
-		pattern string
-		value   string
-		pyErr   bool
-	}{
-		{"unicode property", `\p{L}`, "a", true},
-		{"posix class", `[[:alpha:]]`, "a", false},
-	}
-	for _, tc := range re2Only {
-		t.Run("failopen/"+tc.name, func(t *testing.T) {
-			want := "N"
-			if tc.pyErr {
-				want = "ERR"
-			}
-			if got := pythonFullMatchStatus(t, python, tc.pattern, tc.value); got != want {
-				t.Fatalf("python status for %q is %q, want %q", tc.pattern, got, want)
-			}
-			matched, err := hooksFullMatch(tc.pattern, tc.value)
-			if err != nil {
-				t.Fatalf("Go regexp failed to compile %q: %v", tc.pattern, err)
-			}
-			if !matched {
-				t.Fatalf("Go regexp no longer matches %q against %q; the recorded fail-open divergence changed", tc.pattern, tc.value)
+				t.Fatalf("Go regexp no longer matches %q against %q; the recorded fail-open divergence changed", tc.Pattern, tc.Input)
 			}
 		})
 	}
@@ -527,48 +625,38 @@ func TestRecipeHooksRegexEngineDivergence(t *testing.T) {
 // TestRecipeHooksRegexPythonOnlyConstructs records the fail-closed side of the
 // RE2/Python gap: constructs the real Python engine accepts but RE2 cannot
 // compile, so the native runner returns a compile error and fails sync where
-// Python validates the value. The one asymmetry below is the $ anchor: Python
-// matches $ just before a trailing newline, while the native \A(?:...)\z
-// wrapper does not, because Go's $ (without (?m)) anchors only at the very end
-// of the text. Every case is pinned against the real Python engine.
+// Python validates the value. The $ anchor asymmetry is covered separately.
+// Every case is pinned against the frozen snapshot of the real Python engine.
 func TestRecipeHooksRegexPythonOnlyConstructs(t *testing.T) {
-	python, _ := syncPythonAuthority(t)
+	golden := loadHooksREGolden(t)
 
-	cases := []struct {
-		name    string
-		pattern string
-		value   string
-	}{
-		{"unicode escape", `\u0041`, "A"},
-		{"end-of-text escape", `a\Z`, "a"},
-		{"possessive quantifier", `a*+`, "aaa"},
-		{"atomic group", `(?>a)`, "a"},
-		{"comment group", `(?#x)a`, "a"},
-		{"conditional", `(a)?(?(1)b|c)`, "c"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := pythonFullMatchStatus(t, python, tc.pattern, tc.value); got != "Y" {
-				t.Fatalf("python no longer matches %q against %q (status %s)", tc.pattern, tc.value, got)
+	for _, tc := range hooksREPythonOnlyCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			ref := frozenHooksRECase(t, golden, tc.Name)
+			if ref.Verdict != hooksREMatch {
+				t.Fatalf("frozen verdict says python no longer matches %q against %q (verdict %s)", tc.Pattern, tc.Input, ref.Verdict)
 			}
-			if _, err := hooksFullMatch(tc.pattern, tc.value); err == nil {
-				t.Fatalf("Go regexp compiled %q; the recorded fail-closed divergence changed", tc.pattern)
+			if _, err := hooksFullMatch(tc.Pattern, tc.Input); err == nil {
+				t.Fatalf("Go regexp compiled %q; the recorded fail-closed divergence changed", tc.Pattern)
 			}
 		})
 	}
 
-	t.Run("dollar before trailing newline", func(t *testing.T) {
-		if got := pythonFullMatchStatus(t, python, "a$\n", "a\n"); got != "Y" {
-			t.Fatalf("python no longer matches a$ before a trailing newline (status %s)", got)
-		}
-		matched, err := hooksFullMatch("a$\n", "a\n")
-		if err != nil {
-			t.Fatalf("Go regexp failed to compile: %v", err)
-		}
-		if matched {
-			t.Fatalf("native fullmatch now matches a$ before a trailing newline; the recorded divergence changed")
-		}
-	})
+	for _, tc := range hooksREDollarCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			ref := frozenHooksRECase(t, golden, tc.Name)
+			if ref.Verdict != hooksREMatch {
+				t.Fatalf("frozen verdict says python no longer matches %q against %q (verdict %s)", tc.Pattern, tc.Input, ref.Verdict)
+			}
+			matched, err := hooksFullMatch(tc.Pattern, tc.Input)
+			if err != nil {
+				t.Fatalf("Go regexp failed to compile %q: %v", tc.Pattern, err)
+			}
+			if matched {
+				t.Fatalf("native fullmatch now matches %q against %q; the recorded divergence changed", tc.Pattern, tc.Input)
+			}
+		})
+	}
 }
 
 // hooksRunnerReprCatalog is the fixture for the nested-value repr divergence:
