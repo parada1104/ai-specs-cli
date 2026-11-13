@@ -64,7 +64,7 @@ def _make_home(base: Path) -> Path:
     is the Go binary, so no test reads or copies it.
     """
     home = isolated_home(base, catalog=False)
-    (home / "lib").unlink()
+    (home / "lib").unlink(missing_ok=True)
     populate_catalog(home / "catalog" / "recipes")
     return home
 

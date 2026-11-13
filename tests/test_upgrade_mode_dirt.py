@@ -353,9 +353,8 @@ class InstallModeOnlyDirtTests(unittest.TestCase):
         env["INSTALL_BIN"] = str(home / ".local" / "bin")
         env["PATH"] = str(home / ".local" / "bin") + ":" + env.get("PATH", "")
         # GO-20 U1b-2b: a local release base (file://) runs the verified-asset
-        # path offline, and the still-Python TUI step is skipped.
+        # path offline.
         env["AI_SPECS_RELEASE_BASE"] = "file://" + str(home / "release-assets")
-        env["AI_SPECS_SKIP_TUI_DEPS"] = "1"
         return env
 
     def test_install_sh_remediates_mode_only_dirt(self):

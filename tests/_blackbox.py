@@ -53,6 +53,8 @@ def normalize_output(text: str, roots: tuple[Path, ...] = ()) -> str:
 # Top-level entries of the install root that the CLI resolves at runtime.
 # `cache` is deliberately excluded: it must be a real directory inside the
 # isolated home so per-project cache writes land in temp, not in the repo.
+# `lib` is gone since GO-20 U2e T5 (PR4b): the entry is only linked when the
+# checkout still carries it, so the fixture tolerates its absence.
 _INSTALL_ENTRIES = (
     "bin", "lib", "catalog", "VERSION",
     "bundled-skills", "bundled-commands", "templates", "scripts",
@@ -66,7 +68,7 @@ def isolated_home(base: Path, *, catalog: bool = True) -> Path:
     repo catalog) — needed by tests that assert exact recipe sets.
     AI_SPECS_HOME is the CLI *install root* (catalog, templates, bundled assets
     resolve under it) and it is ALSO the cache root
-    ($AI_SPECS_HOME/cache/projects/<key>, see lib/_internal/project-cache.py).
+    ($AI_SPECS_HOME/cache/projects/<key>, keyed by the project's git identity).
     The native binary reads its assets from this root, so the root must hold
     them; an empty directory is not a usable install.
 
@@ -144,6 +146,9 @@ def invoke(project_root: Path, *args: str, cli_home: Path | None = None,
     tmp_tmp = tempfile.TemporaryDirectory(prefix="ai-specs-tmp-") if tmpdir is None else None
     home = isolated_home(Path(home_tmp.name)) if home_tmp else cli_home
     temp = Path(tmp_tmp.name) if tmp_tmp else tmpdir
+    # Invariant: home_tmp is None only when cli_home was given, and tmp_tmp is
+    # None only when tmpdir was; both are set by the ternaries above.
+    assert home is not None and temp is not None
     env = {
         "PATH": os.environ.get("PATH", ""),
         "HOME": str(temp / "home"),

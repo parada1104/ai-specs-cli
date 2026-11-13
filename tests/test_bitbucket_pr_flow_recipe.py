@@ -37,7 +37,7 @@ def _make_home(base: Path) -> Path:
     """Isolated CLI install root. ``lib/`` is dropped: materialization is
     native, so no test copies or reads the Python tree."""
     home = isolated_home(base)
-    (home / "lib").unlink()
+    (home / "lib").unlink(missing_ok=True)
     return home
 
 

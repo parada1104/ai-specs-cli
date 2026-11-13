@@ -67,7 +67,7 @@ def _make_home(base: Path) -> Path:
     test reads or copies it.
     """
     home = isolated_home(base, catalog=False)
-    (home / "lib").unlink()
+    (home / "lib").unlink(missing_ok=True)
     return home
 
 

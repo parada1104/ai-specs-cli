@@ -126,7 +126,6 @@ class TrackerLedgerHostDirectModeTests(unittest.TestCase):
             GATE.read_text()
             .replace("__TRACKER_CARD_GATE_MODE__", mode)
             .replace("__TRACKER_CLI_HOME__", str(self.cli_home))
-            .replace("__TRACKER_LIB_INTERNAL__", "")
         )
         stamped.chmod(0o755)
         return stamped
