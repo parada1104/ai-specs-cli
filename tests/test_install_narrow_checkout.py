@@ -19,10 +19,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 INSTALL_SH = ROOT / "install.sh"
 
-RUNTIME_DIRS = ("lib", "bin", "catalog", "bundled-skills", "bundled-commands",
+RUNTIME_DIRS = ("bin", "cmd", "internal", "catalog", "bundled-skills", "bundled-commands",
                 "templates", "scripts", "docs")
-EXCLUDED_DIRS = ("openspec", "tests", ".github", "tmp")
-NARROW_LINE = "narrowed checkout (openspec/, tests/, .github/, tmp/ excluded)"
+EXCLUDED_DIRS = ("openspec", "tests", ".github", "tmp", "lib")
+NARROW_LINE = "narrowed checkout (non-runtime trees excluded)"
 
 
 def _platform_asset() -> str:

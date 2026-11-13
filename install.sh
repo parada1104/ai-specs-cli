@@ -117,8 +117,8 @@ fi
 # fails the install. Cone-mode allowlist: name what stays, not what goes.
 narrow_checkout() {
     local target="$1"
-    local keep_dirs=(lib bin catalog bundled-skills bundled-commands templates scripts docs)
-    local excluded_label="openspec/, tests/, .github/, tmp/"
+    local keep_dirs=(bin cmd internal catalog bundled-skills bundled-commands templates scripts docs)
+    local excluded_label="non-runtime trees"
     local desired current probe dirty missing dir
 
     _narrow_warn() { echo "  ! narrow-checkout: $1" >&2; }
