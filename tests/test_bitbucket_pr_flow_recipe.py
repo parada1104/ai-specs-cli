@@ -17,10 +17,7 @@ semantics, golden skill/command content) through the CLI process boundary:
 from __future__ import annotations
 
 import json
-import os
 import re
-import shutil
-import subprocess
 import sys
 import tempfile
 import tomllib
@@ -37,18 +34,10 @@ RECIPE_ID = "bitbucket-pr-flow"
 
 
 def _make_home(base: Path) -> Path:
-    """Isolated CLI install root with a REAL lib copy.
-
-    sync/materialize derive cache and catalog roots from their own realpath,
-    so a symlinked lib would resolve back into the repository and let the CLI
-    touch repo cache state. A real copy keeps every lookup and write in temp.
-    """
+    """Isolated CLI install root. ``lib/`` is dropped: materialization is
+    native, so no test copies or reads the Python tree."""
     home = isolated_home(base)
     (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
-    )
     return home
 
 
@@ -88,33 +77,21 @@ class _CliFixtureMixin:
         return cache_project_dir(self.root, self.home)
 
     def resolved_bindings(self) -> dict:
-        """Bindings map from the resolved-config JSON at the materialize
-        process boundary (the isolated home's OWN lib copy — never a repo
-        import). This is the only observable the [[bindings]] capability
-        selection controls: cache artifacts materialize per enabled recipe
-        regardless of the binding, so the map is the honest stand-in for the
-        old white-box resolve_bindings() assertion.
+        """Bindings map from the resolved-config JSON the CLI writes.
+
+        ``ai-specs baseline-brief --resolved-config-out`` is the native
+        materialize + brief-render chain, so the map is read from the shipped
+        binary instead of a Python materialize process. This is the only
+        observable the [[bindings]] capability selection controls: cache
+        artifacts materialize per enabled recipe regardless of the binding.
         """
         out = self.base / "resolved-config.json"
-        (self.base / "home").mkdir(parents=True, exist_ok=True)
-        env = {
-            "PATH": os.environ.get("PATH", ""),
-            "HOME": str(self.base / "home"),
-            "TMPDIR": str(self.base),
-            "AI_SPECS_HOME": str(self.home),
-            "AI_SPECS_NO_NETWORK": "1",
-            "LC_ALL": "C",
-            "LANG": "C",
-        }
-        argv = [
-            sys.executable,
-            str(self.home / "lib" / "_internal" / "recipe-materialize.py"),
-            str(self.root), str(self.home), "--resolved-config-out", str(out),
-        ]
-        proc = subprocess.run(argv, cwd=ROOT, env=env, text=True,
-                              capture_output=True, check=False, input="")
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertTrue(out.is_file(), proc.stdout + proc.stderr)
+        result = invoke(
+            self.root, "baseline-brief", "--resolved-config-out", str(out),
+            cli_home=self.home, tmpdir=self.base,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(out.is_file(), result.stdout + result.stderr)
         return json.loads(out.read_text()).get("bindings", {})
 
 

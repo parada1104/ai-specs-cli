@@ -31,18 +31,13 @@ FIXTURE_ROOT = ROOT / "tests" / "fixtures" / "sync-workspace" / "root"
 
 
 def _make_home(base: Path) -> Path:
-    """Isolated CLI install root with a REAL lib copy.
+    """Isolated CLI install root.
 
-    sync/materialize derive cache and catalog roots from their own realpath,
-    so a symlinked lib would resolve back into the repository and let the CLI
-    touch repo cache state. A real copy keeps every lookup and write in temp.
+    ``lib/`` is dropped from the install tree: sync and materialize are native,
+    so no test copies or reads the Python tree.
     """
     home = isolated_home(base)
     (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
-    )
     return home
 
 
@@ -88,36 +83,6 @@ def run_cli_env(project, *args, home: Path, tmpdir: Path, extra_env=None,
     argv = [str(CLI), *args]
     if append_root:
         argv.append(str(project))
-    return subprocess.run(argv, cwd=ROOT, env=env, text=True,
-                          capture_output=True, check=False, input="")
-
-
-def _resolved_config_process(project_root: Path, home: Path, out: Path,
-                             *extra: str) -> subprocess.CompletedProcess:
-    """Run the ISOLATED HOME'S OWN lib copy of recipe-materialize.py.
-
-    Mirror of test_recipe_materialize.py::_materialize_process — never a
-    repository import. Used only by ``# TRIAGE:`` tests whose contract (the
-    standalone ``--resolved-config-only`` bindings map) is observable solely
-    at the materialize process boundary via ``--resolved-config-out``.
-    """
-    tmpdir = project_root.parent
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": str(tmpdir / "home"),
-        "TMPDIR": str(tmpdir),
-        "AI_SPECS_HOME": str(home),
-        "AI_SPECS_NO_NETWORK": "1",
-        "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
-        "LC_ALL": "C",
-        "LANG": "C",
-    }
-    (tmpdir / "home").mkdir(parents=True, exist_ok=True)
-    argv = [
-        sys.executable, str(home / "lib" / "_internal" / "recipe-materialize.py"),
-        str(project_root), str(home),
-        "--resolved-config-out", str(out), *extra,
-    ]
     return subprocess.run(argv, cwd=ROOT, env=env, text=True,
                           capture_output=True, check=False, input="")
 
@@ -1974,36 +1939,12 @@ class TestMissingScenarios(unittest.TestCase):
                 f"standalone sync-agent failed:\n{result.stderr}\n{result.stdout}"
             )
 
-            # TRIAGE: JSON bindings-map parity, observable only at the
-            # materialize process boundary (the old 'identical output'
-            # guarantee). Full materialize path vs standalone
-            # --resolved-config-only, each dumping resolved-config JSON.
-            full_out = parent / "rc-full.json"
-            standalone_out = parent / "rc-standalone.json"
-            proc = _resolved_config_process(workspace, home, full_out)
-            self.assertEqual(
-                proc.returncode, 0,
-                f"full materialize resolved-config run failed:\n{proc.stderr}"
-            )
-            proc = _resolved_config_process(
-                workspace, home, standalone_out, "--resolved-config-only")
-            self.assertEqual(
-                proc.returncode, 0,
-                f"standalone --resolved-config-only run failed:\n{proc.stderr}"
-            )
-            full_data = json.loads(full_out.read_text())
-            standalone_data = json.loads(standalone_out.read_text())
-            self.assertEqual(
-                full_data["bindings"], standalone_data["bindings"],
-                "standalone --resolved-config-only bindings map must exactly "
-                "match the full materialize path bindings map",
-            )
-            # Auto-binding sanity: enabled catalog recipes must appear in both.
-            self.assertIn("tracker", full_data["bindings"])
-            self.assertIn("tracker", standalone_data["bindings"])
-            self.assertIn("test-runner", full_data["bindings"])
-            self.assertIn("test-runner", standalone_data["bindings"])
-
+            # The bindings map itself is pinned natively: the frozen
+            # resolved-config-only differential
+            # (internal/sync/resolvedconfigonly_test.go, the "auto-bound
+            # capability with catalog defaults and brief fragments" scenario)
+            # fixes exit code, streams and document, so this method keeps the
+            # CLI-observable parity of the two paths.
             root_agents = (workspace / "AGENTS.md").read_text()
             standalone_agents = (workspace / "sub" / "a" / "AGENTS.md").read_text()
 
@@ -2135,34 +2076,18 @@ class TestAutoBindingFix(unittest.TestCase):
                 # NO [[bindings]] section — auto-bind must handle this
             )
 
-            materialize = home / "lib" / "_internal" / "recipe-materialize.py"
             with _tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
                 resolved_out = Path(f.name)
 
-            # TRIAGE: ai-specs sync — the resolved-config JSON bindings map is a
-            # temp file deleted after each CLI run; no CLI verb exposes it, so
-            # this assertion keeps the process-boundary materialize invocation
-            # (now bound to the isolated home's own lib copy).
-            proc = subprocess.run(
-                ["python3", str(materialize),
-                 str(workspace), str(home),
-                 "--resolved-config-out", str(resolved_out)],
-                text=True,
-                capture_output=True,
-                check=False,
-                input="",
-                env={
-                    "PATH": os.environ.get("PATH", ""),
-                    "HOME": str(workspace.parent / "cli-run-home"),
-                    "TMPDIR": str(workspace.parent),
-                    "AI_SPECS_HOME": str(home),
-                    "AI_SPECS_NO_NETWORK": "1",
-                    "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
-                    "LC_ALL": "C",
-                    "LANG": "C",
-                },
+            # `baseline-brief --resolved-config-out` is the native
+            # materialize + render chain, so the resolved-config JSON is read
+            # from the shipped binary instead of a Python materialize run.
+            result = invoke(
+                workspace, "baseline-brief", "--resolved-config-out",
+                str(resolved_out), cli_home=home,
+                env_extra={"AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE)},
             )
-            self.assertEqual(proc.returncode, 0, f"materialize failed:\n{proc.stderr}\n{proc.stdout}")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             with open(resolved_out) as f:
                 resolved = json.load(f)
@@ -2188,98 +2113,6 @@ class TestAutoBindingFix(unittest.TestCase):
             shutil.rmtree(workspace.parent)
             if resolved_out.exists():
                 resolved_out.unlink()
-
-    def test_resolved_config_only_with_explicit_ai_specs_home_resolves_bindings(self):
-        """FIX 1 (R3): --resolved-config-only uses caller-supplied ai_specs_home to
-        locate the catalog instead of recomputing from __file__.
-
-        Invokes the standalone path with an explicit AI_SPECS_HOME env var and asserts
-        that auto-bindings still resolve (board_id present in bindings), proving that
-        the catalog lookup does not diverge when the home is supplied explicitly.
-
-        This guards against custom/symlinked installs where Path(__file__).parents[2]
-        would diverge from the actual AI_SPECS_HOME.
-        """
-        import tempfile as _tempfile
-        import json
-
-        workspace = self.make_workspace()
-        home = _home_for(workspace)
-        try:
-            result = invoke(workspace, "init", cli_home=home)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            (workspace / "ai-specs" / "ai-specs.toml").write_text(
-                "[project]\n"
-                "name = 'rc-only-explicit-home'\n\n"
-                "[recipes.trello-mcp-workflow]\n"
-                "enabled = true\n"
-                "version = '1.2.0'\n"
-                "[recipes.trello-mcp-workflow.config]\n"
-                "board_id = 'aabbccddeeff001122334455'\n"
-                # NO [[bindings]] — auto-bind must handle this via the supplied home
-            )
-
-            materialize = home / "lib" / "_internal" / "recipe-materialize.py"
-            # A distinct explicit install root: the materialize lib copy lives
-            # under `home`, so Path(__file__).parents[2] resolves to `home`,
-            # while the caller-supplied home below points elsewhere. The
-            # assertion proves the explicit home wins for catalog lookup.
-            explicit_home = isolated_home(workspace.parent / "explicit-home")
-            with _tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-                resolved_out = Path(f.name)
-
-            try:
-                # Pass AI_SPECS_HOME explicitly AND as the second positional arg.
-                # build_resolved_config_only now uses the positional arg to locate the
-                # catalog instead of falling back to Path(__file__).parents[2].
-                # TRIAGE: ai-specs sync — the resolved-config JSON bindings map is a
-                # temp file deleted after each CLI run; no CLI verb exposes it, so
-                # this assertion keeps the process-boundary materialize invocation
-                # (running from the isolated home's own lib copy while the explicit
-                # home deliberately diverges from the __file__ fallback).
-                proc = subprocess.run(
-                    ["python3", str(materialize),
-                     str(workspace), str(explicit_home),
-                     "--resolved-config-out", str(resolved_out),
-                     "--resolved-config-only"],
-                    text=True,
-                    capture_output=True,
-                    check=False,
-                    input="",
-                    env={
-                        "PATH": os.environ.get("PATH", ""),
-                        "HOME": str(workspace.parent / "cli-run-home"),
-                        "TMPDIR": str(workspace.parent),
-                        "AI_SPECS_HOME": str(explicit_home),
-                        "AI_SPECS_NO_NETWORK": "1",
-                        "LC_ALL": "C",
-                        "LANG": "C",
-                    },
-                )
-                self.assertEqual(
-                    proc.returncode, 0,
-                    f"--resolved-config-only with explicit home failed:\n{proc.stderr}\n{proc.stdout}"
-                )
-
-                with open(resolved_out) as fh:
-                    resolved = json.load(fh)
-
-                bindings = resolved.get("bindings", {})
-                self.assertIn(
-                    "tracker", bindings,
-                    f"'tracker' must be auto-bound via explicit ai_specs_home. Got: {bindings}"
-                )
-                self.assertEqual(
-                    bindings["tracker"], "trello-mcp-workflow",
-                    f"tracker must auto-bind to trello-mcp-workflow. Got: {bindings}"
-                )
-            finally:
-                if resolved_out.exists():
-                    resolved_out.unlink()
-        finally:
-            shutil.rmtree(workspace.parent)
-
-
 class TestJudgmentDayFixes(unittest.TestCase):
     """Tests for confirmed issues from Judgment Day Round 1.
 
@@ -2292,8 +2125,6 @@ class TestJudgmentDayFixes(unittest.TestCase):
     FIX 9: hardened needle assertions — pin to line context not bare tokens.
     FIX 10: structured fields resolved via capability bindings, not literal recipe ids.
     """
-
-    AGENTS_RENDER = ROOT / "lib" / "_internal" / "agents-render.py"
 
     def _sync_render(self, manifest: str) -> Path:
         """Black-box staging: init + sync a fresh fixture workspace with `manifest`.
@@ -2310,24 +2141,6 @@ class TestJudgmentDayFixes(unittest.TestCase):
         result = invoke(workspace, "sync", cli_home=home)
         self.assertEqual(result.returncode, 0, f"sync failed:\n{result.stdout}{result.stderr}")
         return workspace
-
-    def run_render(self, toml_text: str, resolved: dict | None = None) -> str:
-        """Helper: write TOML + optional resolved-config, invoke agents-render.py, return output."""
-        import tempfile as _tempfile
-        with _tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "ai-specs.toml"
-            output_path = tmp_path / "AGENTS.md"
-            toml_path.write_text(toml_text)
-            cmd = ["python3", str(self.AGENTS_RENDER), str(toml_path), str(output_path)]
-            if resolved is not None:
-                resolved_path = tmp_path / "resolved.json"
-                resolved_path.write_text(json.dumps(resolved))
-                cmd += ["--resolved-config", str(resolved_path)]
-            proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
-            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed:\n{proc.stderr}")
-            self.assertTrue(output_path.exists())
-            return output_path.read_text()
 
     # --- FIX 1 ---
 
@@ -2519,70 +2332,6 @@ class TestJudgmentDayFixes(unittest.TestCase):
             self.assertNotIn("VCS/PR provider: github", agents)
         finally:
             shutil.rmtree(workspace.parent)
-
-    # --- FIX 5 ---
-
-    def test_malformed_resolved_config_degrades_gracefully(self):
-        # TRIAGE: ai-specs sync — a malformed --resolved-config JSON payload can
-        # never be produced by any CLI verb (sync always writes valid JSON), so the
-        # renderer is exercised at its process boundary with a hand-crafted payload.
-        """FIX 5: Malformed JSON in --resolved-config must not crash agents-render.py.
-        Degrade to {} (no structured fields); prose and identity still render.
-        """
-        import tempfile as _tempfile
-        with _tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "ai-specs.toml"
-            output_path = tmp_path / "AGENTS.md"
-            bad_json_path = tmp_path / "bad.json"
-
-            toml_path.write_text(
-                "[project]\n"
-                "name = 'fix5-malformed-json'\n\n"
-                "[brief]\n"
-                'workflow_rules = ["No pushes without review."]\n'
-            )
-            bad_json_path.write_text("this is not json {{{")
-
-            proc = subprocess.run(
-                ["python3", str(self.AGENTS_RENDER), str(toml_path), str(output_path),
-                 "--resolved-config", str(bad_json_path)],
-                text=True, capture_output=True, check=False,
-            )
-            # Must not crash
-            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed on bad JSON:\n{proc.stderr}")
-            self.assertTrue(output_path.exists())
-
-            agents = output_path.read_text()
-            self.assertIn("fix5-malformed-json", agents)
-            self.assertIn("No pushes without review.", agents)
-
-    def test_non_dict_resolved_config_degrades_gracefully(self):
-        # TRIAGE: ai-specs sync — a non-dict --resolved-config JSON payload can
-        # never be produced by any CLI verb, so the renderer is exercised at its
-        # process boundary with a hand-crafted payload.
-        """FIX 5: Non-dict JSON (e.g. a list) in --resolved-config must degrade to {}."""
-        import tempfile as _tempfile
-        with _tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "ai-specs.toml"
-            output_path = tmp_path / "AGENTS.md"
-            list_json_path = tmp_path / "list.json"
-
-            toml_path.write_text("[project]\nname = 'fix5-list-json'\n")
-            list_json_path.write_text('["a", "b", "c"]')
-
-            proc = subprocess.run(
-                ["python3", str(self.AGENTS_RENDER), str(toml_path), str(output_path),
-                 "--resolved-config", str(list_json_path)],
-                text=True, capture_output=True, check=False,
-            )
-            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed on list JSON:\n{proc.stderr}")
-            agents = output_path.read_text()
-            self.assertIn("fix5-list-json", agents)
-
-    # --- FIX 7 ---
-
     def test_trello_section_has_no_recipe_id_parenthetical(self):
         """FIX 7: The Trello Tracking section must show board_id without the
         recipe-id parenthetical (e.g. no '(trello-mcp-workflow)').
@@ -2722,68 +2471,6 @@ class TestJudgmentDayFixes(unittest.TestCase):
             self.assertNotIn("literal-value", agents)
         finally:
             shutil.rmtree(workspace.parent)
-
-    # --- FIX 10 ---
-
-    def test_test_command_resolves_via_test_runner_capability_binding(self):
-        # TRIAGE: ai-specs sync — binding a capability to a custom recipe id that
-        # the catalog does not provide is rejected by manifest validation, so the
-        # binding-substitution contract is exercised at the renderer process
-        # boundary with a hand-crafted resolved-config.
-        """FIX 10: test_command resolved via bindings['test-runner'] → recipe, not hardcoded 'tdd-flow'.
-        Swapping the bound recipe id (while keeping the capability) must still surface test_command.
-        """
-        resolved = {
-            "bindings": {"test-runner": "my-custom-runner"},  # different recipe id
-            "recipes": {
-                "my-custom-runner": {"test_command": "./custom-tests.sh"},
-                "tdd-flow": {"test_command": "./tests/run.sh"},  # NOT the bound one
-            },
-        }
-        agents = self.run_render("[project]\nname = 'fix10-test-runner'\n", resolved)
-        # The BOUND recipe's command must appear
-        self.assertIn("./custom-tests.sh", agents)
-        # The un-bound recipe's command must NOT appear (tdd-flow is not the active binding)
-        self.assertNotIn("./tests/run.sh", agents)
-
-    def test_integration_branch_resolves_via_worktree_isolation_binding(self):
-        # TRIAGE: ai-specs sync — binding worktree-isolation to a custom recipe id
-        # outside the catalog is rejected by manifest validation; the
-        # binding-substitution contract is exercised at the renderer process
-        # boundary with a hand-crafted resolved-config.
-        """FIX 10: integration_branch resolved via bindings['worktree-isolation'] → recipe.
-        Swapping bound recipe id keeps the field.
-        """
-        resolved = {
-            "bindings": {"worktree-isolation": "my-worktree"},  # different recipe id
-            "recipes": {
-                "my-worktree": {"integration_branch": "staging"},
-                "worktree-flow": {"integration_branch": "main"},  # NOT the bound one
-            },
-        }
-        agents = self.run_render("[project]\nname = 'fix10-integration-branch'\n", resolved)
-        self.assertIn("- **Integration branch**: `staging`", agents)
-        self.assertNotIn("`main`", agents)
-
-    def test_vault_scope_resolves_via_canonical_store_binding(self):
-        # TRIAGE: ai-specs sync — binding canonical-store to a custom recipe id
-        # outside the catalog is rejected by manifest validation; the
-        # binding-substitution contract is exercised at the renderer process
-        # boundary with a hand-crafted resolved-config.
-        """FIX 10: vault_scope resolved via bindings['canonical-store'] → recipe."""
-        resolved = {
-            "bindings": {"canonical-store": "my-vault"},
-            "recipes": {
-                "my-vault": {"vault_scope": "my/vault/path"},
-                "vault-canonical-store": {"vault_scope": "other/path"},  # NOT bound
-            },
-        }
-        agents = self.run_render("[project]\nname = 'fix10-vault'\n", resolved)
-        self.assertIn("- **Vault scope**: `my/vault/path`", agents)
-        self.assertNotIn("other/path", agents)
-
-    # --- FIX A (Round 2) ---
-
     def test_resolved_config_only_mode_writes_json_and_leaves_no_recipe_mcp_temp(self):
         """FIX A (R2): the standalone resolved-config-only path (sync-agent --all)
         must leave NO ai-specs-recipe-mcp-* temp files behind and must produce a
@@ -2904,94 +2591,12 @@ class TestJudgmentDayFixes(unittest.TestCase):
                 "The invalid-binding validation error must be surfaced, not swallowed.\n"
                 f"stderr: {result.stderr}\nstdout: {result.stdout}",
             )
-
-            # TRIAGE: standalone --resolved-config-only restoration. The
-            # standalone path must not swallow the binding validation error
-            # either: it must exit non-zero, surface the cause, and write no
-            # resolved-config output.
-            resolved_out = parent / "invalid-binding-resolved.json"
-            proc = _resolved_config_process(
-                workspace, home, resolved_out, "--resolved-config-only")
-            self.assertNotEqual(
-                proc.returncode, 0,
-                "standalone --resolved-config-only must not swallow the "
-                "binding validation error and exit 0\n"
-                f"stderr: {proc.stderr}\nstdout: {proc.stdout}",
-            )
-            self.assertIn(
-                "references disabled/unknown recipe", proc.stderr,
-                "standalone --resolved-config-only must surface the binding "
-                "validation error\n"
-                f"stderr: {proc.stderr}\nstdout: {proc.stdout}",
-            )
-            self.assertFalse(
-                resolved_out.exists(),
-                "resolved-config output must not be written when binding "
-                "validation fails",
-            )
+            # The standalone resolved-config-only path's idential contract is
+            # frozen natively: internal/sync/resolvedconfigonly_test.go's
+            # "malformed explicit binding is fatal" scenario fixes its exit
+            # code, streams and the absent document.
         finally:
             shutil.rmtree(parent)
-
-    # --- FIX B (Round 2) ---
-
-    def test_wrong_typed_inner_fields_degrade_gracefully_no_crash(self):
-        # TRIAGE: ai-specs sync — wrong-typed inner resolved-config fields can
-        # never be produced by any CLI verb, so the renderer is exercised at its
-        # process boundary with a hand-crafted payload.
-        """FIX B (R2): resolved-config with wrong-typed inner fields must not crash.
-
-        A dict with bindings/recipes/enabled set to wrong types (list, string, str)
-        triggers AttributeError in the section helpers unless coerced to the expected
-        types in render(). This test feeds such a dict and verifies: exit 0, no crash,
-        degraded output (project name present).
-        """
-        import tempfile as _tempfile
-
-        with _tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "ai-specs.toml"
-            output_path = tmp_path / "AGENTS.md"
-            bad_resolved_path = tmp_path / "bad_resolved.json"
-
-            toml_path.write_text(
-                "[project]\n"
-                "name = 'fixB-wrong-typed-inner-fields'\n\n"
-                "[brief]\n"
-                'workflow_rules = ["No merges without review."]\n'
-            )
-            # bindings is a list (not dict), recipes is a string (not dict),
-            # enabled is a dict (not list) — all wrong types
-            bad_resolved_path.write_text(json.dumps({
-                "bindings": ["tracker", "vcs-pr-flow"],  # list, not dict
-                "recipes": "should-be-a-dict",           # string, not dict
-                "enabled": {"tdd-flow": True},           # dict, not list
-            }))
-
-            proc = subprocess.run(
-                [
-                    "python3",
-                    str(ROOT / "lib" / "_internal" / "agents-render.py"),
-                    str(toml_path), str(output_path),
-                    "--resolved-config", str(bad_resolved_path),
-                ],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-
-            # Must not crash
-            self.assertEqual(
-                proc.returncode, 0,
-                f"agents-render.py crashed on wrong-typed inner fields:\n{proc.stderr}",
-            )
-            self.assertTrue(output_path.exists())
-
-            agents = output_path.read_text()
-            # Project identity must be present (degraded but not empty)
-            self.assertIn("fixB-wrong-typed-inner-fields", agents)
-            # Workflow rules must render (from TOML, not from wrong resolved-config)
-            self.assertIn("No merges without review.", agents)
-
 
 class RuntimeHookSyncPipelineTests(unittest.TestCase):
     """End-to-end: enabling the worktree-flow hook fans wiring to every harness."""
@@ -3182,106 +2787,6 @@ class TestVcsDropRemediations(unittest.TestCase):
             )
         finally:
             shutil.rmtree(workspace.parent)
-
-
-class TestCustomVcsWarning(unittest.TestCase):
-    """Unknown/custom vcs-pr-flow recipe ids must warn to stderr and use generic label.
-
-    When the bound vcs-pr-flow recipe id is not in _VCS_RECIPE_LABELS, the renderer
-    must emit a '⚠ ai-specs:' warning to stderr and render 'VCS PR (custom)' as the
-    bullet label instead of falling back silently.
-    """
-
-    AGENTS_RENDER = ROOT / "lib" / "_internal" / "agents-render.py"
-
-    def run_render_with_stderr(self, toml_text: str, resolved: dict) -> tuple[str, str]:
-        """Invoke agents-render.py, return (agents_output, stderr)."""
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "ai-specs.toml"
-            output_path = tmp_path / "AGENTS.md"
-            resolved_path = tmp_path / "resolved.json"
-            toml_path.write_text(toml_text)
-            resolved_path.write_text(json.dumps(resolved))
-            proc = subprocess.run(
-                [
-                    "python3", str(self.AGENTS_RENDER),
-                    str(toml_path), str(output_path),
-                    "--resolved-config", str(resolved_path),
-                ],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed:\n{proc.stderr}")
-            self.assertTrue(output_path.exists())
-            return output_path.read_text(), proc.stderr
-
-    def test_unknown_vcs_recipe_warns_to_stderr(self):
-        # TRIAGE: ai-specs sync — an unknown/custom vcs-pr-flow recipe id cannot
-        # be declared through any CLI verb (manifest binding validation rejects
-        # recipes outside the catalog), so the custom-id warning and generic
-        # label are exercised at the renderer process boundary with a
-        # hand-crafted resolved-config.
-        """Bound custom vcs-pr-flow id → stderr contains ⚠ ai-specs: warning."""
-        resolved = {
-            "bindings": {"vcs-pr-flow": "my-custom-vcs"},
-            "recipes": {
-                "my-custom-vcs": {"base_branch": "trunk"},
-            },
-            "enabled": ["my-custom-vcs"],
-        }
-        agents, stderr = self.run_render_with_stderr(
-            "[project]\nname = 'custom-vcs-warning'\n", resolved,
-        )
-        self.assertIn("⚠ ai-specs:", stderr)
-        self.assertIn("my-custom-vcs", stderr)
-        self.assertIn("VCS PR (custom)", stderr)
-
-    def test_unknown_vcs_recipe_renders_generic_label(self):
-        # TRIAGE: ai-specs sync — an unknown/custom vcs-pr-flow recipe id cannot
-        # be declared through any CLI verb (manifest binding validation rejects
-        # recipes outside the catalog), so the custom-id warning and generic
-        # label are exercised at the renderer process boundary with a
-        # hand-crafted resolved-config.
-        """Bound custom vcs-pr-flow id → AGENTS.md uses 'VCS PR (custom)' label."""
-        resolved = {
-            "bindings": {"vcs-pr-flow": "my-custom-vcs"},
-            "recipes": {
-                "my-custom-vcs": {"base_branch": "trunk"},
-            },
-            "enabled": ["my-custom-vcs"],
-        }
-        agents, stderr = self.run_render_with_stderr(
-            "[project]\nname = 'custom-vcs-label'\n", resolved,
-        )
-        self.assertIn("VCS/PR provider: VCS PR (custom)", agents)
-        self.assertIn("base branch: `trunk`", agents)
-
-    def test_unknown_vcs_warning_once_per_id(self):
-        # TRIAGE: ai-specs sync — an unknown/custom vcs-pr-flow recipe id cannot
-        # be declared through any CLI verb (manifest binding validation rejects
-        # recipes outside the catalog), so the custom-id warning and generic
-        # label are exercised at the renderer process boundary with a
-        # hand-crafted resolved-config.
-        """Warning must appear exactly once per unknown id per render invocation."""
-        resolved = {
-            "bindings": {"vcs-pr-flow": "my-custom-vcs"},
-            "recipes": {
-                "my-custom-vcs": {"base_branch": "trunk"},
-            },
-            "enabled": ["my-custom-vcs"],
-        }
-        agents, stderr = self.run_render_with_stderr(
-            "[project]\nname = 'custom-vcs-dedup'\n", resolved,
-        )
-        # Count occurrences of the warning prefix
-        warning_count = stderr.count("⚠ ai-specs: VCS recipe 'my-custom-vcs'")
-        self.assertEqual(
-            warning_count, 1,
-            f"Warning must appear exactly once, but found {warning_count} times.\n"
-            f"stderr: {stderr}",
-        )
 
 
 class GateRefreshCliTests(unittest.TestCase):

@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import platform
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -35,7 +34,8 @@ from _blackbox import (  # noqa: E402
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCTOR_PY = ROOT / "lib" / "_internal" / "doctor.py"
+# The renderer that owns the runtime brief (the legacy agents-render.py port).
+AGENTS_RENDER_GO = ROOT / "internal" / "sync" / "agentsrender.go"
 
 BUNDLED_SKILLS = (
     "harness-lifecycle",
@@ -59,20 +59,15 @@ def _platform() -> tuple[str, str]:
 
 
 def _make_home(base: Path) -> Path:
-    """Isolated CLI home with a REAL lib copy and an empty catalog.
+    """Isolated CLI home with an EMPTY catalog.
 
-    doctor.py derives its cache root from its own realpath, so a symlinked
-    lib would resolve back into the repository and make the gate checks read
-    (never write) repo cache state. A real copy keeps every lookup in temp;
-    the empty catalog keeps the SHA256SUMS trust root out of the way so a
-    receipt-backed stub binary is accepted exactly like an acquired one.
+    The empty catalog keeps the SHA256SUMS trust root out of the way so a
+    receipt-backed stub binary is accepted exactly like an acquired one, and
+    ``lib/`` is dropped from the install tree: doctor is the Go binary, so no
+    test reads or copies it.
     """
     home = isolated_home(base, catalog=False)
     (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor"),
-    )
     return home
 
 
@@ -427,12 +422,6 @@ class DoctorTrackerLedgerTests(unittest.TestCase):
         self.assertNotIn("link section", blob)
         self.assertEqual(code, 0)
 
-    def test_legacy_grader_is_gone(self):
-        source = DOCTOR_PY.read_text(encoding="utf-8")
-        self.assertNotIn("_check_tracker_card_link", source)
-        self.assertNotIn("_load_trello_link", source)
-        self.assertNotIn("is_valid_link", source)
-
     def test_doctor_is_read_only(self):
         root = self._project()
         (root / "openspec" / "changes" / "no-card").mkdir(parents=True)
@@ -449,7 +438,7 @@ class DoctorTrackerLedgerTests(unittest.TestCase):
 
     def test_runtime_brief_sources_add_no_dormancy_line(self):
         sources = list((ROOT / "catalog" / "recipes").rglob("recipe.toml"))
-        sources.append(ROOT / "lib" / "_internal" / "agents-render.py")
+        sources.append(AGENTS_RENDER_GO)
         for path in sources:
             with self.subTest(path=path.name):
                 self.assertNotIn("tracker-ledger", path.read_text(encoding="utf-8"))

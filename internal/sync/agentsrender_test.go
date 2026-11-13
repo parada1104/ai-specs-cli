@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -1151,5 +1152,139 @@ func TestCollectRecipeBriefFragmentsFirstWinsKeyAndExactText(t *testing.T) {
 	}
 	if rules[0].text != sharedRule {
 		t.Fatalf("workflow_rules[0].text = %q", rules[0].text)
+	}
+}
+
+// TestRenderAgentsMarkdownResolvesStructuredFieldsThroughTheBinding pins the
+// four structured fields at the binding seam: test_command, integration_branch
+// and vault_scope come from the recipe the CAPABILITY is bound to, never from a
+// hard-coded recipe id. The retired Python suite reached this through the
+// renderer's --resolved-config process boundary with a hand-crafted resolved
+// document (no CLI verb can produce a binding to a recipe outside the catalog);
+// the native rules are asserted on the renderer that owns them.
+func TestRenderAgentsMarkdownResolvesStructuredFieldsThroughTheBinding(t *testing.T) {
+	manifest, err := toml.Parse([]byte("[project]\nname = 'binding-substitution'\n\n[agents]\nenabled = ['claude']\n"))
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	resolved := map[string]any{
+		"bindings": map[string]any{
+			"test-runner":        "my-custom-runner",
+			"worktree-isolation": "my-worktree",
+			"canonical-store":    "my-vault",
+		},
+		"recipes": map[string]any{
+			"my-custom-runner":      map[string]any{"test_command": "./custom-tests.sh"},
+			"tdd-flow":              map[string]any{"test_command": "./tests/run.sh"},
+			"my-worktree":           map[string]any{"integration_branch": "staging"},
+			"worktree-flow":         map[string]any{"integration_branch": "main"},
+			"my-vault":              map[string]any{"vault_scope": "my/vault/path"},
+			"vault-canonical-store": map[string]any{"vault_scope": "other/path"},
+		},
+		"enabled": []any{"my-custom-runner", "my-worktree", "my-vault"},
+	}
+
+	got := string(RenderAgentsMarkdown(manifest, resolved))
+	for _, want := range []string{
+		"- Focused tests: `./custom-tests.sh`",
+		"- **Integration branch**: `staging`",
+		"- **Vault scope**: `my/vault/path`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("render lacks the BOUND field %q:\n%s", want, got)
+		}
+	}
+	// The un-bound recipes' values must not appear: resolution follows the
+	// binding, never a hard-coded recipe id.
+	for _, unwanted := range []string{"`./tests/run.sh`", "`main`", "other/path"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("un-bound recipe value %q leaked into the render:\n%s", unwanted, got)
+		}
+	}
+}
+
+// TestLoadResolvedConfigDegradesMalformedDocumentsAndStillRenders pins the two
+// payload shapes no CLI verb can produce (malformed JSON and a non-dict
+// document) plus the wrong-typed inner fields the Python suite fed the
+// renderer: the reader degrades to the empty document, the inner fields are
+// coerced, and the render still carries the manifest's identity and prose.
+func TestLoadResolvedConfigDegradesMalformedDocumentsAndStillRenders(t *testing.T) {
+	manifest, err := toml.Parse([]byte(
+		"[project]\nname = 'tolerant-render'\n\n[agents]\nenabled = ['claude']\n\n" +
+			"[brief]\nworkflow_rules = ['No merges without review.']\n"))
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+
+	cases := []struct {
+		name     string
+		payload  string
+		wantKeys map[string]any
+	}{
+		{
+			name:    "malformed json degrades to the empty document",
+			payload: "this is not json {{{",
+		},
+		{
+			name:    "non-dict document degrades to the empty document",
+			payload: `["a", "b", "c"]`,
+		},
+		{
+			name:    "wrong-typed inner fields are coerced",
+			payload: `{"bindings": ["tracker"], "recipes": "should-be-a-dict", "enabled": {"tdd-flow": true}}`,
+			wantKeys: map[string]any{
+				"bindings": map[string]any{},
+				"recipes":  map[string]any{},
+				"enabled":  []any{},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "resolved.json")
+			if err := os.WriteFile(path, []byte(tc.payload), 0o644); err != nil {
+				t.Fatalf("write payload: %v", err)
+			}
+			got := loadResolvedConfig(path)
+			for key, want := range tc.wantKeys {
+				if !reflect.DeepEqual(got[key], want) {
+					t.Errorf("%s = %#v, want %#v", key, got[key], want)
+				}
+			}
+			if tc.wantKeys == nil && len(got) != 0 {
+				t.Errorf("an unusable document must degrade to the empty document: %#v", got)
+			}
+
+			rendered := string(RenderAgentsMarkdown(manifest, got))
+			for _, want := range []string{"tolerant-render", "No merges without review."} {
+				if !strings.Contains(rendered, want) {
+					t.Errorf("render lacks %q:\n%s", want, rendered)
+				}
+			}
+		})
+	}
+}
+
+// TestRenderAgentsMarkdownToleratesAnEnabledRecipeWithoutConfig pins the
+// no-crash contract for an enabled id the resolved document carries no recipe
+// entry for. The Python suite reached it through the renderer's
+// --resolved-config boundary because the CLI derives the enabled list from the
+// manifest; the native accessors own the tolerance, so it is asserted here.
+func TestRenderAgentsMarkdownToleratesAnEnabledRecipeWithoutConfig(t *testing.T) {
+	manifest, err := toml.Parse([]byte("[project]\nname = 'missing-recipe-config'\n\n[agents]\nenabled = ['claude']\n"))
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	resolved := map[string]any{
+		"enabled":  []any{"missing-recipe"},
+		"recipes":  map[string]any{},
+		"bindings": map[string]any{},
+	}
+	got := string(RenderAgentsMarkdown(manifest, resolved))
+	if !strings.Contains(got, "missing-recipe-config") {
+		t.Errorf("render lost the project identity:\n%s", got)
+	}
+	if strings.Count(got, "## ") != strings.Count(string(RenderAgentsMarkdown(manifest, map[string]any{})), "## ") {
+		t.Errorf("an absent recipe entry changed the section set:\n%s", got)
 	}
 }
