@@ -2165,3 +2165,82 @@ func pcCases() []pcCase {
 				"content_sha": "deadbeef"}},
 	}
 }
+
+// MergeCommands precedence is bundled -> managed -> local hand-authored, and
+// only a local file colliding with an earlier tier warns. The frozen CLI cases
+// pin the bytes for one collision each; this pins the precedence ladder and the
+// warning set together (legacy tests/test_command_merge.py).
+func TestMergeCommandsPrecedenceAndWarnings(t *testing.T) {
+	seed := func(t *testing.T, path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("local wins over managed and bundled with one warning", func(t *testing.T) {
+		root, home := t.TempDir(), t.TempDir()
+		bundled := BundledCommandsRoot(root, home)
+		managed := CommandsDir(root, home)
+		seed(t, filepath.Join(bundled, "shared.md"), "bundled\n")
+		seed(t, filepath.Join(bundled, "only-bundled.md"), "b\n")
+		seed(t, filepath.Join(managed, "shared.md"), "managed\n")
+		seed(t, filepath.Join(managed, "only-managed.md"), "m\n")
+		seed(t, filepath.Join(managed, "dup.md"), "managed dup\n")
+		seed(t, filepath.Join(root, "ai-specs", "commands", "shared.md"), "local\n")
+		seed(t, filepath.Join(root, "ai-specs", "commands", "only-local.md"), "l\n")
+
+		dest := filepath.Join(root, "out")
+		var stderr bytes.Buffer
+		n, err := MergeCommands(root, dest, home, &bytes.Buffer{}, &stderr)
+		if err != nil {
+			t.Fatalf("MergeCommands: %v", err)
+		}
+		// shared, only-bundled, only-managed, dup, only-local.
+		if n != 5 {
+			t.Errorf("count = %d, want 5", n)
+		}
+		// Local hand-authored content wins over both cache tiers.
+		if got := readFile(t, filepath.Join(dest, "shared.md")); got != "local\n" {
+			t.Errorf("shared.md = %q, want the local copy", got)
+		}
+		for name, want := range map[string]string{
+			"only-bundled.md": "b\n",
+			"only-managed.md": "m\n",
+			"only-local.md":   "l\n",
+		} {
+			if got := readFile(t, filepath.Join(dest, name)); got != want {
+				t.Errorf("%s = %q, want %q", name, got, want)
+			}
+		}
+		want := "  ! command 'shared' present in cache and ai-specs/commands/; local hand-authored wins\n"
+		if stderr.String() != want {
+			t.Errorf("stderr = %q, want %q", stderr.String(), want)
+		}
+	})
+
+	t.Run("bundled versus managed collision is silent", func(t *testing.T) {
+		root, home := t.TempDir(), t.TempDir()
+		seed(t, filepath.Join(BundledCommandsRoot(root, home), "dup.md"), "# bundled\n")
+		seed(t, filepath.Join(CommandsDir(root, home), "dup.md"), "# managed\n")
+
+		dest := filepath.Join(root, "out")
+		var stderr bytes.Buffer
+		n, err := MergeCommands(root, dest, home, &bytes.Buffer{}, &stderr)
+		if err != nil {
+			t.Fatalf("MergeCommands: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("count = %d, want 1", n)
+		}
+		if got := readFile(t, filepath.Join(dest, "dup.md")); got != "# managed\n" {
+			t.Errorf("dup.md = %q, want the managed copy", got)
+		}
+		if stderr.String() != "" {
+			t.Errorf("stderr = %q, want no warning for a bundled/managed collision", stderr.String())
+		}
+	})
+}

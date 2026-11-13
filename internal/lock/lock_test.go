@@ -872,3 +872,66 @@ func TestPyReprUnitsGoOnly(t *testing.T) {
 		t.Errorf("pyReprDepth(active table) = %q, %v; want '{...}'", got, err)
 	}
 }
+
+// The control-character walk starts at the lock path itself: a path carrying a
+// control character is refused before any section is inspected, and nothing is
+// written (legacy tests/test_lock.py::test_control_char_in_lock_path_is_refused).
+func TestControlCharRefusalNamesTheLockPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "loc\x1fck.ai-specs.lock")
+	err := WriteLock(path, NewLock())
+	if err == nil {
+		t.Fatal("a lock path with a control character must be refused")
+	}
+	// The walk starts at the lock path, before meta.
+	want := "value for lock_path contains a control character"
+	if err.Error() != want {
+		t.Fatalf("refusal = %q, want %q", err.Error(), want)
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		t.Error("nothing may be written on refusal")
+	}
+}
+
+// A lock written by an earlier CLI version still carries [commands] and
+// [opted-out]; the loader has no field for them and the writer emits only the
+// supported sections, so the next write normalizes them away while [agents.*]
+// provenance survives untouched (legacy tests/test_lock.py::
+// test_legacy_commands_opted_out_dropped_agents_preserved).
+func TestLegacyLockSectionsAreDroppedOnRewrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".ai-specs.lock")
+	legacy := "[meta]\ncli_version = \"0.14.0\"\nsynced_at = \"2026-07-01T00:00:00Z\"\n\n" +
+		"[commands]\n\"rules-audit.md\" = \"cmdhash\"\n\n" +
+		"[opted-out]\nfiles = [\"commands/skills-as-rules.md\"]\n\n" +
+		"[agents.\"claude\"]\n\"AGENTS.md\" = \"agenthash\"\n"
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lk, err := LoadLock(path)
+	if err != nil {
+		t.Fatalf("LoadLock: %v", err)
+	}
+	if lk.Agents["claude"]["AGENTS.md"] != "agenthash" {
+		t.Fatalf("agents not loaded: %v", lk.Agents)
+	}
+	if err := WriteLock(path, lk); err != nil {
+		t.Fatalf("WriteLock: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	// The legacy sections have no loader field and no writer slot: they are
+	// dropped by the rewrite, as the Python writer does.
+	for _, drop := range []string{"[commands]", "[opted-out]"} {
+		if strings.Contains(text, drop) {
+			t.Errorf("%s survived the rewrite; want it dropped", drop)
+		}
+	}
+	if !strings.Contains(text, "[agents.\"claude\"]") || !strings.Contains(text, "\"AGENTS.md\" = \"agenthash\"") {
+		t.Errorf("agents provenance lost:\n%s", text)
+	}
+	if !strings.Contains(text, "cli_version = \"0.14.0\"") {
+		t.Errorf("meta lost:\n%s", text)
+	}
+}

@@ -78,3 +78,20 @@ func TestParseSectionInvalidUTF8PropagatesAnError(t *testing.T) {
 		t.Fatal("invalid UTF-8 must propagate, as Python's read_text does")
 	}
 }
+
+// A fenced sample ## Tracker block that appears before any real tracker section
+// is documentation, not a link: the section scan ignores headings that open
+// inside a fence, so the document yields no fields
+// (legacy tests/test_trello_link.py::test_fenced_sample_tracker_ignored).
+func TestParseSectionIgnoresAFencedSampleTracker(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "proposal.md")
+	writeFile(t, p, "# Title\n\nSample:\n\n```markdown\n## Tracker\n\n- **card_id**: `<24-hex>`\n```\n\n## Scope\n\nNo real tracker yet.\n")
+	got, err := ParseSection([]string{p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %v, want no fields: the sample is fenced documentation", got)
+	}
+}
