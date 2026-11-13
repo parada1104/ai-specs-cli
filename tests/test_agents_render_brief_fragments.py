@@ -27,9 +27,7 @@ Coverage preserved from the original white-box suite:
 from __future__ import annotations
 
 import json
-import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -46,18 +44,13 @@ ROOT = Path(__file__).resolve().parents[1]
 # ---------------------------------------------------------------------------
 
 def _make_home(base: Path) -> Path:
-    """Isolated CLI install root with a REAL lib copy.
+    """Isolated CLI install root.
 
-    sync/materialize derive cache and catalog roots from their own realpath,
-    so a symlinked lib would resolve back into the repository and let the CLI
-    touch repo cache state. A real copy keeps every lookup and write in temp.
+    ``lib/`` is dropped from the install tree: the renderer is native, so no
+    test copies or reads the Python tree.
     """
     home = isolated_home(base)
     (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
-    )
     return home
 
 
@@ -365,38 +358,6 @@ class CollectRecipeBriefFragmentsTests(BriefFragmentCLITest):
         section = self._wf_section()
         self.assertIn("A rule.", section)
         self.assertNotIn("B rule.", section)
-
-    def test_recipe_not_in_recipes_dict(self):
-        # TRIAGE: ai-specs sync — the CLI derives the enabled list from the
-        # [recipes.*] manifest entries, so an enabled id absent from the recipes
-        # map is unreachable black-box; this pins the no-crash contract at the
-        # renderer process boundary using the isolated home's own lib copy.
-        tmp = self.project / "ai-specs"
-        toml_path = tmp / "ai-specs.toml"
-        output_path = self.project / "AGENTS.md"
-        resolved_path = tmp / "resolved-config.json"
-        toml_path.write_text("[project]\nname = 'p'\n")
-        resolved_path.write_text(json.dumps({
-            "enabled": ["missing-recipe"], "recipes": {}, "bindings": {},
-        }))
-        env = {
-            "PATH": os.environ.get("PATH", ""),
-            "HOME": str(self.project.parent / "home"),
-            "TMPDIR": str(self.project.parent),
-            "AI_SPECS_HOME": str(self.home),
-            "AI_SPECS_NO_NETWORK": "1",
-            "LC_ALL": "C",
-            "LANG": "C",
-        }
-        (self.project.parent / "home").mkdir(parents=True, exist_ok=True)
-        proc = subprocess.run(
-            [sys.executable, str(self.home / "lib" / "_internal" / "agents-render.py"),
-             str(toml_path), str(output_path), "--resolved-config", str(resolved_path)],
-            cwd=str(ROOT), env=env, text=True, capture_output=True, check=False, input="",
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        # Must not crash: rendering an enabled id without recipe config succeeds
-        self.assertTrue(output_path.exists())
 
     def test_substitution_applied(self):
         self.seed_recipe("wf", recipe_toml("wf", fragments={

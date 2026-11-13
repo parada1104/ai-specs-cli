@@ -6,17 +6,16 @@ No test may import ``lib/_internal`` modules. Assertions preserve the
 original contract intents (cache dir layout, external dir placement, skill
 resolution precedence, warnings, leftovers migration) through the CLI.
 
-Internal-only surfaces with no CLI-observable equivalent are kept as
-process-boundary probes of the isolated home's own lib copy, each marked
-with a distinct ``# TRIAGE:`` comment.
+Multi-source skill resolution precedence, first-seen warnings, cache layout and
+leftover migration are observed through ``sync``/``sync-agent`` alone; the
+single-skill and override-template helpers that lived in the Python module have
+no CLI surface and no native consumer, so their probes are retired with it
+(``internal/skills/skills_test.go`` owns the resolution rules).
 """
 from __future__ import annotations
 
 import hashlib
-import json
-import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -36,19 +35,10 @@ CATALOG = ROOT / "catalog" / "recipes"
 
 
 def _make_home(base: Path) -> Path:
-    """Isolated CLI install root with a REAL lib copy.
-
-    sync/materialize/doctor derive cache and catalog roots from their own
-    realpath, so a symlinked lib would resolve back into the repository and
-    let the CLI touch repo cache state. A real copy keeps every lookup and
-    write in temp.
-    """
+    """Isolated CLI install root. ``lib/`` is dropped: sync, materialize and
+    doctor are native, so no test copies or reads the Python tree."""
     home = isolated_home(base)
     (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
-    )
     return home
 
 
@@ -171,42 +161,6 @@ def _cache_command(project: Path, home: Path, cmd: str) -> Path:
 
 def _resolved_skill(project: Path, home: Path, skill: str) -> Path:
     return cache_project_dir(project, home) / "resolved-skills" / skill / "SKILL.md"
-
-
-def _skill_resolution_probe(project: Path, home: Path, calls: str) -> subprocess.CompletedProcess:
-    """Process-boundary probe used only by # TRIAGE tests below.
-
-    Runs the isolated home's OWN ``skill-resolution.py`` copy in a hermetic
-    subprocess; ``calls`` is python code that must print JSON to stdout.
-    stdin is closed (input='') so the probe can never block.
-    """
-    sr = home / "lib" / "_internal" / "skill-resolution.py"
-    script = (
-        "import json, sys\n"
-        "from pathlib import Path\n"
-        f"src = open({str(sr)!r}).read()\n"
-        "mod = type(sys)('skill_resolution_probe')\n"
-        f"mod.__file__ = {str(sr)!r}\n"
-        "exec(compile(src, mod.__file__, 'exec'), mod.__dict__)\n"
-        f"project = Path({str(project)!r})\n"
-        f"home = Path({str(home)!r})\n"
-        + calls + "\n"
-    )
-    with tempfile.TemporaryDirectory(prefix="ai-specs-probe-") as tmp:
-        env = {
-            "PATH": os.environ.get("PATH", ""),
-            "HOME": str(Path(tmp) / "home"),
-            "TMPDIR": tmp,
-            "AI_SPECS_HOME": str(home),
-            "AI_SPECS_NO_NETWORK": "1",
-            "LC_ALL": "C",
-            "LANG": "C",
-        }
-        (Path(tmp) / "home").mkdir()
-        return subprocess.run(
-            [sys.executable, "-"], input=script, env=env, text=True,
-            capture_output=True, check=False,
-        )
 
 
 def _git_project() -> tuple[tempfile.TemporaryDirectory, Path]:
@@ -1069,27 +1023,6 @@ class SkillResolutionTests(unittest.TestCase):
             self.assertIn("d1", result.stderr)
             resolved = _resolved_skill(root, home, "dup").read_text()
             self.assertEqual(resolved, "# dup from d1\n")
-
-    def test_missing_skill_raises(self):
-        # TRIAGE: ai-specs sync — single-skill resolution (resolve_skill) has
-        # no CLI surface; the failure contract is probed against the isolated
-        # home's own skill-resolution.py copy in a subprocess.
-        with tempfile.TemporaryDirectory() as tmp:
-            home = _make_home(Path(tmp))
-            tmp2, root = _new_project()
-            self.addCleanup(tmp2.cleanup)
-            probe = _skill_resolution_probe(root, home, (
-                "try:\n"
-                "    mod.resolve_skill(project, 'missing', cli_home=home)\n"
-                "    print(json.dumps({'error': None}))\n"
-                "except RuntimeError as exc:\n"
-                "    print(json.dumps({'error': str(exc)}))\n"
-            ))
-            self.assertEqual(probe.returncode, 0, probe.stderr)
-            payload = json.loads(probe.stdout)
-            self.assertIsNotNone(payload["error"])
-            self.assertIn("missing", payload["error"])
-
     def test_local_override_silent_no_warning(self):
         tmp, root, home = self._project()
         with tmp:
@@ -1104,151 +1037,6 @@ class SkillResolutionTests(unittest.TestCase):
             # No warning should be emitted for local override
             self.assertNotIn("found in multiple", result.stderr)
             self.assertNotIn("using first-seen", result.stderr)
-
-    def test_local_precedence_does_not_backfill_files_from_recipe(self):
-        # TRIAGE: ai-specs sync — resolve_skill_template has no CLI surface;
-        # the no-backfill contract is probed against the isolated home's own
-        # skill-resolution.py copy in a subprocess.
-        with tempfile.TemporaryDirectory() as tmp:
-            home = _make_home(Path(tmp))
-            tmp2, root = _new_project()
-            self.addCleanup(tmp2.cleanup)
-            # Local skill wins; recipe tier holds an asset the local skill lacks.
-            local = root / "ai-specs" / "skills" / "shared"
-            local.mkdir(parents=True)
-            (local / "SKILL.md").write_text("# local shared")
-            staged = _recipe_cache_skill(root, home, "ext-res-backfill", "shared")
-            staged.mkdir(parents=True)
-            (staged / "SKILL.md").write_text("# recipe shared")
-            (staged / "assets").mkdir()
-            (staged / "assets" / "helper.md").write_text("recipe asset")
-            probe = _skill_resolution_probe(root, home, (
-                "p = mod.resolve_skill_template(project, 'shared', 'assets/helper.md', cli_home=home)\n"
-                "print(json.dumps(str(p) if p else None))\n"
-            ))
-            self.assertEqual(probe.returncode, 0, probe.stderr)
-            self.assertIsNone(json.loads(probe.stdout))
-
-
-class OverrideLoadingTests(unittest.TestCase):
-    """Recipe-skill override loading (config.toml merge, template override).
-
-    # TRIAGE: ai-specs sync — load_skill_config / resolve_skill_template have
-    # no CLI surface (no verb or rendered artifact consumes them); each test
-    # probes the isolated home's own skill-resolution.py copy in a hermetic
-    # subprocess and asserts on its JSON output.
-    """
-
-    def _project(self) -> tuple[Path, Path]:
-        tmp, root = _new_project()
-        self.addCleanup(tmp.cleanup)
-        home = _home_for(root)
-        (root / "ai-specs" / "skills").mkdir(parents=True, exist_ok=True)
-        return root, home
-
-    def _stage_recipe_skill(
-        self, root: Path, home: Path, recipe: str, skill: str,
-        files: dict[str, str] | None = None,
-    ) -> Path:
-        d = _recipe_cache_skill(root, home, recipe, skill)
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "SKILL.md").write_text(f"# {skill}")
-        for rel, content in (files or {}).items():
-            p = d / rel
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(content)
-        return d
-
-    def _overrides_file(self, root: Path, recipe: str, rel: str, content: str) -> Path:
-        p = root / "ai-specs" / "recipes" / recipe / "overrides" / rel
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content)
-        return p
-
-    def test_override_config_merged(self):
-        root, home = self._project()
-        self._stage_recipe_skill(root, home, "ext-ovr-merged", "my-skill")
-        self._overrides_file(root, "ext-ovr-merged", "config.toml", "timeout = 99\n")
-        probe = _skill_resolution_probe(root, home, (
-            "cfg = mod.load_skill_config(project, 'my-skill', {'timeout': 30}, cli_home=home)\n"
-            "print(json.dumps(cfg))\n"
-        ))
-        self.assertEqual(probe.returncode, 0, probe.stderr)
-        self.assertEqual(json.loads(probe.stdout)["timeout"], 99)
-
-    def test_override_config_missing_uses_defaults(self):
-        root, home = self._project()
-        self._stage_recipe_skill(root, home, "ext-ovr-default", "my-skill")
-        probe = _skill_resolution_probe(root, home, (
-            "cfg = mod.load_skill_config(project, 'my-skill', {'timeout': 30}, cli_home=home)\n"
-            "print(json.dumps(cfg))\n"
-        ))
-        self.assertEqual(probe.returncode, 0, probe.stderr)
-        self.assertEqual(json.loads(probe.stdout)["timeout"], 30)
-
-    def test_override_config_isolated_between_recipes(self):
-        root, home = self._project()
-        self._stage_recipe_skill(root, home, "ext-ovr-iso-a", "shared-skill")
-        self._stage_recipe_skill(root, home, "ext-ovr-iso-b", "shared-skill")
-        self._stage_recipe_skill(root, home, "ext-ovr-iso-b", "other-skill")
-        self._overrides_file(root, "ext-ovr-iso-a", "config.toml", "timeout = 99\n")
-        # For ext-ovr-iso-b's other-skill, the override from ext-ovr-iso-a
-        # must not apply; first-seen resolution picks ext-ovr-iso-a for
-        # shared-skill.
-        probe = _skill_resolution_probe(root, home, (
-            "cfg = mod.load_skill_config(project, 'shared-skill', {'timeout': 30}, cli_home=home)\n"
-            "cfg_b = mod.load_skill_config(project, 'other-skill', {'timeout': 30}, cli_home=home)\n"
-            "print(json.dumps({'shared': cfg, 'other': cfg_b}))\n"
-        ))
-        self.assertEqual(probe.returncode, 0, probe.stderr)
-        payload = json.loads(probe.stdout)
-        self.assertEqual(payload["shared"]["timeout"], 99)
-        self.assertEqual(payload["other"]["timeout"], 30)
-
-    def test_override_template_preferred(self):
-        root, home = self._project()
-        self._stage_recipe_skill(
-            root, home, "ext-ovr-tpl", "my-skill",
-            files={"template.md": "bundled"},
-        )
-        self._overrides_file(
-            root, "ext-ovr-tpl", "templates/template.md", "override",
-        )
-        probe = _skill_resolution_probe(root, home, (
-            "p = mod.resolve_skill_template(project, 'my-skill', 'template.md', cli_home=home)\n"
-            "print(json.dumps(str(p) if p else None))\n"
-        ))
-        self.assertEqual(probe.returncode, 0, probe.stderr)
-        resolved = json.loads(probe.stdout)
-        self.assertIsNotNone(resolved)
-        self.assertEqual(Path(resolved).read_text(), "override")
-
-    def test_override_template_fallback_to_bundled(self):
-        root, home = self._project()
-        self._stage_recipe_skill(
-            root, home, "ext-ovr-tpl-fb", "my-skill",
-            files={"template.md": "bundled"},
-        )
-        probe = _skill_resolution_probe(root, home, (
-            "p = mod.resolve_skill_template(project, 'my-skill', 'template.md', cli_home=home)\n"
-            "print(json.dumps(str(p) if p else None))\n"
-        ))
-        self.assertEqual(probe.returncode, 0, probe.stderr)
-        resolved = json.loads(probe.stdout)
-        self.assertIsNotNone(resolved)
-        self.assertEqual(Path(resolved).read_text(), "bundled")
-
-    def test_override_template_missing_returns_none(self):
-        root, home = self._project()
-        self._stage_recipe_skill(root, home, "ext-ovr-tpl-miss", "my-skill")
-        probe = _skill_resolution_probe(root, home, (
-            "p = mod.resolve_skill_template(project, 'my-skill', 'nonexistent.md', cli_home=home)\n"
-            "print(json.dumps(str(p) if p else None))\n"
-        ))
-        self.assertEqual(probe.returncode, 0, probe.stderr)
-        self.assertIsNone(json.loads(probe.stdout))
-
-
 class OrphanCleanupTests(unittest.TestCase):
     """Orphaned origin dirs are cleaned by `ai-specs sync`; referenced recipe
     dirs survive materialization."""

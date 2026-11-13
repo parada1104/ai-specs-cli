@@ -2,21 +2,16 @@
 
 Every test drives the CLI through its process boundary:
 - ``bin/ai-specs init ...`` — non-interactive gating and TUI-stub rc paths;
-- ``bin/ai-specs init --tui`` under a pseudo-terminal — the real wizard;
-- the isolated install's own ``lib/_internal/init_tui.py`` as a subprocess —
-  the TUI entrypoint rc contract (never imported in-process).
-A few pure internal-builder contracts with no CLI surface are kept as
-process-boundary drivers (subprocess executing the isolated install's
-init_tui.py via runpy), each marked with a distinct ``# TRIAGE:`` comment.
+- ``bin/ai-specs init --tui`` under a pseudo-terminal — the real wizard.
+The retired Python entrypoint's rc contracts are pinned natively by
+``internal/cli/initwizard_test.go``.
 """
 from __future__ import annotations
 
 import fcntl
-import json
 import os
 import re
 import select
-import shutil
 import struct
 import subprocess
 import sys
@@ -29,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _go_cli  # noqa: E402
-from _blackbox import cli_path, CLIResult, invoke, isolated_home, normalize_output  # noqa: E402
+from _blackbox import cli_path, CLIResult, isolated_home, normalize_output  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = cli_path()
@@ -58,16 +53,10 @@ def _recipe_toml(rid: str, name: str, extra: str = "") -> str:
 
 
 def _make_home(base: Path, *, catalog: bool = True) -> Path:
-    """Isolated CLI install root with a REAL lib copy (plus _vendor, needed by
-    the interactive deps gate). A symlinked lib would resolve runtime paths
-    back into the repository."""
+    """Isolated CLI install root. ``lib/`` is dropped: the wizard is native, so
+    no test copies or reads the Python tree."""
     home = isolated_home(base / "cli-home", catalog=catalog)
     (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor"),
-    )
-    (home / "lib" / "_vendor").symlink_to(ROOT / "lib" / "_vendor")
     return home
 
 
@@ -202,35 +191,6 @@ def _spawn_pty(target: Path, home: Path, base: Path, *, feed: bytes = b"",
     return proc.returncode, output
 
 
-_DRIVER_PREAMBLE = (
-    "import json, runpy, sys\n"
-    "_g = runpy.run_path(sys.argv[1], run_name='ai_specs_driver')\n"
-    "# runpy returns a copy of the module globals; patching must target the\n"
-    "# dict the module's functions actually bind to.\n"
-    "_w = _g['run_wizard'].__globals__\n"
-)
-
-
-def _run_driver(testcase: unittest.TestCase, home: Path, body: str,
-                *args: object) -> dict:
-    """Execute a process-boundary driver against the isolated install's own
-    init_tui.py (runpy, never imported in-process). Returns its JSON stdout."""
-    tmp = tempfile.TemporaryDirectory(prefix="ai-specs-tui-driver-")
-    testcase.addCleanup(tmp.cleanup)
-    driver = Path(tmp.name) / "driver.py"
-    driver.write_text(_DRIVER_PREAMBLE + body, encoding="utf-8")
-    proc = subprocess.run(
-        [sys.executable, str(driver), str(home / "lib" / "_internal" / "init_tui.py"),
-         *(str(a) for a in args)],
-        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60,
-        env=_cli_env(home, Path(tmp.name)),
-    )
-    testcase.assertEqual(
-        proc.returncode, 0, f"driver failed: rc={proc.returncode} stderr={proc.stderr}"
-    )
-    return json.loads(proc.stdout.strip())
-
-
 def _fresh_env(testcase: unittest.TestCase, *, catalog: bool = False,
                name: str = "demo-proj") -> tuple[Path, Path, Path]:
     tmp = tempfile.TemporaryDirectory(prefix="ai-specs-init-pty-")
@@ -335,23 +295,6 @@ class TestRenderManifest(unittest.TestCase):
         self.assertEqual(data["recipes"]["cfg-one"]["config"]["gate_mode"], "always")
         self.assertIs(data["recipes"]["cfg-one"]["config"]["auto_remove_merged"], True)
 
-    # TRIAGE: ai-specs init --tui — byte-equality between a legacy and a modern
-    # _render_manifest call (configured=None vs absent) has no CLI surface: the
-    # wizard renders exactly once. Kept as a process-boundary driver of the
-    # isolated install's own init_tui.py.
-    def test_render_manifest_no_config_backward_compat(self):
-        base, home, _target = _fresh_env(self)
-        result = _run_driver(self, home, (
-            "_tw = _g['_load_toml_write']()\n"
-            "_recipes = [{'id': 'session-context', 'version': '2.0.0'}]\n"
-            "_legacy = _g['_render_manifest'](_tw, 'demo', ['claude'], _recipes)\n"
-            "_modern = _g['_render_manifest'](_tw, 'demo', ['claude'], _recipes, configured=None)\n"
-            "print(json.dumps({'legacy': _legacy, 'modern': _modern}))\n"
-        ))
-        self.assertEqual(result["legacy"], result["modern"])
-        self.assertNotIn(".config]", result["modern"])
-
-
 class TestConfigureRecipesStep(unittest.TestCase):
     """Step 3.5 (per-recipe configure), driven through the real wizard PTY."""
 
@@ -455,9 +398,9 @@ class TestConfigureRecipesStep(unittest.TestCase):
 # S20/S40: every wizard flow below drives the built binary as of U4b-2 — the
 # harness-env offer with U4d-2, the per-recipe-configuration cases with this
 # slice. No case keeps the LEGACY launcher for a missing native feature any
-# more; the dep-gate case runs the NATIVE gate inside the binary (U7-1), and
-# the runpy drivers below are TRIAGE
-# process-boundary contracts of the legacy module, not launcher cases.
+# more: the dep-gate case runs the NATIVE gate inside the binary (U7-1), and
+# the retired Python module's internal contracts are pinned by
+# internal/cli/initwizard_test.go.
 class TestRunWizardHarnessEnv(unittest.TestCase):
     """JD-1: fresh init must spoon-feed harness env after staging write."""
 
@@ -544,69 +487,6 @@ class TestCatalogRecipes(unittest.TestCase):
 
 class TestEnsureDepsAndMain(unittest.TestCase):
     """init_tui.py entrypoint rc contract, at its own process boundary."""
-
-    def test_run_wizard_returns_3_on_non_tty(self):
-        tmp = tempfile.TemporaryDirectory(prefix="ai-specs-init-nontty-")
-        self.addCleanup(tmp.cleanup)
-        base = Path(tmp.name)
-        home = _make_home(base)
-        target = base / "proj"
-        target.mkdir()
-        out = base / "out.toml"
-        proc = subprocess.run(
-            [sys.executable, str(home / "lib" / "_internal" / "init_tui.py"),
-             "--target", str(target), "--out", str(out)],
-            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60,
-            env=_cli_env(home, base),
-        )
-        self.assertEqual(proc.returncode, 3)
-        self.assertFalse(out.exists())
-
-    def test_main_unexpected_exception_returns_3_not_1(self):
-        """An unexpected failure must return 3 (classic fallback), never 1 (cancel)."""
-        tmp = tempfile.TemporaryDirectory(prefix="ai-specs-init-boom-")
-        self.addCleanup(tmp.cleanup)
-        base = Path(tmp.name)
-        home = _make_home(base, catalog=False)  # empty catalog: no recipes prompt
-        target = base / "proj"
-        target.mkdir()
-        blocker = base / "not-a-dir"
-        blocker.write_text("regular file\n", encoding="utf-8")
-        out = blocker / "staged.toml"  # --out parent is a file → write fails
-        rc, output = _spawn_pty(
-            target, home, base,
-            argv=[sys.executable, str(home / "lib" / "_internal" / "init_tui.py"),
-                  "--target", str(target), "--out", str(out)],
-            stages=[(N_NAME, b"\n"), (N_TOPO, b"\n"), (N_AGENTS, b"\n"), (N_CONFIRM, b"\n")],
-            timeout=60,
-        )
-        self.assertEqual(rc, 3)
-        self.assertIn("interactive init failed", _strip_ansi(output))
-
-    def test_ensure_deps_mkdir_failure_returns_3(self):
-        """Vendor install offered on TTY; a failed vendor mkdir must return 3."""
-        tmp = tempfile.TemporaryDirectory(prefix="ai-specs-init-deps-")
-        self.addCleanup(tmp.cleanup)
-        base = Path(tmp.name)
-        home = _make_home(base, catalog=False)
-        # Replace lib/_vendor with a regular file: rich/questionary become
-        # unimportable AND the vendor mkdir is impossible.
-        (home / "lib" / "_vendor").unlink()
-        (home / "lib" / "_vendor").write_text("not a directory\n", encoding="utf-8")
-        target = base / "proj"
-        target.mkdir()
-        out = base / "out.toml"
-        rc, output = _spawn_pty(
-            target, home, base,
-            argv=[sys.executable, str(home / "lib" / "_internal" / "init_tui.py"),
-                  "--target", str(target), "--out", str(out)],
-            stages=[(b"Install into", b"y\n")],
-            timeout=60,
-        )
-        self.assertEqual(rc, 3)
-        self.assertIn("cannot create vendor dir", _strip_ansi(output))
-
-
 class TestInitShellGating(unittest.TestCase):
     """Shell integration: auto-TUI stays off without a TTY; stubs cover rc paths."""
 
@@ -795,43 +675,6 @@ class TopologyWizardNodeTests(unittest.TestCase):
         self.assertEqual(data["project"]["repo_topology"], "standalone")
         self.assertEqual(data["recipes"]["worktree-flow"]["config"], {"gate_mode": "always"})
 
-    # TRIAGE: ai-specs init --tui — a legacy caller passing repo_topology inside
-    # recipe config (and its promotion to [project]) cannot be produced through
-    # the CLI: the wizard schema filters project-owned keys before prompting.
-    # Kept as a process-boundary driver of the isolated install's init_tui.py.
-    def test_recipe_config_never_owns_repo_topology(self):
-        base, home, _target = _fresh_env(self)
-        result = _run_driver(self, home, (
-            "_tw = _g['_load_toml_write']()\n"
-            "_text = _g['_render_manifest'](_tw, 'demo', ['claude'],"
-            " [{'id': 'worktree-flow', 'version': '1.3.0'}],"
-            " configured={'worktree-flow': {'repo_topology': 'standalone', 'gate_mode': 'ask'}},"
-            " topology='monorepo-submodules')\n"
-            "print(json.dumps({'text': _text}))\n"
-        ))
-        data = tomllib.loads(result["text"])
-        self.assertEqual(data["project"]["repo_topology"], "monorepo-submodules")
-        self.assertEqual(data["recipes"]["worktree-flow"]["config"], {"gate_mode": "ask"})
-
-    # TRIAGE: ai-specs init --tui — the recipe-schema filter (_wizard_recipe) is
-    # a data-level contract; through the CLI it is only observable as the
-    # absence of a repo_topology prompt. Kept as a process-boundary driver of
-    # the isolated install's init_tui.py, reading the real repo catalog
-    # read-only.
-    def test_wizard_schema_excludes_project_owned_topology(self):
-        base, home, _target = _fresh_env(self)
-        result = _run_driver(self, home, (
-            "import pathlib\n"
-            "_rr = _g['_load_sibling']('recipe-read')\n"
-            "_recipe = _rr.read_recipe(pathlib.Path(sys.argv[2]), 'worktree-flow')\n"
-            "_filtered = _g['_wizard_recipe'](_recipe)\n"
-            "print(json.dumps({'orig': sorted(_recipe.config_schema.fields),"
-            " 'filtered': sorted(_filtered.config_schema.fields)}))\n"
-        ), ROOT / "catalog" / "recipes")
-        self.assertIn("repo_topology", result["orig"])
-        self.assertNotIn("repo_topology", result["filtered"])
-        self.assertIn("gate_mode", result["filtered"])
-
     # U4b-2: native from end to end — the topology prompt, the Configure-now
     # decline, and the project-owned routing of repo_topology (S18).
     def test_run_wizard_asks_topology_and_writes_override(self):
@@ -857,94 +700,6 @@ class TopologyWizardNodeTests(unittest.TestCase):
         self.assertIn("Repo topology for worktree-flow:", plain)
         self.assertIn("standalone (detected)", plain)
         data = tomllib.loads((target / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8"))
-        self.assertEqual(data["project"]["repo_topology"], "standalone")
-        self.assertNotIn(
-            "repo_topology",
-            (data["recipes"]["worktree-flow"].get("config") or {}),
-        )
-
-    # TRIAGE: ai-specs init --tui — the promotion of a recipe-side repo_topology
-    # answer over the identity answer requires injecting a config flow that
-    # returns repo_topology, which the real (filtered) schema can never do.
-    # Kept as a process-boundary driver of the isolated install's init_tui.py
-    # with a fake questionary, preserving the original mocked-wizard intent.
-    def test_configure_recipes_topology_wins_over_identity_prompt(self):
-        """Later explicit recipe-config answer must not be clobbered by identity."""
-        base, home, _target = _fresh_env(self)
-        target = Path(base) / "prj"
-        out = Path(base) / "staged.toml"
-        body = f"""
-import io, sys, types
-
-class _Ask:
-    def __init__(self, value):
-        self._value = value
-    def ask(self):
-        return self._value
-
-class FakeQ:
-    class Choice:
-        def __init__(self, title='', value=None, checked=False):
-            self.title, self.value, self.checked = title, value, checked
-    @staticmethod
-    def text(prompt, default=''):
-        return _Ask(default)
-    @staticmethod
-    def select(prompt, choices=None, default=None):
-        assert 'topology' in prompt.lower()
-        return _Ask('monorepo-submodules')
-    @staticmethod
-    def checkbox(prompt, choices=None):
-        if 'agents' in prompt.lower():
-            return _Ask(['claude'])
-        if 'recipes' in prompt.lower():
-            return _Ask([{{'id': 'worktree-flow', 'version': '1.3.0', 'description': 'wt'}}])
-        return _Ask([])
-    @staticmethod
-    def confirm(prompt, default=True):
-        return _Ask(True)
-
-sys.modules['questionary'] = FakeQ
-_rich = types.ModuleType('rich')
-_rich_console = types.ModuleType('rich.console')
-_rich_console.Console = lambda **kw: types.SimpleNamespace(print=lambda *a, **k: None)
-_rich_panel = types.ModuleType('rich.panel')
-_rich_panel.Panel = types.SimpleNamespace(fit=lambda *a, **k: 'panel')
-sys.modules['rich'] = _rich
-sys.modules['rich.console'] = _rich_console
-sys.modules['rich.panel'] = _rich_panel
-
-_fake_in = io.StringIO()
-_fake_in.isatty = lambda: True
-_fake_out = io.StringIO()
-_fake_out.isatty = lambda: True
-sys.stdin = _fake_in
-sys.stdout = _fake_out
-
-_g['_ensure_deps'] = lambda: None
-_w['_ensure_deps'] = lambda: None
-_g['_catalog_recipes'] = lambda: [{{'id': 'worktree-flow', 'version': '1.3.0', 'description': 'wt'}}]
-_w['_catalog_recipes'] = _w['_catalog_recipes']
-_w['_catalog_recipes'] = _g['_catalog_recipes']
-# _configure_recipes returns a DIFFERENT topology than the identity prompt.
-_g['_configure_recipes'] = lambda recipes, console, catalog_dir: {{
-    'worktree-flow': {{'repo_topology': 'standalone'}},
-}}
-_w['_configure_recipes'] = _g['_configure_recipes']
-
-import pathlib
-_target = pathlib.Path({str(target)!r})
-_target.mkdir(parents=True, exist_ok=True)
-_out = pathlib.Path({str(out)!r})
-_rc = _g['run_wizard'](target=_target, name_prefill='demo', out_path=_out)
-_staged = _out.read_text() if _out.is_file() else None
-sys.stdout = sys.__stdout__
-print(json.dumps({{'rc': _rc, 'staged': _staged}}))
-"""
-        result = _run_driver(self, home, body)
-        self.assertEqual(result["rc"], 0)
-        self.assertIsNotNone(result["staged"])
-        data = tomllib.loads(result["staged"])
         self.assertEqual(data["project"]["repo_topology"], "standalone")
         self.assertNotIn(
             "repo_topology",

@@ -25,20 +25,16 @@ boundary only.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "catalog" / "recipes" / "trello-mcp-workflow" / "hooks" / "tracker-card-gate.sh"
-LIB_INTERNAL = ROOT / "lib" / "_internal"
 
 STUB_BINARY = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${STUB_LOG}"
@@ -112,8 +108,7 @@ class TrackerCardGateHookTests(unittest.TestCase):
         self.stub.write_text(STUB_BINARY)
         self.stub.chmod(0o755)
 
-    def _stamped_gate(self, mode: str, cli_home: str | None = None,
-                      lib_internal: str = "__TRACKER_LIB_INTERNAL__") -> Path:
+    def _stamped_gate(self, mode: str, cli_home: str | None = None) -> Path:
         self.assertTrue(GATE.is_file(), f"gate script missing: {GATE}")
         # Default: the native bridge resolves, so the verdict/ask display is
         # exercised. Pass cli_home="" for the deliberate unstamped cases.
@@ -124,7 +119,10 @@ class TrackerCardGateHookTests(unittest.TestCase):
             GATE.read_text()
             .replace("__TRACKER_CARD_GATE_MODE__", mode)
             .replace("__TRACKER_CLI_HOME__", cli_home)
-            .replace("__TRACKER_LIB_INTERNAL__", lib_internal)
+            # The legacy lib/_internal stamp is a dead placeholder in the hook
+            # (PR4b deletes it with lib/); substitute it so no test copy carries
+            # the raw token.
+            .replace("__TRACKER_LIB_INTERNAL__", "")
         )
         stamped.chmod(0o755)
         return stamped
@@ -659,39 +657,6 @@ class TrackerCardGateHookTests(unittest.TestCase):
         self.assertIn("advisory", r.stderr.lower())
         self.assertEqual(self._write_lines(), [],
                          "writing the exemption the file describes is not the host's call")
-
-    def test_materialize_stamps_the_bridge_directory(self):
-        materialize_path = ROOT / "lib" / "_internal" / "recipe-materialize.py"
-        spec = importlib.util.spec_from_file_location("recipe_materialize_stamp", materialize_path)
-        assert spec is not None
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        assert spec.loader is not None
-        spec.loader.exec_module(module)
-
-        base = Path(self.tmp.name)
-        project = base / "project"
-        recipe_dir = base / "recipe"
-        hooks = recipe_dir / "hooks"
-        hooks.mkdir(parents=True)
-        (hooks / "tracker-card-gate.sh").write_text(GATE.read_text())
-        hook = SimpleNamespace(script="hooks/tracker-card-gate.sh", id="tracker-card-gate")
-        rel = module.materialize_hook_script(
-            recipe_dir, hook, project, "trello-mcp-workflow", {"gate_mode": "warn"},
-            cli_home=ROOT,
-        )
-        text = (project / rel).read_text()
-        self.assertNotIn("__TRACKER_LIB_INTERNAL__", text, "the stamp must be substituted")
-        self.assertIn(str((ROOT / "lib" / "_internal").resolve()), text)
-        # No CLI home means no bridge directory: the host then skips both evidence
-        # and the exemption write (fail open).
-        rel2 = module.materialize_hook_script(
-            recipe_dir, hook, base / "project2", "trello-mcp-workflow",
-            {"gate_mode": "warn"}, cli_home=None,
-        )
-        text2 = (base / "project2" / rel2).read_text()
-        self.assertNotIn("__TRACKER_LIB_INTERNAL__", text2)
-        self.assertIn('stamped_lib_internal=""', text2)
 
     def test_unstamped_bridge_skips_evidence_and_exempt_write(self):
         # The same bridge now also supplies `tracker classify`, so an unstamped

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -29,7 +28,6 @@ from _fixture_catalog import (  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = cli_path()
-SYNC_SH = ROOT / "lib" / "sync.sh"
 KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
 
 TRACKER_RECIPE = '[recipes.test-tracker-ledger]\nenabled = true\nversion = "1.0.0"\n'
@@ -57,20 +55,16 @@ def _git(cwd: Path, *args: str) -> None:
 
 
 def _make_home(base: Path) -> Path:
-    """Isolated CLI home: real lib copy + a REAL catalog populated with the
-    public recipes plus the internal test-* fixture recipes.
+    """Isolated CLI home with a REAL catalog populated with the public recipes
+    plus the internal test-* fixture recipes.
 
     The repo catalog is never touched: the temp catalog holds symlinks to the
     public + fixture recipe directories, and every cache write lands in the
-    temp home's own cache (the lib copy keeps realpath-derived cache roots
-    out of the repository).
+    temp home's own cache. ``lib/`` is dropped from the install tree: the CLI
+    is the Go binary, so no test reads or copies it.
     """
     home = isolated_home(base, catalog=False)
     (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
-    )
     populate_catalog(home / "catalog" / "recipes")
     return home
 
@@ -294,15 +288,6 @@ class TrackerLedgerWitnessTests(unittest.TestCase):
         self._sync(root)
         self.assertEqual(git_common_dir(root), "")
 
-    def test_sync_sh_trap_never_names_the_witness(self):
-        text = SYNC_SH.read_text()
-        trap_line = next(
-            line for line in text.splitlines() if "RESOLVED_CONFIG_TEMP:-" in line
-        )
-        self.assertIn("rm -f", trap_line)
-        self.assertNotIn("witness", trap_line.lower())
-        self.assertEqual(text.count("RESOLVED_CONFIG_TEMP="), 1)
-
     # --- 4.5 TRIANGULATE: linked worktree shares the common-dir witness --------
 
     def test_linked_worktree_reads_main_checkout_witness(self):
@@ -352,7 +337,7 @@ class TrackerLedgerWitnessTests(unittest.TestCase):
         self.assertEqual(witness["state"], "unbound")
         self.assertEqual(witness["recipe_id"], "")
 
-    def test_go_ledger_reads_the_python_witness_from_a_linked_worktree(self):
+    def test_go_ledger_reads_the_sync_witness_from_a_linked_worktree(self):
         base = self._tmp()
         root = self._project(TRACKER_RECIPE, base=base)
         _git(root, "config", "user.email", "t@t.t")
