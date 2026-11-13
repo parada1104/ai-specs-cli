@@ -238,7 +238,7 @@
 # command contract are unchanged; the parse-error detail is TOLERANT per
 # docs/go-migration-parity-contract.md. No new asset, no second trust root), with
 # the canonical go1.24.13 toolchain via the same command above.
-5af87fe1ccff094eaabbdac6be1a4f7ceab7ed7f917cded91d4eebaa4130cc06  worktree-gate-darwin-amd64
-e17825997beb6089875d86813276a7da5b41c13ea75c52d0b4cb3cd1cc9429bf  worktree-gate-darwin-arm64
-e5cab740b89d81c452319e242232c8df49e3ac417e255e779aeb166aaf2936ac  worktree-gate-linux-amd64
-67ce8327e85c8cd73cdbcb32feae10912be0a739eff30e7917c549f513604d47  worktree-gate-linux-arm64
+41dbdd0545449e6714f054d613ce6ebb5eeb2a270c0d1f34e34d69e30a636234  worktree-gate-darwin-amd64
+75d90b5457eaaaf16ec6939cb3f012c4af1c51eead8d6f7bc213f7525cdab06e  worktree-gate-darwin-arm64
+44f61f195c77281871c5f359c015b439fa9620c360bb3050681e52418bee2c3a  worktree-gate-linux-amd64
+4364b5ad01c0cfcfb9c7c923dc9f128898bc03216d963f7c82f3bd15719949fa  worktree-gate-linux-arm64
