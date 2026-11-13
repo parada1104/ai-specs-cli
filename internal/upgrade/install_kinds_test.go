@@ -281,3 +281,27 @@ func TestBinaryUpgradeDryRunDoesNotTouchDistCopy(t *testing.T) {
 		t.Errorf("a dry-run must not write the dist copy: stat err = %v", err)
 	}
 }
+
+func TestDetectBinaryEntryUnderSymlinkedHome(t *testing.T) {
+	f := newFakeBinaryInstall(t, "1.0.0")
+	// The home is reached through a symlinked directory component (macOS
+	// /var -> /private/var class, T9): UserHome names the alias, the real
+	// layout lives behind it.
+	alias := f.home + "-alias"
+	if err := os.Symlink(f.home, alias); err != nil {
+		t.Fatal(err)
+	}
+	// The running executable was invoked through the unresolved alias form;
+	// ResolveBinary keeps that form (it only follows symlink ENTRIES, frozen
+	// parity with lib/upgrade.sh resolve_binary), so binaryEntry must resolve
+	// BOTH sides of the comparison.
+	exe := filepath.Join(alias, ".local", "bin", "ai-specs")
+	var errb bytes.Buffer
+	inst, code, ok := Detect(Env{Home: filepath.Join(alias, ".ai-specs"), UserHome: alias, Executable: exe}, &errb)
+	if !ok || code != 0 {
+		t.Fatalf("a binary install under a symlinked home must classify as binary, got ok=%v code=%d stderr=%q", ok, code, errb.String())
+	}
+	if inst.Kind != KindBinary {
+		t.Fatalf("kind=%v, want KindBinary (T9: EvalSymlinks(LocalBin) vs unresolved BinaryPath)", inst.Kind)
+	}
+}
