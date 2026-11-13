@@ -43,18 +43,13 @@ _LINE_RE = re.compile(r"^\s*(OK|INFO|WARN|ERROR)\s+(?P<name>\S+)\s+(?P<body>.*)$
 
 
 def _make_home(base: Path, *, catalog: bool = True) -> Path:
-    """Isolated CLI home with a REAL lib copy.
+    """Isolated CLI home.
 
-    doctor.py derives its cache root from its own realpath, so a symlinked
-    lib would resolve back into the repository and make checks read (never
-    write) repo cache state. A real copy keeps every lookup in temp.
+    ``lib/`` is not installed: doctor is the native binary, which derives its
+    cache root from this home and never reads Python.
     """
     home = isolated_home(base, catalog=catalog)
     (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor"),
-    )
     return home
 
 

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -91,20 +90,14 @@ enabled = true
 
 
 def _make_home(base: Path) -> Path:
-    """Symlink-farm install root over this tree with a REAL lib copy.
+    """Symlink-farm install root over this tree.
 
     The candidate install tree IS this checkout (catalog/VERSION/etc. are
-    symlinks), but sync/materialize derive cache roots from their own
-    realpath, so a symlinked lib would resolve back into the repository and
-    let the CLI touch repo cache state. A real lib copy keeps every cache
-    write in temp while the dogfood lock check stays meaningful.
+    symlinks); ``lib/`` is not installed at all, so every cache write lands in
+    temp while the dogfood lock check stays meaningful.
     """
     home = isolated_home(base)
     (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
-    )
     return home
 
 

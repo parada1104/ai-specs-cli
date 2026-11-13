@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -48,18 +47,13 @@ PROJECT_RUNTIME_FLOW_WORKTREE_RULE = (
 
 
 def _make_home(base: Path) -> Path:
-    """Isolated CLI install root with a REAL lib copy.
+    """Isolated CLI install root.
 
-    sync/materialize derive cache and catalog roots from their own realpath,
-    so a symlinked lib would resolve back into the repository and let the CLI
-    touch repo cache state. A real copy keeps every lookup and write in temp.
+    ``lib/`` is not installed: sync/materialize are the native binary, which
+    derives its cache and catalog roots from this home and never reads Python.
     """
     home = isolated_home(base)
     (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
-    )
     return home
 
 

@@ -30,7 +30,6 @@ from __future__ import annotations
 import json
 import os
 import platform
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -124,11 +123,6 @@ def _acquired_gate_binary() -> Path:
     holder = tempfile.TemporaryDirectory(prefix="wtr-gate-acquire-")
     base = Path(holder.name)
     home = isolated_home(base)
-    (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
-    )
     project = base / "proj"
     (project / "ai-specs").mkdir(parents=True)
     _git(project, "init", "-q")

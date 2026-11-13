@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import platform
 import re
-import shutil
 import sys
 import tempfile
 import unittest
@@ -53,20 +52,12 @@ def _platform() -> tuple[str, str]:
 def _make_home(base: Path) -> Path:
     """Isolated CLI home with a REAL lib copy and an empty catalog.
 
-    doctor.py derives its cache root from its own realpath, so a symlinked
-    lib would resolve back into the repository and make the gate check read
-    (never write) repo cache state. A real copy keeps every cache lookup
-    (binary, verification receipt, digest-mismatch record) inside temp; the
-    empty catalog removes the SHA256SUMS trust root so a receipt-backed stub
-    binary is accepted exactly like an acquired one.
+    ``lib/`` is not installed: doctor is the native binary, so every cache
+    lookup (binary, verification receipt, digest-mismatch record) stays inside
+    temp; the empty catalog removes the SHA256SUMS trust root so a
+    receipt-backed stub binary is accepted exactly like an acquired one.
     """
-    home = isolated_home(base, catalog=False)
-    (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor"),
-    )
-    return home
+    return isolated_home(base, catalog=False)
 
 
 def _seed_clean_cache(root: Path, home: Path) -> None:

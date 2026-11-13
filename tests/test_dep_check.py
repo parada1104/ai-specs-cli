@@ -26,7 +26,6 @@ import json
 import os
 import platform
 import re
-import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -62,13 +61,12 @@ def _dep_rows(stdout: str) -> list[tuple[str, str]]:
 
 
 def _make_home(base: Path) -> Path:
-    """Isolated CLI home with a REAL lib copy and an EMPTY catalog."""
+    """Isolated CLI home with an EMPTY catalog.
+
+    ``lib/`` is not installed: the dep check is the native doctor/table path.
+    """
     home = isolated_home(base, catalog=False)
     (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor"),
-    )
     return home
 
 

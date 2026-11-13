@@ -12,7 +12,6 @@ materialization contract driven through ``bin/ai-specs sync`` via
 ``_blackbox`` (no lib/_internal import).
 """
 
-import shutil
 import sys
 import tempfile
 import unittest
@@ -27,19 +26,13 @@ CATALOG_RECIPES = ROOT / "catalog" / "recipes"
 
 
 def _make_home(base: Path) -> Path:
-    """Isolated CLI install root with a REAL lib copy.
+    """Isolated CLI install root.
 
-    Mirrors the proven staging pattern (test_recipe_materialize.py):
-    sync/materialize derive roots from their own realpath, so a symlinked
-    lib would resolve back into the repository and let the CLI touch repo
-    state. A real copy keeps every lookup and write in temp.
+    ``lib/`` is not installed: sync/materialize are the native binary, which
+    derives its roots from this home and never reads Python.
     """
     home = isolated_home(base)
     (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
-    )
     return home
 
 

@@ -11,7 +11,7 @@ materialization change cannot silently regress the isolated consumer path:
 The fixture stays network-free and self-contained:
 
 * the consumer project lives in a temporary directory outside the repository;
-* ``AI_SPECS_HOME`` points at a temporary CLI home whose catalog/lib/bundled
+* ``AI_SPECS_HOME`` points at a temporary CLI home whose catalog/bundled
   assets are symlinks back to this worktree, so no durable state is written;
 * a fake ``jinna`` executable is first on ``PATH`` and answers only
   ``jinna version``. Any other invocation (notably ``jinna mcp``) fails and is
@@ -42,7 +42,7 @@ JINNA_SKILL_ID = "jinna-mcp-recipe"
 DOGFOOD_MANIFEST = ROOT / "ai-specs" / "ai-specs.toml"
 
 # Directories the CLI resolves from AI_SPECS_HOME (symlinked from this worktree).
-CLI_HOME_LINKS = ("catalog", "lib", "bundled-skills", "bundled-commands", "templates")
+CLI_HOME_LINKS = ("catalog", "bundled-skills", "bundled-commands", "templates")
 
 OPENPROJECT_ENV = {
     "OPENPROJECT_BASE_URL": "https://openproject.example.com",
