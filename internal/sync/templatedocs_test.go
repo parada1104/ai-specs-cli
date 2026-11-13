@@ -522,6 +522,68 @@ func TestMaterializeRefusalsAndBoundary(t *testing.T) {
 			t.Fatalf("error = %v, want %q", err, want)
 		}
 	})
+	t.Run("template destination symlink", func(t *testing.T) {
+		for _, tc := range []struct {
+			name      string
+			condition string
+			regular   bool
+		}{
+			{"link to a regular file", "always", true},
+			{"dangling link", "not_exists", false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				projectRoot, recipeDir := newFixture(t)
+				dest := filepath.Join(projectRoot, filepath.FromSlash(tdTemplateTarget))
+				if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				victim := filepath.Join(projectRoot, "victim.sh")
+				if tc.regular {
+					writeTDFile(t, victim, "echo victim\n", 0o644)
+				}
+				if err := os.Symlink(victim, dest); err != nil {
+					t.Fatal(err)
+				}
+				_, err := MaterializeTemplate(&shared.TemplateRequest{
+					ProjectRoot: projectRoot, RecipeDir: recipeDir, RecipeID: "worktree-flow",
+					Source: "templates/run.sh", Target: tdTemplateTarget,
+					Condition: tc.condition, UpdatePolicy: "auto",
+				})
+				want := shared.TemplateSymlinkRefusal(tdTemplateTarget)
+				if err == nil || err.Error() != want {
+					t.Fatalf("error = %v, want %q", err, want)
+				}
+				if tc.regular {
+					if got := string(tdReadRegular(victim)); got != "echo victim\n" {
+						t.Errorf("victim bytes = %q, want them unchanged", got)
+					}
+				} else if _, statErr := os.Stat(victim); !os.IsNotExist(statErr) {
+					t.Errorf("a dangling link target must never be created (stat err=%v)", statErr)
+				}
+				if info, lstatErr := os.Lstat(dest); lstatErr != nil || info.Mode()&os.ModeSymlink == 0 {
+					t.Errorf("the destination symlink must survive: %v, %v", info, lstatErr)
+				}
+			})
+		}
+	})
+	t.Run("template git parent escape", func(t *testing.T) {
+		projectRoot, recipeDir := newFixture(t)
+		outside := filepath.Join(filepath.Dir(projectRoot), "escape.sh")
+		_, err := MaterializeTemplate(&shared.TemplateRequest{
+			ProjectRoot: projectRoot, RecipeDir: recipeDir, RecipeID: "worktree-flow",
+			Source: "templates/run.sh", Target: ".git/../../escape.sh",
+		})
+		want := "template target .git/../../escape.sh escapes the project root; refusing to write outside the project. Fix the recipe target and run sync again"
+		if err == nil || err.Error() != want {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
+		if _, statErr := os.Stat(outside); !os.IsNotExist(statErr) {
+			t.Fatalf("nothing may be written outside the root: %v", statErr)
+		}
+		if _, statErr := os.Stat(filepath.Join(projectRoot, ".git")); !os.IsNotExist(statErr) {
+			t.Fatalf("no .git tree may be created: %v", statErr)
+		}
+	})
 	t.Run("doc source missing", func(t *testing.T) {
 		projectRoot, recipeDir := newFixture(t)
 		_, err := MaterializeDoc(&DocRequest{

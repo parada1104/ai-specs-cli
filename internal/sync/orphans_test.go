@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/lock"
+	"ai-specs.dev/ai-specs/internal/projectcache"
 	"ai-specs.dev/worktree-gate/shared"
 )
 
@@ -683,5 +684,97 @@ func TestCleanOrphansDifferentialAgainstPython(t *testing.T) {
 				t.Errorf("lock bytes diverge\n--- go ---\n%q\n--- frozen python ---\n%q", got, tc.Lock)
 			}
 		})
+	}
+}
+
+// --- native acquisition + empty-scope boundary (S5-4 /c/) ----------------
+
+// TestMaterializeOrphanInputsListDirectoriesOnly pins the native acquisition
+// that replaced Python's _dir_child_names + _orphan_plan_input: only direct
+// child DIRECTORIES are listed (a stray file and a symlink child are ignored),
+// sorted, a missing root yields nothing, and the resolved roots are the three
+// project-cache roots. Python's
+// test_non_directory_children_are_never_listed_as_orphans asserted the same
+// listing through the bridge.
+func TestMaterializeOrphanInputsListDirectoriesOnly(t *testing.T) {
+	projectRoot := filepath.Join(t.TempDir(), "project")
+	home := t.TempDir()
+	recipeDir := projectcache.RecipeSkillsRoot(projectRoot, home)
+	for _, name := range []string{"b", "a"} {
+		if err := os.MkdirAll(filepath.Join(recipeDir, name), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(recipeDir, "stray.txt"), []byte("ignore me"), 0o644); err != nil {
+		t.Fatalf("write stray: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(recipeDir, "a"), filepath.Join(recipeDir, "link")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	// The deps root is deliberately missing and the in-project root empty.
+	lockPath := filepath.Join(projectRoot, "ai-specs", ".ai-specs.lock")
+	writeOrphanLock(t, lockPath, lock.LockHeader+
+		"\n[recipes.\"old\".skills.\"demo\"]\n\"f.md\" = \"abc\"\n\n[recipes.\"a\".skills.\"demo\"]\n\"f.md\" = \"abc\"\n")
+
+	input, roots := materializeOrphanInputs(projectRoot, home, []string{"b"}, []string{"z"})
+
+	if want := []string{"a", "b"}; !reflect.DeepEqual(input.RecipeSkills, want) {
+		t.Errorf("RecipeSkills = %#v, want %#v (directories only, sorted)", input.RecipeSkills, want)
+	}
+	if len(input.DepsSkills) != 0 {
+		t.Errorf("DepsSkills = %#v, want nothing for a missing root", input.DepsSkills)
+	}
+	if len(input.InprojectDeps) != 0 {
+		t.Errorf("InprojectDeps = %#v, want nothing for an empty root", input.InprojectDeps)
+	}
+	if want := []string{"a", "old"}; !reflect.DeepEqual(input.LockRecipes, want) {
+		t.Errorf("LockRecipes = %#v, want %#v (sorted)", input.LockRecipes, want)
+	}
+	if want := []string{"b"}; !reflect.DeepEqual(input.EnabledRecipeIDs, want) {
+		t.Errorf("EnabledRecipeIDs = %#v, want %#v", input.EnabledRecipeIDs, want)
+	}
+	if want := []string{"z"}; !reflect.DeepEqual(input.ExpectedDepIDs, want) {
+		t.Errorf("ExpectedDepIDs = %#v, want %#v", input.ExpectedDepIDs, want)
+	}
+	wantRoots := shared.OrphanApplyRoots{
+		RecipeSkills:  recipeDir,
+		DepsSkills:    projectcache.DepsSkillsRoot(projectRoot, home),
+		InprojectDeps: projectcache.InprojectDepsRoot(projectRoot),
+	}
+	if roots != wantRoots {
+		t.Errorf("roots = %#v, want %#v", roots, wantRoots)
+	}
+}
+
+// TestCleanOrphansEmptyRootsIsASilentNoOp pins Python's empty-dirs case: with
+// no directory child in any scope nothing is planned, so the run is applied and
+// completely silent and a missing lock file is never created.
+func TestCleanOrphansEmptyRootsIsASilentNoOp(t *testing.T) {
+	roots := orphanRoots(t)
+	lockPath := orphanLockPath(t)
+	var out bytes.Buffer
+	outcome, err := CleanOrphans(OrphanCleanupInput{
+		PlanInput: shared.OrphanPlanInput{
+			RecipeSkills:     []string{},
+			DepsSkills:       []string{},
+			InprojectDeps:    []string{},
+			EnabledRecipeIDs: []string{"a"},
+			ExpectedDepIDs:   []string{"x"},
+		},
+		Roots:    roots,
+		LockPath: lockPath,
+		Output:   &out,
+	}, os.RemoveAll)
+	if err != nil {
+		t.Fatalf("CleanOrphans: %v", err)
+	}
+	if outcome.Status != shared.StatusApplied {
+		t.Errorf("status = %q, want %q", outcome.Status, shared.StatusApplied)
+	}
+	if out.String() != "" {
+		t.Errorf("output = %q, want silence", out.String())
+	}
+	if _, statErr := os.Stat(lockPath); !os.IsNotExist(statErr) {
+		t.Errorf("a missing lock must never be created (stat err=%v)", statErr)
 	}
 }
