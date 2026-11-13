@@ -1,13 +1,13 @@
-"""Differential parity harness: legacy (Bash/Python) vs Go single-binary.
+"""Differential parity harness: FROZEN LEGACY GOLDENS vs the Go single-binary.
 
 Card [Go 03] — Trello 6a84e77110b9ac751af676f4.
 
 Purpose
 -------
 Run the SAME fixture through TWO implementations of the ai-specs CLI —
-the legacy launcher ``bin/ai-specs`` (this tree's Bash/Python implementation,
-frozen at the checked-out revision) and the Go root-module binary
-(``cmd/ai-specs``, card 04) — and diff:
+the legacy Bash/Python implementation, frozen as the versioned goldens under
+``goldens/`` before the launcher flip (GO-20 U2e T2a), and the Go root-module
+binary (``cmd/ai-specs``, card 04) — and diff:
 
   * the FULL emitted project file tree (paths, contents via sha256, file modes,
     symlink targets),
@@ -25,18 +25,20 @@ Design constraints (from the card):
     isolated ``HOME``/``TMPDIR``/``AI_SPECS_HOME`` per leg);
   * reuses ``tests/_blackbox.py`` helpers (install-root isolation, capture
     conventions) instead of reimplementing them;
-  * the Go build side never silently substitutes the legacy launcher in
+  * the Go build side never silently substitutes a legacy launcher in
     the wired CI phase: run.py REQUIRES the build and fails loudly (exit 2)
-    when go is absent or the build fails; the legacy-vs-legacy
-    "identical-by-shim" mode (both legs legacy, must report ZERO deltas,
-    acceptance a) exists ONLY as run.py's explicit ``--self-test`` flag,
-    never as a silent fallback;
+    when go is absent or the build fails; the "identical-by-shim" mode
+    (both legs run the same launcher, must report ZERO deltas, acceptance a)
+    exists ONLY as run.py's explicit ``--self-test`` flag, never as a silent
+    fallback. Its historical mode id is ``legacy-vs-legacy``; since the
+    GO-20 U2e flip ``bin/ai-specs`` IS the native launcher, so that id names
+    the mode, not a legacy execution (see the note run_corpus prints);
   * the corpus runs in TWO gate modes (plan finding F3 / risk R7):
-    ``gate-absent`` (no verified gate binary, every bridge takes its Python
-    fallback) and ``gate-present`` (a locally built worktree-gate pinned via
-    ``WORKTREE_GATE_BIN`` for both legs, exercising the Go-authority path).
-    The mode is recorded in the report, never ambient; the built binary stays
-    in the temp dir and is never committed.
+    ``gate-absent`` (no verified gate binary in the isolated home — the mode
+    the legacy goldens were captured in) and ``gate-present`` (a locally built
+    worktree-gate pinned via ``WORKTREE_GATE_BIN`` for the live leg, exercising
+    the Go-authority path). The mode is recorded in the report, never ambient;
+    the built binary stays in the temp dir and is never committed.
 
 The known help-heredoc quirk (card 04 finding) and every normalization rule
 carry a written justification in NORMALIZATIONS below; nothing is silently
@@ -51,9 +53,10 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
@@ -69,18 +72,19 @@ BASE_ENV = {
     "LANG": "C",
     # Per-step strangler selection (GO-07). Forwarded from the operator's
     # environment so the corpus can be run with GO_SYNC_STEP_GITIGNORE=go (and
-    # friends): the legacy leg ignores these vars entirely, while the Go spine
-    # routes the named step through its native implementation.
+    # friends): the frozen legacy golden does not react to these vars, while the
+    # live Go spine routes the named step through its native implementation.
     **{k: v for k, v in os.environ.items() if k.startswith("GO_SYNC_STEP_")},
 }
 
 # Gate modes: whether the corpus runs with a locally built worktree-gate binary
-# pinned via WORKTREE_GATE_BIN for BOTH legs. `gate-absent` is the historical
-# behavior (isolated home with an empty cache/ and no binary, so every bridge
-# degrades to the Python fallback); `gate-present` builds the nested
-# worktree-flow gate module once and exercises the real Go-authority bridge
-# path (plan finding F3 / risk R7). AI_SPECS_GATE_OFFLINE stays set in both
-# modes: it only prevents NETWORK acquisition, never a pinned local binary.
+# pinned via WORKTREE_GATE_BIN for the live leg. `gate-absent` is the historical
+# behavior (isolated home with an empty cache/ and no binary), and it is the mode
+# the legacy goldens were captured in, when the legacy Python bridges degraded to
+# their own fallback; `gate-present` builds the nested worktree-flow gate module
+# once and exercises the real Go-authority path (plan finding F3 / risk R7).
+# AI_SPECS_GATE_OFFLINE stays set in both modes: it only prevents NETWORK
+# acquisition, never a pinned local binary.
 GATE_ABSENT = "gate-absent"
 GATE_PRESENT = "gate-present"
 GATE_MODULE_DIR = ROOT / "catalog" / "recipes" / "worktree-flow" / "gate"
@@ -97,7 +101,7 @@ class Normalization:
     surfaces: tuple[str, ...]          # "stdout" | "stderr" | "tree"
     description: str
     justification: str
-    fn: object                          # (text, ctx) -> text
+    fn: Callable[[str, dict[str, Any]], str]
 
 
 # Stable anchors of the help text around the volatile region (both legs emit
@@ -168,35 +172,6 @@ def _norm_help_stderr(text: str, ctx: dict) -> str:
     return text
 
 
-# The legacy Python modules announce their degraded Python authority on stderr
-# when no verified worktree-gate binary is present in the install. The
-# sync-agent route merges the child's stderr into its stdout, so the same
-# announcement also reaches the stdout surface there. Anchored to the two exact
-# notice prefixes; nothing else is touched.
-_BRIDGE_FALLBACK_NOTICE_RE = re.compile(
-    r"^(?:  ! )?GO_[A-Z_]+_BRIDGE_FALLBACK: .*$\n?", re.MULTILINE)
-
-
-# The legacy Python hook bridge, when its Go envelope is unusable, runs the
-# Python body and then reconciles the lock itself, announcing the reason and the
-# reconciliation outcome. The Go port materializes hooks natively and never
-# reconciles a lock against a bridge envelope.
-_HOOK_BRIDGE_RECONCILE_RE = re.compile(
-    r"^  ! (?:the Go bridge produced no usable output|wrote without a record); "
-    r"(?:reconciled the lock with the on-disk gate bytes|"
-    r"the on-disk bytes are not proven CLI-rendered, .*)$\n?",
-    re.MULTILINE,
-)
-
-
-def _norm_bridge_fallback_notice(text: str, ctx: dict) -> str:
-    return _BRIDGE_FALLBACK_NOTICE_RE.sub("", text)
-
-
-def _norm_hook_bridge_reconcile_notice(text: str, ctx: dict) -> str:
-    return _HOOK_BRIDGE_RECONCILE_RE.sub("", text)
-
-
 # A failed `git clone` in a [[deps]] source. The legacy vendor-skills.py lets
 # the CalledProcessError escape as an uncaught Python traceback after git's own
 # `fatal:` line; the native port prints git's `fatal:` line followed by one
@@ -219,10 +194,14 @@ def _norm_vendor_clone_failure(text: str, ctx: dict) -> str:
 
 
 # GO-20 U2e T7 (Robert's decision): the generated Cursor deny wrapper no longer
-# invokes python3. The legacy leg (lib/_internal/hooks-render.py) still emits the
-# python3 deny line; the Go leg emits the POSIX awk line. This rule canonicalizes
-# EXACTLY those two lines, on BOTH legs, to one marker. Exact-string match only.
-# EXPIRES with lib/_internal (T5): delete this rule and both constants then.
+# invokes python3. The FROZEN legacy goldens still carry the python3 deny line
+# (captured from lib/_internal/hooks-render.py before the flip); the Go leg emits
+# the POSIX awk line. This rule canonicalizes EXACTLY those two lines, on BOTH
+# legs, to one marker. Exact-string match only.
+# EXPIRES with the frozen corpus, not with lib/: measured in GO-20 U2e T5 PR4a
+# S7b, dropping N10 fails cache-layout and hooks-five-runtimes in both gate modes
+# because the golden tree hash was computed over the canonicalized wrapper.
+# Delete only together with a corpus recapture (PR4b).
 _T7_LEGACY_DENY_LINE = r"""  printf '{"permission":"deny","agent_message":%s}' "$(printf %s "$out" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
 """
 _T7_GO_DENY_LINE = r"""  printf '{"permission":"deny","agent_message":"%s"}' "$(printf %s "$out" | LC_ALL=C awk 'BEGIN{esc["\\"]="\\\\";esc["\""]="\\\"";esc["\r"]="\\r";esc["\t"]="\\t";esc["\b"]="\\b";esc["\f"]="\\f";for(i=1;i<32;i++){c=sprintf("%c",i);if(!(c in esc))esc[c]=sprintf("\\u%04x",i)}} {line=$0;if(NR>1)printf "%s","\\n";for(i=1;i<=length(line);i++){c=substr(line,i,1);printf "%s",((c in esc)?esc[c]:c)}}')"
@@ -235,7 +214,8 @@ def _norm_t7_cursor_deny_line(text: str, ctx: dict) -> str:
     return text.replace(_T7_GO_DENY_LINE, _T7_DENY_MARKER + "\n")
 
 
-# GO-20 U2e T4: scoped to add-dep and skills add; expires with lib/_internal (T5).
+# GO-20 U2e T4: scoped to add-dep and skills add; expires with the frozen corpus
+# (see N11), not with lib/ alone.
 def _norm_vendor_add_clone_failure(text: str, ctx: dict) -> str:
     argv = ctx.get("argv") or ()
     if not (argv[:1] == ("add-dep",) or argv[:2] == ("skills", "add")):
@@ -244,6 +224,11 @@ def _norm_vendor_add_clone_failure(text: str, ctx: dict) -> str:
     return _VENDOR_CLONE_STATUS_RE.sub(r"\1", text)
 
 
+# N7 (legacy bridge-fallback notice) and N8 (legacy hook-bridge reconcile
+# notice) were REMOVED in GO-20 U2e T5 PR4a S7b: they stripped announcements only
+# the legacy Python modules ever printed, the frozen goldens were captured with
+# them already stripped, and no live legacy leg is left to strip anything from.
+# The rule ids below keep their numbers so external references stay stable.
 NORMALIZATIONS = (
     Normalization(
         rule_id="N1-temp-paths",
@@ -343,54 +328,6 @@ NORMALIZATIONS = (
         fn=_norm_help_stderr,
     ),
     Normalization(
-        rule_id="N7-legacy-bridge-fallback-notice",
-        surfaces=("stdout", "stderr"),
-        description="Remove only the legacy GO_*_BRIDGE_FALLBACK announcement "
-                    "lines, with or without the '  ! ' prefix, from stdout and "
-                    "stderr.",
-        justification="The legacy Python modules announce their degraded "
-                      "Python authority on stderr when no verified "
-                      "worktree-gate binary is present in the install "
-                      "(`GO_RESOLVED_CONFIG_BRIDGE_FALLBACK`, "
-                      "`GO_CLASSIFY_OVERRIDE_BRIDGE_FALLBACK`, and the other "
-                      "`GO_*_BRIDGE_FALLBACK` notices). The Go port performs "
-                      "those projections and classifications natively, so it "
-                      "has no temporary authority to announce and must never "
-                      "claim to be using Python. The stdout surface is "
-                      "included because `sync-agent` runs its resolved-config "
-                      "child with BOTH streams on one descriptor (the shell's "
-                      "`2>&1`), so the same legacy announcement lands on "
-                      "stdout there (GO-07 S14c; measured in "
-                      "sync-agent-standalone and nested-fanout-suppression, "
-                      "gate-absent only). Only the announcement lines are "
-                      "removed; the check roster, severities, messages, exit "
-                      "codes and report formatting stay compared verbatim.",
-        fn=_norm_bridge_fallback_notice,
-    ),
-    Normalization(
-        rule_id="N8-legacy-hook-bridge-reconcile-notice",
-        surfaces=("stderr",),
-        description="Remove only the legacy `  ! <reason>; reconciled the lock "
-                    "with the on-disk gate bytes` / `…; the on-disk bytes are "
-                    "not proven CLI-rendered, …` announcement lines, where "
-                    "<reason> is one of the two bridge-envelope reasons.",
-        justification="When the legacy Python hook bridge gets no usable "
-                      "envelope from the gate, it runs the Python body and "
-                      "then reconciles the lock itself, announcing why "
-                      "(`lib/_internal/recipe-materialize.py:2041-2085`: "
-                      "`the Go bridge produced no usable output` or `wrote "
-                      "without a record`, each with one of three "
-                      "reconciliation outcomes). The Go port materializes "
-                      "hooks natively, so there is no bridge envelope to "
-                      "reconcile and no such notice to print (GO-07 S14c; "
-                      "measured in all-recipes-enabled, cache-layout, "
-                      "hooks-five-runtimes and doctor-healthy, gate-absent "
-                      "only). Anchored to the two exact reasons and the "
-                      "reconciliation prefixes — never a blanket pattern — "
-                      "so every other warning stays compared verbatim.",
-        fn=_norm_hook_bridge_reconcile_notice,
-    ),
-    Normalization(
         rule_id="N9-vendor-clone-failure-wrapper",
         surfaces=("stderr",),
         description="For the `sync` verb only, remove the legacy uncaught "
@@ -420,10 +357,16 @@ NORMALIZATIONS = (
                     "both legs.",
         justification="Intentional divergence, GO-20 U2e T7, Robert's decision: "
                       "the generated Cursor wrapper must not invoke python3. The "
-                      "legacy renderer still emits it and the native port emits "
-                      "the POSIX awk escaper. Only those two exact lines change; "
-                      "the rest of each wrapper is compared byte for byte. Expires "
-                      "with lib/_internal (T5).",
+                      "FROZEN LEGACY GOLDEN still carries it (captured from "
+                      "lib/_internal/hooks-render.py before the flip) and the "
+                      "native port emits the POSIX awk escaper. Only those two "
+                      "exact lines change; the rest of each wrapper is compared "
+                      "byte for byte. It expires with the frozen corpus, not with "
+                      "lib/: GO-20 U2e T5 PR4a S7b measured that dropping it "
+                      "fails cache-layout and hooks-five-runtimes in both gate "
+                      "modes, because the golden tree hash was computed over the "
+                      "canonicalized wrapper. Delete it only with a corpus "
+                      "recapture (PR4b).",
         fn=_norm_t7_cursor_deny_line,
     ),
     Normalization(
@@ -434,15 +377,19 @@ NORMALIZATIONS = (
                     "`git clone` in a vendored skill source, and the native "
                     "`  ✗ exit status N` line after git's `fatal:` line. Both "
                     "legs keep git's `fatal:` line; the exit code is compared "
-                    "verbatim. Expires with lib/_internal (T5).",
+                    "verbatim. Expires at T5 with a frozen-corpus recapture "
+                    "(PR4b), not with lib/ alone.",
         justification="Same accepted divergence class as N9: vendor-skills.py "
                       "crashes with an uncaught traceback on a clone failure, "
                       "while the native port reports git's `fatal:` line plus "
                       "one status line and the same exit code. N9 is scoped to "
                       "argv[0]=='sync' and is NOT widened; this rule covers "
-                      "only the two verbs named above. EXPIRES with "
-                      "lib/_internal (T5): delete this rule with its helper "
-                      "when lib/_internal is deleted.",
+                      "only the two verbs named above. It expires with the "
+                      "frozen corpus, not with lib/ alone: GO-20 U2e T5 PR4a "
+                      "S7b measured that dropping it fails "
+                      "vendor-add-clone-failure in both gate modes, because the "
+                      "golden stderr was stored with the wrapper already "
+                      "removed. Delete it only with a corpus recapture (PR4b).",
         fn=_norm_vendor_add_clone_failure,
     ),
 )
@@ -519,7 +466,7 @@ class Step:
 class Fixture:
     name: str
     description: str
-    setup: object              # (project_root: Path) -> None
+    setup: Callable[[Path], Any]
     steps: tuple[Step, ...]
 
 
@@ -837,8 +784,7 @@ def _setup_orphan_cleanup(project: Path) -> None:
     emits only meta/managed/deps/agents). The fixture therefore pins the
     effective lock outcome: no [recipes.*] entry survives sync. The
     clean_orphans `_prune_stale_lock` branch is only reachable when nothing
-    rewrote the lock first (see tests/test_materialize_bridge.py), so it is
-    NOT observable here.
+    rewrote the lock first, so it is NOT observable here.
 
     The `[[deps]]` source is a plain LOCAL tree copied by vendor-skills.clone
     (no network), and it is RELATIVE so the rendered skill metadata embeds a
@@ -1523,19 +1469,19 @@ class LegResult:
 
 
 def make_home(base: Path) -> Path:
-    """Isolated install root with a REAL lib copy.
+    """Isolated install root that carries NO lib/ at all.
 
     Reuses _blackbox.isolated_home (symlinked install entries + local cache/)
-    but materializes lib/ as a real copy: doctor.py derives its cache root
-    from its own realpath, so a symlinked lib would resolve back into the
-    repository and read repo cache state (proven in tests/test_doctor.py).
-    The copy is made from this checkout's frozen revision — the legacy
-    reference implementation for BOTH legs.
+    and drops the lib/ symlink it creates while this checkout still has lib/,
+    the same fixture shape the black-box suites use (GO-20 U2e T5 PR4a S7).
+    The native binary needs no Python implementation in the install root: the
+    legacy side of the comparison is the frozen golden, never a live run.
+
+    Tolerant of absence on purpose: PR4b deletes lib/, and then there is no
+    symlink to remove (`missing_ok=True` is a no-op instead of a crash).
     """
     home = bb.isolated_home(base, catalog=True)
-    (home / "lib").unlink()
-    shutil.copytree(ROOT / "lib", home / "lib", symlinks=True,
-                    ignore=shutil.ignore_patterns("_vendor"))
+    (home / "lib").unlink(missing_ok=True)
     return home
 
 
@@ -1544,15 +1490,15 @@ def run_leg(label: str, cli_path: Path, fixture: Fixture, scratch: Path,
     """Run one implementation against one fixture in an isolated scratch root.
 
     ``gate_bin`` pins WORKTREE_GATE_BIN for the leg when provided (gate-present
-    mode); when None the ambient isolated home has no verified gate binary and
-    every bridge takes its Python fallback (gate-absent mode).
+    mode); when None the isolated home has no verified gate binary (gate-absent
+    mode — the mode the legacy goldens were captured in).
     """
     home = make_home(scratch / "home")
     home_str = str(home)
     project = scratch / "project"
     project.mkdir(parents=True)
     fixture.setup(project)
-    ctx = {"project_root": str(project), "home": home_str,
+    ctx: dict[str, Any] = {"project_root": str(project), "home": home_str,
            "scratch": str(scratch)}
     env = {**BASE_ENV, "HOME": str(scratch / "user-home"), "TMPDIR": str(scratch),
            "AI_SPECS_HOME": home_str}
@@ -1599,7 +1545,7 @@ def diff_legs(legacy: LegResult, other: LegResult) -> list[str]:
     if len(legacy.steps) != len(other.steps):
         return [f"  step count differs: legacy={len(legacy.steps)} "
                 f"other={len(other.steps)}"]
-    for i, (a, b) in enumerate(zip(legacy.steps, other.steps)):
+    for i, (a, b) in enumerate(zip(legacy.steps, other.steps, strict=False)):
         head = f"  step {i}: `{' '.join(b.argv)}`"
         if a.rc != b.rc:
             deltas.append(f"{head} exit code: legacy={a.rc} other={b.rc}")
@@ -1622,7 +1568,7 @@ def build_go_binary(dest_dir: Path) -> Path | None:
     Returns the binary path, or None when go is unavailable or the build
     fails. Policy is the CALLER's: the wired suite entry (run.py) requires
     the build and fails loudly (exit 2); run.py --self-test uses None
-    explicitly as the legacy-vs-legacy identical-by-shim mode (acceptance a).
+    explicitly as the identical-by-shim same-launcher mode (acceptance a).
     Build artifacts stay in the temp dir and are never committed.
     """
     if shutil.which("go") is None:
@@ -1670,18 +1616,21 @@ def build_gate_binary(dest_dir: Path) -> Path | None:
 
 
 # ── Legacy goldens (GO-20 U2e T2a) ────────────────────────────────────────
-# The legacy leg is FROZEN as versioned goldens before the launcher flip: the
-# harness compares the live Go leg against the captured legacy output instead
-# of executing bin/ai-specs at comparison time. Capture with
-# tests/parity/capture_goldens.py; the only live-legacy path left is the
-# explicit --self-test mode (go_cli is None), whose identical-by-shim meaning
-# requires both legs to run the legacy launcher.
+# The legacy leg is FROZEN as versioned goldens captured before the launcher
+# flip: the harness compares the live Go leg against that captured legacy output
+# instead of executing a legacy implementation at comparison time — there is no
+# legacy implementation left to execute. The only live two-leg path left is the
+# explicit --self-test mode (go_cli is None), which runs bin/ai-specs twice; that
+# launcher is native since the flip, so the mode proves harness symmetry, not
+# legacy execution.
 GOLDENS_DIR = Path(__file__).resolve().parent / "goldens"
 
 # Fixtures whose legacy output cannot be captured deterministically (an
 # environment-dependent artifact no narrow normalization covers). Excluded
-# fixtures stay live-legacy in run_comparison so the corpus still measures
-# them; they are never silently compared against a stale golden.
+# fixtures run live in run_comparison so the corpus still measures them; they
+# are never silently compared against a stale golden. Empty today; capture is
+# retired (tests/parity/capture_goldens.py refuses), so an entry here is the
+# only way to keep measuring a fixture whose golden is unusable.
 GOLDEN_EXCLUDED: dict[str, str] = {}
 
 
@@ -1705,16 +1654,18 @@ def load_golden_leg(fixture: Fixture, gate_mode: str) -> LegResult:
     """Load the frozen legacy leg for one fixture and gate mode.
 
     A missing golden for a fixture that is not GOLDEN_EXCLUDED is a hard
-    error: the harness must never silently fall back to live-running the
-    legacy launcher in normal comparison mode.
+    error: the harness must never silently fall back to live-running a
+    launcher in normal comparison mode. Capture is retired — no legacy
+    implementation is left to capture from — so a missing golden is a repo
+    defect (restore it from git), not something to regenerate here.
     """
     path = golden_path(fixture.name, gate_mode)
     if not path.is_file():
         raise RuntimeError(
             f"parity: no legacy golden for fixture {fixture.name!r} in gate "
-            f"mode {gate_mode!r} ({path}); capture it with "
-            f"tests/parity/capture_goldens.py or add it to GOLDEN_EXCLUDED "
-            f"with a reason")
+            f"mode {gate_mode!r} ({path}); the corpus is frozen, so restore "
+            f"it from git, or add the fixture to GOLDEN_EXCLUDED with a "
+            f"reason so it runs live")
     data = json.loads(path.read_text(encoding="utf-8"))
     steps = [
         StepResult(argv=tuple(item["argv"]), rc=item["rc"],
@@ -1748,8 +1699,10 @@ def run_comparison(fixture: Fixture, go_cli: Path | None,
 
     The legacy leg (leg_a) is loaded from the versioned golden unless
     `live_legacy` is true. `live_legacy=None` (the default) preserves the
-    explicit --self-test contract: when `go_cli` is None both legs run the
-    legacy launcher live. Fixtures in GOLDEN_EXCLUDED always run live.
+    explicit --self-test contract: when `go_cli` is None both legs run
+    bin/ai-specs live (the same native launcher twice since the flip). The
+    `legacy` label names that frozen/launcher leg throughout; fixtures in
+    GOLDEN_EXCLUDED always run live.
     """
     if live_legacy is None:
         live_legacy = go_cli is None
@@ -1805,7 +1758,9 @@ def run_corpus(go_cli: Path | None, workdir: Path, fixtures=CORPUS,
         lines.append("")
     if go_cli is None:
         lines.append("note: identical-by-shim self-test mode (--self-test): both "
-                     "legs legacy; acceptance (a) path.")
+                     "legs run bin/ai-specs, which is the native launcher since "
+                     "the GO-20 U2e flip — 'legacy-vs-legacy' is the historical "
+                     "mode id, not a legacy execution; acceptance (a) path.")
     lines.append(f"fixtures: {len(fixtures)}, failing: {failures}")
     report = "\n".join(lines)
     return (1 if failures else 0), report
