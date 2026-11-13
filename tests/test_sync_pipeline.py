@@ -14,14 +14,13 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-import sys
-
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _blackbox import cli_path, cache_project_dir, invoke, isolated_home  # noqa: E402
+from _blackbox import cache_project_dir, cli_path, invoke, isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = cli_path()
@@ -37,7 +36,7 @@ def _make_home(base: Path) -> Path:
     so no test copies or reads the Python tree.
     """
     home = isolated_home(base)
-    (home / "lib").unlink()
+    (home / "lib").unlink(missing_ok=True)
     return home
 
 
@@ -2046,17 +2045,19 @@ class TestAutoBindingFix(unittest.TestCase):
     def test_resolved_config_bindings_non_empty_without_explicit_bindings(self):
         """The resolved-config JSON bindings must be non-empty for auto-bound single providers.
 
-        Directly invokes recipe-materialize.py and inspects the JSON output.
+        Reads the resolved-config JSON the native `baseline-brief
+        --resolved-config-out` writes and inspects it.
         RED: build_resolved_config returns {} bindings for no explicit [[bindings]].
         GREEN: it returns {'tracker': 'trello-mcp-workflow', 'canonical-store': 'vault-canonical-store', ...}.
 
         Uses enabled=true; board_id must be 24-char hex to pass trello validate-config.
         """
-        import tempfile as _tempfile
         import json
+        import tempfile as _tempfile
 
         workspace = self.make_workspace()
         home = _home_for(workspace)
+        resolved_out: Path | None = None
         try:
             result = invoke(workspace, "init", cli_home=home)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -2111,7 +2112,7 @@ class TestAutoBindingFix(unittest.TestCase):
             )
         finally:
             shutil.rmtree(workspace.parent)
-            if resolved_out.exists():
+            if resolved_out is not None and resolved_out.exists():
                 resolved_out.unlink()
 class TestJudgmentDayFixes(unittest.TestCase):
     """Tests for confirmed issues from Judgment Day Round 1.

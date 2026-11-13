@@ -56,7 +56,7 @@ def _make_home(base: Path, *, catalog: bool = True) -> Path:
     """Isolated CLI install root. ``lib/`` is dropped: the wizard is native, so
     no test copies or reads the Python tree."""
     home = isolated_home(base / "cli-home", catalog=catalog)
-    (home / "lib").unlink()
+    (home / "lib").unlink(missing_ok=True)
     return home
 
 

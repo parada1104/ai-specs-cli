@@ -32,7 +32,7 @@ def _make_home(base: Path) -> Path:
     ``lib/`` is not installed: sync renders the brief from the native binary.
     """
     home = isolated_home(base)
-    (home / "lib").unlink()
+    (home / "lib").unlink(missing_ok=True)
     return home
 
 

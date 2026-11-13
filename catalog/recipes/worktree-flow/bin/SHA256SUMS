@@ -226,7 +226,19 @@
 # gate module cannot import; the frozen refusal framings are unchanged and the parse
 # error detail is TOLERANT per docs/go-migration-parity-contract.md; no new asset, no
 # second trust root), with the canonical go1.24.13 toolchain via the same command above.
-465bda94c22bc10c0ccc0adfcb36d79fe1ffb9c918f1129f47b1bbf28c0bee86  worktree-gate-darwin-amd64
-def34f0e391dbc0eb9c76d85e668f62f20367d3bfcb27b89ddd60de58dd725c2  worktree-gate-darwin-arm64
-35262310fcf0599da24d6770035ec2bdce97f7c6961a2ecde0e42f1129136c16  worktree-gate-linux-amd64
-5ed65ea89693ea05010b09037662f3c560f69ec096efb72fec58fd1ee713644d  worktree-gate-linux-arm64
+# Regenerated for GO-20 U2e T5 PR4b, the atomic lib/ deletion (the same four-arch
+# asset loses the 14 bridge flags that existed only so lib/ could call Go:
+# --resolve-bindings, --plan-classify, --apply-copy, --materialize-hook,
+# --write-lock, --plan-orphans, --apply-orphans, --plan-merge-config,
+# --write-recipe-config, --resolve-primitive-conflicts, --plan-reconcile-stamps,
+# --plan-resolved-config, --resolve-tag-conflicts, --materialize-template; the two
+# live recipe.toml readers now parse in process so the gate needs no ambient
+# python3 at all, and the retired __TRACKER_LIB_INTERNAL__ hook stamp is gone. The
+# wheel file API, the shared cores the root module imports and every surviving
+# command contract are unchanged; the parse-error detail is TOLERANT per
+# docs/go-migration-parity-contract.md. No new asset, no second trust root), with
+# the canonical go1.24.13 toolchain via the same command above.
+a891c6d24d90f07dd2280d3b0a87a922f21f61689ac0e555e8916c2f97621291  worktree-gate-darwin-amd64
+4fcd510ad123774e1a53c0eb96623b783c3dbf84208b0669858092891e8e153e  worktree-gate-darwin-arm64
+cbef15203a2ff53e7b1e7ce301720a526e3327811f4ca5365cca9bc0ca3f18ef  worktree-gate-linux-amd64
+43b7bbf0c509b8c8f3f9e2b905796058a534d58896122001676cc14738d89aab  worktree-gate-linux-arm64

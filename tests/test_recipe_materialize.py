@@ -59,7 +59,7 @@ def _make_home(base: Path) -> Path:
     its cache and catalog roots from this home and never reads Python.
     """
     home = isolated_home(base)
-    (home / "lib").unlink()
+    (home / "lib").unlink(missing_ok=True)
     return home
 
 
@@ -334,10 +334,9 @@ class RecipeMaterializeTests(unittest.TestCase):
         skill_dir = _recipe_skill(root, home, "test-fixture", "test-skill")
         self.assertTrue(skill_dir.is_dir())
 
-    # DEFERRED row D-U2d-9 (owner: D-U2d-9 diagnostic unit; expires when it lands):
-    # the native binary reports this failure as the manifest TOML error, not the
-    # recipe name. Invoked on the native binary (CLI), the same build the launcher execs.
-    @unittest.expectedFailure
+    # D-U2d-9 closed by GO-20 U2e T5 PR4b: the in-process recipe.toml reader names
+    # the recipe in its diagnostic (`recipe nonexistent: recipe.toml not found or
+    # not parseable`), so the failure is attributable again.
     def test_unknown_recipe_fails(self):
         root, home = self._project(
             '[recipes.nonexistent]\nenabled = true\nversion = "1.0.0"\n'

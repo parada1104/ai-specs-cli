@@ -37,12 +37,14 @@ func applyEnvelope(t *testing.T, recipeRoot, depsRoot, inprojectRoot string,
 	return string(raw)
 }
 
-// runApplyCLI invokes run() with --apply-orphans and returns the exit code,
-// stdout and stderr, mirroring runPlanCLI in orphans_plan_test.go.
+// runApplyCLI invokes the shared orphan-apply command the way the retired
+// --apply-orphans bridge flag did, mirroring runPlanCLI in
+// orphans_plan_test.go. GO-20 U2e T5 PR4b deleted the flag; the shared core it
+// delegated to is the subject here.
 func runApplyCLI(t *testing.T, stdin string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--apply-orphans"}, strings.NewReader(stdin), &stdout, &stderr)
+	code := shared.RunApplyOrphans(strings.NewReader(stdin), &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
 }
 

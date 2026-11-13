@@ -50,7 +50,7 @@ def _make_home(base: Path) -> Path:
     test copies or reads the Python tree.
     """
     home = isolated_home(base)
-    (home / "lib").unlink()
+    (home / "lib").unlink(missing_ok=True)
     return home
 
 

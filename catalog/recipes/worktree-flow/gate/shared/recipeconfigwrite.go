@@ -13,125 +13,29 @@ package shared
 //
 // The parser is a copy of the root module's internal/toml, which the gate
 // module (ai-specs.dev/worktree-gate) can never import: the go tool rejects a
-// cross-module internal/ import. It lives in this file because this file is the
-// only surface both seams share (the gate main package imports this package).
-// internal/toml stays the root module's authoritative copy; the two are the same
-// reader by construction, and a later slice can promote one authoritative home.
+// cross-module internal/ import. It lives in this package because the readers
+// that need it (this writer, shared/recipe_toml.go, the gate main package) all
+// reach it here. internal/toml stays the root module's authoritative copy; the
+// two are the same reader by construction, and a later slice can promote one
+// authoritative home.
 //
-// The seam helpers below are private copies of the gate main package's
-// manifest-acquisition seam (ledger_reconcile.go). The promotion could not
-// share them: the gate's other readers keep their own copies behind separate
-// edit surfaces, and the promoted writer must be reachable from the root module
-// without importing package main. The remaining subprocess seam
-// (runRecipeConfigPython) now serves only shared/recipe_toml.go's readers and
-// the gate main package's resolved-config and recipe.toml acquisition.
+// GO-20 U2e T5 PR4b deleted the last subprocess seam this package carried
+// (runRecipeConfigPython and its bounded-execution helpers): the shared recipe
+// readers now parse in process, so nothing in the gate binary resolves an
+// ambient interpreter.
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 )
-
-// recipeConfigParseTimeout, recipeConfigAcquisitionLimit and
-// recipeConfigErrorLimit mirror the gate main package's acquisition bounds.
-const (
-	recipeConfigParseTimeout     = 3 * time.Second
-	recipeConfigAcquisitionLimit = 1 << 20
-	recipeConfigErrorLimit       = 4 << 10
-)
-
-// recipeConfigCappedBuffer buffers at most max bytes and records that anything
-// more arrived, mirroring the gate main package's cappedBuffer.
-type recipeConfigCappedBuffer struct {
-	buf       bytes.Buffer
-	max       int
-	truncated bool
-}
-
-func (w *recipeConfigCappedBuffer) Write(p []byte) (int, error) {
-	if room := w.max - w.buf.Len(); room > 0 {
-		if len(p) <= room {
-			w.buf.Write(p)
-			return len(p), nil
-		}
-		w.buf.Write(p[:room])
-	}
-	w.truncated = true
-	return len(p), nil
-}
-
-// recipeConfigInterpreter resolves the ambient python3 without executing it and
-// refuses an interpreter that lives inside the project root.
-func recipeConfigInterpreter(root string) (string, error) {
-	interpreter, err := exec.LookPath("python3")
-	if err != nil {
-		return "", fmt.Errorf("standard TOML parser is unavailable: %v", err)
-	}
-	if abs, absErr := filepath.Abs(interpreter); absErr == nil {
-		if absRoot, rootErr := filepath.Abs(root); rootErr == nil && (absRoot == abs || strings.HasPrefix(abs+string(filepath.Separator), absRoot)) {
-			return "", errors.New("standard TOML parser interpreter resolves inside the project root")
-		}
-	}
-	return interpreter, nil
-}
-
-// classifyRecipeConfigParserError names the failure without reproducing parser
-// output, mirroring the gate main package's classifyManifestParserError.
-func classifyRecipeConfigParserError(err error) error {
-	var execErr *exec.Error
-	if errors.As(err, &execErr) {
-		return fmt.Errorf("standard TOML parser is unavailable: %v", execErr.Err)
-	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return fmt.Errorf("the manifest is not valid TOML (parser exit status %d)", exitErr.ExitCode())
-	}
-	return errors.New("standard TOML parser could not be started")
-}
-
-// runRecipeConfigPython runs one embedded reader under bounded execution: a
-// deadline, bounded stdout and stderr, explicit interpreter resolution, and an
-// interpreter refused inside the project root.
-func runRecipeConfigPython(root, program string, args []string, stdin []byte) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), recipeConfigParseTimeout)
-	defer cancel()
-
-	interpreter, err := recipeConfigInterpreter(root)
-	if err != nil {
-		return nil, err
-	}
-	stdout := &recipeConfigCappedBuffer{max: recipeConfigAcquisitionLimit}
-	stderr := &recipeConfigCappedBuffer{max: recipeConfigErrorLimit}
-	cmd := exec.CommandContext(ctx, interpreter, "-I", "-B", "-c", program)
-	cmd.Args = append(cmd.Args, args...)
-	cmd.Stdin = bytes.NewReader(stdin)
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	cmd.WaitDelay = recipeConfigParseTimeout
-
-	runErr := cmd.Run()
-	if ctx.Err() != nil {
-		return nil, fmt.Errorf("standard TOML parser timed out after %s", recipeConfigParseTimeout)
-	}
-	if runErr != nil {
-		return nil, classifyRecipeConfigParserError(runErr)
-	}
-	if stdout.truncated {
-		return nil, fmt.Errorf("standard TOML parser returned more than %d bytes", recipeConfigAcquisitionLimit)
-	}
-	return stdout.buf.Bytes(), nil
-}
 
 // ReadManifestRecipesJSON is the ledger-reconcile manifest reader: the [recipes]
 // table of the manifest at path as one JSON object, {} when the manifest

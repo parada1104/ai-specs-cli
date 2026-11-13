@@ -10,13 +10,14 @@ import (
 	"ai-specs.dev/worktree-gate/shared"
 )
 
-// runPlanCLI invokes run() with the given stdin and returns exit code, stdout
-// and stderr, so the whole --plan-orphans flag/exit contract is testable
-// in-process without touching the filesystem.
+// runPlanCLI invokes the shared orphan-plan command the way the retired
+// --plan-orphans bridge flag did, so the whole stdin/stdout/exit-code contract
+// stays testable in-process without touching the filesystem. GO-20 U2e T5 PR4b
+// deleted the flag; the shared core it delegated to is the subject here.
 func runPlanCLI(t *testing.T, stdin string, args ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := run(args, strings.NewReader(stdin), &stdout, &stderr)
+	code := shared.RunPlanOrphans(strings.NewReader(stdin), &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
 }
 

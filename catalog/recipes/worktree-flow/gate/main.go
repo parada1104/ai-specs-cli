@@ -18,8 +18,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"ai-specs.dev/worktree-gate/shared"
 )
 
 // version is injected at build time with
@@ -75,67 +73,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	ledgerWrite := fs.String("write", "", "JSON machine write to apply (open|bind|link|close|exempt), then re-grade")
 	ledgerReconcile := fs.String("reconcile", "", "path to an MCP-acquired observation JSON; adds a reconcile sidecar (exit code unchanged)")
 	ledgerReconcileEvent := fs.String("reconcile-event", "", "the event the caller asks to compare (recipe-declared expectations for it)")
-	// Binding resolution is a separate command surface: it reads the catalog, not
-	// the worktree, and its flags never touch the gate or ledger state.
-	resolveBindingsCmd := fs.Bool("resolve-bindings", false, "resolve capability-to-recipe bindings and grade capability conflicts (JSON on stdout, exit 0/2)")
-	bindingsCatalogDir := fs.String("catalog-dir", "", "catalog recipes directory for --resolve-bindings and --resolve-tag-conflicts")
-	bindingsRecipeIDs := stringListFlag{}
-	fs.Var(&bindingsRecipeIDs, "recipe", "enabled recipe id in order (repeatable, for --resolve-bindings and --resolve-tag-conflicts)")
-	bindingsJSON := fs.String("bindings", "[]", "explicit manifest [[bindings]] tables as a JSON array of {capability, recipe}")
-	bindingsWriteWitness := fs.Bool("write-witness", true, "persist the durable tracker binding witness after --resolve-bindings (best-effort)")
-	// Tag-conflict grading is another catalog query: it reads the enabled recipes'
-	// [recipe] metadata and emits one JSON envelope. Advisory only, so it never
-	// changes the caller's materialization exit behavior.
-	resolveTagConflictsCmd := fs.Bool("resolve-tag-conflicts", false, "grade advisory tag conflicts across enabled recipes (JSON on stdout, exit 0/2)")
-	resolvePrimitiveConflictsCmd := fs.Bool("resolve-primitive-conflicts", false, "grade recipe primitive (skill/command/mcp) conflicts across enabled recipes (JSON on stdout, exit 0/2)")
-	// Reconcile-stamp planning is another catalog query: it reads the enabled
-	// recipes' declared [config.reconcile] values and config-field defaults and
-	// emits one ordered JSON envelope. Pure planning, no write side effects.
-	planReconcileStampsCmd := fs.Bool("plan-reconcile-stamps", false, "compute the per-recipe reconcile stamp dict from the enabled recipes' declared config schema (JSON on stdout, exit 0/2)")
-	// Orphan planning is another separate command surface: pure set arithmetic
-	// over a JSON envelope on stdin; it never reads the worktree or the catalog.
-	planOrphansCmd := fs.Bool("plan-orphans", false, "plan materialization orphans from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
-	// Orphan deletion is the destructive sibling: same stdin envelope plus the
-	// three resolved cache roots; it reuses the plan decision and deletes only
-	// validated direct child directories, stopping on the first filesystem
-	// failure with a structured outcome (never touches any lock file).
-	applyOrphansCmd := fs.Bool("apply-orphans", false, "apply the orphan plan: delete orphaned cache directories under the given roots (JSON on stdout, exit 0/2/3)")
-	// Resolved-config projection is a manifest query: it reads one project root's
-	// ai-specs.toml, projects it in Go, and emits a single JSON envelope.
-	planResolvedConfigCmd := fs.Bool("plan-resolved-config", false, "project the project manifest into the resolved-config JSON envelope (exit 0/2)")
-	resolvedProjectRoot := fs.String("project", "", "project root for --plan-resolved-config (default: cwd)")
-	// Managed-override classification is a read-only grader: it reads the
-	// destination bytes named by the stdin envelope and emits one JSON object.
-	planClassifyCmd := fs.Bool("plan-classify", false, "classify a managed-override destination from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
-	// Config merge is another pure command surface: the Python bridge acquires
-	// the already-loaded Recipe schema and sends it with the manifest config as
-	// an ordered JSON envelope; Go owns the merge decision.
-	planMergeConfigCmd := fs.Bool("plan-merge-config", false, "merge recipe config defaults with manifest overrides from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
-	// Recipe-config write is the Go strangler slice for the Python authority
-	// recipe-config-write.py: line surgery is decided in Go, parsing and final
-	// validation stay on the bounded standard TOML seam.
-	writeRecipeConfigCmd := fs.Bool("write-recipe-config", false, "apply recipe config values from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
-	// Lock write is the Go strangler slice for the Python authority
-	// lib/_internal/lock.py write_lock: Go owns the byte-exact TOML emission
-	// and the atomic replace; no parser seam is involved.
-	writeLockCmd := fs.Bool("write-lock", false, "write the ai-specs lock file from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
-	// Copy apply is the Go strangler slice for the materialize blind copiers
-	// (bundled skills, commands, docs): Go owns the copy decision + execution;
-	// Python keeps hashing, lock writes, prints and the fail-open fallback.
-	applyCopyCmd := fs.Bool("apply-copy", false, "execute the materialize copy plan from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
-	// Template actuator is the Go strangler slice for the Python
-	// materialize_template authority: Go owns git-path dest resolution,
-	// rendering, classification (the shared classify core), the write + chmod
-	// and the record payload; Python keeps lock load/write, prints and the
-	// fail-open fallback.
-	materializeTemplateCmd := fs.Bool("materialize-template", false, "materialize one governed template from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
-	// Hook/gate actuator is the Go strangler slice for the Python
-	// materialize_hook_script authority: Go owns the 8-placeholder rendering,
-	// classification (the shared classify core), the write + chmod 0755 and
-	// the refresh backup/rollback; Python keeps lock load/write, prints,
-	// backup-path precomputation, version resolution and the fail-open
-	// fallback.
-	materializeHookCmd := fs.Bool("materialize-hook", false, "materialize one runtime hook gate script from a JSON envelope on stdin (JSON on stdout, exit 0/2)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain] [--resolve-central-root]\n")
@@ -196,53 +133,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			reconcile:      *ledgerReconcile,
 			reconcileEvent: *ledgerReconcileEvent,
 		}, stdout, stderr)
-	case *resolveBindingsCmd:
-		return runResolveBindings(bindingsOptions{
-			catalogDir:   *bindingsCatalogDir,
-			recipeIDs:    bindingsRecipeIDs.values,
-			bindings:     *bindingsJSON,
-			projectRoot:  *ledgerProjectRoot,
-			writeWitness: *bindingsWriteWitness,
-		}, stdout, stderr)
-	case *resolveTagConflictsCmd:
-		return runResolveTagConflicts(tagConflictOptions{
-			catalogDir: *bindingsCatalogDir,
-			recipeIDs:  bindingsRecipeIDs.values,
-		}, stdout, stderr)
-	case *resolvePrimitiveConflictsCmd:
-		return runResolvePrimitiveConflicts(primitiveConflictOptions{
-			catalogDir: *bindingsCatalogDir,
-			recipeIDs:  bindingsRecipeIDs.values,
-		}, stdout, stderr)
-	case *planReconcileStampsCmd:
-		return runPlanReconcileStamps(reconcileStampOptions{
-			catalogDir: *bindingsCatalogDir,
-			recipeIDs:  bindingsRecipeIDs.values,
-		}, stdout, stderr)
-	case *planOrphansCmd:
-		return shared.RunPlanOrphans(stdin, stdout, stderr)
-	case *applyOrphansCmd:
-		return shared.RunApplyOrphans(stdin, stdout, stderr)
-	case *planResolvedConfigCmd:
-		root := *resolvedProjectRoot
-		if root == "" {
-			root = processCwd()
-		}
-		return runPlanResolvedConfig(root, stdout, stderr)
-	case *planClassifyCmd:
-		return shared.RunPlanClassify(stdin, stdout, stderr)
-	case *planMergeConfigCmd:
-		return runPlanMergeConfig(stdin, stdout, stderr)
-	case *writeRecipeConfigCmd:
-		return runWriteRecipeConfig(stdin, stdout, stderr)
-	case *writeLockCmd:
-		return shared.RunWriteLock(stdin, stdout, stderr)
-	case *applyCopyCmd:
-		return shared.RunApplyCopy(stdin, stdout, stderr)
-	case *materializeTemplateCmd:
-		return runMaterializeTemplate(stdin, stdout, stderr)
-	case *materializeHookCmd:
-		return runMaterializeHook(stdin, stdout, stderr)
 	case *explain:
 		return explainRun(*gateMode, *gateScope, *repoTopology, *protected, stdin, stdout, stderr)
 	case *tokenize:

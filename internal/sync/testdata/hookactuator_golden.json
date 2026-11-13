@@ -6,7 +6,7 @@
     "script": "lib/_internal/recipe-materialize.py"
   },
   "fixture": {
-    "hook_sha256": "f2c8311478518129959195834276dc7e02b1f5e249bda326943e4ad9af707e5d",
+    "hook_sha256": "2cf09794ed6430b9c96303375e65f95877937a386e7eb8c3bc32c0e9cdb692ff",
     "project_root": "project",
     "recipe_dir": "catalog/worktree-flow"
   },
@@ -31,11 +31,11 @@
           "kind": "gate",
           "policy": "auto",
           "recipe": "worktree-flow",
-          "sha256": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+          "sha256": "18151817c3a113e11cf6a5bcf7fc33a9b6886d297af5155e41f964f42855657b",
           "source": "hooks/h1-fresh-write.sh",
           "target": "ai-specs/recipes/worktree-flow/hooks/h1-fresh-write.sh"
         },
-        "disk_sha": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+        "disk_sha": "18151817c3a113e11cf6a5bcf7fc33a9b6886d297af5155e41f964f42855657b",
         "mode": "755",
         "backup": "",
         "backup_sha": "",
@@ -57,8 +57,8 @@
           "repo_topology": "auto"
         },
         "refresh": false,
-        "managed_sha": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
-        "seed_sha256": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+        "managed_sha": "18151817c3a113e11cf6a5bcf7fc33a9b6886d297af5155e41f964f42855657b",
+        "seed_sha256": "18151817c3a113e11cf6a5bcf7fc33a9b6886d297af5155e41f964f42855657b",
         "seed_mode": "644"
       },
       "outcome": {
@@ -68,11 +68,11 @@
           "kind": "gate",
           "policy": "auto",
           "recipe": "worktree-flow",
-          "sha256": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+          "sha256": "18151817c3a113e11cf6a5bcf7fc33a9b6886d297af5155e41f964f42855657b",
           "source": "hooks/h2-managed-current.sh",
           "target": "ai-specs/recipes/worktree-flow/hooks/h2-managed-current.sh"
         },
-        "disk_sha": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+        "disk_sha": "18151817c3a113e11cf6a5bcf7fc33a9b6886d297af5155e41f964f42855657b",
         "mode": "644",
         "backup": "",
         "backup_sha": "",
@@ -94,14 +94,14 @@
           "repo_topology": "auto"
         },
         "refresh": false,
-        "seed_sha256": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+        "seed_sha256": "18151817c3a113e11cf6a5bcf7fc33a9b6886d297af5155e41f964f42855657b",
         "seed_mode": "644"
       },
       "outcome": {
         "wrote": false,
         "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/hooks/h3-no-provenance.sh",
         "record": null,
-        "disk_sha": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+        "disk_sha": "18151817c3a113e11cf6a5bcf7fc33a9b6886d297af5155e41f964f42855657b",
         "mode": "644",
         "backup": "",
         "backup_sha": "",
@@ -166,11 +166,11 @@
           "kind": "gate",
           "policy": "auto",
           "recipe": "worktree-flow",
-          "sha256": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+          "sha256": "18151817c3a113e11cf6a5bcf7fc33a9b6886d297af5155e41f964f42855657b",
           "source": "hooks/h5-managed-stale-refresh.sh",
           "target": "ai-specs/recipes/worktree-flow/hooks/h5-managed-stale-refresh.sh"
         },
-        "disk_sha": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+        "disk_sha": "18151817c3a113e11cf6a5bcf7fc33a9b6886d297af5155e41f964f42855657b",
         "mode": "755",
         "backup": "",
         "backup_sha": "",
@@ -203,11 +203,11 @@
           "kind": "gate",
           "policy": "auto",
           "recipe": "worktree-flow",
-          "sha256": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+          "sha256": "18151817c3a113e11cf6a5bcf7fc33a9b6886d297af5155e41f964f42855657b",
           "source": "hooks/h6-refresh-backup.sh",
           "target": "ai-specs/recipes/worktree-flow/hooks/h6-refresh-backup.sh"
         },
-        "disk_sha": "b455e21f3707ef264f565be36b6e8afb2d40972b071563e29a0aafbe0c4e35ea",
+        "disk_sha": "18151817c3a113e11cf6a5bcf7fc33a9b6886d297af5155e41f964f42855657b",
         "mode": "755",
         "backup": "<BASE>/cache/backups/gate/73e715b456dc1ee129756f902a8cd2be2dce9ee2226a268e44ee4d31be7635e7.sh",
         "backup_sha": "73e715b456dc1ee129756f902a8cd2be2dce9ee2226a268e44ee4d31be7635e7",

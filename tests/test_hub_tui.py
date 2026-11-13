@@ -78,7 +78,7 @@ def _make_home(base: Path, *, catalog: bool = True) -> Path:
     which derives its cache root from this home and never reads Python.
     """
     home = isolated_home(base / "cli-home", catalog=catalog)
-    (home / "lib").unlink()
+    (home / "lib").unlink(missing_ok=True)
     return home
 
 

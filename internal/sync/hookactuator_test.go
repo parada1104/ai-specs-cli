@@ -33,11 +33,13 @@ const (
 	hkScript = "hooks/gate.sh"
 )
 
-// hkHookSource carries all eight hook placeholders, so one render exercises
+// hkHookSource carries every surviving hook placeholder, so one render exercises
 // every substitution arm. The fixture config omits gate_mode, so the two
 // gate-mode tokens take their historical defaults ("always"/"warn"); the cli
-// home is empty, so the tracker bridge tokens render empty (fail open) and the
-// gate version is the Python-resolved "dev" the envelope carries.
+// home is empty, so the tracker bridge token renders empty (fail open) and the
+// gate version is the Python-resolved "dev" the envelope carries. The legacy
+// `__TRACKER_LIB_INTERNAL__` stamp was deleted with lib/ (GO-20 U2e T5 PR4b), so
+// it is no longer part of the contract.
 const hkHookSource = "#!/bin/sh\n" +
 	"# mode=__WORKTREE_GATE_MODE__\n" +
 	"# card=__TRACKER_CARD_GATE_MODE__\n" +
@@ -45,8 +47,7 @@ const hkHookSource = "#!/bin/sh\n" +
 	"# topology=__WORKTREE_REPO_TOPOLOGY__\n" +
 	"# impl=__WORKTREE_GATE_IMPL__\n" +
 	"# version=__WORKTREE_GATE_VERSION__\n" +
-	"# home=__TRACKER_CLI_HOME__\n" +
-	"# internal=__TRACKER_LIB_INTERNAL__\n"
+	"# home=__TRACKER_CLI_HOME__\n"
 
 // hkRender reproduces the render for the fixture config/version/home so the
 // expected bytes stay derived from the source instead of duplicated by hand.
@@ -59,7 +60,6 @@ func hkRender(body string) string {
 		"__WORKTREE_GATE_IMPL__", "auto",
 		"__WORKTREE_GATE_VERSION__", "dev",
 		"__TRACKER_CLI_HOME__", "",
-		"__TRACKER_LIB_INTERNAL__", "",
 	).Replace(body)
 }
 

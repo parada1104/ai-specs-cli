@@ -84,9 +84,9 @@ func TestStandaloneMaterializeRunsNatively(t *testing.T) {
 			planJSON := "{\"root\":\"" + root + "\",\"targets\":[" + strings.Join(entries, ",") + "]}"
 
 			// The stub records every invocation and DELEGATES to the real
-			// interpreter, because the gate binary's own readers are still
-			// Python; only the resolver plan is synthesized so both fan-out
-			// shapes are reachable.
+			// interpreter. It records rather than asserts: since GO-20 U2e T5
+			// PR4b the whole materialize path (including the recipe.toml
+			// readers) is native, so the expected log is EMPTY.
 			script := "#!/bin/sh\n" +
 				"printf '%s\\n' \"$*\" >> " + logPath + "\n" +
 				"if printf '%s\\n' \"$*\" | grep -q target-resolve.py; then\n" +
@@ -112,16 +112,16 @@ func TestStandaloneMaterializeRunsNatively(t *testing.T) {
 				t.Fatalf("rc = %d, want 0\nstdout:\n%s\nstderr:\n%s", rc, out.String(), errOut.String())
 			}
 
+			// GO-20 U2e T5 PR4b removed the last python3 seam on this path (the
+			// recipe.toml readers now parse in process), so the stub must never be
+			// invoked at all: a missing log IS the proof.
 			logged, err := os.ReadFile(logPath)
-			if err != nil {
+			if err != nil && !os.IsNotExist(err) {
 				t.Fatalf("stub log: %v", err)
 			}
 			log := string(logged)
-			if strings.Contains(log, "target-resolve.py") {
-				t.Fatalf("the plan still spawns target-resolve.py:\n%s", log)
-			}
-			if strings.Contains(log, "recipe-materialize.py") {
-				t.Fatalf("the materializer still spawns recipe-materialize.py:\n%s", log)
+			if log != "" {
+				t.Fatalf("the native materialize still spawned python3:\n%s", log)
 			}
 			if strings.Contains(errOut.String(), "resolved-config generation failed") {
 				t.Fatalf("native resolved-config failed:\n%s", errOut.String())
