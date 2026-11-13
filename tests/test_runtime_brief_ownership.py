@@ -12,7 +12,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -28,13 +27,12 @@ LOCK_NAME = "AGENTS.md"
 
 
 def _make_home(base: Path) -> Path:
-    """Isolated CLI install root with a REAL lib copy (see test_sync_pipeline)."""
+    """Isolated CLI install root.
+
+    ``lib/`` is not installed: sync renders the brief from the native binary.
+    """
     home = isolated_home(base)
     (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
-    )
     return home
 
 

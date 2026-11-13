@@ -61,7 +61,7 @@ class EnvrcScaffoldTests(unittest.TestCase):
     def _workspace(
         self, recipes: dict[str, tuple[str, bool]] | None = None
     ) -> tuple[Path, Path]:
-        """Temp workspace: isolated home (real lib copy) + minimal project.
+        """Temp workspace: isolated home (no lib/) + minimal project.
 
         Recipe TOMLs are seeded into the home's own catalog via
         populate_catalog (per-recipe symlinks); repo catalog files are never

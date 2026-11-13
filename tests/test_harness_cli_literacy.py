@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -50,26 +49,20 @@ POINTER_NEEDLES = (
 
 
 def _make_home(base: Path) -> Path:
-    """Isolated CLI install root with a REAL lib copy.
+    """Isolated CLI install root.
 
-    The CLI derives cache and catalog roots from its own realpath, so a
-    symlinked lib would resolve back into the repository and let the CLI
-    touch repo cache state. A real copy keeps every lookup and write in temp.
+    ``lib/`` is not installed: the CLI reads its assets from this home and
+    derives every cache/catalog root from it.
     """
     home = base / "cli-home"
     home.mkdir(parents=True, exist_ok=True)
-    for entry in ("bin", "lib", "catalog", "VERSION", "bundled-skills",
+    for entry in ("bin", "catalog", "VERSION", "bundled-skills",
                   "bundled-commands", "templates", "scripts"):
         src = ROOT / entry
         dest = home / entry
         if src.exists() and not dest.exists():
             dest.symlink_to(src)
     (home / "cache").mkdir(parents=True, exist_ok=True)
-    (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
-    )
     return home
 
 

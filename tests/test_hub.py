@@ -14,7 +14,6 @@ import importlib.util
 import os
 import re
 import select
-import shutil
 import struct
 import subprocess
 import sys
@@ -57,21 +56,14 @@ def _recipe_toml(rid: str, name: str) -> str:
     )
 
 
-def _make_home(base: Path, *, catalog: bool = True, vendor: bool = True) -> Path:
-    """Isolated CLI install root with a REAL lib copy.
+def _make_home(base: Path, *, catalog: bool = True) -> Path:
+    """Isolated CLI install root.
 
-    doctor.py resolves cache roots from its own realpath, so a symlinked lib
-    would reach back into the repository. ``vendor=False`` hides _vendor to
-    make rich/questionary truly unavailable (system python3 has neither).
+    ``lib/`` is not installed: the hub is the native binary, which derives its
+    cache root from this home and never reads Python (nor _vendor).
     """
     home = isolated_home(base / "cli-home", catalog=catalog)
     (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor"),
-    )
-    if vendor:
-        (home / "lib" / "_vendor").symlink_to(ROOT / "lib" / "_vendor")
     return home
 
 
@@ -271,12 +263,12 @@ def _strip_ansi(data: bytes) -> bytes:
 class TestHubImportContract(unittest.TestCase):
     def test_imports_without_third_party_deps(self):
         """Import-time contract, observed black-box: with NO rich/questionary
-        available anywhere (isolated lib copy, _vendor hidden, system python3
-        has neither), the hub still runs its stdlib-only paths — a module-level
+        available anywhere (no lib/ in the install root, and system python3 has
+        neither), the hub still runs its stdlib-only paths — a module-level
         third-party import would crash the process instead of exiting 0/2."""
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            home = _make_home(base, vendor=False)
+            home = _make_home(base)
             root = base / "prj"
             root.mkdir()
             _clean_init(root, home)

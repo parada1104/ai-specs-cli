@@ -12,7 +12,6 @@ import fcntl
 import os
 import re
 import select
-import shutil
 import struct
 import subprocess
 import sys
@@ -73,16 +72,13 @@ def _recipe_toml(rid: str, name: str) -> str:
 
 
 def _make_home(base: Path, *, catalog: bool = True) -> Path:
-    """Isolated CLI install root with a REAL lib copy (plus _vendor, needed by
-    the interactive deps gate). A symlinked lib would resolve cache roots back
-    into the repository."""
+    """Isolated CLI install root.
+
+    ``lib/`` is not installed: the interactive flows drive the native binary,
+    which derives its cache root from this home and never reads Python.
+    """
     home = isolated_home(base / "cli-home", catalog=catalog)
     (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor"),
-    )
-    (home / "lib" / "_vendor").symlink_to(ROOT / "lib" / "_vendor")
     return home
 
 
