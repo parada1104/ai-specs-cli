@@ -457,6 +457,23 @@ func TestMaterializeHookRefusalsAndBoundary(t *testing.T) {
 			}
 		}
 	})
+	t.Run("invalid gate scope", func(t *testing.T) {
+		projectRoot, recipeDir := newFixture(t)
+		_, err := MaterializeHook(&HookRequest{
+			ProjectRoot: projectRoot, RecipeDir: recipeDir, RecipeID: "worktree-flow",
+			Script: hkScript, GateVersion: "dev",
+			Config: map[string]any{"gate_scope": "bogus"},
+		})
+		want := "invalid gate_scope 'bogus'; allowed: auto | superrepo | subrepo"
+		if err == nil || err.Error() != want {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
+		// The refusal fires while rendering, before any read of the lock or
+		// write of the destination.
+		if _, statErr := os.Stat(filepath.Join(projectRoot, filepath.FromSlash(hkRel))); !os.IsNotExist(statErr) {
+			t.Fatalf("a refusal must not write the destination: %v", statErr)
+		}
+	})
 	t.Run("no lock or manifest write", func(t *testing.T) {
 		projectRoot, recipeDir := newFixture(t)
 		if _, err := MaterializeHook(&HookRequest{
