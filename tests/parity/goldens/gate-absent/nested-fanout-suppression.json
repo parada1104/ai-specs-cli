@@ -9,7 +9,7 @@
    ],
    "rc": 0,
    "stderr": "",
-   "stdout": "\nai-specs sync\n  root:    <TEMP>\n  planning: <TEMP>\n  topology: standalone (via auto; source: default)\n  targets: root:. subrepo:sub-a subrepo:sub-b\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  (no [[deps]] declared \u2014 nothing to vendor)\n  syncing harness env (.envrc + ai-specs.env.example)\nWrote <TEMP>/ai-specs.env.example\n  syncing recipes\n  (no [recipes.*] enabled \u2014 skipping)\n  syncing AGENTS.md\n  syncing root:. \u2192 <TEMP>\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing claude\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing subrepo:sub-a \u2192 <TEMP>/sub-a\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing ai-specs/.gitignore\n  syncing claude\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing subrepo:sub-b \u2192 <TEMP>/sub-b\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing ai-specs/.gitignore\n  syncing claude\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n\n\u2713 ai-specs sync complete\n",
+   "stdout": "\nai-specs sync\n  root:    <TEMP>\n  planning: <TEMP>\n  topology: standalone (via auto; source: default)\n  targets: root:. subrepo:sub-a subrepo:sub-b\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  (no [[deps]] declared — nothing to vendor)\n  syncing harness env (.envrc + ai-specs.env.example)\nWrote <TEMP>/ai-specs.env.example\n  syncing recipes\n  (no [recipes.*] enabled — skipping)\n  syncing AGENTS.md\n  syncing root:. → <TEMP>\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing claude\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing subrepo:sub-a → <TEMP>/sub-a\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing ai-specs/.gitignore\n  syncing claude\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing subrepo:sub-b → <TEMP>/sub-b\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing ai-specs/.gitignore\n  syncing claude\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    ℹ mcp skipped (no [mcp.*] in manifest)\n\n✓ ai-specs sync complete\n",
    "tree": [
     [
      ".claude",
@@ -120,7 +120,7 @@
      [
       "file",
       "0o600",
-      "e2f63ce3cf473090b2c2a37974d6f5ef3eb0e9e65c8bbbffb12a3e4c58d488dc"
+      "ea4e7ab183055ff5824e188c0ea94177f6d54d5746ca1c348c4adba97182253e"
      ]
     ],
     [
@@ -660,7 +660,7 @@
    ],
    "rc": 0,
    "stderr": "",
-   "stdout": "\nai-specs sync-agent\n  source root: <TEMP>\n  planning:    <TEMP>\n  targets:     <TEMP> <TEMP>/sub-a <TEMP>/sub-b\n  mode:        public root fan-out (declared-only)\n\n  syncing <TEMP>\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing claude\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing <TEMP>/sub-a\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing ai-specs/.gitignore\n  syncing claude\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing <TEMP>/sub-b\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing ai-specs/.gitignore\n  syncing claude\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n\n\u2713 sync-agent complete\n",
+   "stdout": "\nai-specs sync-agent\n  source root: <TEMP>\n  planning:    <TEMP>\n  targets:     <TEMP> <TEMP>/sub-a <TEMP>/sub-b\n  mode:        public root fan-out (declared-only)\n\n  syncing <TEMP>\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing claude\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing <TEMP>/sub-a\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing ai-specs/.gitignore\n  syncing claude\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing <TEMP>/sub-b\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing ai-specs/.gitignore\n  syncing claude\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    ℹ mcp skipped (no [mcp.*] in manifest)\n\n✓ sync-agent complete\n",
    "tree": [
     [
      ".claude",
@@ -771,7 +771,7 @@
      [
       "file",
       "0o600",
-      "e2f63ce3cf473090b2c2a37974d6f5ef3eb0e9e65c8bbbffb12a3e4c58d488dc"
+      "ea4e7ab183055ff5824e188c0ea94177f6d54d5746ca1c348c4adba97182253e"
      ]
     ],
     [

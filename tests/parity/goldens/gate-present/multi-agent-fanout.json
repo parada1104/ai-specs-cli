@@ -9,7 +9,7 @@
    ],
    "rc": 0,
    "stderr": "",
-   "stdout": "\nai-specs sync\n  root:    <TEMP>\n  planning: <TEMP>\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  (no [[deps]] declared \u2014 nothing to vendor)\n  syncing harness env (.envrc + ai-specs.env.example)\nWrote <TEMP>/ai-specs.env.example\n  syncing recipes\n  (no [recipes.*] enabled \u2014 skipping)\n  syncing AGENTS.md\n  syncing root:. \u2192 <TEMP>\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing claude\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing cursor\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing opencode\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing omp\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n\n\u2713 ai-specs sync complete\n",
+   "stdout": "\nai-specs sync\n  root:    <TEMP>\n  planning: <TEMP>\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  (no [[deps]] declared — nothing to vendor)\n  syncing harness env (.envrc + ai-specs.env.example)\nWrote <TEMP>/ai-specs.env.example\n  syncing recipes\n  (no [recipes.*] enabled — skipping)\n  syncing AGENTS.md\n  syncing root:. → <TEMP>\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing claude\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing cursor\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing opencode\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing omp\n    ℹ mcp skipped (no [mcp.*] in manifest)\n\n✓ ai-specs sync complete\n",
    "tree": [
     [
      ".claude",
@@ -248,7 +248,7 @@
      [
       "file",
       "0o600",
-      "a9c408133525de2ad55cb5e858410b624cef4025c855792b2d1e973636e78ea3"
+      "7640838e7631a0f7c6d80f16f91f8a061a5e6314e5bada1473995ded9bd62454"
      ]
     ],
     [
@@ -292,7 +292,7 @@
    ],
    "rc": 0,
    "stderr": "",
-   "stdout": "  syncing flatten resolved skills\n  syncing merge commands\n\nai-specs sync-agent\n  source root: <TEMP>\n  target:      <TEMP>\n  agents:      claude cursor opencode pi omp\n  enabled:     claude cursor opencode pi omp\n  mcp:         0 server(s)\n\n  derived artifacts: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n  syncing claude\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing cursor\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing opencode\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing omp\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n\n\u2713 sync-agent complete\n",
+   "stdout": "  syncing flatten resolved skills\n  syncing merge commands\n\nai-specs sync-agent\n  source root: <TEMP>\n  target:      <TEMP>\n  agents:      claude cursor opencode pi omp\n  enabled:     claude cursor opencode pi omp\n  mcp:         0 server(s)\n\n  derived artifacts: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n  syncing claude\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing cursor\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing opencode\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing omp\n    ℹ mcp skipped (no [mcp.*] in manifest)\n\n✓ sync-agent complete\n",
    "tree": [
     [
      ".claude",
@@ -531,7 +531,7 @@
      [
       "file",
       "0o600",
-      "a9c408133525de2ad55cb5e858410b624cef4025c855792b2d1e973636e78ea3"
+      "7640838e7631a0f7c6d80f16f91f8a061a5e6314e5bada1473995ded9bd62454"
      ]
     ],
     [

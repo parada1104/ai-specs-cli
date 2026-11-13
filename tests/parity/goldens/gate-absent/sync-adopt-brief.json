@@ -10,7 +10,7 @@
    ],
    "rc": 0,
    "stderr": "",
-   "stdout": "\nai-specs sync\n  root:    <TEMP>\n  planning: <TEMP>\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  (no [[deps]] declared \u2014 nothing to vendor)\n  syncing harness env (.envrc + ai-specs.env.example)\nWrote <TEMP>/ai-specs.env.example\n  syncing recipes\n  (no [recipes.*] enabled \u2014 skipping)\n  syncing AGENTS.md\n  syncing root:. \u2192 <TEMP>\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing claude\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n\n\u2713 ai-specs sync complete\n",
+   "stdout": "\nai-specs sync\n  root:    <TEMP>\n  planning: <TEMP>\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  (no [[deps]] declared — nothing to vendor)\n  syncing harness env (.envrc + ai-specs.env.example)\nWrote <TEMP>/ai-specs.env.example\n  syncing recipes\n  (no [recipes.*] enabled — skipping)\n  syncing AGENTS.md\n  syncing root:. → <TEMP>\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing claude\n    ℹ mcp skipped (no [mcp.*] in manifest)\n\n✓ ai-specs sync complete\n",
    "tree": [
     [
      ".claude",
@@ -105,7 +105,7 @@
      [
       "file",
       "0o600",
-      "bdf8073f6c1eaa47d54754213763e9f11de16e01a36a951b59245d141a869a30"
+      "e98611216386b8a1b0cd0da0bdc23411e9a0a36f3f4a91153d85974bfdc0a28d"
      ]
     ],
     [

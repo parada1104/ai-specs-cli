@@ -1,5 +1,5 @@
 # Expected SHA-256 digests of the published worktree-gate release assets
-# (v0.24.0). This file is the trust root (D5): the network supplies only
+# (v0.25.0). This file is the trust root (D5): the network supplies only
 # bytes, the repository supplies the expected digest. A downloaded asset
 # whose SHA-256 does not match is deleted and never executed.
 #
@@ -238,7 +238,14 @@
 # command contract are unchanged; the parse-error detail is TOLERANT per
 # docs/go-migration-parity-contract.md. No new asset, no second trust root), with
 # the canonical go1.24.13 toolchain via the same command above.
-a891c6d24d90f07dd2280d3b0a87a922f21f61689ac0e555e8916c2f97621291  worktree-gate-darwin-amd64
-4fcd510ad123774e1a53c0eb96623b783c3dbf84208b0669858092891e8e153e  worktree-gate-darwin-arm64
-cbef15203a2ff53e7b1e7ce301720a526e3327811f4ca5365cca9bc0ca3f18ef  worktree-gate-linux-amd64
-43b7bbf0c509b8c8f3f9e2b905796058a534d58896122001676cc14738d89aab  worktree-gate-linux-arm64
+667210941499c28f0e7ab5953bc1fe3a2140409e63cd32ed1435ca949d994058  worktree-gate-darwin-amd64
+ef90a30093e80915953614133c2592e64f9500cf0b997c1d3a9d5866daba88d7  worktree-gate-darwin-arm64
+550a1b2fbe8d766a086d5579f8f407ba7030db3f0e3b4d7e2162d340fd7e1b02  worktree-gate-linux-amd64
+2b184a3001bdfb314438c3923c51cf7a294ba998a19f0203320c46bc685f238f  worktree-gate-linux-arm64
+
+# Regenerated for the v0.25.0 version bump (GO-20 U2e T5): build-gate.sh
+# injects $VERSION at link time (-X main.version), so the 0.24.0 -> 0.25.0
+# bump alone changes all four digests. Same canonical go1.24.13 toolchain via:
+#   scripts/build-gate.sh
+#   cd dist && shasum -a 256 worktree-gate-darwin-amd64 worktree-gate-darwin-arm64 \
+#     worktree-gate-linux-amd64 worktree-gate-linux-arm64

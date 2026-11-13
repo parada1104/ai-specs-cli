@@ -3,7 +3,7 @@
 ### Requirement: Platform registration
 
 The system MUST register `pi` in `lib/_internal/platform.sh` with:
-`skills_dir=.pi/skills`, `mcp_config_path=.mcp.json`, `mcp_key=mcpServers`,
+`skills_dir=.pi/skills`, `mcp_config_path=.pi/mcp.json`, `mcp_key=mcpServers`,
 `native=true`, and empty `instructions_path`, `agents_dir`, `commands_dir`.
 
 #### Scenario: Lookup succeeds
@@ -52,21 +52,24 @@ The system MUST symlink resolved skills to `.pi/skills/` when syncing to Pi.
 
 ### Requirement: MCP fan-out
 
-The system MUST render `.mcp.json` with `mcpServers` when MCPs are declared.
+The system MUST render `.pi/mcp.json` with `mcpServers` when MCPs are declared.
+Pi resolves project MCP servers from `<cwd>/.pi/mcp.json` only; the root
+`.mcp.json` belongs to Claude Code and is ignored by Pi.
 
 #### Scenario: MCP rendered
 
 - GIVEN `[mcp.*]` entries exist
 - AND `ai-specs sync-agent --pi` runs
 - WHEN sync completes
-- THEN `.mcp.json` MUST exist with the `mcpServers` key
+- THEN `.pi/mcp.json` MUST exist with the `mcpServers` key
+- AND the root `.mcp.json` MUST NOT be created by the Pi target
 
 #### Scenario: MCP skipped when empty
 
 - GIVEN no `[mcp.*]` entries exist
 - AND `ai-specs sync-agent --pi` runs
 - WHEN sync completes
-- THEN `.mcp.json` MUST NOT be created for Pi
+- THEN `.pi/mcp.json` MUST NOT be created for Pi
 
 ### Requirement: AGENTS.md native
 

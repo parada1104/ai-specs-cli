@@ -74,7 +74,7 @@ Flags:
   --codex          Codex        (.codex/config.toml)
   --copilot        GitHub Copilot (.github/copilot-instructions.md)
   --gemini         Gemini CLI   (GEMINI.md, .gemini/skills, .gemini/settings.json)
-  --pi             Pi (pi.dev)  (.pi/skills, .mcp.json)
+  --pi             Pi (pi.dev)  (.pi/skills, .pi/mcp.json)
   --omp            Oh My Pi     (.omp/skills, .omp/mcp.json, .omp/commands)
   -v, --verbose    Print full per-step detail instead of compact summaries
 
@@ -943,7 +943,7 @@ var agentPlatformMatrix = map[string]platformInfo{
 	"pi": {
 		instructionsPath:   "",
 		skillsDir:          ".pi/skills",
-		mcpConfigPath:      ".mcp.json",
+		mcpConfigPath:      ".pi/mcp.json",
 		mcpKey:             "mcpServers",
 		native:             "true",
 		commandsDir:        "",

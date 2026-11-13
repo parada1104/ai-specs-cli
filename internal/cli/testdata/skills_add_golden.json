@@ -34,7 +34,7 @@
         },
         {
           "path": "ai-specs/.ai-specs.lock",
-          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.24.0\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"obsidian-skills\".skills.\"obsidian-skills\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.25.0\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"obsidian-skills\".skills.\"obsidian-skills\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
         },
         {
           "path": "ai-specs/.deps",
@@ -104,7 +104,7 @@
         },
         {
           "path": "ai-specs/.ai-specs.lock",
-          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.24.0\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"src-ok\".skills.\"src-ok\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.25.0\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"src-ok\".skills.\"src-ok\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
         },
         {
           "path": "ai-specs/.deps",
@@ -212,7 +212,7 @@
         },
         {
           "path": "ai-specs/.ai-specs.lock",
-          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.24.0\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"my-override\".skills.\"my-override\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.25.0\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"my-override\".skills.\"my-override\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
         },
         {
           "path": "ai-specs/.deps",
@@ -282,7 +282,7 @@
         },
         {
           "path": "ai-specs/.ai-specs.lock",
-          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.24.0\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"src-ok\".skills.\"src-ok\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.25.0\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"src-ok\".skills.\"src-ok\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
         },
         {
           "path": "ai-specs/.deps",

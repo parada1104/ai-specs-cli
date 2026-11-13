@@ -9,7 +9,7 @@
    ],
    "rc": 0,
    "stderr": "  ! keeping local/customized ai-specs/commands/tdd.md (differs from recipe-managed cache/source and legacy provenance; resolve manually)\n  ! command 'tdd' present in cache and ai-specs/commands/; local hand-authored wins\n  ! cursor: no pre-file-write hook exists; skipping hook 'worktree-flow:worktree-gate' (matcher 'Edit|Write|MultiEdit|NotebookEdit') for cursor\n",
-   "stdout": "\nai-specs sync\n  root:    <TEMP>\n  planning: <TEMP>\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  (no [[deps]] declared \u2014 nothing to vendor)\n  syncing harness env (.envrc + ai-specs.env.example)\nWrote <TEMP>/ai-specs.env.example\n  syncing recipes \u2192 worktree-flow, tdd-flow\n  syncing AGENTS.md\n  syncing root:. \u2192 <TEMP>\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing claude\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing cursor\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing opencode\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing omp\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n\n\u2713 ai-specs sync complete\n",
+   "stdout": "\nai-specs sync\n  root:    <TEMP>\n  planning: <TEMP>\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  (no [[deps]] declared — nothing to vendor)\n  syncing harness env (.envrc + ai-specs.env.example)\nWrote <TEMP>/ai-specs.env.example\n  syncing recipes → worktree-flow, tdd-flow\n  syncing AGENTS.md\n  syncing root:. → <TEMP>\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing claude\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing cursor\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing opencode\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing omp\n    ℹ mcp skipped (no [mcp.*] in manifest)\n\n✓ ai-specs sync complete\n",
    "tree": [
     [
      ".claude",
@@ -504,7 +504,7 @@
      [
       "file",
       "0o600",
-      "83104679868dd61bd9ec7850e54a6ef663d3384fed60893df3c5ae2f05c4971f"
+      "3ef38f486db8eac322364792222f66013eafa5d7bcfb3c4180b218a11dc96512"
      ]
     ],
     [
@@ -600,7 +600,7 @@
      [
       "file",
       "0o755",
-      "ff6aa4b6721bdf5ee932ff97cda95a559d71d419a4a1acf0794d3cef4a85edf8"
+      "0abee150b409855d6876cdd3f590d798084adb63caddf86dd8e69d3a64110320"
      ]
     ],
     [
@@ -644,7 +644,7 @@
    ],
    "rc": 0,
    "stderr": "  ! command 'tdd' present in cache and ai-specs/commands/; local hand-authored wins\n",
-   "stdout": "  syncing flatten resolved skills\n  syncing merge commands\n\nai-specs sync-agent\n  source root: <TEMP>\n  target:      <TEMP>\n  agents:      claude cursor opencode pi omp\n  enabled:     claude cursor opencode pi omp\n  mcp:         0 server(s)\n\n  derived artifacts: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n  syncing claude\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing cursor\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing opencode\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing omp\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n\n\u2713 sync-agent complete\n",
+   "stdout": "  syncing flatten resolved skills\n  syncing merge commands\n\nai-specs sync-agent\n  source root: <TEMP>\n  target:      <TEMP>\n  agents:      claude cursor opencode pi omp\n  enabled:     claude cursor opencode pi omp\n  mcp:         0 server(s)\n\n  derived artifacts: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n  syncing claude\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing cursor\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing opencode\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    ℹ mcp skipped (no [mcp.*] in manifest)\n  syncing omp\n    ℹ mcp skipped (no [mcp.*] in manifest)\n\n✓ sync-agent complete\n",
    "tree": [
     [
      ".claude",
@@ -1139,7 +1139,7 @@
      [
       "file",
       "0o600",
-      "83104679868dd61bd9ec7850e54a6ef663d3384fed60893df3c5ae2f05c4971f"
+      "3ef38f486db8eac322364792222f66013eafa5d7bcfb3c4180b218a11dc96512"
      ]
     ],
     [
@@ -1235,7 +1235,7 @@
      [
       "file",
       "0o755",
-      "ff6aa4b6721bdf5ee932ff97cda95a559d71d419a4a1acf0794d3cef4a85edf8"
+      "0abee150b409855d6876cdd3f590d798084adb63caddf86dd8e69d3a64110320"
      ]
     ],
     [

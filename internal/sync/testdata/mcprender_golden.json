@@ -6,7 +6,7 @@
     "opencode opencode.json mcp",
     "codex .codex/config.toml mcp_servers",
     "gemini .gemini/settings.json mcpServers",
-    "pi .mcp.json mcpServers",
+    "pi .pi/mcp.json mcpServers",
     "omp .omp/mcp.json mcpServers",
     "existing json preserves keys order duplicates and unicode",
     "existing json numeric extremes round-trip",
@@ -90,7 +90,7 @@
     {
       "kind": "differential",
       "rc": 0,
-      "stdout": "  ✓ pi → <TEMP>/.mcp.json (3 server(s))\n",
+      "stdout": "  ✓ pi → <TEMP>/.pi/mcp.json (3 server(s))\n",
       "stderr": "",
       "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJucHgiLAogICAgICAiYXJncyI6IFsKICAgICAgICAiLXkiLAogICAgICAgICJAc2NvcGUvc2VydmVyIgogICAgICBdLAogICAgICAiZW52IjogewogICAgICAgICJUT0tFTiI6ICIke0FMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICIke0hPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0KICB9Cn0K"
     },

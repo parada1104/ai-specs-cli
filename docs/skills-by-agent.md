@@ -12,6 +12,8 @@ lives in each `SKILL.md` frontmatter (`metadata.scope`, `metadata.auto_invoke`).
 | Codex    | Yes                       | No                                     | `.codex/config.toml` |
 | Copilot  | No (`.github/copilot-instructions.md`) | No                          | `.github/copilot-instructions.md` symlink |
 | Gemini   | No (needs `GEMINI.md`)    | Yes (`.gemini/skills/<name>/SKILL.md`) | `GEMINI.md` symlink + `.gemini/skills` symlink + `.gemini/settings.json` |
+| Pi       | Yes                       | Yes (`.pi/skills/<name>/SKILL.md`)     | `.pi/skills` symlink → resolved-skills + `.pi/mcp.json` + `.pi/extensions` runtime hooks |
+| Oh My Pi | Yes                       | Yes (`.omp/skills/<name>/SKILL.md`)    | `.omp/AGENTS.md` symlink + `.omp/skills` symlink + `.omp/commands` + `.omp/mcp.json` + `.omp/extensions` runtime hooks |
 
 ## Harness CLI literacy (always-on)
 

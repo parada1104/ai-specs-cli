@@ -33,7 +33,7 @@
     },
     {
       "agent": "pi",
-      "block": "\n            # Pi (pi.dev) — reads AGENTS.md natively, uses .mcp.json with mcpServers.\n            case \"$field\" in\n                instructions_path) echo \"\" ;;\n                skills_dir)        echo \".pi/skills\" ;;\n                agents_dir)        echo \"\" ;;\n                mcp_config_path)   echo \".mcp.json\" ;;\n                mcp_key)           echo \"mcpServers\" ;;\n                native)            echo \"true\" ;;\n                commands_dir)      echo \"\" ;;  # pi has no slash commands\n                runtime_hooks_target) echo \".pi/extensions\" ;;\n                *) return 1 ;;\n            esac\n            ;;\n"
+      "block": "\n            # Pi (pi.dev) — reads AGENTS.md natively, uses .pi/mcp.json with mcpServers.\n            case \"$field\" in\n                instructions_path) echo \"\" ;;\n                skills_dir)        echo \".pi/skills\" ;;\n                agents_dir)        echo \"\" ;;\n                mcp_config_path)   echo \".pi/mcp.json\" ;;\n                mcp_key)           echo \"mcpServers\" ;;\n                native)            echo \"true\" ;;\n                commands_dir)      echo \"\" ;;  # pi has no slash commands\n                runtime_hooks_target) echo \".pi/extensions\" ;;\n                *) return 1 ;;\n            esac\n            ;;\n"
     },
     {
       "agent": "omp",

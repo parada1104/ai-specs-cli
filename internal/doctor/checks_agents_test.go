@@ -33,7 +33,7 @@ func TestPlatformTable(t *testing.T) {
 		"claude":   {instructionsPath: "CLAUDE.md", skillsDir: ".claude/skills", mcpConfigPath: ".mcp.json", mcpKey: "mcpServers", commandsDir: ".claude/commands"},
 		"cursor":   {instructionsPath: "", skillsDir: ".cursor/skills", mcpConfigPath: ".cursor/mcp.json", mcpKey: "mcpServers", commandsDir: ".cursor/commands"},
 		"opencode": {instructionsPath: "", skillsDir: ".opencode/skills", mcpConfigPath: "opencode.json", mcpKey: "mcp", commandsDir: ".opencode/commands", skillsCopy: true},
-		"pi":       {instructionsPath: "", skillsDir: ".pi/skills", mcpConfigPath: ".mcp.json", mcpKey: "mcpServers", commandsDir: ""},
+		"pi":       {instructionsPath: "", skillsDir: ".pi/skills", mcpConfigPath: ".pi/mcp.json", mcpKey: "mcpServers", commandsDir: ""},
 		"omp":      {instructionsPath: ".omp/AGENTS.md", skillsDir: ".omp/skills", mcpConfigPath: ".omp/mcp.json", mcpKey: "mcpServers", commandsDir: ".omp/commands"},
 		"codex":    {instructionsPath: "", skillsDir: "", mcpConfigPath: ".codex/config.toml", mcpKey: "mcp_servers", commandsDir: ""},
 		"copilot":  {instructionsPath: ".github/copilot-instructions.md", skillsDir: "", mcpConfigPath: "", mcpKey: "", commandsDir: ""},

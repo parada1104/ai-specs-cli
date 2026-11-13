@@ -303,7 +303,8 @@ class AgentDiagnosticsTests(unittest.TestCase):
 
     def test_pi_is_in_platform_dict(self):
         """Pi platform fields via doctor output: skills dir, MCP config path,
-        MCP key, and no commands dir (empty commands_dir renders no check)."""
+        MCP key, and no commands dir (empty commands_dir renders no check).
+        MCP config path is .pi/mcp.json per #379 (Pi never reads the root file)."""
         with tempfile.TemporaryDirectory() as tmp:
             home = _make_home(Path(tmp))
             target = Path(tmp) / "prj"
@@ -317,12 +318,12 @@ class AgentDiagnosticsTests(unittest.TestCase):
             self.assertTrue(_named_checks(result.stdout, ".pi/skills"))
             mcp_lines = _named_checks(result.stdout, "mcp-pi")
             self.assertTrue(mcp_lines)
-            self.assertIn(".mcp.json", mcp_lines[0][1])
+            self.assertIn(".pi/mcp.json", mcp_lines[0][1])
             self.assertNotIn(".pi/commands", _check_names(result.stdout))
             # mcp_key: sync-agent writes the server under the mcpServers key.
             sync = invoke(target, "sync-agent", cli_home=home)
             self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
-            data = json.loads((target / ".mcp.json").read_text())
+            data = json.loads((target / ".pi/mcp.json").read_text())
             self.assertIn("mcpServers", data)
             self.assertIn("demo", data["mcpServers"])
 
@@ -773,13 +774,13 @@ class PlatformGetTests(unittest.TestCase):
         result = self._doctor(self._platform_project("pi", mcp=True))
         lines = _named_checks(result.stdout, "mcp-pi")
         self.assertTrue(lines)
-        self.assertIn(".mcp.json", lines[0][1])
+        self.assertIn(".pi/mcp.json", lines[0][1])
 
     def test_pi_mcp_key(self):
         root = self._platform_project("pi", mcp=True)
         sync = invoke(root, "sync-agent", cli_home=self.home)
         self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
-        data = json.loads((root / ".mcp.json").read_text())
+        data = json.loads((root / ".pi/mcp.json").read_text())
         self.assertIn("mcpServers", data)
         self.assertIn("demo", data["mcpServers"])
 

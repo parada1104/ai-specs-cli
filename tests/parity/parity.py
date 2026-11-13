@@ -233,6 +233,32 @@ def _norm_gate_cache_size(text: str, ctx: dict) -> str:
     return _GATE_CACHE_KB_RE.sub(r"\1<CACHE_KB>\2", text)
 
 
+# GO-20 U2e T5 (v0.25.0 merge): CLI version stamps move with every release.
+# The frozen goldens were captured at 0.24.0; after the bump the live legs
+# legitimately print 0.25.0 in doctor lines, the version verb, the hub banner
+# and lock stamps. Same class as N12: a permanent instability, never expires
+# with a corpus recapture.
+_VERSION_STAMP_CONTEXTUAL_RES = (
+    (re.compile(r"installed \d+\.\d+\.\d+"), "installed <CLI_VERSION>"),
+    (re.compile(r"last sync \d+\.\d+\.\d+"), "last sync <CLI_VERSION>"),
+    (re.compile(r"version: \d+\.\d+\.\d+"), "version: <CLI_VERSION>"),
+    (re.compile(r'cli_version = "\d+\.\d+\.\d+"'), 'cli_version = "<CLI_VERSION>"'),
+    (re.compile(r'"cli_version": "\d+\.\d+\.\d+"'), '"cli_version": "<CLI_VERSION>"'),
+    (re.compile(r'stamped_gate_version="\d+\.\d+\.\d+"'), 'stamped_gate_version="<CLI_VERSION>"'),
+)
+
+
+def _norm_version_stamps(text: str, ctx: dict) -> str:
+    for pat, repl in _VERSION_STAMP_CONTEXTUAL_RES:
+        text = pat.sub(repl, text)
+    return text
+
+
+def _norm_bare_version_line(text: str, ctx: dict) -> str:
+    # The `version` verb prints as "<semver>\n" (surface-verbs).
+    return re.sub(r"(?m)^0\.\d+\.\d+$", "<CLI_VERSION>", text)
+
+
 # GO-20 U2e T4: scoped to add-dep and skills add; expires with the frozen corpus
 # (see N11), not with lib/ alone.
 def _norm_vendor_add_clone_failure(text: str, ctx: dict) -> str:
@@ -433,6 +459,34 @@ NORMALIZATIONS = (
                       "doctor-healthy in both gate modes after the gate's writer "
                       "and manifest TOML reads moved in process.",
         fn=_norm_gate_cache_size,
+    ),
+    Normalization(
+        rule_id="N13-version-stamps",
+        surfaces=("stdout", "stderr", "tree"),
+        description="Canonicalize CLI version stamps (doctor 'installed'/'last "
+                    "sync' lines, the hub 'version:' banner, and lock "
+                    "cli_version stamps in both TOML and JSON shapes) to "
+                    "<CLI_VERSION> on both legs.",
+        justification="GO-20 U2e T5 (v0.25.0 release merge), Robert's approved "
+                      "release model: the frozen goldens were captured at "
+                      "0.24.0 and every version bump legitimately moves these "
+                      "stamps in the live legs. Same permanent-instability class "
+                      "as N12 (binary-derived values): it must NOT be deleted "
+                      "with a corpus recapture, because the next release moves "
+                      "the stamps again. No other version-shaped literal is "
+                      "touched.",
+        fn=_norm_version_stamps,
+    ),
+    Normalization(
+        rule_id="N13b-bare-version-line",
+        surfaces=("stdout",),
+        description="Canonicalize a stdout that is exactly one semver line "
+                    "(the `version` verb) to <CLI_VERSION> on both legs.",
+        justification="Same class as N13-version-stamps: the bare `version` "
+                      "verb output moves with every release (surface-verbs "
+                      "fixture). Scoped to a whole-line exact semver so no "
+                      "embedded literal is touched.",
+        fn=_norm_bare_version_line,
     ),
 )
 

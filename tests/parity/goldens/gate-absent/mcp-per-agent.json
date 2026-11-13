@@ -9,7 +9,7 @@
    ],
    "rc": 0,
    "stderr": "",
-   "stdout": "\nai-specs sync\n  root:    <TEMP>\n  planning: <TEMP>\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  (no [[deps]] declared \u2014 nothing to vendor)\n  syncing harness env (.envrc + ai-specs.env.example)\nWrote <TEMP>/ai-specs.env.example\n  syncing recipes\n  (no [recipes.*] enabled \u2014 skipping)\n  syncing AGENTS.md\n  syncing root:. \u2192 <TEMP>\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing claude\n  syncing cursor\n  syncing opencode\n  syncing codex\n  syncing copilot\n  syncing gemini\n  syncing pi\n  syncing omp\n\n\u2713 ai-specs sync complete\n",
+   "stdout": "\nai-specs sync\n  root:    <TEMP>\n  planning: <TEMP>\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  (no [[deps]] declared — nothing to vendor)\n  syncing harness env (.envrc + ai-specs.env.example)\nWrote <TEMP>/ai-specs.env.example\n  syncing recipes\n  (no [recipes.*] enabled — skipping)\n  syncing AGENTS.md\n  syncing root:. → <TEMP>\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing claude\n  syncing cursor\n  syncing opencode\n  syncing codex\n  syncing copilot\n  syncing gemini\n  syncing pi\n  syncing omp\n\n✓ ai-specs sync complete\n",
    "tree": [
     [
      ".claude",
@@ -284,6 +284,14 @@
      ]
     ],
     [
+     ".pi/mcp.json",
+     [
+      "file",
+      "0o644",
+      "c8c008cf459b55bf603d7ef6163744fa76ca1c45547751beed8f2013c3cd15eb"
+     ]
+    ],
+    [
      ".pi/skills",
      [
       "symlink",
@@ -336,7 +344,7 @@
      [
       "file",
       "0o600",
-      "108522feb0a731b52d755ed6b05e6e8827db92c16f321e601d67db1c1ac2da64"
+      "24acd20f389fdd9ad5c5b4599722148b58687c688c7bb81379bab3bc94b713f4"
      ]
     ],
     [
@@ -388,7 +396,7 @@
    ],
    "rc": 0,
    "stderr": "",
-   "stdout": "  syncing flatten resolved skills\n  syncing merge commands\n\nai-specs sync-agent\n  source root: <TEMP>\n  target:      <TEMP>\n  agents:      claude cursor opencode codex copilot gemini pi omp\n  enabled:     claude cursor opencode codex copilot gemini pi omp\n  mcp:         2 server(s)\n\n  derived artifacts: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n  syncing claude\n  syncing cursor\n  syncing opencode\n  syncing codex\n  syncing copilot\n  syncing gemini\n  syncing pi\n  syncing omp\n\n\u2713 sync-agent complete\n",
+   "stdout": "  syncing flatten resolved skills\n  syncing merge commands\n\nai-specs sync-agent\n  source root: <TEMP>\n  target:      <TEMP>\n  agents:      claude cursor opencode codex copilot gemini pi omp\n  enabled:     claude cursor opencode codex copilot gemini pi omp\n  mcp:         2 server(s)\n\n  derived artifacts: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n  syncing claude\n  syncing cursor\n  syncing opencode\n  syncing codex\n  syncing copilot\n  syncing gemini\n  syncing pi\n  syncing omp\n\n✓ sync-agent complete\n",
    "tree": [
     [
      ".claude",
@@ -663,6 +671,14 @@
      ]
     ],
     [
+     ".pi/mcp.json",
+     [
+      "file",
+      "0o644",
+      "c8c008cf459b55bf603d7ef6163744fa76ca1c45547751beed8f2013c3cd15eb"
+     ]
+    ],
+    [
      ".pi/skills",
      [
       "symlink",
@@ -715,7 +731,7 @@
      [
       "file",
       "0o600",
-      "108522feb0a731b52d755ed6b05e6e8827db92c16f321e601d67db1c1ac2da64"
+      "24acd20f389fdd9ad5c5b4599722148b58687c688c7bb81379bab3bc94b713f4"
      ]
     ],
     [

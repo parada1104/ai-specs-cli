@@ -43,7 +43,7 @@ var platform = map[string]platformInfo{
 	"pi": {
 		instructionsPath: "",
 		skillsDir:        ".pi/skills",
-		mcpConfigPath:    ".mcp.json",
+		mcpConfigPath:    ".pi/mcp.json",
 		mcpKey:           "mcpServers",
 		commandsDir:      "",
 	},
