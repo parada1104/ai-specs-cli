@@ -780,6 +780,45 @@ func TestNativeMergeConfigRealCatalogSchema(t *testing.T) {
 		}
 	})
 
+	t.Run("worktree-flow rejects a stranger gate_impl with the enum", func(t *testing.T) {
+		// The retired Python suite pinned the recipe schema's enum directly
+		// (["auto", "go"]); the native authority exposes it through the
+		// rejection message, which must name the allowed pair and never
+		// re-offer the retired bash leg.
+		got := plan(t, "worktree-flow", "gate_impl = \"rust\"\n")
+		want := "invalid gate_impl 'rust'; bash has been removed; allowed: auto | go"
+		if got.Error != want {
+			t.Fatalf("error = %q, want %q", got.Error, want)
+		}
+		if strings.Contains(got.Error, "| bash") {
+			t.Fatalf("error re-offers the retired bash leg: %q", got.Error)
+		}
+	})
+
+	t.Run("trello ledger_mode declares its default and enum", func(t *testing.T) {
+		// The retired Python suite read the recipe schema; ledger_mode is the
+		// Tracker-domain mode policy, declared in the adapter recipe and read
+		// by the gate's ResolveLedgerMode.
+		got := plan(t, "trello-mcp-workflow", "board_id = \"b\"\n")
+		if got.Error != "" {
+			t.Fatalf("error = %q, want none", got.Error)
+		}
+		value, present := got.Config.Get("ledger_mode")
+		if !present {
+			t.Fatalf("config has no ledger_mode: %s", mergeConfigRaw(t, got))
+		}
+		raw, _ := json.Marshal(value)
+		if string(raw) != `"warn"` {
+			t.Fatalf("ledger_mode = %s, want \"warn\"", raw)
+		}
+
+		got = plan(t, "trello-mcp-workflow", "board_id = \"b\"\nledger_mode = \"bogus\"\n")
+		want := "recipe 'Trello MCP Workflow': config field 'ledger_mode' value 'bogus' is invalid; allowed: always | ask | warn"
+		if got.Error != want {
+			t.Fatalf("error = %q, want %q", got.Error, want)
+		}
+	})
+
 	t.Run("plan-build-flow carries its enum default and rejects a stranger", func(t *testing.T) {
 		got := plan(t, "plan-build-flow", "")
 		if want := `{"artifact_store_default":"openspec"}`; mergeConfigRaw(t, got) != want {

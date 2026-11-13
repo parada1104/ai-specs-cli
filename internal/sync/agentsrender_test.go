@@ -1087,3 +1087,69 @@ func TestAgentsRenderWidenedValueKinds(t *testing.T) {
 		}
 	}
 }
+
+// TestCollectRecipeBriefFragmentsFirstWinsKeyAndExactText pins the two dedupe
+// rules of collect_recipe_brief_fragments: a keyed fragment belongs to the
+// FIRST enabled recipe that declares that key, and an identical unkeyed text is
+// emitted once. The retired Python suite reached this through the renderer's
+// --resolved-config process boundary with a hand-crafted resolved document;
+// the native rules are asserted on the collector that owns them.
+func TestCollectRecipeBriefFragmentsFirstWinsKeyAndExactText(t *testing.T) {
+	const sharedRule = "A session works on one explicit user request or tracker card; resolve focus from memory and tracker before starting."
+	resolved := map[string]any{
+		"enabled": []any{"session-context", "recipe-extra"},
+		"recipes": map[string]any{
+			"session-context": map[string]any{
+				"brief_fragments": map[string]any{
+					"conflict_policy": []any{
+						map[string]any{
+							"key":  "conflict-policy-source-authority",
+							"text": "Current explicit human instruction wins.",
+						},
+					},
+					"workflow_rules": []any{
+						map[string]any{"key": nil, "text": sharedRule},
+					},
+				},
+			},
+			"recipe-extra": map[string]any{
+				"brief_fragments": map[string]any{
+					"conflict_policy": []any{
+						map[string]any{
+							"key":  "conflict-policy-source-authority",
+							"text": "Extra recipe override must not appear.",
+						},
+					},
+					"workflow_rules": []any{
+						map[string]any{"key": nil, "text": sharedRule},
+					},
+				},
+			},
+		},
+	}
+
+	got := collectRecipeBriefFragments(resolved, "conflict_policy", nil)
+	if len(got) != 1 {
+		t.Fatalf("conflict_policy fragments = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].text != "Current explicit human instruction wins." {
+		t.Fatalf("conflict_policy[0].text = %q, want the first recipe text", got[0].text)
+	}
+	if got[0].key == nil || *got[0].key != "conflict-policy-source-authority" {
+		t.Fatalf("conflict_policy[0].key = %v, want conflict-policy-source-authority", got[0].key)
+	}
+	if strings.Contains(got[0].text, "must not appear") {
+		t.Fatalf("the second recipe override survived: %q", got[0].text)
+	}
+
+	rules := collectRecipeBriefFragments(resolved, "workflow_rules", nil)
+	if len(rules) != 1 {
+		t.Fatalf("workflow_rules fragments = %d, want 1 (exact-text dedupe): %#v", len(rules), rules)
+	}
+	if rules[0].key != nil {
+		t.Fatalf("an unkeyed fragment must stay unkeyed, got %q", *rules[0].key)
+	}
+	if rules[0].text != sharedRule {
+		t.Fatalf("workflow_rules[0].text = %q", rules[0].text)
+	}
+}

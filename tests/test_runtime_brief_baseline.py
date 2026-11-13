@@ -1,32 +1,28 @@
 """Black-box tests for the runtime-brief-baseline behavior.
 
-Every test drives ``bin/ai-specs`` (init/sync) or an internal render script at
-its process boundary. No test may import ``lib/_internal`` modules; the two
-process-boundary render/materialize invocations are marked with distinct
-``# TRIAGE:`` comments.
+Every test drives the native CLI (``init``/``sync``) at its process boundary.
+No test may import or exec ``lib/_internal`` modules.
 
 Covers:
-  - Default template pre-enables session-context in the resolved config
-    (TemplateDefaultTests, materializer process boundary)
   - E2E: fresh init produces behavioral brief (InitBriefE2ETests)
   - E2E: render failure → placeholder fallback, init exits 0
   - E2E: init→sync byte-stability
   - E2E: --preserve-if-runtime-brief marker preserved under --force
   - E2E: no this-repo tokens in baseline AGENTS.md
-  - W1 — dedupe with session-context + second recipe sharing a key
-    (SessionContextDedupTests, renderer process boundary)
   - W2 — sync-side marker preservation after user adds marker post-init
   - Optional — no unrendered {config.} or {{ placeholders in baseline brief
+
+The template default (session-context pre-enabled, no dogfood tokens) is pinned
+natively in ``internal/cli`` and the recipe-fragment dedupe rules (key
+first-wins, then exact text) in ``internal/sync``.
 
 All offline: catalog read from the isolated AI_SPECS_HOME; session-context
 skills are bundled.
 """
 from __future__ import annotations
 
-import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -38,18 +34,11 @@ from _blackbox import cli_path, invoke, isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = cli_path()
-TEMPLATE_PATH = ROOT / "templates" / "ai-specs.toml.tmpl"
 
 
 def _make_home(base: Path) -> Path:
-    """Isolated CLI install root with a REAL lib copy (see test_sync_pipeline)."""
-    home = isolated_home(base)
-    (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
-    )
-    return home
+    """Isolated CLI install root (the native binary resolves its own assets)."""
+    return isolated_home(base)
 
 
 _HOMES: dict[str, Path] = {}
@@ -88,100 +77,6 @@ def _run_cli_env(project, *args, home: Path, tmpdir: Path, extra_env=None,
         argv.append(str(project))
     return subprocess.run(argv, cwd=ROOT, env=env, text=True,
                           capture_output=True, check=False, input="")
-
-
-def _run_internal(home: Path, script: str, *args: str, base: Path):
-    """Run an internal render/materialize script at the process boundary."""
-    return subprocess.run(
-        ["python3", str(home / "lib" / "_internal" / script), *args],
-        text=True, capture_output=True, check=False, input="",
-        env={
-            "PATH": os.environ.get("PATH", ""),
-            "HOME": str(base / "home"),
-            "TMPDIR": str(base),
-            "AI_SPECS_HOME": str(home),
-            "AI_SPECS_NO_NETWORK": "1",
-            "LC_ALL": "C",
-            "LANG": "C",
-        },
-    )
-
-
-class TemplateDefaultTests(unittest.TestCase):
-    """The default TOML template pre-enables session-context (resolved config)."""
-
-    def _make_project_from_template(self) -> tuple[Path, Path, Path]:
-        """Render ai-specs.toml.tmpl into a fresh temp project directory.
-
-        Returns (base, project, home) — base is the temp dir backing home.
-        """
-        tmp = tempfile.TemporaryDirectory(prefix="ai-specs-tmpl-")
-        self.addCleanup(tmp.cleanup)
-        base = Path(tmp.name)
-        root = base / "project"
-        ai_specs = root / "ai-specs"
-        ai_specs.mkdir(parents=True)
-        (ai_specs / "skills").mkdir()
-        (ai_specs / "commands").mkdir()
-
-        # Mimic what init.sh does: replace {{PROJECT_NAME}} and write toml
-        template_text = TEMPLATE_PATH.read_text()
-        toml_text = template_text.replace("{{PROJECT_NAME}}", "test-proj")
-        (ai_specs / "ai-specs.toml").write_text(toml_text)
-
-        return base, root, _make_home(base)
-
-    def _resolved_from_template(self):
-        base, root, home = self._make_project_from_template()
-        out = base / "resolved.json"
-        # TRIAGE: ai-specs sync — the resolved-config JSON (enabled list, per-
-        # recipe configs) is written to a temp file the CLI deletes after each
-        # run; the enabled-list contract is only observable at the
-        # materializer's --resolved-config-only process boundary.
-        proc = _run_internal(
-            home, "recipe-materialize.py", str(root), str(home),
-            "--resolved-config-only", "--resolved-config-out", str(out),
-            base=base,
-        )
-        self.assertEqual(
-            proc.returncode, 0,
-            f"materialize failed:\n{proc.stderr}\n{proc.stdout}",
-        )
-        return json.loads(out.read_text())
-
-    def test_template_default_enables_session_context(self):
-        """The default template's resolved config yields session-context in enabled."""
-        # TRIAGE: ai-specs sync — the resolved-config temp file is deleted after
-        # every verb run, so the enabled-list JSON is only observable at the
-        # materializer's --resolved-config-only process boundary.
-        result = self._resolved_from_template()
-        self.assertIn(
-            "session-context",
-            result["enabled"],
-            f"Expected 'session-context' in enabled list. Got: {result['enabled']!r}",
-        )
-
-    def test_template_default_no_project_specific_tokens(self):
-        """Resolved config from the default template must not contain this-repo tokens."""
-        # TRIAGE: ai-specs sync — the resolved-config JSON blob is not exposed
-        # by any verb (temp file deleted post-run); token leakage is checked at
-        # the materializer's --resolved-config-only process boundary.
-        result = self._resolved_from_template()
-        serialized = json.dumps(result)
-
-        # These are tokens from the ai-specs-cli dogfood project; they must not
-        # appear in a generic project's baseline config.
-        forbidden_tokens = [
-            "69ec097f13e2d38ecd89a557",   # board id
-            "nnodes/proyectos",             # vault scope
-            "ai-specs-cli",                 # project name
-        ]
-        for token in forbidden_tokens:
-            self.assertNotIn(
-                token,
-                serialized,
-                f"Found project-specific token {token!r} in resolved config output.",
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -359,204 +254,6 @@ class InitBriefE2ETests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # W1 — Fragment dedupe with session-context + second concrete recipe
 # ---------------------------------------------------------------------------
-
-class SessionContextDedupTests(unittest.TestCase):
-    """W1: Dedupe when session-context and a second recipe share the same key.
-
-    Both tests hand-craft a resolved-config JSON (two recipes contributing the
-    same keyed fragment) and drive the renderer at its process boundary.
-
-    Asserts:
-    - The keyed bullet appears exactly once (first-wins).
-    - session-context wins over the second recipe (ordering preserved).
-    - The session-context workflow_rules fragment is present and also deduplicated.
-    """
-
-    @classmethod
-    def setUpClass(cls):
-        cls._tmp = tempfile.TemporaryDirectory(prefix="ai-specs-dedup-")
-        cls.addClassCleanup(cls._tmp.cleanup)
-        cls.base = Path(cls._tmp.name)
-        cls.home = _make_home(cls.base)
-
-    def _session_context_conflict_policy_frags(self):
-        """Fragment list matching catalog/recipes/session-context/recipe.toml [provides.brief]."""
-        return [
-            {
-                "key": "conflict-policy-source-authority",
-                "text": (
-                    "Current explicit human instruction controls the immediate scope "
-                    "unless it conflicts with safety, secrets, or a higher-authority project rule."
-                ),
-            },
-            {
-                "key": "conflict-policy-source-hierarchy",
-                "text": (
-                    "Tracker controls work state; vault controls canonical decisions and handoffs; "
-                    "repo docs and manifests control versioned project contracts. "
-                    "Agent plans are lowest authority until accepted and recorded."
-                ),
-            },
-        ]
-
-    def _resolved(self, enabled, recipes):
-        return {"enabled": enabled, "recipes": recipes}
-
-    def _render_resolved(self, resolved: dict) -> str:
-        """Render AGENTS.md at the renderer's process boundary from a crafted config."""
-        toml_path = self.base / f"{self.id().rsplit('.', 1)[-1]}.toml"
-        output_path = self.base / f"{self.id().rsplit('.', 1)[-1]}.out.md"
-        resolved_path = self.base / f"{self.id().rsplit('.', 1)[-1]}.json"
-        toml_path.write_text(
-            "[project]\nname = 'dedup-fixture'\n\n"
-            "[brief]\n"
-            "intro = 'Dedup fixture project.'\n"
-            "purpose = 'Testing fragment dedup with session-context.'\n"
-        )
-        resolved_path.write_text(json.dumps(resolved))
-        proc = _run_internal(
-            self.home, "agents-render.py", str(toml_path), str(output_path),
-            "--resolved-config", str(resolved_path),
-            base=self.base,
-        )
-        self.assertEqual(
-            proc.returncode, 0,
-            f"agents-render failed:\n{proc.stderr}\n{proc.stdout}",
-        )
-        return output_path.read_text()
-
-    def test_session_context_key_wins_over_second_recipe(self):
-        """W1 core: session-context and a second recipe both provide
-        key='conflict-policy-source-authority'. The renderer must emit each
-        session-context keyed bullet exactly once with session-context's
-        wording (first-wins)."""
-        # TRIAGE: ai-specs sync — the CLI derives the resolved config from the
-        # project manifest, so two recipes sharing one keyed fragment can only
-        # be exercised at the renderer's --resolved-config process boundary.
-        resolved = self._resolved(
-            ["session-context", "recipe-extra"],
-            {
-                "session-context": {
-                    "brief_fragments": {
-                        "conflict_policy": self._session_context_conflict_policy_frags()
-                    }
-                },
-                "recipe-extra": {
-                    "brief_fragments": {
-                        "conflict_policy": [
-                            {
-                                "key": "conflict-policy-source-authority",
-                                "text": "Extra recipe override — MUST NOT appear.",
-                            }
-                        ]
-                    }
-                },
-            },
-        )
-        content = self._render_resolved(resolved)
-
-        # Each session-context keyed bullet appears exactly once (the two unique
-        # keys survive; no third duplicate from recipe-extra)
-        session_bullet = (
-            "Current explicit human instruction controls the immediate scope "
-            "unless it conflicts with safety, secrets, or a higher-authority project rule."
-        )
-        hierarchy_bullet = (
-            "Tracker controls work state; vault controls canonical decisions and handoffs; "
-            "repo docs and manifests control versioned project contracts. "
-            "Agent plans are lowest authority until accepted and recorded."
-        )
-        self.assertEqual(
-            content.count(session_bullet), 1,
-            f"session-context source-authority bullet must appear exactly once.\nContent:\n{content}",
-        )
-        self.assertEqual(
-            content.count(hierarchy_bullet), 1,
-            f"session-context source-hierarchy bullet must appear exactly once.\nContent:\n{content}",
-        )
-        # second recipe duplicate must be suppressed
-        self.assertNotIn(
-            "MUST NOT appear",
-            content,
-            "recipe-extra override must be suppressed by first-wins key dedup",
-        )
-
-    def test_session_context_key_dedup_appears_exactly_once_in_full_render(self):
-        """W1 end-to-end: full render with session-context + second recipe sharing key.
-        The conflict_policy bullet must appear exactly once in the rendered AGENTS.md."""
-        # TRIAGE: ai-specs sync — a hand-crafted resolved-config JSON cannot be
-        # produced by any verb (sync always derives it from the manifest), so
-        # this full-render dedup contract stays at the renderer's process
-        # boundary.
-        session_context_bullet = (
-            "Current explicit human instruction controls the immediate scope "
-            "unless it conflicts with safety, secrets, or a higher-authority project rule."
-        )
-        resolved = {
-            "enabled": ["session-context", "recipe-extra"],
-            "recipes": {
-                "session-context": {
-                    "brief_fragments": {
-                        "conflict_policy": self._session_context_conflict_policy_frags(),
-                        "workflow_rules": [
-                            {
-                                "key": None,
-                                "text": (
-                                    "A session works on one explicit user request or tracker card; "
-                                    "resolve focus from memory and tracker before starting."
-                                ),
-                            }
-                        ],
-                    }
-                },
-                "recipe-extra": {
-                    "brief_fragments": {
-                        "conflict_policy": [
-                            {
-                                "key": "conflict-policy-source-authority",
-                                "text": "Extra recipe override — MUST NOT appear.",
-                            }
-                        ],
-                        "workflow_rules": [
-                            {
-                                "key": None,
-                                "text": (
-                                    "A session works on one explicit user request or tracker card; "
-                                    "resolve focus from memory and tracker before starting."
-                                ),
-                            }
-                        ],
-                    }
-                },
-            },
-            "bindings": {},
-        }
-
-        content = self._render_resolved(resolved)
-
-        # Key-dedup: session-context wording appears exactly once
-        self.assertEqual(
-            content.count(session_context_bullet),
-            1,
-            f"session-context source-authority bullet must appear exactly once.\nContent:\n{content}",
-        )
-        # Override from second recipe must not appear at all
-        self.assertNotIn(
-            "MUST NOT appear",
-            content,
-            "recipe-extra duplicate bullet must be suppressed by key dedup",
-        )
-        # Exact-string dedup: shared workflow_rules text appears exactly once
-        session_wf = (
-            "A session works on one explicit user request or tracker card; "
-            "resolve focus from memory and tracker before starting."
-        )
-        self.assertEqual(
-            content.count(session_wf),
-            1,
-            f"Shared workflow_rules bullet must appear exactly once (exact-string dedup).\nContent:\n{content}",
-        )
-
 
 # ---------------------------------------------------------------------------
 # W2 — Sync-side marker preservation

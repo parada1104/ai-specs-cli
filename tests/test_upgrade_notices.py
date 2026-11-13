@@ -210,29 +210,6 @@ class UpgradeNoticeTests(UpgradeOutputTests):
         self.assertNotIn("What changed", result.stdout)
         self.assertNotIn("Traceback", result.stdout + result.stderr)
 
-    def test_missing_parser_does_not_break_the_upgrade(self):
-        home = self.fake_home()
-        ai_specs, bare = self.setup_install(home, version="0.21.0")
-        # GO-20 U2e: the shared fixture no longer seeds the Python parser. This test
-        # seeds it into the base install and origin so the mutation below has a file to remove.
-        parser = ai_specs / "lib" / "_internal" / "changelog.py"
-        parser.parent.mkdir(parents=True)
-        parser.write_bytes((ROOT / "lib" / "_internal" / "changelog.py").read_bytes())
-        run(["git", "add", "-A"], cwd=ai_specs)
-        run(["git", "commit", "-m", "seed parser"], cwd=ai_specs)
-        run(["git", "push", "origin", "main"], cwd=ai_specs)
-        self.publish_mutated(
-            ai_specs,
-            bare,
-            "0.22.0",
-            lambda c: (c / "lib" / "_internal" / "changelog.py").unlink(),
-        )
-
-        result = self.upgrade(home)
-        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
-        self.assertIn("Upgraded", result.stdout)
-        self.assertNotIn("Traceback", result.stdout + result.stderr)
-
 
 if __name__ == "__main__":
     unittest.main()
