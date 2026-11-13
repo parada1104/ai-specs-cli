@@ -69,7 +69,6 @@ class InstallNarrowCheckoutTests(unittest.TestCase):
             "AI_SPECS_REF": "main",
             "AI_SPECS_RELEASE_BASE": assets.as_uri(),
             "AI_SPECS_TRUST_ROOT_FILE": str(home / "bin" / "SHA256SUMS"),
-            "AI_SPECS_SKIP_TUI_DEPS": "1",
             "LC_ALL": "C",
             "LANG": "C",
         }

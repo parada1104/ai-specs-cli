@@ -744,118 +744,135 @@ func TestLedgerReconcileRejectsNonRegularManifest(t *testing.T) {
 	}
 }
 
-// fakeManifestParser shadows python3 on PATH with one shell script, so the
-// parser's failure modes are exercised without touching the real interpreter.
-func fakeManifestParser(t *testing.T, script string) {
+// pythonShimOnPath puts a python3 shim first on PATH that records every
+// invocation and fails loudly, and returns the record file. A seam that still
+// reaches for an ambient interpreter cannot pass unnoticed; a seam that parses
+// in process never creates the file.
+func pythonShimOnPath(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "python3"), []byte("#!/bin/sh\n"+script), 0o700); err != nil {
+	record := filepath.Join(t.TempDir(), "python3-calls")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + record + "\n" +
+		"echo 'python3 must not be invoked' >&2\n" +
+		"exit 97\n"
+	if err := os.WriteFile(filepath.Join(dir, "python3"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return record
 }
 
-// fakeManifestParserInDir shadows python3 on PATH with one shell script written
-// into dir (used to place the interpreter inside the project root for R1-001).
-func fakeManifestParserInDir(t *testing.T, dir, script string) {
+// pythonInvocations reads the shim's record: empty means the interpreter was
+// never executed.
+func pythonInvocations(t *testing.T, record string) string {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, "python3"), []byte("#!/bin/sh\n"+script), 0o700); err != nil {
+	data, err := os.ReadFile(record)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return string(data)
 }
 
-// TestLedgerReconcileIsolatesTheManifestInterpreter pins R1-001: the manifest
-// parser runs the ambient interpreter isolated and never an interpreter the
-// repository itself supplies, so repository-controlled or ambient module
-// shadowing cannot execute arbitrary code during --reconcile.
-func TestLedgerReconcileIsolatesTheManifestInterpreter(t *testing.T) {
-	t.Run("interpreter inside the project root is refused", func(t *testing.T) {
-		root := t.TempDir()
-		fakeManifestParserInDir(t, root, "echo '{}'\n")
-		_, err := readManifestRecipes(writeReconcileManifest(t, root, reconcileManifestBody))
-		if err == nil || !strings.Contains(err.Error(), "resolves inside the project root") {
-			t.Fatalf("error = %v, want an in-root interpreter refusal", err)
-		}
-	})
-
-	t.Run("parser runs isolated (-I -B)", func(t *testing.T) {
-		fakeManifestParser(t, `if [ "$1" = "-I" ] && [ "$2" = "-B" ]; then echo '{"recipes":{}}'; else exit 9; fi`)
-		recipes, err := readManifestRecipes(writeReconcileManifest(t, t.TempDir(), reconcileManifestBody))
-		if err != nil {
-			t.Fatalf("readManifestRecipes: %v, want an isolated parser invocation", err)
-		}
-		if _, ok := recipes["recipes"]; !ok {
-			t.Fatalf("recipes = %v, want the parsed manifest table shape", recipes)
-		}
-	})
-
-	t.Run("ambient PYTHONPATH cannot shadow stdlib imports", func(t *testing.T) {
-		shadow := t.TempDir()
-		if err := os.WriteFile(filepath.Join(shadow, "json.py"), []byte("raise RuntimeError('shadowed')\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv("PYTHONPATH", shadow)
-		recipes, err := readManifestRecipes(writeReconcileManifest(t, t.TempDir(), reconcileManifestBody))
-		if err != nil {
-			t.Fatalf("readManifestRecipes: %v, want isolation to ignore the shadowing module", err)
-		}
-		if _, ok := recipes["trello-mcp-workflow"]; !ok {
-			t.Fatalf("recipes = %v, want the parsed recipe table", recipes)
-		}
-	})
+// TestLedgerReconcileNeverInvokesAnInterpreter pins GO-20 U2e T5: the manifest
+// is acquired by the in-process Go parser, so --reconcile needs no ambient
+// python3. The shim fails loudly if anything still reaches for an interpreter,
+// which is exactly what the retired subprocess seam did.
+func TestLedgerReconcileNeverInvokesAnInterpreter(t *testing.T) {
+	record := pythonShimOnPath(t)
+	recipes, err := readManifestRecipes(writeReconcileManifest(t, t.TempDir(), reconcileManifestBody))
+	if err != nil {
+		t.Fatalf("readManifestRecipes: %v, want the manifest parsed in process", err)
+	}
+	if calls := pythonInvocations(t, record); calls != "" {
+		t.Fatalf("python3 was invoked: %q, want none", calls)
+	}
+	recipe, ok := recipes[reconcileRecipeID]
+	if !ok {
+		t.Fatalf("recipes = %v, want the parsed recipe table", recipes)
+	}
+	if recipe.Enabled == nil || !*recipe.Enabled {
+		t.Fatalf("enabled = %v, want the declared true", recipe.Enabled)
+	}
+	if _, ok := recipe.Config["reconcile"]; !ok {
+		t.Fatalf("config = %v, want the reconcile sub-table as raw JSON", recipe.Config)
+	}
 }
 
-// TestLedgerReconcileBoundsTheManifestParser pins F5: the parser subprocess is
-// bounded in time and output, and its failure is reported as bounded detail
-// rather than raw parser output.
-func TestLedgerReconcileBoundsTheManifestParser(t *testing.T) {
-	t.Run("hung parser is killed", func(t *testing.T) {
-		fakeManifestParser(t, "/bin/sleep 30\n")
-		start := time.Now()
-		_, err := readManifestRecipes(writeReconcileManifest(t, t.TempDir(), reconcileManifestBody))
-		elapsed := time.Since(start)
-		if err == nil || !strings.Contains(err.Error(), "timed out") {
-			t.Fatalf("error = %v, want a timed-out parser failure", err)
+// TestLedgerReconcileReportsAnInvalidManifestWithoutEchoingIt preserves the
+// acquisition error contract the subprocess seam pinned: an unparseable
+// manifest keeps the frozen framing, and neither manifest content nor a parser
+// traceback is echoed back through the error.
+func TestLedgerReconcileReportsAnInvalidManifestWithoutEchoingIt(t *testing.T) {
+	body := "[recipes.trello-mcp-workflow]\nboard_id = \"secret-board\"\nthis is not toml\n"
+	_, err := readManifestRecipes(writeReconcileManifest(t, t.TempDir(), body))
+	if err == nil {
+		t.Fatal("error = nil, want the parse failure reported")
+	}
+	if !strings.Contains(err.Error(), "not valid TOML") {
+		t.Fatalf("error = %v, want an actionable invalid-manifest message", err)
+	}
+	for _, leak := range []string{"Traceback", "secret-board", "board_id", "not toml", "\n"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Fatalf("error = %q, want no leaked manifest content (%q)", err, leak)
 		}
-		// The documented bound is the deadline plus the I/O drain; anything near
-		// the child's own 30s runtime means the execution was not bounded.
-		if elapsed >= 2*manifestParseTimeout+time.Second {
-			t.Fatalf("elapsed = %s, want the call bounded by 2x%s", elapsed, manifestParseTimeout)
-		}
-	})
+	}
+}
 
-	t.Run("oversized stdout is refused", func(t *testing.T) {
-		fakeManifestParser(t, "dd if=/dev/zero bs=1024 count=2048 2>/dev/null\n")
-		_, err := readManifestRecipes(writeReconcileManifest(t, t.TempDir(), reconcileManifestBody))
-		if err == nil || !strings.Contains(err.Error(), "more than") {
-			t.Fatalf("error = %v, want a bounded-output failure", err)
+// TestLedgerReconcileParsesTheManifestSubset preserves what the retired
+// interpreter read: the [recipes] table with multiline strings, arrays of
+// tables, inline tables, a hex integer and non-ASCII text, plus the {} fallback
+// when [recipes] is absent or is not a table.
+func TestLedgerReconcileParsesTheManifestSubset(t *testing.T) {
+	body := "[recipes.demo]\n" +
+		"enabled = false\n" +
+		"[recipes.demo.config]\n" +
+		"note = \"\"\"line one\nline two\"\"\"\n" +
+		"mask = 0x1F\n" +
+		"threshold = 1.5\n" +
+		"labels = [\"a\", \"b\"]\n" +
+		"inline = { mode = \"fast\", retries = 3 }\n" +
+		"title = \"cl\u00f3set\"\n" +
+		"[[recipes.demo.config.rows]]\n" +
+		"id = 1\n" +
+		"[[recipes.demo.config.rows]]\n" +
+		"id = 2\n"
+	recipes, err := readManifestRecipes(writeReconcileManifest(t, t.TempDir(), body))
+	if err != nil {
+		t.Fatalf("readManifestRecipes: %v", err)
+	}
+	demo, ok := recipes["demo"]
+	if !ok || demo.Enabled == nil || *demo.Enabled {
+		t.Fatalf("demo = %#v, want enabled = false preserved", demo)
+	}
+	for key, want := range map[string]string{
+		"note":   "\"line one\\nline two\"",
+		"mask":   "31",
+		"labels": "[\"a\",\"b\"]",
+		"inline": "{\"mode\":\"fast\",\"retries\":3}",
+		"title":  "\"cl\\u00f3set\"",
+	} {
+		if got := string(demo.Config[key]); got != want {
+			t.Errorf("config %q = %s, want %s", key, got, want)
 		}
-	})
-
-	t.Run("failing parser leaks no output", func(t *testing.T) {
-		fakeManifestParser(t, "echo 'Traceback (most recent call last):' >&2\necho 'board_id = \"secret-board\"' >&2\nexit 1\n")
-		_, err := readManifestRecipes(writeReconcileManifest(t, t.TempDir(), reconcileManifestBody))
-		if err == nil {
-			t.Fatal("error = nil, want the parser failure reported")
+	}
+	for _, key := range []string{"threshold", "rows"} {
+		if !json.Valid(demo.Config[key]) {
+			t.Errorf("config %q = %s, want valid JSON", key, demo.Config[key])
 		}
-		if !strings.Contains(err.Error(), "not valid TOML") {
-			t.Fatalf("error = %v, want an actionable invalid-manifest message", err)
+	}
+	for _, absent := range []string{"[project]\nname = \"x\"\n", "recipes = 5\n"} {
+		empty, err := readManifestRecipes(writeReconcileManifest(t, t.TempDir(), absent))
+		if err != nil {
+			t.Fatalf("readManifestRecipes(%q): %v", absent, err)
 		}
-		for _, leak := range []string{"Traceback", "secret-board", "board_id", "\n"} {
-			if strings.Contains(err.Error(), leak) {
-				t.Fatalf("error = %q, want no leaked parser output (%q)", err, leak)
-			}
+		if len(empty) != 0 {
+			t.Fatalf("recipes = %v, want the empty-table fallback", empty)
 		}
-	})
-
-	t.Run("missing parser is named", func(t *testing.T) {
-		t.Setenv("PATH", t.TempDir())
-		_, err := readManifestRecipes(writeReconcileManifest(t, t.TempDir(), reconcileManifestBody))
-		if err == nil || !strings.Contains(err.Error(), "unavailable") {
-			t.Fatalf("error = %v, want a missing-parser failure", err)
-		}
-	})
+	}
 }
 
 // TestLedgerReconcileDoesNotRecordConflict pins that the documented read-only

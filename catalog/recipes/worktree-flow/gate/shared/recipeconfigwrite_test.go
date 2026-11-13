@@ -2,6 +2,8 @@ package shared
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -358,5 +360,166 @@ func TestTomlValueInlineNonBareKeysQuoted(t *testing.T) {
 	want = `{ opts = [{ "a b" = true }] }`
 	if got != want {
 		t.Errorf("tomlValue(deep) = %q, want %q", got, want)
+	}
+}
+
+// --- GO-20 U2e T5: the TOML acquisition seam runs in process ---
+
+// recipeConfigPythonShim puts a python3 shim first on PATH that records every
+// invocation and fails loudly, and returns the record file.
+func recipeConfigPythonShim(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	record := filepath.Join(t.TempDir(), "python3-calls")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + record + "\n" +
+		"echo 'python3 must not be invoked' >&2\n" +
+		"exit 97\n"
+	if err := os.WriteFile(filepath.Join(dir, "python3"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return record
+}
+
+func recipeConfigPythonCalls(t *testing.T, record string) string {
+	t.Helper()
+	data, err := os.ReadFile(record)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// TestRecipeConfigSeamNeverInvokesAnInterpreter pins that reading the recipe
+// config table, parsing an inline value and validating the candidate text all
+// run in process: no ambient python3 is executed by the writer.
+func TestRecipeConfigSeamNeverInvokesAnInterpreter(t *testing.T) {
+	record := recipeConfigPythonShim(t)
+	manifest := []byte("[recipes.reconcile]\nenabled = true\n\n[recipes.reconcile.config]\nmode = \"fast\"\n")
+	config, err := readRecipeConfigTable(manifest, "reconcile")
+	if err != nil {
+		t.Fatalf("readRecipeConfigTable: %v", err)
+	}
+	if got := config.Values()["mode"]; got != "fast" {
+		t.Fatalf("mode = %v, want fast", got)
+	}
+	if _, err := parseInlineTomlValue(`{ mode = "fast" }`); err != nil {
+		t.Fatalf("parseInlineTomlValue: %v", err)
+	}
+	if err := validateTomlText(string(manifest)); err != nil {
+		t.Fatalf("validateTomlText: %v", err)
+	}
+	if calls := recipeConfigPythonCalls(t, record); calls != "" {
+		t.Fatalf("python3 was invoked: %q, want none", calls)
+	}
+}
+
+// TestReadRecipeConfigTableKeepsTheReferenceDomain pins the values the retired
+// reader produced: ordered tables, json.Number for numbers, and the reference's
+// two swallows (an unparseable manifest and a non-table config yield {}).
+func TestReadRecipeConfigTableKeepsTheReferenceDomain(t *testing.T) {
+	manifest := []byte("[recipes.reconcile.config]\n" +
+		"zeta = \"last\"\n" +
+		"alpha = 0x1F\n" +
+		"ratio = 1.5\n" +
+		"flag = true\n" +
+		"items = [1, \"two\"]\n" +
+		"nested = { mode = \"fast\" }\n")
+	config, err := readRecipeConfigTable(manifest, "reconcile")
+	if err != nil {
+		t.Fatalf("readRecipeConfigTable: %v", err)
+	}
+	if keys := config.Keys(); len(keys) != 6 || keys[0] != "zeta" || keys[5] != "nested" {
+		t.Fatalf("keys = %v, want declaration order preserved", keys)
+	}
+	if got := config.Values()["alpha"]; !pyValueEqual(got, json.Number("31")) {
+		t.Fatalf("alpha = %#v, want json.Number(\"31\")", got)
+	}
+	if got := config.Values()["ratio"]; !pyValueEqual(got, json.Number("1.5")) {
+		t.Fatalf("ratio = %#v, want json.Number(\"1.5\")", got)
+	}
+	if got, _ := config.Values()["nested"].(*OrderedMap); got == nil {
+		t.Fatalf("nested = %#v, want an ordered table", config.Values()["nested"])
+	}
+
+	for _, tc := range []struct {
+		name string
+		text string
+	}{
+		{"unparseable manifest", "[recipes.reconcile.config\nmode = \"fast\"\n"},
+		{"config is not a table", "[recipes.reconcile]\nconfig = 5\n"},
+		{"recipe absent", "[recipes.other]\nenabled = true\n"},
+		{"recipes not a table", "recipes = 5\n"},
+	} {
+		config, err := readRecipeConfigTable([]byte(tc.text), "reconcile")
+		if err != nil {
+			t.Fatalf("%s: readRecipeConfigTable: %v", tc.name, err)
+		}
+		if len(config.Keys()) != 0 {
+			t.Fatalf("%s: config = %v, want the empty-table fallback", tc.name, config.Values())
+		}
+	}
+
+	if _, err := readRecipeConfigTable([]byte("mode = \"\xff\"\n"), "reconcile"); err == nil {
+		t.Fatal("error = nil, want invalid UTF-8 reported")
+	}
+}
+
+// TestParseInlineTomlValueKeepsTheReferenceDomain pins the inline-value reader:
+// scalars, arrays, inline tables and the reference's default=str lowering of a
+// TOML date/time to a Python str.
+func TestParseInlineTomlValueKeepsTheReferenceDomain(t *testing.T) {
+	cases := []struct {
+		text string
+		want any
+	}{
+		{`"fast"`, "fast"},
+		{`31`, json.Number("31")},
+		{`true`, true},
+		{`[1, "two"]`, []any{json.Number("1"), "two"}},
+	}
+	for _, tc := range cases {
+		got, err := parseInlineTomlValue(tc.text)
+		if err != nil {
+			t.Fatalf("parseInlineTomlValue(%s): %v", tc.text, err)
+		}
+		if !pyValueEqual(got, tc.want) {
+			t.Fatalf("parseInlineTomlValue(%s) = %#v, want %#v", tc.text, got, tc.want)
+		}
+	}
+	table, err := parseInlineTomlValue(`{ mode = "fast" }`)
+	if err != nil {
+		t.Fatalf("parseInlineTomlValue(inline table): %v", err)
+	}
+	if _, ok := table.(*OrderedMap); !ok {
+		t.Fatalf("parseInlineTomlValue(inline table) = %#v, want an ordered table", table)
+	}
+	stamp, err := parseInlineTomlValue("1979-05-27T07:32:00Z")
+	if err != nil {
+		t.Fatalf("parseInlineTomlValue(datetime): %v", err)
+	}
+	text, ok := stamp.(string)
+	if !ok || !strings.HasPrefix(text, "1979-05-27 07:32:00") {
+		t.Fatalf("parseInlineTomlValue(datetime) = %#v, want the reference's str() lowering", stamp)
+	}
+	if _, err := parseInlineTomlValue(`"unterminated`); err == nil {
+		t.Fatal("error = nil, want the unparseable inline value reported")
+	}
+}
+
+// TestValidateTomlTextIsThePostWriteGate pins the final validation: valid text
+// passes, invalid text is refused with the frozen framing upstream.
+func TestValidateTomlTextIsThePostWriteGate(t *testing.T) {
+	if err := validateTomlText("[recipes.x.config]\nmode = \"fast\"\n"); err != nil {
+		t.Fatalf("validateTomlText(valid): %v", err)
+	}
+	for _, bad := range []string{"[recipes.x.config\nmode = 1\n", "[recipes.x]\nmode = \"unterminated\n", "mode = "} {
+		if err := validateTomlText(bad); err == nil {
+			t.Fatalf("validateTomlText(%q) = nil, want a refusal", bad)
+		}
 	}
 }

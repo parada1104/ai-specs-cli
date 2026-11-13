@@ -18,7 +18,6 @@
 #   AI_SPECS_REF=tag-or-branch  Git ref to checkout (default: main)
 #   AI_SPECS_RELEASE_BASE=url   Release download base (default: this repo's releases for VERSION)
 #   AI_SPECS_TRUST_ROOT_FILE=p  Committed digests to verify against (default: <home>/bin/SHA256SUMS)
-#   AI_SPECS_SKIP_TUI_DEPS=1    Skip the still-Python TUI dependency step (tests)
 
 set -e
 
@@ -41,11 +40,10 @@ echo -e "Bin:  ${BOLD}$INSTALL_BIN/ai-specs${NC}"
 echo ""
 
 command -v git >/dev/null 2>&1 || { echo -e "${RED}error: git is required${NC}" >&2; exit 1; }
-command -v python3 >/dev/null 2>&1 || { echo -e "${RED}error: python3 is required${NC}" >&2; exit 1; }
 
 # 1. Clone or update the repo
 if [ -d "$AI_SPECS_HOME/.git" ]; then
-    echo -e "${YELLOW}[1/3]${NC} Updating existing install at $AI_SPECS_HOME"
+    echo -e "${YELLOW}[1/2]${NC} Updating existing install at $AI_SPECS_HOME"
 
     # Detect dirty working tree before attempting any update.
     # Mode-only dirt (e.g. chmod applied to 100644 files by a previous installer)
@@ -90,7 +88,7 @@ elif [ -e "$AI_SPECS_HOME" ]; then
     echo -e "${RED}error: $AI_SPECS_HOME exists but is not a git repo${NC}" >&2
     exit 1
 else
-    echo -e "${YELLOW}[1/3]${NC} Cloning $AI_SPECS_REPO → $AI_SPECS_HOME"
+    echo -e "${YELLOW}[1/2]${NC} Cloning $AI_SPECS_REPO → $AI_SPECS_HOME"
     # Partial clone (blobs on demand) keeps the full commit graph, which
     # `ai-specs upgrade` needs for its `merge-base --is-ancestor` divergence
     # guard. A shallow clone would break that check, so it is not used here.
@@ -192,25 +190,7 @@ narrow_checkout "$AI_SPECS_HOME" || true
 chmod +x "$AI_SPECS_HOME/bundled-skills/skill-sync/assets/"*.sh 2>/dev/null || true
 chmod +x "$AI_SPECS_HOME/bundled-skills/skill-sync/assets/"*.py 2>/dev/null || true
 
-# 2. Install Python dependencies (Rich + Questionary for the interactive init TUI)
-VENDOR_DIR="$AI_SPECS_HOME/lib/_vendor"
-_has_deps() {
-    python3 -c "import rich, questionary" 2>/dev/null && return 0
-    [ -d "$VENDOR_DIR" ] && python3 -c "import sys; sys.path.insert(0, '$VENDOR_DIR'); import rich, questionary" 2>/dev/null && return 0
-    return 1
-}
-if [ -n "${AI_SPECS_SKIP_TUI_DEPS:-}" ]; then
-    echo "  skipping TUI deps (AI_SPECS_SKIP_TUI_DEPS is set)"
-elif _has_deps; then
-    echo "  TUI deps (rich + questionary) already available"
-else
-    echo -e "${YELLOW}[2/3]${NC} Installing TUI dependencies (rich + questionary)"
-    python3 -m pip install --upgrade --quiet --target "$VENDOR_DIR" 'rich>=13.0.0,<15' 'questionary>=2.0.0,<2.1' || {
-        echo -e "${YELLOW}warning:${NC} could not install TUI deps; init will prompt on first use or fall back to classic mode"
-    }
-fi
-
-# 3. Install the entrypoint as the compiled binary (GO-20 U1b-2b).
+# 2. Install the entrypoint as the compiled binary (GO-20 U1b-2b).
 #
 #    The checkout above stays the data home: the trust anchor (the committed
 #    digests), the catalogue and the still-shell verbs. What changes is the
@@ -219,7 +199,7 @@ fi
 #    fallback; either way the bytes land atomically, so a failure never leaves a
 #    broken or unverified entry behind.
 VERSION="$(cat "$AI_SPECS_HOME/VERSION" 2>/dev/null || echo "unknown")"
-echo -e "${YELLOW}[3/3]${NC} Installing the entrypoint"
+echo -e "${YELLOW}[2/2]${NC} Installing the entrypoint"
 
 _platform_asset() {
     case "$(uname -s)" in
