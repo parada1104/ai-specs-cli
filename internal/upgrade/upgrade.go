@@ -207,7 +207,15 @@ func binaryEntry(inst Install) bool {
 	if err != nil {
 		return false
 	}
-	return filepath.Clean(resolved) == filepath.Clean(inst.BinaryPath)
+	// T9: the running executable may be named through a symlinked directory
+	// component (a symlinked home); ResolveBinary keeps that spelling — frozen
+	// parity with lib/upgrade.sh resolve_binary, — so resolve this side too, or a
+	// binary install under a symlinked home never classifies as binary.
+	binaryPath, err := filepath.EvalSymlinks(inst.BinaryPath)
+	if err != nil {
+		binaryPath = inst.BinaryPath
+	}
+	return filepath.Clean(resolved) == filepath.Clean(binaryPath)
 }
 
 // Detect ports the five lib/upgrade.sh install checks and classifies the
