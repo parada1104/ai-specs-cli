@@ -119,10 +119,6 @@ class TrackerCardGateHookTests(unittest.TestCase):
             GATE.read_text()
             .replace("__TRACKER_CARD_GATE_MODE__", mode)
             .replace("__TRACKER_CLI_HOME__", cli_home)
-            # The legacy lib/_internal stamp is a dead placeholder in the hook
-            # (PR4b deletes it with lib/); substitute it so no test copy carries
-            # the raw token.
-            .replace("__TRACKER_LIB_INTERNAL__", "")
         )
         stamped.chmod(0o755)
         return stamped

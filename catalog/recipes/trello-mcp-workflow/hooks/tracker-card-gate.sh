@@ -32,7 +32,6 @@
 # Tokens stamped at sync (gitignored project copy):
 #   __TRACKER_CARD_GATE_MODE__   (raw legacy gate_mode hint; default warn)
 #   __TRACKER_CLI_HOME__         (CLI install home for binary resolution)
-#   __TRACKER_LIB_INTERNAL__     (legacy materializer placeholder; not read here)
 #
 # Config / env (all read by Go's ledger-mode resolver, never by this host):
 #   TRACKER_LEDGER_MODE       strongest mode env (always|ask|warn)
@@ -45,7 +44,6 @@
 
 stamped_gate_mode="__TRACKER_CARD_GATE_MODE__"
 stamped_cli_home="__TRACKER_CLI_HOME__"
-stamped_lib_internal="__TRACKER_LIB_INTERNAL__"
 prod_dirs="${TRACKER_CARD_GATE_PATHS:-lib catalog bin src}"
 [ -n "${prod_dirs// /}" ] || prod_dirs="lib catalog bin src"
 

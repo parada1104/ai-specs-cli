@@ -43,7 +43,6 @@ const (
 	hookGateImplToken     = "__WORKTREE_GATE_IMPL__"
 	hookGateVersionToken  = "__WORKTREE_GATE_VERSION__"
 	hookCLIHomeToken      = "__TRACKER_CLI_HOME__"
-	hookLibInternalToken  = "__TRACKER_LIB_INTERNAL__"
 )
 
 // hookGateModeTokens pairs each gate-mode token with its default: unlike the
@@ -97,7 +96,7 @@ func HookRelPathEscapes(recipeID, script string) bool {
 // exact historical refusal when the configured value is not allowed; an
 // absent/empty value falls back to "auto" (Python's `or default`). The gate
 // version is Python-resolved and substituted verbatim (Go never invents a
-// value); the two tracker-home tokens become empty strings without a CLI
+// value); the tracker CLI-home token becomes an empty string without a CLI
 // home, which makes the host skip evidence acquisition (fail open). Rendering
 // is string surgery only: CRLF bytes are never normalized (normalization
 // happens only inside Sha256Bytes).
@@ -140,13 +139,6 @@ func RenderHookGateContent(src []byte, cfg map[string]any, cliHome string, gateV
 	}
 	if strings.Contains(content, hookCLIHomeToken) {
 		replace(hookCLIHomeToken, cliHome)
-	}
-	if strings.Contains(content, hookLibInternalToken) {
-		internal := ""
-		if cliHome != "" {
-			internal = filepath.Join(cliHome, "lib", "_internal")
-		}
-		replace(hookLibInternalToken, internal)
 	}
 	return content, nil
 }
