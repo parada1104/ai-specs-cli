@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import re
 import shutil
 import subprocess
-import sys
-import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +15,6 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
 CATALOG = ROOT / "catalog"
-RECIPE_MATERIALIZE = ROOT / "lib" / "_internal" / "recipe-materialize.py"
 
 SUPPORTED_RUNTIMES = ("claude", "cursor-agent", "opencode", "pi", "omp")
 
@@ -42,14 +38,45 @@ META_PROMPT_RE = re.compile(
     r"(?i)(/plan\b|/build\b|haz un plan|run the /plan|produce planning artifacts only)"
 )
 
+# `write_manifest` writes exactly one [agents].enabled line; the helpers below
+# edit that line in place, because `sync` renders (and therefore wires hooks for)
+# exactly the agents it lists.
+AGENTS_LINE_RE = re.compile(r"^enabled = \[(.*)\]$", re.MULTILINE)
 
-def _load_materialize():
-    spec = importlib.util.spec_from_file_location("recipe_materialize_eval", RECIPE_MATERIALIZE)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+
+def _cli() -> Path:
+    """Native CLI path (built once per process, loud fallback when go is absent)."""
+    from tests import _go_cli
+
+    return _go_cli.cli()
+
+
+def _sync(project_root: Path) -> None:
+    """Run the native `sync`: the one authority that materializes recipes, the
+    lock, the brief and the gitignore/envrc, and fans out to enabled agents."""
+    env = {**os.environ, "AI_SPECS_HOME": str(ROOT)}
+    subprocess.run(
+        [str(_cli()), "sync", str(project_root)],
+        check=True,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+
+def _enabled_agents(project_root: Path) -> list[str]:
+    manifest = project_root / "ai-specs" / "ai-specs.toml"
+    match = AGENTS_LINE_RE.search(manifest.read_text())
+    if match is None:
+        raise RuntimeError(f"no [agents].enabled line in {manifest}")
+    return [a.strip().strip("'\"") for a in match.group(1).split(",") if a.strip()]
+
+
+def _set_enabled_agents(project_root: Path, agents: list[str]) -> None:
+    manifest = project_root / "ai-specs" / "ai-specs.toml"
+    literal = "[" + ", ".join(f"'{a}'" for a in agents) + "]"
+    text = manifest.read_text()
+    manifest.write_text(AGENTS_LINE_RE.sub(f"enabled = {literal}", text, count=1))
 
 
 @dataclass
@@ -90,14 +117,23 @@ def materialize_project(project_root: Path, recipe_id: str, version: str, extra:
         str(ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"),
     )
     write_manifest(project_root, recipe_id=recipe_id, version=version, extra_recipes=extra)
-    mod = _load_materialize()
-    mod.materialize_recipes(project_root, ROOT)
+    # Materialize ONLY: the legacy materializer never fanned out to agents either,
+    # and `sync` wires the runtime hooks of every agent it renders. So the spine
+    # runs with no enabled agents (recipes, lock, brief, gitignore/envrc — all
+    # agent-independent) and the manifest is restored verbatim; the scenario then
+    # opts into one agent's channels through wire_runtime_hooks.
+    agents = _enabled_agents(project_root)
+    _set_enabled_agents(project_root, [])
+    try:
+        _sync(project_root)
+    finally:
+        _set_enabled_agents(project_root, agents)
 
 
-# Eval runtime id → platform agent id (platform.sh / hooks-render use `cursor`).
+# Eval runtime id → platform agent id (the native renderer names it `cursor`).
 RUNTIME_TO_AGENT = {"cursor-agent": "cursor"}
 # Runtimes whose native hook channel exposes no pre-file-write event; a
-# file-write gate hook cannot be wired for them (see hooks-render.py).
+# file-write gate hook cannot be wired for them (internal/sync/hooksrender.go).
 NO_FILE_WRITE_HOOK_RUNTIMES = frozenset({"cursor-agent"})
 
 
@@ -108,29 +144,20 @@ def runtime_to_agent(runtime: str) -> str:
 
 def wire_runtime_hooks(project_root: Path, runtime: str) -> None:
     """Wire enabled recipes' `[[provides.hooks]]` into the runtime's native
-    channel (e.g. `.claude/settings.json` PreToolUse), exactly as
-    `sync-agent.sh` does, so live scenarios exercise runtime hooks and not only
-    the advisory skill/brief layer.
+    channel (e.g. `.claude/settings.json` PreToolUse) by re-syncing with ONLY
+    that agent enabled, so live scenarios exercise runtime hooks and not only the
+    advisory skill/brief layer.
 
-    Safe by construction: `hooks-render.py` skips agents with no runtime-hook
-    target and skips `Edit|Write|MultiEdit|NotebookEdit` matchers for cursor.
+    The native renderer is the single authority for the channel shape. Narrowing
+    `[agents].enabled` to the agent under test keeps the wiring scoped to the
+    runtime the scenario drives (the legacy `hooks-render.py <agent>` argument
+    behaved the same way): no other agent's channel is touched. Safe by
+    construction: the renderer skips agents with no runtime-hook target and skips
+    `Edit|Write|MultiEdit|NotebookEdit` matchers for cursor, which has no
+    pre-file-write event.
     """
-    agent = runtime_to_agent(runtime)
-    mod = _load_materialize()
-    fd, tmp = tempfile.mkstemp(prefix="eval-resolved-hooks-", suffix=".json")
-    os.close(fd)
-    resolved = Path(tmp)
-    try:
-        mod.materialize_recipes(project_root, ROOT, resolved_hooks_out=resolved)
-        hooks_render = ROOT / "lib" / "_internal" / "hooks-render.py"
-        subprocess.run(
-            [sys.executable, str(hooks_render), str(resolved), agent, str(project_root)],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    finally:
-        resolved.unlink(missing_ok=True)
+    _set_enabled_agents(project_root, [runtime_to_agent(runtime)])
+    _sync(project_root)
 
 
 def live_enabled() -> bool:
