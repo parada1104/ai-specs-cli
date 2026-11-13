@@ -5,16 +5,26 @@ package shared
 // materializer share ONE grader of the line-surgery decision.
 //
 // Ported 1:1 from the Python authority lib/_internal/recipe-config-write.py
-// (update_recipe_config). Go owns the line-surgery decision; the standard TOML
-// parser keeps every parse through the bounded embedded-Python seam, so no TOML
-// parser (hand-written subset or new Go dependency) is introduced.
+// (update_recipe_config). Go owns the line-surgery decision AND, since GO-20
+// U2e T5, the three TOML reads it needs (config-table read, inline-value parse,
+// post-write validation): they run in process through the parser appended at
+// the end of this file instead of an embedded Python tomllib subprocess, so the
+// gate binary needs no ambient interpreter for its writer.
+//
+// The parser is a copy of the root module's internal/toml, which the gate
+// module (ai-specs.dev/worktree-gate) can never import: the go tool rejects a
+// cross-module internal/ import. It lives in this file because this file is the
+// only surface both seams share (the gate main package imports this package).
+// internal/toml stays the root module's authoritative copy; the two are the same
+// reader by construction, and a later slice can promote one authoritative home.
 //
 // The seam helpers below are private copies of the gate main package's
 // manifest-acquisition seam (ledger_reconcile.go). The promotion could not
 // share them: the gate's other readers keep their own copies behind separate
 // edit surfaces, and the promoted writer must be reachable from the root module
-// without importing package main. The seam is acquisition plumbing; the writer
-// decision itself exists only here.
+// without importing package main. The remaining subprocess seam
+// (runRecipeConfigPython) now serves only shared/recipe_toml.go's readers and
+// the gate main package's resolved-config and recipe.toml acquisition.
 
 import (
 	"bytes"
@@ -90,46 +100,6 @@ func classifyRecipeConfigParserError(err error) error {
 	return errors.New("standard TOML parser could not be started")
 }
 
-// Embedded reader programs. Each prints one JSON object: {"config": ...},
-// {"value": ...} or {"ok": ...} on success, {"error": "<message>"} on a
-// failure the Python reference propagates. The parser itself is the trust
-// boundary: isolated (-I -B) stdlib tomllib only, no repository code.
-const recipeConfigReader = `import json, sys, tomllib
-try:
-    text = sys.stdin.buffer.read().decode("utf-8")
-except UnicodeDecodeError as exc:
-    print(json.dumps({"error": str(exc)}))
-else:
-    try:
-        parsed = tomllib.loads(text)
-    except tomllib.TOMLDecodeError:
-        print(json.dumps({"config": {}}))
-    else:
-        recipes = parsed.get("recipes") or {}
-        recipe = recipes.get(sys.argv[1]) if isinstance(recipes, dict) else None
-        config = recipe.get("config") if isinstance(recipe, dict) else None
-        print(json.dumps({"config": config if isinstance(config, dict) else {}}, default=str))
-`
-
-const recipeTomlValueReader = `import json, sys, tomllib
-try:
-    text = sys.stdin.buffer.read().decode("utf-8")
-    value = tomllib.loads("value = " + text + "\n")["value"]
-except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
-    print(json.dumps({"error": str(exc)}))
-else:
-    print(json.dumps({"value": value}, default=str))
-`
-
-const recipeTomlTextValidator = `import json, sys, tomllib
-try:
-    tomllib.loads(sys.stdin.buffer.read().decode("utf-8"))
-except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
-    print(json.dumps({"ok": False, "error": str(exc)}))
-else:
-    print(json.dumps({"ok": True}))
-`
-
 // runRecipeConfigPython runs one embedded reader under bounded execution: a
 // deadline, bounded stdout and stderr, explicit interpreter resolution, and an
 // interpreter refused inside the project root.
@@ -163,78 +133,203 @@ func runRecipeConfigPython(root, program string, args []string, stdin []byte) ([
 	return stdout.buf.Bytes(), nil
 }
 
-// readRecipeConfigTable is _existing_config: the recipe's config table from
-// the manifest text through the standard parser. A manifest that fails TOML
-// parsing yields an empty table ({}), exactly as the Python reference does;
-// every other failure is returned.
-func readRecipeConfigTable(root string, manifestText []byte, recipeID string) (*OrderedMap, error) {
-	out, err := runRecipeConfigPython(root, recipeConfigReader, []string{recipeID}, manifestText)
+// ReadManifestRecipesJSON is the ledger-reconcile manifest reader: the [recipes]
+// table of the manifest at path as one JSON object, {} when the manifest
+// declares none or declares a non-table value under that key. Parsing happens
+// in process, so the gate needs no ambient interpreter.
+func ReadManifestRecipesJSON(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var payload struct {
-		Config json.RawMessage `json:"config"`
-		Error  *string         `json:"error"`
-	}
-	if err := json.Unmarshal(out, &payload); err != nil {
-		return nil, fmt.Errorf("deserialized recipe config: %w", err)
-	}
-	if payload.Error != nil {
-		return nil, errors.New(*payload.Error)
-	}
-	decoded, err := DecodeOrdered(payload.Config)
+	root, err := Parse(data)
 	if err != nil {
-		return nil, fmt.Errorf("deserialized recipe config: %w", err)
+		return nil, manifestNotValid(err)
 	}
-	config, ok := decoded.(*OrderedMap)
+	table, ok := root.Table("recipes")
 	if !ok {
-		config = NewOrderedMap()
+		return []byte("{}"), nil
 	}
-	return config, nil
+	var out strings.Builder
+	if err := appendJSONValue(&out, table); err != nil {
+		return nil, errors.New("the manifest is not valid TOML")
+	}
+	return []byte(out.String()), nil
 }
 
-// parseInlineTomlValue is _parse_inline_value: parse one inline value text
-// through the standard parser. A parse failure returns the exact reference
-// exception text for the caller's refusal message.
-func parseInlineTomlValue(root, valueText string) (any, error) {
-	out, err := runRecipeConfigPython(root, recipeTomlValueReader, nil, []byte(valueText))
-	if err != nil {
-		return nil, err
+// manifestNotValid reports an unusable manifest without echoing its content: the
+// parse diagnostic is reduced to the line it failed on, so no manifest value can
+// reach the error text.
+func manifestNotValid(err error) error {
+	if line := tomlErrorLine(err); line > 0 {
+		return fmt.Errorf("the manifest is not valid TOML (line %d)", line)
 	}
-	var payload struct {
-		Value json.RawMessage `json:"value"`
-		Error *string         `json:"error"`
-	}
-	if err := json.Unmarshal(out, &payload); err != nil {
-		return nil, fmt.Errorf("deserialized inline value: %w", err)
-	}
-	if payload.Error != nil {
-		return nil, errors.New(*payload.Error)
-	}
-	return DecodeOrdered(payload.Value)
+	return errors.New("the manifest is not valid TOML")
 }
 
-// validateTomlText is the final tomllib.loads gate over the candidate text.
-// It returns the exact reference exception text on failure.
-func validateTomlText(root, newText string) error {
-	out, err := runRecipeConfigPython(root, recipeTomlTextValidator, nil, []byte(newText))
-	if err != nil {
-		return err
+// tomlErrorLine extracts N from the parser's "toml: line N: ..." diagnostic.
+func tomlErrorLine(err error) int {
+	const prefix = "toml: line "
+	text := err.Error()
+	if !strings.HasPrefix(text, prefix) {
+		return 0
 	}
-	var payload struct {
-		OK    bool    `json:"ok"`
-		Error *string `json:"error"`
+	rest := text[len(prefix):]
+	end := strings.Index(rest, ":")
+	if end < 0 {
+		return 0
 	}
-	if err := json.Unmarshal(out, &payload); err != nil {
-		return fmt.Errorf("validated TOML text: %w", err)
+	line, convErr := strconv.Atoi(rest[:end])
+	if convErr != nil {
+		return 0
 	}
-	if !payload.OK {
-		if payload.Error != nil {
-			return errors.New(*payload.Error)
+	return line
+}
+
+// appendJSONValue renders a parsed TOML value as JSON. The retired reader let
+// Python's json.dumps build this envelope and Go read it back, so the text has to
+// be equivalent, not identical: no ", " / ": " separators, and the value domain
+// is the same (a TOML date/time has no JSON form there either).
+func appendJSONValue(out *strings.Builder, v any) error {
+	switch t := v.(type) {
+	case *Table:
+		out.WriteByte('{')
+		for i, key := range t.Keys() {
+			if i > 0 {
+				out.WriteByte(',')
+			}
+			out.WriteString(PyJSONString(key))
+			out.WriteByte(':')
+			value, _ := t.Get(key)
+			if err := appendJSONValue(out, value); err != nil {
+				return err
+			}
 		}
-		return errors.New("invalid TOML")
+		out.WriteByte('}')
+	case []*Table:
+		items := make([]any, len(t))
+		for i, item := range t {
+			items[i] = item
+		}
+		return appendJSONValue(out, items)
+	case []any:
+		out.WriteByte('[')
+		for i, item := range t {
+			if i > 0 {
+				out.WriteByte(',')
+			}
+			if err := appendJSONValue(out, item); err != nil {
+				return err
+			}
+		}
+		out.WriteByte(']')
+	case string:
+		out.WriteString(PyJSONString(t))
+	case bool:
+		if t {
+			out.WriteString("true")
+		} else {
+			out.WriteString("false")
+		}
+	case int64:
+		out.WriteString(strconv.FormatInt(t, 10))
+	case BigInt:
+		out.WriteString(string(t))
+	case float64:
+		out.WriteString(formatPyFloat(t))
+	case DateTime:
+		return errors.New("a TOML date/time has no JSON form")
+	default:
+		return fmt.Errorf("cannot render %T as JSON", v)
 	}
 	return nil
+}
+
+// readRecipeConfigTable is _existing_config: the recipe's config table from the
+// manifest text. A manifest that fails to parse yields an empty table ({}),
+// exactly as the Python reference does; only undecodable text is an error.
+func readRecipeConfigTable(manifestText []byte, recipeID string) (*OrderedMap, error) {
+	if !utf8.Valid(manifestText) {
+		return nil, errors.New("the manifest is not valid UTF-8")
+	}
+	config := NewOrderedMap()
+	root, err := Parse(manifestText)
+	if err != nil {
+		return config, nil
+	}
+	recipes, ok := root.Table("recipes")
+	if !ok {
+		return config, nil
+	}
+	recipe, ok := recipes.Table(recipeID)
+	if !ok {
+		return config, nil
+	}
+	table, ok := recipe.Table("config")
+	if !ok {
+		return config, nil
+	}
+	converted, ok := fromTOML(table).(*OrderedMap)
+	if !ok {
+		return config, nil
+	}
+	return converted, nil
+}
+
+// parseInlineTomlValue is _parse_inline_value: parse one inline value text. A
+// parse failure is returned for the caller's refusal message.
+func parseInlineTomlValue(valueText string) (any, error) {
+	root, err := Parse([]byte("value = " + valueText + "\n"))
+	if err != nil {
+		return nil, err
+	}
+	value, _ := root.Get("value")
+	return fromTOML(value), nil
+}
+
+// validateTomlText is the final parse gate over the candidate text.
+func validateTomlText(newText string) error {
+	_, err := Parse([]byte(newText))
+	return err
+}
+
+// fromTOML lowers a parsed TOML value into the JSON domain the writer works in:
+// the shapes DecodeOrdered produced for the reference's json.dumps envelope.
+// Tables keep declaration order, numbers become json.Number carrying Python's
+// text, and a TOML date/time becomes its Python str() because the reference
+// lowered it with json.dumps(default=str) before the writer saw it.
+func fromTOML(v any) any {
+	switch t := v.(type) {
+	case *Table:
+		m := NewOrderedMap()
+		for _, key := range t.Keys() {
+			value, _ := t.Get(key)
+			m.Set(key, fromTOML(value))
+		}
+		return m
+	case []*Table:
+		items := make([]any, 0, len(t))
+		for _, item := range t {
+			items = append(items, fromTOML(item))
+		}
+		return items
+	case []any:
+		items := make([]any, 0, len(t))
+		for _, item := range t {
+			items = append(items, fromTOML(item))
+		}
+		return items
+	case int64:
+		return json.Number(strconv.FormatInt(t, 10))
+	case BigInt:
+		return json.Number(string(t))
+	case float64:
+		return json.Number(formatPyFloat(t))
+	case DateTime:
+		return t.PyStr()
+	default:
+		return v
+	}
 }
 
 // --- Python parity helpers ---
@@ -846,7 +941,7 @@ func setInlinePaths(state *recipeConfigWriteState, idx int, rootKey string, pair
 	if err != nil {
 		return err
 	}
-	parsed, err := parseInlineTomlValue(state.manifestDir, valueText)
+	parsed, err := parseInlineTomlValue(valueText)
 	if err != nil {
 		return fmt.Errorf("cannot read the existing value for '%s': %v", rootKey, err)
 	}
@@ -927,7 +1022,7 @@ func ApplyRecipeConfigWrite(manifestPath, recipeID string, values *OrderedMap) (
 	}
 	originalText := string(original)
 
-	current, err := readRecipeConfigTable(manifestDir, original, recipeID)
+	current, err := readRecipeConfigTable(original, recipeID)
 	if err != nil {
 		return false, "", err
 	}
@@ -1085,7 +1180,7 @@ func ApplyRecipeConfigWrite(manifestPath, recipeID string, values *OrderedMap) (
 		newText = strings.Join(state.lines, "")
 	}
 
-	if err := validateTomlText(manifestDir, newText); err != nil {
+	if err := validateTomlText(newText); err != nil {
 		return false, "invalid TOML after config write: " + err.Error(), nil
 	}
 	if newText != originalText {

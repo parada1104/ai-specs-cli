@@ -4,24 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
-
-// requireRecipeConfigSeam skips the end-to-end parity tests when the standard
-// TOML parser subprocess is unavailable, mirroring the acquisition tests in
-// recipe_toml_test.go.
-func requireRecipeConfigSeam(t *testing.T) {
-	t.Helper()
-	if testing.Short() {
-		t.Skip("recipe config write runs the standard TOML parser subprocess")
-	}
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not available for the TOML seam")
-	}
-}
 
 // writeRecipeConfigFixture writes a manifest fixture and returns its path.
 func writeRecipeConfigFixture(t *testing.T, body string) string {
@@ -83,7 +69,6 @@ func assertFileBytes(t *testing.T, path, want string) {
 // TestRecipeConfigWriteFlatReplace replaces one flat key in place, preserving
 // the line's indent and its TOML-aware inline comment byte for byte.
 func TestRecipeConfigWriteFlatReplace(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	original := "# project manifest\n\n[recipes.reconcile]\nenabled = true\n\n[recipes.reconcile.config]\nmax_age_seconds = 30   # freshness window\nmode = \"fast\"\n"
 	path := writeRecipeConfigFixture(t, original)
 
@@ -101,7 +86,6 @@ func TestRecipeConfigWriteFlatReplace(t *testing.T) {
 // TestRecipeConfigWriteIndentPreserved checks an indented config line keeps
 // its indent and comment across a replacement.
 func TestRecipeConfigWriteIndentPreserved(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	original := "[recipes.reconcile]\nenabled = true\n\n[recipes.reconcile.config]\n  mode = \"fast\"  # operational\n"
 	path := writeRecipeConfigFixture(t, original)
 
@@ -116,7 +100,6 @@ func TestRecipeConfigWriteIndentPreserved(t *testing.T) {
 // TestRecipeConfigWriteMissingFlatKeysAppended appends absent flat keys in
 // sorted order at the end of the config block.
 func TestRecipeConfigWriteMissingFlatKeysAppended(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	original := "[recipes.reconcile]\nenabled = true\n\n[recipes.reconcile.config]\nmode = \"fast\"\n"
 	path := writeRecipeConfigFixture(t, original)
 
@@ -132,7 +115,6 @@ func TestRecipeConfigWriteMissingFlatKeysAppended(t *testing.T) {
 // the recipe is absent, with enabled = true and no version key, handling both
 // trailing-newline shapes of the original manifest.
 func TestRecipeConfigWriteBlockCreation(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	for name, original := range map[string]string{
 		"trailing newline":      "[recipes.other]\nenabled = false\n",
 		"no trailing newline":   "[recipes.other]\nenabled = false",
@@ -158,7 +140,6 @@ func TestRecipeConfigWriteBlockCreation(t *testing.T) {
 // TestRecipeConfigWriteInsertConfigTable inserts the config table at the end
 // of an existing recipe's region.
 func TestRecipeConfigWriteInsertConfigTable(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	original := "[recipes.reconcile]\nenabled = true\n"
 	path := writeRecipeConfigFixture(t, original)
 
@@ -173,7 +154,6 @@ func TestRecipeConfigWriteInsertConfigTable(t *testing.T) {
 // TestRecipeConfigWriteNoOpByteIdentity leaves the manifest untouched when
 // every value already matches, reporting applied=false with no write.
 func TestRecipeConfigWriteNoOpByteIdentity(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	original := "[recipes.reconcile]\nenabled = true\n\n[recipes.reconcile.config]\nmax_age_seconds = 30\nmode = \"fast\"\nreconcile = { max_age_seconds = 30, mode = \"fast\" }\n"
 	path := writeRecipeConfigFixture(t, original)
 
@@ -213,7 +193,6 @@ func TestRecipeConfigWriteEmptyValuesNoOp(t *testing.T) {
 // TestRecipeConfigWriteQuotedRecipeID uses json.dumps quoting for recipe ids
 // that are not bare keys.
 func TestRecipeConfigWriteQuotedRecipeID(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	original := ""
 	path := writeRecipeConfigFixture(t, original)
 	code, out, stderr := runRecipeConfigWriteCLI(t, path, "my.recipe", `{"mode": "fast"}`)
@@ -237,7 +216,6 @@ func TestRecipeConfigWriteQuotedRecipeID(t *testing.T) {
 // TestRecipeConfigWriteHashInsideStrings keeps '#' characters inside string
 // values intact and the real inline comment after them.
 func TestRecipeConfigWriteHashInsideStrings(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	original := "[recipes.reconcile]\nenabled = true\n\n[recipes.reconcile.config]\nmode = \"a # b\"  # tail\n"
 	path := writeRecipeConfigFixture(t, original)
 
@@ -252,7 +230,6 @@ func TestRecipeConfigWriteHashInsideStrings(t *testing.T) {
 // TestRecipeConfigWriteDottedInlineUpdate updates an inline-table root in
 // place, preserving unrelated keys in document order and the line comment.
 func TestRecipeConfigWriteDottedInlineUpdate(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	original := "[recipes.reconcile]\nenabled = true\n\n[recipes.reconcile.config]\nreconcile = { max_age_seconds = 30, mode = \"fast\" }   # inline table\nother = 1\n"
 	path := writeRecipeConfigFixture(t, original)
 
@@ -267,7 +244,6 @@ func TestRecipeConfigWriteDottedInlineUpdate(t *testing.T) {
 // TestRecipeConfigWriteDottedHeaderLeafReplace replaces a leaf inside a
 // header-table root.
 func TestRecipeConfigWriteDottedHeaderLeafReplace(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	original := "[recipes.reconcile]\nenabled = true\n\n[recipes.reconcile.config]\n\n[recipes.reconcile.config.reconcile]\nmax_age_seconds = 30\nmode = \"fast\"\n"
 	path := writeRecipeConfigFixture(t, original)
 
@@ -282,7 +258,6 @@ func TestRecipeConfigWriteDottedHeaderLeafReplace(t *testing.T) {
 // TestRecipeConfigWriteDottedHeaderLeafAppend appends a missing leaf at the
 // end of the header-table root's block.
 func TestRecipeConfigWriteDottedHeaderLeafAppend(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	original := "[recipes.reconcile]\nenabled = true\n\n[recipes.reconcile.config]\n\n[recipes.reconcile.config.reconcile]\nmax_age_seconds = 30\n"
 	path := writeRecipeConfigFixture(t, original)
 
@@ -297,7 +272,6 @@ func TestRecipeConfigWriteDottedHeaderLeafAppend(t *testing.T) {
 // TestRecipeConfigWriteDottedCreateRoot creates a new inline-table root at
 // the end of the config block when the root exists nowhere.
 func TestRecipeConfigWriteDottedCreateRoot(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	original := "[recipes.reconcile]\nenabled = true\n\n[recipes.reconcile.config]\nmode = \"fast\"\n"
 	path := writeRecipeConfigFixture(t, original)
 
@@ -312,7 +286,6 @@ func TestRecipeConfigWriteDottedCreateRoot(t *testing.T) {
 // TestRecipeConfigWriteConflictRefusal refuses whole-table and dotted updates
 // to the same root with the exact reference string, exit 2, and no write.
 func TestRecipeConfigWriteConflictRefusal(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	original := "[recipes.reconcile.config]\nmode = \"fast\"\n"
 	cases := []struct {
 		values string
@@ -338,7 +311,6 @@ func TestRecipeConfigWriteConflictRefusal(t *testing.T) {
 // TestRecipeConfigWriteMultilineRefusals refuses to replace multiline values,
 // for flat keys and inline-table roots alike.
 func TestRecipeConfigWriteMultilineRefusals(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	t.Run("flat", func(t *testing.T) {
 		original := "[recipes.reconcile]\nenabled = true\n\n[recipes.reconcile.config]\nmode = \"\"\"\nopen\n\"\"\"\n"
 		path := writeRecipeConfigFixture(t, original)
@@ -371,7 +343,6 @@ func TestRecipeConfigWriteMultilineRefusals(t *testing.T) {
 // whose intermediate header table does not exist, with the exact reference
 // string. A root that exists nowhere becomes a new inline table instead.
 func TestRecipeConfigWriteDottedTableNotFound(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	t.Run("missing intermediate header", func(t *testing.T) {
 		original := "[recipes.reconcile]\nenabled = true\n\n[recipes.reconcile.config]\n\n[recipes.reconcile.config.opts]\nmode = \"fast\"\n"
 		path := writeRecipeConfigFixture(t, original)
@@ -401,7 +372,6 @@ func TestRecipeConfigWriteDottedTableNotFound(t *testing.T) {
 // TestRecipeConfigWriteRootNotInlineTable refuses a dotted update against a
 // scalar root line.
 func TestRecipeConfigWriteRootNotInlineTable(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	original := "[recipes.reconcile]\nenabled = true\n\n[recipes.reconcile.config]\nreconcile = \"hello\"\n"
 	path := writeRecipeConfigFixture(t, original)
 	code, out, stderr := runRecipeConfigWriteCLI(t, path, "reconcile", `{"reconcile.a": 1}`)
@@ -421,7 +391,6 @@ func TestRecipeConfigWriteRootNotInlineTable(t *testing.T) {
 // table): the exact invalid-TOML refusal fires and the original bytes are
 // preserved on disk.
 func TestRecipeConfigWriteValidateAndRestore(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	original := "recipes = { other = {} }\n"
 	path := writeRecipeConfigFixture(t, original)
 	code, out, stderr := runRecipeConfigWriteCLI(t, path, "new", `{"mode": "fast"}`)
@@ -439,7 +408,6 @@ func TestRecipeConfigWriteValidateAndRestore(t *testing.T) {
 // and string values that need json.dumps escaping (quotes, backslashes,
 // control characters, non-ASCII) against a pre-existing quoted-key line.
 func TestRecipeConfigWriteExoticStrings(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	original := "[recipes.reconcile]\nenabled = true\n\n[recipes.reconcile.config]\n\"my key\" = \"old # value\"  # keep\n"
 	path := writeRecipeConfigFixture(t, original)
 	code, out, stderr := runRecipeConfigWriteCLI(t, path, "reconcile", `{"my key": "new \"quoted\" # value"}`)
@@ -455,7 +423,6 @@ func TestRecipeConfigWriteExoticStrings(t *testing.T) {
 // (the bridge's json.dumps produces \u0001), and the block must be created
 // under the quoted key.
 func TestRecipeConfigWriteControlCharRecipeID(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	path := writeRecipeConfigFixture(t, "")
 	code, out, stderr := runRecipeConfigWriteCLI(t, path, "rec\x01ipe", `{"mode": "fast"}`)
 	if code != 0 {
@@ -504,7 +471,6 @@ func TestRecipeConfigWriteMalformedEnvelope(t *testing.T) {
 // (the post-write validation gate re-parses it) and the quoted keys must
 // survive byte for byte.
 func TestRecipeConfigWriteInlineQuotedKeyRoundTrip(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	original := "[recipes.reconcile]\nenabled = true\n\n[recipes.reconcile.config]\nopts = { \"my key\" = 1, mode = \"fast\" }\n"
 	path := writeRecipeConfigFixture(t, original)
 
@@ -524,7 +490,6 @@ func TestRecipeConfigWriteInlineQuotedKeyRoundTrip(t *testing.T) {
 // manifest directory, and a validation refusal leaves the original bytes and
 // directory untouched.
 func TestRecipeConfigWriteAtomicReplaceSmoke(t *testing.T) {
-	requireRecipeConfigSeam(t)
 	original := "[recipes.reconcile]\nenabled = true\n\n[recipes.reconcile.config]\nmode = \"fast\"\n"
 	path := writeRecipeConfigFixture(t, original)
 

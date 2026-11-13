@@ -214,6 +214,25 @@ def _norm_t7_cursor_deny_line(text: str, ctx: dict) -> str:
     return text.replace(_T7_GO_DENY_LINE, _T7_DENY_MARKER + "\n")
 
 
+# GO-20 U2e T5 (Robert's decision, 2026-11-13): the doctor worktree-gate line
+# reports the byte total of the cached gate binary
+# (internal/doctor/gatebinary.go gateCacheSize), which moves with EVERY legitimate
+# gate-binary change. This slice is the first gate-source change since the legacy
+# goldens were frozen (276fa856, T2a), so the frozen 3115 KiB no longer matches the
+# live 3261 KiB for a reason that is not behaviour at all. Anchored to the exact
+# `; selftest passed (cache <N> KiB)` suffix of that ONE line: the line's identity,
+# label and selftest text stay compared verbatim, and no other doctor field is
+# touched. Unlike N10/N11 this never expires with the corpus — a byte count is a
+# permanently unstable pin.
+_GATE_CACHE_KB_RE = re.compile(r"(; selftest passed \(cache )\d+( KiB\))")
+
+
+def _norm_gate_cache_size(text: str, ctx: dict) -> str:
+    if (ctx.get("argv") or ())[:1] != ("doctor",):
+        return text
+    return _GATE_CACHE_KB_RE.sub(r"\1<CACHE_KB>\2", text)
+
+
 # GO-20 U2e T4: scoped to add-dep and skills add; expires with the frozen corpus
 # (see N11), not with lib/ alone.
 def _norm_vendor_add_clone_failure(text: str, ctx: dict) -> str:
@@ -391,6 +410,29 @@ NORMALIZATIONS = (
                       "golden stderr was stored with the wrapper already "
                       "removed. Delete it only with a corpus recapture (PR4b).",
         fn=_norm_vendor_add_clone_failure,
+    ),
+    Normalization(
+        rule_id="N12-gate-cache-size",
+        surfaces=("stdout",),
+        description="For the `doctor` verb only, replace the KiB number in the "
+                    "worktree-gate line's `; selftest passed (cache <N> KiB)` "
+                    "suffix with <CACHE_KB>. The line's identity, label and "
+                    "selftest text are compared verbatim, and no other doctor "
+                    "field is touched.",
+        justification="GO-20 U2e T5, Robert's decision (2026-11-13): that number "
+                      "is the byte total of the cached worktree-gate binary "
+                      "(internal/doctor/gatebinary.go:68 gateCacheSize), so it "
+                      "moves with EVERY legitimate gate-binary change — no gate "
+                      "source had changed since the goldens were frozen at "
+                      "276fa856 (T2a), which is why the pin had never moved "
+                      "before. It is a permanent instability of the metric, not "
+                      "an expiring divergence: unlike N10/N11 it must NOT be "
+                      "deleted with a corpus recapture, because the next gate "
+                      "change moves the number again. Measured live: golden "
+                      "3115 KiB vs live 3261 KiB, the only delta in "
+                      "doctor-healthy in both gate modes after the gate's writer "
+                      "and manifest TOML reads moved in process.",
+        fn=_norm_gate_cache_size,
     ),
 )
 
@@ -1667,12 +1709,21 @@ def load_golden_leg(fixture: Fixture, gate_mode: str) -> LegResult:
             f"it from git, or add the fixture to GOLDEN_EXCLUDED with a "
             f"reason so it runs live")
     data = json.loads(path.read_text(encoding="utf-8"))
-    steps = [
-        StepResult(argv=tuple(item["argv"]), rc=item["rc"],
-                   stdout=item["stdout"], stderr=item["stderr"],
-                   tree=tree_from_json(item["tree"]))
-        for item in data["steps"]
-    ]
+    steps = []
+    for item in data["steps"]:
+        # Both legs go through the same normalizations (N10 states the rule; the
+        # frozen text was captured WITH the normalizations of its time applied, so
+        # re-applying them is idempotent — measured over all 35 fixtures in both
+        # gate modes: only N12-gate-cache-size changes anything, and only the two
+        # doctor-healthy goldens, whose stored byte count the frozen capture could
+        # not mark). Harness artifacts and permanently unstable metrics are
+        # canonicalized on both sides; no golden byte is rewritten.
+        ctx = {"argv": tuple(item["argv"])}
+        steps.append(StepResult(
+            argv=tuple(item["argv"]), rc=item["rc"],
+            stdout=apply_normalizations("stdout", item["stdout"], ctx),
+            stderr=apply_normalizations("stderr", item["stderr"], ctx),
+            tree=tree_from_json(item["tree"])))
     return LegResult(label="legacy", cli_path=data["legacy_launcher"],
                      steps=steps)
 
