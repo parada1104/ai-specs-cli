@@ -37,6 +37,32 @@ func runWriteLockCLI(t *testing.T, envelopeJSON string) (int, string, string) {
 	return code, stdout.String(), stderr.String()
 }
 
+// assertFileBytes compares a written file with the exact expected bytes.
+func assertFileBytes(t *testing.T, path, want string) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", filepath.Base(path), err)
+	}
+	if string(got) != want {
+		t.Fatalf("file bytes differ\n--- got ---\n%q\n--- want ---\n%q", string(got), want)
+	}
+}
+
+// assertNoTempFiles proves the atomic write left no "*.tmp" sibling behind.
+func assertNoTempFiles(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("temp file left behind: %s", e.Name())
+		}
+	}
+}
+
 // --- header byte identity ---
 
 // TestLockHeaderByteIdentity pins LOCK_HEADER character-for-character against
