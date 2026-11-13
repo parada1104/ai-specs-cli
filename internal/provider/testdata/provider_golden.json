@@ -1,0 +1,376 @@
+{
+  "cases": {
+    "managed-candidates/no-ordering": {
+      "inputs": {
+        "empty_dirs": [
+          "0.9.9"
+        ],
+        "goarch": "<GOARCH>",
+        "goos": "<GOOS>",
+        "root_dirs": [
+          "0.0.1",
+          "10.0.0",
+          "0.1.0",
+          "2.0.0",
+          "1.2.3",
+          "zzz"
+        ]
+      },
+      "mode": "candidates",
+      "python": "{\"candidates\":[\"<TMP>/1.2.3/<GOOS>-<GOARCH>/jinna\",\"<TMP>/2.0.0/<GOOS>-<GOARCH>/jinna\",\"<TMP>/0.0.1/<GOOS>-<GOARCH>/jinna\",\"<TMP>/0.1.0/<GOOS>-<GOARCH>/jinna\",\"<TMP>/zzz/<GOOS>-<GOARCH>/jinna\",\"<TMP>/10.0.0/<GOOS>-<GOARCH>/jinna\"]}"
+    },
+    "resolve-differential/empty binary kept": {
+      "inputs": {
+        "binary": "",
+        "managed": null,
+        "min_version": "",
+        "path_version": ""
+      },
+      "mode": "resolve",
+      "python": "{\"binary\":\"\",\"command\":\"\",\"path\":null,\"release_tag\":\"\",\"repository\":\"parada1104/jinna-provider\",\"source\":\"unresolved\",\"target\":[\"<GOOS>\",\"<GOARCH>\"],\"verified\":false,\"version\":\"\"}"
+    },
+    "resolve-differential/managed below min": {
+      "inputs": {
+        "binary": "jinna",
+        "managed": {
+          "overrides": {},
+          "printed": "2.1.0",
+          "version_dir": "2.1.0"
+        },
+        "min_version": "3.0.0",
+        "path_version": ""
+      },
+      "mode": "resolve",
+      "python": "{\"binary\":\"jinna\",\"command\":\"jinna\",\"path\":null,\"release_tag\":\"\",\"repository\":\"parada1104/jinna-provider\",\"source\":\"unresolved\",\"target\":[\"<GOOS>\",\"<GOARCH>\"],\"verified\":false,\"version\":\"\"}"
+    },
+    "resolve-differential/managed digest mismatch": {
+      "inputs": {
+        "binary": "jinna",
+        "managed": {
+          "overrides": {
+            "binary_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "printed": "2.1.0",
+          "version_dir": "2.1.0"
+        },
+        "min_version": "",
+        "path_version": ""
+      },
+      "mode": "resolve",
+      "python": "{\"binary\":\"jinna\",\"command\":\"jinna\",\"path\":null,\"release_tag\":\"\",\"repository\":\"parada1104/jinna-provider\",\"source\":\"unresolved\",\"target\":[\"<GOOS>\",\"<GOARCH>\"],\"verified\":false,\"version\":\"\"}"
+    },
+    "resolve-differential/managed repository rejected": {
+      "inputs": {
+        "binary": "jinna",
+        "managed": {
+          "overrides": {
+            "repository": "someone/else"
+          },
+          "printed": "2.1.0",
+          "version_dir": "2.1.0"
+        },
+        "min_version": "",
+        "path_version": ""
+      },
+      "mode": "resolve",
+      "python": "{\"binary\":\"jinna\",\"command\":\"jinna\",\"path\":null,\"release_tag\":\"\",\"repository\":\"parada1104/jinna-provider\",\"source\":\"unresolved\",\"target\":[\"<GOOS>\",\"<GOARCH>\"],\"verified\":false,\"version\":\"\"}"
+    },
+    "resolve-differential/managed status rejected": {
+      "inputs": {
+        "binary": "jinna",
+        "managed": {
+          "overrides": {
+            "status": "failed"
+          },
+          "printed": "2.1.0",
+          "version_dir": "2.1.0"
+        },
+        "min_version": "",
+        "path_version": ""
+      },
+      "mode": "resolve",
+      "python": "{\"binary\":\"jinna\",\"command\":\"jinna\",\"path\":null,\"release_tag\":\"\",\"repository\":\"parada1104/jinna-provider\",\"source\":\"unresolved\",\"target\":[\"<GOOS>\",\"<GOARCH>\"],\"verified\":false,\"version\":\"\"}"
+    },
+    "resolve-differential/managed tag non-version": {
+      "inputs": {
+        "binary": "jinna",
+        "managed": {
+          "overrides": {
+            "release_tag": "nightly"
+          },
+          "printed": "2.1.0",
+          "version_dir": "2.1.0"
+        },
+        "min_version": "",
+        "path_version": ""
+      },
+      "mode": "resolve",
+      "python": "{\"binary\":\"jinna\",\"command\":\"jinna\",\"path\":null,\"release_tag\":\"\",\"repository\":\"parada1104/jinna-provider\",\"source\":\"unresolved\",\"target\":[\"<GOOS>\",\"<GOARCH>\"],\"verified\":false,\"version\":\"\"}"
+    },
+    "resolve-differential/managed target rejected": {
+      "inputs": {
+        "binary": "jinna",
+        "managed": {
+          "overrides": {
+            "target": "plan9-mips"
+          },
+          "printed": "2.1.0",
+          "version_dir": "2.1.0"
+        },
+        "min_version": "",
+        "path_version": ""
+      },
+      "mode": "resolve",
+      "python": "{\"binary\":\"jinna\",\"command\":\"jinna\",\"path\":null,\"release_tag\":\"\",\"repository\":\"parada1104/jinna-provider\",\"source\":\"unresolved\",\"target\":[\"<GOOS>\",\"<GOARCH>\"],\"verified\":false,\"version\":\"\"}"
+    },
+    "resolve-differential/managed verified": {
+      "inputs": {
+        "binary": "jinna",
+        "managed": {
+          "overrides": {},
+          "printed": "2.1.0",
+          "version_dir": "2.1.0"
+        },
+        "min_version": "",
+        "path_version": ""
+      },
+      "mode": "resolve",
+      "python": "{\"binary\":\"jinna\",\"command\":\"<HOME>/cache/bin/jinna/2.1.0/<GOOS>-<GOARCH>/jinna\",\"path\":\"<HOME>/cache/bin/jinna/2.1.0/<GOOS>-<GOARCH>/jinna\",\"release_tag\":\"v2.1.0\",\"repository\":\"parada1104/jinna-provider\",\"source\":\"managed\",\"target\":[\"<GOOS>\",\"<GOARCH>\"],\"verified\":true,\"version\":\"2.1.0\"}"
+    },
+    "resolve-differential/managed version-tag mismatch": {
+      "inputs": {
+        "binary": "jinna",
+        "managed": {
+          "overrides": {},
+          "printed": "2.2.0",
+          "version_dir": "2.1.0"
+        },
+        "min_version": "",
+        "path_version": ""
+      },
+      "mode": "resolve",
+      "python": "{\"binary\":\"jinna\",\"command\":\"jinna\",\"path\":null,\"release_tag\":\"\",\"repository\":\"parada1104/jinna-provider\",\"source\":\"unresolved\",\"target\":[\"<GOOS>\",\"<GOARCH>\"],\"verified\":false,\"version\":\"\"}"
+    },
+    "resolve-differential/path below min falls through": {
+      "inputs": {
+        "binary": "jinna",
+        "managed": null,
+        "min_version": "2.0.0",
+        "path_version": "1.4.2"
+      },
+      "mode": "resolve",
+      "python": "{\"binary\":\"jinna\",\"command\":\"jinna\",\"path\":null,\"release_tag\":\"\",\"repository\":\"parada1104/jinna-provider\",\"source\":\"unresolved\",\"target\":[\"<GOOS>\",\"<GOARCH>\"],\"verified\":false,\"version\":\"\"}"
+    },
+    "resolve-differential/path source": {
+      "inputs": {
+        "binary": "jinna",
+        "managed": null,
+        "min_version": "",
+        "path_version": "1.4.2"
+      },
+      "mode": "resolve",
+      "python": "{\"binary\":\"jinna\",\"command\":\"jinna\",\"path\":\"<PATH>/jinna\",\"release_tag\":\"\",\"repository\":\"parada1104/jinna-provider\",\"source\":\"path\",\"target\":[\"<GOOS>\",\"<GOARCH>\"],\"verified\":true,\"version\":\"1.4.2\"}"
+    },
+    "resolve-differential/path source min satisfied": {
+      "inputs": {
+        "binary": "jinna",
+        "managed": null,
+        "min_version": "1.0.0",
+        "path_version": "1.4.2"
+      },
+      "mode": "resolve",
+      "python": "{\"binary\":\"jinna\",\"command\":\"jinna\",\"path\":\"<PATH>/jinna\",\"release_tag\":\"\",\"repository\":\"parada1104/jinna-provider\",\"source\":\"path\",\"target\":[\"<GOOS>\",\"<GOARCH>\"],\"verified\":true,\"version\":\"1.4.2\"}"
+    },
+    "resolve-differential/path unparseable falls through": {
+      "inputs": {
+        "binary": "jinna",
+        "managed": null,
+        "min_version": "",
+        "path_version": "hello"
+      },
+      "mode": "resolve",
+      "python": "{\"binary\":\"jinna\",\"command\":\"jinna\",\"path\":null,\"release_tag\":\"\",\"repository\":\"parada1104/jinna-provider\",\"source\":\"unresolved\",\"target\":[\"<GOOS>\",\"<GOARCH>\"],\"verified\":false,\"version\":\"\"}"
+    },
+    "resolve-differential/unresolved empty cache": {
+      "inputs": {
+        "binary": "jinna",
+        "managed": null,
+        "min_version": "",
+        "path_version": ""
+      },
+      "mode": "resolve",
+      "python": "{\"binary\":\"jinna\",\"command\":\"jinna\",\"path\":null,\"release_tag\":\"\",\"repository\":\"parada1104/jinna-provider\",\"source\":\"unresolved\",\"target\":[\"<GOOS>\",\"<GOARCH>\"],\"verified\":false,\"version\":\"\"}"
+    },
+    "resolve-tie/keeps-first": {
+      "inputs": {
+        "binary": "jinna",
+        "managed": [
+          {
+            "overrides": {},
+            "printed": "1.2.3",
+            "version_dir": "1.2.3"
+          },
+          {
+            "overrides": {},
+            "printed": "1.2.3",
+            "version_dir": "01.2.3"
+          }
+        ],
+        "min_version": "",
+        "path_version": null
+      },
+      "mode": "resolve",
+      "python": "{\"binary\":\"jinna\",\"command\":\"<HOME>/cache/bin/jinna/1.2.3/<GOOS>-<GOARCH>/jinna\",\"path\":\"<HOME>/cache/bin/jinna/1.2.3/<GOOS>-<GOARCH>/jinna\",\"release_tag\":\"v1.2.3\",\"repository\":\"parada1104/jinna-provider\",\"source\":\"managed\",\"target\":[\"<GOOS>\",\"<GOARCH>\"],\"verified\":true,\"version\":\"1.2.3\"}"
+    },
+    "runversion-differential/missing": {
+      "inputs": {
+        "fixture": "missing",
+        "timeout": "5"
+      },
+      "mode": "runversion",
+      "python": "{\"error\":\"provider version check failed: [Errno 2] No such file or directory: '<TMP>/absent'\"}"
+    },
+    "runversion-differential/no-version": {
+      "inputs": {
+        "fixture": "no-version",
+        "timeout": "5"
+      },
+      "mode": "runversion",
+      "python": "{\"error\":\"provider version check returned no usable version\"}"
+    },
+    "runversion-differential/nonzero-exit": {
+      "inputs": {
+        "fixture": "nonzero-exit",
+        "timeout": "5"
+      },
+      "mode": "runversion",
+      "python": "{\"error\":\"provider version check returned no usable version\"}"
+    },
+    "runversion-differential/ok": {
+      "inputs": {
+        "fixture": "ok",
+        "timeout": "5"
+      },
+      "mode": "runversion",
+      "python": "{\"version\":\"3.4.5\"}"
+    },
+    "runversion-differential/timeout": {
+      "inputs": {
+        "fixture": "timeout",
+        "timeout": "0.2"
+      },
+      "mode": "runversion",
+      "python": "{\"error\":\"provider version check failed: Command '['<TMP>/jinna-slow', 'version']' timed out after 0.2 seconds\"}"
+    },
+    "unicode16-residual/U+10D40": {
+      "inputs": {
+        "text": "jinna 𐵀.𐵁"
+      },
+      "mode": "runversion",
+      "python": "{\"version\":\"0.1\"}"
+    },
+    "unicode16-residual/U+116D0": {
+      "inputs": {
+        "text": "jinna 𑛐.𑛑"
+      },
+      "mode": "runversion",
+      "python": "{\"version\":\"0.1\"}"
+    },
+    "unicode16-residual/U+11BF0": {
+      "inputs": {
+        "text": "jinna 𑯰.𑯱"
+      },
+      "mode": "runversion",
+      "python": "{\"version\":\"0.1\"}"
+    },
+    "unicode16-residual/U+16130": {
+      "inputs": {
+        "text": "jinna 𖄰.𖄱"
+      },
+      "mode": "runversion",
+      "python": "{\"version\":\"0.1\"}"
+    },
+    "unicode16-residual/U+16D70": {
+      "inputs": {
+        "text": "jinna 𖵰.𖵱"
+      },
+      "mode": "runversion",
+      "python": "{\"version\":\"0.1\"}"
+    },
+    "unicode16-residual/U+1CCF0": {
+      "inputs": {
+        "text": "jinna 𜳰.𜳱"
+      },
+      "mode": "runversion",
+      "python": "{\"version\":\"0.1\"}"
+    },
+    "unicode16-residual/U+1E5F1": {
+      "inputs": {
+        "text": "jinna 𞗱.𞗲"
+      },
+      "mode": "runversion",
+      "python": "{\"version\":\"0.1\"}"
+    },
+    "version-parity/arabic-indic": {
+      "inputs": {
+        "text": "jinna ١٢.٣"
+      },
+      "mode": "runversion",
+      "python": "{\"version\":\"12.3\"}"
+    },
+    "version-parity/ascii": {
+      "inputs": {
+        "text": "jinna 1.2.3"
+      },
+      "mode": "runversion",
+      "python": "{\"version\":\"1.2.3\"}"
+    },
+    "version-parity/devanagari": {
+      "inputs": {
+        "text": "jinna ०१.२"
+      },
+      "mode": "runversion",
+      "python": "{\"version\":\"1.2\"}"
+    },
+    "version-parity/nd-before-v": {
+      "inputs": {
+        "text": "jinna ١v2.3"
+      },
+      "mode": "runversion",
+      "python": "{\"version\":\"2.3\"}"
+    },
+    "version-parity/nd-then-ascii": {
+      "inputs": {
+        "text": "jinna ١3.4"
+      },
+      "mode": "runversion",
+      "python": "{\"version\":\"13.4\"}"
+    },
+    "version-parity/no-version": {
+      "inputs": {
+        "text": "jinna 123"
+      },
+      "mode": "runversion",
+      "python": "{\"error\":\"provider version check returned no usable version\"}"
+    },
+    "version-parity/overflow": {
+      "inputs": {
+        "text": "jinna 99999999999999999999.1"
+      },
+      "mode": "runversion",
+      "python": "{\"version\":\"99999999999999999999.1\"}"
+    },
+    "version-parity/overflow-mixed": {
+      "inputs": {
+        "text": "jinna 1.99999999999999999999"
+      },
+      "mode": "runversion",
+      "python": "{\"version\":\"1.99999999999999999999\"}"
+    }
+  },
+  "oracle": {
+    "authority": "lib/_internal/provider_install.py",
+    "python": "3.14.7",
+    "source": "internal/provider/testdata/provider_ref.py"
+  }
+}

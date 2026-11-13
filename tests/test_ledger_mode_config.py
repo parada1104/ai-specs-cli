@@ -37,11 +37,27 @@ RECIPE_DIR = ROOT / "catalog" / "recipes" / "trello-mcp-workflow"
 RECIPE_TOML = RECIPE_DIR / "recipe.toml"
 PLAN_BUILD_GATE = ROOT / "catalog" / "recipes" / "plan-build-flow" / "hooks" / "plan-build-gate.sh"
 TRACKER_GATE = RECIPE_DIR / "hooks" / "tracker-card-gate.sh"
-GUARDIAN = ROOT / "lib" / "_internal" / "premerge_guardian.py"
-DOCTOR = ROOT / "lib" / "_internal" / "doctor.py"
+
+_CLI_HOME: Path | None = None
+
+
+def _cli_home() -> Path:
+    """A stamped CLI home holding the native ai-specs binary (verdict display reads through it)."""
+    global _CLI_HOME
+    if _CLI_HOME is None:
+        home = Path(tempfile.mkdtemp(prefix="ai-specs-cli-home-"))
+        (home / "dist").mkdir(parents=True)
+        subprocess.run(
+            ["go", "build", "-o", str(home / "dist" / "ai-specs"), "./cmd/ai-specs"],
+            cwd=ROOT, check=True, capture_output=True, text=True,
+        )
+        _CLI_HOME = home
+    return _CLI_HOME
+
+
+GUARDIAN = ROOT / "internal" / "gates" / "gates.go"  # native port of the deleted premerge_guardian.py
+DOCTOR_TRACKER = ROOT / "internal" / "doctor" / "checks_tracker.go"  # native port of doctor.py's ledger check
 LEGACY_RECIPE = "trello-mcp-workflow"
-LIB_INTERNAL = ROOT / "lib" / "_internal"
-SCHEMA = ROOT / "lib" / "_internal" / "recipe_schema.py"
 
 STUB_BINARY = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${STUB_LOG}"
@@ -73,18 +89,6 @@ exit 0
 
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True)
-
-
-def _load_schema():
-    import importlib.util
-    import sys
-
-    spec = importlib.util.spec_from_file_location("recipe_schema_ledger_mode", SCHEMA)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
 
 
 class LedgerModeConfigTests(unittest.TestCase):
@@ -152,12 +156,12 @@ class LedgerModeConfigTests(unittest.TestCase):
         for label, path in (("tracker-gate", TRACKER_GATE),
                             ("plan-build-gate", PLAN_BUILD_GATE)):
             text = path.read_text(encoding="utf-8")
-            for token in ("_ledger_mode", "_resolve_gate_mode", "_ledger_recipe_id"):
-                with self.subTest(site=label, token=token):
-                    self.assertNotIn(token, text,
+            for needle in ("_ledger_mode", "_resolve_gate_mode", "_ledger_recipe_id"):
+                with self.subTest(site=label, needle=needle):
+                    self.assertNotIn(needle, text,
                                      "shell mode policy must live in Go, not the host")
-            with self.subTest(site=label, token="tomllib"):
-                self.assertNotIn(token, text,
+            with self.subTest(site=label, needle="tomllib"):
+                self.assertNotIn("tomllib", text,
                                  "the host must not read the manifest; Go owns the "
                                  "witness-bound recipe config lookup")
 
@@ -174,7 +178,9 @@ class LedgerModeConfigTests(unittest.TestCase):
                     "witness binding belongs to Go",
                 )
                 self.assertIn("_ledger_grade", text, f"{path.name} must still grade")
-        self.assertIn("recipe_id", DOCTOR.read_text(encoding="utf-8"))
+        # doctor.py's ledger check is native now; the witness binding it reads is
+        # recipe_id in internal/doctor/checks_tracker.go.
+        self.assertIn("recipe_id", DOCTOR_TRACKER.read_text(encoding="utf-8"))
 
     def test_plan_build_gate_drops_the_dead_bridge_seam(self):
         plan_build = PLAN_BUILD_GATE.read_text(encoding="utf-8")
@@ -193,15 +199,12 @@ class LedgerModeConfigTests(unittest.TestCase):
             "the named residue is closed; docs must not still claim it",
         )
 
-    # --- 5.2: recipe declares the field ---
-
-    def test_recipe_declares_ledger_mode_enum_and_default(self):
-        schema = _load_schema()
-        recipe = schema.load_recipe_toml(RECIPE_TOML)
-        fields = recipe.config_schema.fields
-        self.assertIn("ledger_mode", fields)
-        self.assertEqual(fields["ledger_mode"].default, "warn")
-        self.assertEqual(set(fields["ledger_mode"].enum or []), {"always", "ask", "warn"})
+    # --- 5.2: the recipe declares the field ---
+    #
+    # The declared default (`warn`) and enum (`always | ask | warn`) are pinned
+    # natively by internal/sync mergeconfig_test.go
+    # TestNativeMergeConfigRealCatalogSchema, which merges the real catalog
+    # recipe and surfaces the enum in the rejection message.
 
     # --- W2: the ledger core is a provider-neutral Tracker domain port ---
 
@@ -277,8 +280,7 @@ class LedgerModeConfigTests(unittest.TestCase):
         text = (
             TRACKER_GATE.read_text()
             .replace("__TRACKER_CARD_GATE_MODE__", gate_mode)
-            .replace("__TRACKER_CLI_HOME__", "")
-            .replace("__TRACKER_LIB_INTERNAL__", str(LIB_INTERNAL))
+            .replace("__TRACKER_CLI_HOME__", str(_cli_home()))
         )
         path.write_text(text)
         path.chmod(0o755)
@@ -295,7 +297,9 @@ class LedgerModeConfigTests(unittest.TestCase):
         env = dict(os.environ)
         env.pop("TRACKER_CARD_GATE_MODE", None)
         env.pop("TRACKER_LEDGER_MODE", None)
-        env.pop("AI_SPECS_HOME", None)
+        # The native CLI home: plan-build normalizes and reads verdicts through
+        # dist/ai-specs (GO-20 U2e U-F2a). Without it the hook fails open.
+        env["AI_SPECS_HOME"] = str(_cli_home())
         env["WORKTREE_GATE_BIN"] = str(self.stub)
         env["STUB_LOG"] = str(self.stub_log)
         env.update(extra)
@@ -334,8 +338,8 @@ class LedgerModeConfigTests(unittest.TestCase):
             if not line.startswith("--ledger "):
                 continue
             parts = line.split()
-            for i, token in enumerate(parts):
-                if token == "--checkpoint" and i + 1 < len(parts):
+            for i, arg in enumerate(parts):
+                if arg == "--checkpoint" and i + 1 < len(parts):
                     out.append(parts[i + 1])
         return out
 
@@ -345,8 +349,8 @@ class LedgerModeConfigTests(unittest.TestCase):
         out = []
         for line in self.stub_log.read_text().splitlines():
             parts = line.split()
-            for i, token in enumerate(parts):
-                if token == "--ledger-mode" and i + 1 < len(parts):
+            for i, arg in enumerate(parts):
+                if arg == "--ledger-mode" and i + 1 < len(parts):
                     out.append(parts[i + 1])
         return out
 

@@ -1,133 +1,90 @@
-"""Unit tests for brief-render-policy.py."""
-import importlib.util
-import subprocess
+"""Black-box tests for the doctor-visible half of the brief render policy.
+
+The [brief].render verdict matrix (default enabled, explicit true/false, the
+fail-safe non-validate default, the --validate rejection and the TOML-decode
+exit) is native: ``internal/sync/briefpolicy_test.go`` asserts the verdicts and
+its frozen differential pins the rc/stdout/stderr of every manifest × mode pair
+that the retired ``lib/_internal/brief-render-policy.py`` CLI produced. What is
+left here is the doctor-level contract — an enabled recipe whose brief
+fragments can never render is reported as ``brief-fragments-unused``.
+"""
+from __future__ import annotations
+
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import invoke, isolated_home, populate_catalog  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
-POLICY_PATH = ROOT / "lib" / "_internal" / "brief-render-policy.py"
+
+_HOMES: dict[str, Path] = {}
 
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+def _home_for(project: Path) -> Path:
+    """One shared isolated install root per command sequence."""
+    base = project.parent
+    key = str(base)
+    if key not in _HOMES:
+        _HOMES[key] = isolated_home(base)
+    return _HOMES[key]
 
 
-class BriefRenderPolicyTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(POLICY_PATH, "brief_render_policy_unit")
+class BriefRenderPolicyDoctorTests(unittest.TestCase):
+    """Dead-recipe-fragment detection through the doctor verb."""
 
-    def _write_toml(self, content: str) -> Path:
-        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False)
-        self.addCleanup(lambda: Path(tmp.name).unlink(missing_ok=True))
-        tmp.write(content)
-        tmp.flush()
-        return Path(tmp.name)
-
-    def test_no_brief_table_defaults_true(self):
-        self.assertTrue(self.mod.brief_render_enabled({}))
-
-    def test_brief_without_render_defaults_true(self):
-        self.assertTrue(self.mod.brief_render_enabled({"brief": {}}))
-
-    def test_render_true(self):
-        self.assertTrue(self.mod.brief_render_enabled({"brief": {"render": True}}))
-
-    def test_render_false(self):
-        self.assertFalse(self.mod.brief_render_enabled({"brief": {"render": False}}))
-
-    def test_render_string_raises(self):
-        with self.assertRaises(ValueError) as ctx:
-            self.mod.brief_render_enabled({"brief": {"render": "false"}})
-        self.assertIn("[brief].render", str(ctx.exception))
-
-    def test_render_int_raises(self):
-        with self.assertRaises(ValueError):
-            self.mod.brief_render_enabled({"brief": {"render": 1}})
-
-    def test_load_from_toml_file(self):
-        path = self._write_toml("[brief]\nrender = false\n")
-        self.assertFalse(self.mod.load_brief_render_enabled(path))
-
-    def test_cli_prints_false(self):
-        path = self._write_toml("[brief]\nrender = false\n")
-        result = subprocess.run(
-            [sys.executable, str(POLICY_PATH), str(path)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "false")
-
-    def test_render_uppercase_true_is_toml_error(self):
-        # Characterization test: `render = True` is invalid TOML (TOML booleans
-        # are lowercase-only). The parser must raise tomllib.TOMLDecodeError,
-        # which surfaces as a non-zero exit code through the CLI path.
-        path = self._write_toml("[brief]\nrender = True\n")
-        result = subprocess.run(
-            [sys.executable, str(POLICY_PATH), str(path)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertNotEqual(result.returncode, 0)
-        # stderr must mention a TOML parse/decode error (not a value error)
-        stderr_lower = result.stderr.lower()
-        self.assertTrue(
-            "invalid" in stderr_lower or "decode" in stderr_lower or "error" in stderr_lower,
-            f"Expected a TOML error in stderr, got: {result.stderr!r}",
-        )
-
-    def test_cli_non_validate_invalid_render_defaults_to_true(self):
-        # S1: In non-validate mode an invalid render value (e.g. a string) must
-        # NOT exit 1. It must treat the value as the default (enabled) and print
-        # "true" with exit code 0. This is the fail-safe contract.
-        path = self._write_toml('[brief]\nrender = "false"\n')
-        result = subprocess.run(
-            [sys.executable, str(POLICY_PATH), str(path)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, f"stderr: {result.stderr!r}")
-        self.assertEqual(result.stdout.strip(), "true")
-
-    def test_cli_validate_rejects_string(self):
-        path = self._write_toml('[brief]\nrender = "false"\n')
-        result = subprocess.run(
-            [sys.executable, str(POLICY_PATH), str(path), "--validate"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("[brief].render", result.stderr)
+    def _doctor_project(self, toml: str) -> Path:
+        td = tempfile.TemporaryDirectory(prefix="ai-specs-doctor-")
+        self.addCleanup(td.cleanup)
+        project = Path(td.name) / "project"
+        (project / "ai-specs" / "skills").mkdir(parents=True)
+        (project / "ai-specs" / "commands").mkdir()
+        (project / "ai-specs" / "ai-specs.toml").write_text(toml)
+        # A pre-existing AGENTS.md keeps the unrelated agents-md check quiet.
+        (project / "AGENTS.md").write_text("# manual brief\n")
+        return project
 
     def test_has_dead_recipe_fragments_true(self):
-        resolved = {
-            "enabled": ["session-context"],
-            "recipes": {
-                "session-context": {
-                    "brief_fragments": {"workflow_rules": [{"key": "x", "text": "y"}]}
-                }
-            },
-        }
-        self.assertTrue(self.mod.has_dead_recipe_fragments(resolved))
+        """An enabled recipe declaring brief fragments under render=false is dead.
+
+        doctor surfaces has_dead_recipe_fragments as the brief-fragments-unused
+        WARN — that is the CLI-observable form of this contract.
+        """
+        project = self._doctor_project(
+            "[project]\nname = 'dead-fragments'\n\n"
+            "[brief]\nrender = false\n\n"
+            "[recipes.session-context]\nenabled = true\nversion = '2.0.0'\n"
+        )
+        result = invoke(project, "doctor", cli_home=_home_for(project))
+        self.assertIn(
+            "brief-fragments-unused",
+            result.stdout + result.stderr,
+            "doctor must WARN on enabled recipes whose brief fragments can never render",
+        )
 
     def test_has_dead_recipe_fragments_false(self):
-        resolved = {
-            "enabled": ["session-context"],
-            "recipes": {"session-context": {}},
-        }
-        self.assertFalse(self.mod.has_dead_recipe_fragments(resolved))
+        """An enabled recipe WITHOUT brief fragments is not dead.
+
+        Uses a fresh custom recipe (no [provides.brief]) inside the isolated
+        home so no catalog recipe's fragments leak into the assertion.
+        """
+        project = self._doctor_project(
+            "[project]\nname = 'live-fragments'\n\n"
+            "[brief]\nrender = false\n\n"
+            "[recipes.policy-plain-recipe]\nenabled = true\n"
+        )
+        home = _home_for(project)
+        populate_catalog(home, "policy-plain-recipe")
+        result = invoke(project, "doctor", cli_home=home)
+        combined = result.stdout + result.stderr
+        self.assertIn("brief-provenance", combined, "doctor must run")
+        self.assertNotIn(
+            "brief-fragments-unused",
+            combined,
+            "a recipe without brief fragments must not be reported dead",
+        )
 
 
 if __name__ == "__main__":

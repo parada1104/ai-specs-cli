@@ -1,0 +1,1 @@
+[{"id":"dir-a","stamp":{"base_branch":false,"max_retries":0,"reconcile":{"expectations":[{"config_field":"base_branch","event":"pr_opened"},{"config_field_when_set":"max_retries","event":"card_moved"}],"max_age_seconds":3600,"scope_field":"workflow"},"workflow":"feature"}},{"id":"dir-b","stamp":{"phase":"build","reconcile":{"scope_field":"phase"}}}]

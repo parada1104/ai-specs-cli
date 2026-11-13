@@ -1,0 +1,25 @@
+{
+ "fixture": "rules-audit-bare",
+ "gate_mode": "gate-absent",
+ "legacy_launcher": "6340c27b71d1c573592b2e426c3c45e76b6e3522",
+ "steps": [
+  {
+   "argv": [
+    "rules-audit"
+   ],
+   "rc": 0,
+   "stderr": "",
+   "stdout": "{\n  \"schema_version\": 1,\n  \"mode\": \"B\",\n  \"target\": \"<TEMP>\",\n  \"classification_is_suggestion\": true,\n  \"sources\": {\n    \"cursor_rules\": [],\n    \"cursorrules\": {\n      \"status\": \"absent\"\n    },\n    \"agents_md_sections\": [],\n    \"agents_md_present\": false,\n    \"manifest\": {\n      \"present\": false\n    },\n    \"resolved_skills\": [],\n    \"recipe_catalog\": [\n      \"worktree-flow\",\n      \"git-pr-flow\",\n      \"session-context\",\n      \"tdd-flow\",\n      \"trello-mcp-workflow\",\n      \"vault-canonical-store\"\n    ],\n    \"atl_registry\": {\n      \"present\": false,\n      \"skill_ids\": []\n    }\n  },\n  \"summary\": {\n    \"cursor_rules\": 0,\n    \"cursorrules\": 0,\n    \"agents_md_sections\": 0\n  },\n  \"stack_hints\": [],\n  \"recommendations\": {\n    \"init\": \"ai-specs init\",\n    \"default_recipes\": [\n      \"session-context\"\n    ],\n    \"brief_hint\": \"Draft a runtime-brief [brief] section in AGENTS.md after init.\"\n  }\n}\n",
+   "tree": [
+    [
+     "README.md",
+     [
+      "file",
+      "0o644",
+      "be2f1e1939d62602216983ba4fe6be265c69355c10316d0b432f98401bb304ba"
+     ]
+    ]
+   ]
+  }
+ ]
+}

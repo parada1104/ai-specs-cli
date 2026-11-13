@@ -1,0 +1,142 @@
+{
+  "oracle": {
+    "driver": "python3 -c re.fullmatch(pattern, input) once per corpus case; Y = compiled and matched, N = compiled and did not match, ERR = re.error",
+    "module": "Python standard-library re (no lib/ script)",
+    "note": "Frozen snapshot of the standard-library Python re.fullmatch verdicts for the hooksrunner divergence corpus, captured once, twice byte-identical. The corpus is the hard-coded inventory in hooksrunner_test.go; capturing again needs a human decision. No host path is frozen.",
+    "python": "3.14.7"
+  },
+  "cases": [
+    {
+      "name": "compile/backreference",
+      "pattern": "(a)\\1",
+      "input": "ab",
+      "verdict": "N"
+    },
+    {
+      "name": "compile/named backreference",
+      "pattern": "(?P<x>a)(?P=x)",
+      "input": "ab",
+      "verdict": "N"
+    },
+    {
+      "name": "compile/lookahead",
+      "pattern": "a(?=b)",
+      "input": "ab",
+      "verdict": "N"
+    },
+    {
+      "name": "compile/negative lookahead",
+      "pattern": "a(?!b)",
+      "input": "ab",
+      "verdict": "N"
+    },
+    {
+      "name": "compile/lookbehind",
+      "pattern": "(?<=a)b",
+      "input": "ab",
+      "verdict": "N"
+    },
+    {
+      "name": "compile/negative lookbehind",
+      "pattern": "(?<!a)b",
+      "input": "ab",
+      "verdict": "N"
+    },
+    {
+      "name": "class/digit class",
+      "pattern": "\\d",
+      "input": "٣",
+      "verdict": "Y"
+    },
+    {
+      "name": "class/word class",
+      "pattern": "\\w",
+      "input": "é",
+      "verdict": "Y"
+    },
+    {
+      "name": "class/space class",
+      "pattern": "\\s",
+      "input": " ",
+      "verdict": "Y"
+    },
+    {
+      "name": "failopen/non-word class",
+      "pattern": "\\W",
+      "input": "é",
+      "verdict": "N"
+    },
+    {
+      "name": "failopen/non-space class",
+      "pattern": "\\S",
+      "input": " ",
+      "verdict": "N"
+    },
+    {
+      "name": "failopen/non-digit class",
+      "pattern": "\\D",
+      "input": "٣",
+      "verdict": "N"
+    },
+    {
+      "name": "failopen/non-boundary",
+      "pattern": "\\B.",
+      "input": "é",
+      "verdict": "N"
+    },
+    {
+      "name": "failopen/unicode property",
+      "pattern": "\\p{L}",
+      "input": "a",
+      "verdict": "ERR"
+    },
+    {
+      "name": "failopen/posix class",
+      "pattern": "[[:alpha:]]",
+      "input": "a",
+      "verdict": "N"
+    },
+    {
+      "name": "unicode escape",
+      "pattern": "\\u0041",
+      "input": "A",
+      "verdict": "Y"
+    },
+    {
+      "name": "end-of-text escape",
+      "pattern": "a\\Z",
+      "input": "a",
+      "verdict": "Y"
+    },
+    {
+      "name": "possessive quantifier",
+      "pattern": "a*+",
+      "input": "aaa",
+      "verdict": "Y"
+    },
+    {
+      "name": "atomic group",
+      "pattern": "(?>a)",
+      "input": "a",
+      "verdict": "Y"
+    },
+    {
+      "name": "comment group",
+      "pattern": "(?#x)a",
+      "input": "a",
+      "verdict": "Y"
+    },
+    {
+      "name": "conditional",
+      "pattern": "(a)?(?(1)b|c)",
+      "input": "c",
+      "verdict": "Y"
+    },
+    {
+      "name": "dollar before trailing newline",
+      "pattern": "a$\n",
+      "input": "a\n",
+      "verdict": "Y"
+    }
+  ]
+}

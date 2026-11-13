@@ -1,0 +1,22 @@
+# Differential corpus 01: sections, comments, inline tables, arrays.
+# Used by toml_test.go (Go) and the python3 tomllib reference (differential).
+
+title = "ai-specs"   # inline comment after a value
+
+[project]
+name = "fixture"
+subrepos = ["packages/a", "packages/b"]
+enabled = true
+retries = 3
+ratio = 0.5
+
+[agents]
+# supported agents
+enabled = ["claude", "cursor"]
+
+[recipes.worktree-flow]
+enabled = true
+
+[recipes.worktree-flow.config]
+base_branch = "development"
+gate_mode = "ask"

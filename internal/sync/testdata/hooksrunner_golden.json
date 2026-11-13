@@ -1,0 +1,101 @@
+{
+  "comment": "Frozen oracle bundle for the native recipe hooks runner (GO-20 U2e T5 PR2-B S9). Captured once from the live Python 3.14.7 oracle (testdata/hooksrunner_ref.py driving lib/_internal/recipe-materialize.py execute_hooks) through the same in-package helpers the live differential used, twice with fresh roots and byte-identical records. Frozen properties: the raised error string, stdout, stderr and the bootstrap-board marker bytes (absent when the oracle wrote none). No host path appears in any frozen string, so no token is needed. Restore from a pristine copy, never re-encode.",
+  "names": [
+    "all actions in declaration order",
+    "bootstrap marker with defaults",
+    "bootstrap marker with config values",
+    "required field missing",
+    "field not present is skipped",
+    "first missing field wins declaration order",
+    "board_id shortLink rejected",
+    "board_id 24-hex regex matches",
+    "board_id regex mismatch",
+    "slug regex matches",
+    "slug regex mismatch",
+    "nested map",
+    "nil inside a slice"
+  ],
+  "cases": [
+    {
+      "kind": "differential",
+      "error": "",
+      "stdout": "  ℹ recipe 'hookorder': hook 'link-trello-card' deferred to agent runtime\n  ℹ recipe 'hookorder': hook 'sync-card-state' deferred to agent runtime\n  ℹ recipe 'hookorder': hook 'comment-verification' deferred to agent runtime\n",
+      "stderr": "  ! recipe 'hookorder': unknown hook action 'not-a-real-action' (skipped)\n",
+      "marker": "board_id=\ndefault_list=In Progress\nepic_list=Epic\n"
+    },
+    {
+      "kind": "differential",
+      "error": "",
+      "stdout": "",
+      "stderr": "",
+      "marker": "board_id=\ndefault_list=In Progress\nepic_list=Epic\n"
+    },
+    {
+      "kind": "differential",
+      "error": "",
+      "stdout": "",
+      "stderr": "",
+      "marker": "board_id=69ec0a2099ea20956e371d62\ndefault_list=Backlog\nepic_list=Epics\n"
+    },
+    {
+      "kind": "differential",
+      "error": "recipe 'hookrequired': hook 'validate-config' failed: missing required config field 'board_id'",
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "kind": "differential",
+      "error": "",
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "kind": "differential",
+      "error": "recipe 'hookfields': hook 'validate-config' failed: missing required config field 'alpha'",
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "kind": "differential",
+      "error": "recipe 'hookboard': hook 'validate-config' failed: field 'board_id' value 'AbCd1234' looks like a Trello shortLink; the real board ID is 24 hex characters (e.g., '69ec0a2099ea20956e371d62')",
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "kind": "differential",
+      "error": "",
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "kind": "differential",
+      "error": "recipe 'hookboard': hook 'validate-config' failed: field 'board_id' value 'ZZZZZZZZZZZZZZZZZZZZZZZZ' does not match required pattern '[0-9a-f]{24}'",
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "kind": "differential",
+      "error": "",
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "kind": "differential",
+      "error": "recipe 'hookslug': hook 'validate-config' failed: field 'slug' value 'Bad Slug' does not match required pattern '[a-z]+'",
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "kind": "repr",
+      "error": "recipe 'hookrepr': hook 'validate-config' failed: field 'nested' value '{'a': 1}' does not match required pattern '[0-9]+'",
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "kind": "repr",
+      "error": "recipe 'hookrepr': hook 'validate-config' failed: field 'nested' value '['x', None]' does not match required pattern '[0-9]+'",
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}

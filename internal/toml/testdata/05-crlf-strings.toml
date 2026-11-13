@@ -1,0 +1,18 @@
+# Differential corpus 05: CRLF line endings with multi-line strings and
+# line-ending backslash continuation. This file is stored with real CRLF
+# bytes (converted by the test tooling contract); tomllib normalizes CRLF
+# inside multi-line string values to \n and rejects lone \r.
+title = "crlf-strings"
+
+[project]
+name = "fixture-crlf-strings"
+desc = """
+line one
+line two
+"""
+raw = '''
+kept
+literal
+'''
+joined = """first \
+second"""

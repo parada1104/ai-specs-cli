@@ -2,19 +2,18 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"ai-specs.dev/worktree-gate/ledger"
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // Remote reconciliation wiring (T2). The comparison grader itself is the pure
@@ -362,51 +361,11 @@ type manifestRecipe struct {
 	Config  map[string]json.RawMessage `json:"config"`
 }
 
-// Bounded parser execution. The parser is a trust boundary and an availability
-// risk: it may not run forever, return unbounded output, or have its raw failure
-// output surfaced. The limits are fixed constants, not configuration: bounding an
-// acquisition subprocess is acquisition safety, not a new grader input.
-const (
-	manifestParseTimeout = 3 * time.Second
-	// acquisitionLimit is the one size budget for acquisition in and out: the
-	// parser's stdout and the observation payload share it.
-	acquisitionLimit   = 1 << 20
-	manifestErrorLimit = 4 << 10
-)
-
-// manifestReader is the whole TOML boundary: the Python standard library parser
-// deserializes the manifest and prints its [recipes] table as JSON. It selects
-// nothing — no field, no value, no comparison — so every mapping decision stays in
-// Go and no TOML parser (hand-written subset or new Go dependency) is introduced.
-// This mirrors the existing acquisition seam lib/_internal/toml-read.py, which is
-// not reachable by path from the distributed binary.
-const manifestReader = `import json, sys, tomllib
-with open(sys.argv[1], "rb") as handle:
-    data = tomllib.load(handle)
-recipes = data.get("recipes")
-print(json.dumps(recipes if isinstance(recipes, dict) else {}))
-`
-
-// cappedBuffer buffers at most max bytes and records that anything more arrived.
-// It always reports a full write so a verbose child sees a healthy pipe instead of
-// a short-write error, and never grows past max.
-type cappedBuffer struct {
-	buf       bytes.Buffer
-	max       int
-	truncated bool
-}
-
-func (w *cappedBuffer) Write(p []byte) (int, error) {
-	if room := w.max - w.buf.Len(); room > 0 {
-		if len(p) <= room {
-			w.buf.Write(p)
-			return len(p), nil
-		}
-		w.buf.Write(p[:room])
-	}
-	w.truncated = true
-	return len(p), nil
-}
+// acquisitionLimit is the one size budget for acquisition in and out: a read
+// or a reconciled observation payload may not exceed it. It is a fixed
+// constant, not configuration: bounding acquisition is acquisition safety, not
+// a new grader input.
+const acquisitionLimit = 1 << 20
 
 // readManifestRecipeConfig loads the bound recipe's config table from the project
 // manifest through the standard parser. Every failure is returned so the caller
@@ -436,13 +395,13 @@ func readManifestRecipeConfig(root, recipeID string) (map[string]json.RawMessage
 
 // readManifestRecipes deserializes the manifest's [recipes] table. Provider
 // adaptation lives in the manifest values, so this function is provider-neutral:
-// it returns raw tables for the caller to decode.
+// it returns raw tables for the caller to decode. The parse happens in process,
+// so --reconcile needs no ambient interpreter.
 func readManifestRecipes(path string) (map[string]manifestRecipe, error) {
 	if err := regularFile(path); err != nil {
 		return nil, err
 	}
-	root := filepath.Dir(filepath.Dir(path))
-	out, err := runManifestParser(root, path)
+	out, err := shared.ReadManifestRecipesJSON(path)
 	if err != nil {
 		return nil, err
 	}
@@ -451,80 +410,6 @@ func readManifestRecipes(path string) (map[string]manifestRecipe, error) {
 		return nil, fmt.Errorf("deserialized recipes: %w", err)
 	}
 	return recipes, nil
-}
-
-// runManifestParser runs the standard TOML parser under bounded execution: a
-// deadline, a bounded I/O drain, capped stdout and capped stderr. A parser that
-// hangs, floods or fails is reported through classifyManifestParserError, never by
-// echoing its output. WaitDelay bounds the wait for the output pipes, so a child
-// that leaves a helper holding them cannot extend the deadline: the whole call is
-// bounded by twice manifestParseTimeout.
-//
-// The interpreter is resolved explicitly and then run isolated (-I -B): isolated
-// mode ignores PYTHON* environment variables and user site-packages, so neither a
-// repository-controlled nor an ambient module can shadow the stdlib imports the
-// reader performs (R1-001). An interpreter resolving inside the project root is
-// refused: the manifest must never select the code that parses it.
-func runManifestParser(root, path string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), manifestParseTimeout)
-	defer cancel()
-
-	interpreter, err := manifestInterpreter(root)
-	if err != nil {
-		return nil, err
-	}
-	stdout := &cappedBuffer{max: acquisitionLimit}
-	stderr := &cappedBuffer{max: manifestErrorLimit}
-	cmd := exec.CommandContext(ctx, interpreter, "-I", "-B", "-c", manifestReader, path)
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	cmd.WaitDelay = manifestParseTimeout
-
-	runErr := cmd.Run()
-	if ctx.Err() != nil {
-		return nil, fmt.Errorf("standard TOML parser timed out after %s", manifestParseTimeout)
-	}
-	if runErr != nil {
-		return nil, classifyManifestParserError(runErr)
-	}
-	if stdout.truncated {
-		return nil, fmt.Errorf("standard TOML parser returned more than %d bytes", acquisitionLimit)
-	}
-	return stdout.buf.Bytes(), nil
-}
-
-// manifestInterpreter resolves the ambient python3 without executing it and
-// refuses an interpreter that lives inside the project root, where repository
-// content could shadow the system interpreter. Resolution failures are named so
-// a missing interpreter and a suspicious one are distinguishable without leaking
-// filesystem detail beyond the resolved path class.
-func manifestInterpreter(root string) (string, error) {
-	interpreter, err := exec.LookPath("python3")
-	if err != nil {
-		return "", fmt.Errorf("standard TOML parser is unavailable: %v", err)
-	}
-	if abs, absErr := filepath.Abs(interpreter); absErr == nil {
-		if absRoot, rootErr := filepath.Abs(root); rootErr == nil && (absRoot == abs || strings.HasPrefix(abs+string(filepath.Separator), absRoot)) {
-			return "", errors.New("standard TOML parser interpreter resolves inside the project root")
-		}
-	}
-	return interpreter, nil
-}
-
-// classifyManifestParserError names the failure without reproducing parser
-// output: a missing interpreter and a rejected manifest are different problems,
-// and neither message carries raw stderr, a traceback, or configuration content.
-// stderr is captured only to keep the child from blocking on a full pipe.
-func classifyManifestParserError(err error) error {
-	var execErr *exec.Error
-	if errors.As(err, &execErr) {
-		return fmt.Errorf("standard TOML parser is unavailable: %v", execErr.Err)
-	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return fmt.Errorf("the manifest is not valid TOML (parser exit status %d)", exitErr.ExitCode())
-	}
-	return errors.New("standard TOML parser could not be started")
 }
 
 // regularFile refuses anything that is not a plain file before it is opened: a

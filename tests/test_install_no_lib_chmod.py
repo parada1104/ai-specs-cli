@@ -7,7 +7,6 @@ subsequent update runs to fail or silently skip the pull.
 
 These tests assert the offending lines have been removed.
 """
-import re
 import unittest
 from pathlib import Path
 
@@ -38,15 +37,29 @@ class InstallNoLibChmodTests(unittest.TestCase):
             "are 100644 in git and do not need the executable bit.",
         )
 
-    def test_install_sh_still_chmods_bin_ai_specs(self):
-        """install.sh must keep chmod +x for bin/ai-specs (the entrypoint)."""
+    def test_install_sh_no_longer_symlinks_the_entrypoint(self):
+        """The entry is an INSTALLED BINARY now, not a symlink into the checkout.
+
+        GO-20 U1b-2b replaced the legacy `ln -sf "$AI_SPECS_HOME/bin/ai-specs"
+        "$INSTALL_BIN/ai-specs"` with an atomic install of the compiled binary (a
+        verified release asset, or a local `go build`). The intent of the old
+        `chmod +x bin/ai-specs` assertion survives where it is observable: the
+        functional suite asserts the installed entry exists, is executable and
+        runs. What this guard can still pin statically is that the legacy
+        symlink is gone, so the flip cannot silently regress.
+        """
         text = INSTALL_SH.read_text()
-        # Accept both single-line and continuation-line forms.
-        single_line = re.search(r'chmod\b[^\n]*bin/ai-specs', text)
-        continuation = re.search(r'chmod\s+\+x\s*\\\n\s*["\']?\S*/bin/ai-specs', text)
-        self.assertTrue(
-            single_line or continuation,
-            "install.sh must still chmod +x bin/ai-specs (the entrypoint).",
+        self.assertNotIn(
+            'ln -sf "$AI_SPECS_HOME/bin/ai-specs"',
+            text,
+            "install.sh must install the binary as the entry; symlinking the "
+            "launcher into the checkout is the pre-flip behaviour.",
+        )
+        self.assertIn(
+            "go build",
+            text,
+            "install.sh keeps the local-build fallback for platforms without a "
+            "release asset.",
         )
 
 

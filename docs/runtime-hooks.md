@@ -233,7 +233,7 @@ expectations against neutral observations; a provider recipe extends that domain
 by declaring a `[config.reconcile]` **adapter** mapping in the project manifest,
 while `ledger_mode` / `gate_mode` stay Tracker-domain policy. The tracker
 lifecycle host is `tracker-card-gate.sh` invoked directly
-(`--root <root> --checkpoint pre-merge|archive-close`); `premerge_guardian.py`
+(`--root <root> --checkpoint pre-merge|archive-close`); `ai-specs gates premerge`
 is Plan Build's artifact-only guardian and never invokes the ledger.
 
 | Checkpoint | Host |
@@ -283,7 +283,7 @@ grade path. Opening is therefore **not** agent-only.
 
 **Evidence sides.** `tracker-card-gate.sh` (pre-tool-use hook and direct host
 mode) builds its
-`--evidence` file through `lib/_internal/ledger_bridge.py` — acquisition only
+`--evidence` file through the native `ai-specs tracker evidence` verb — acquisition only
 (`## Tracker` / `tracker.none` / local Git facts; no `gh`, no MCP, no network).
 `local` is the ledger's own store snapshot, `code` is the change's `card_id`, `git`
 is that id when a `pr:` is recorded, and `remote` has **no producer in this
@@ -303,11 +303,19 @@ host. Recording the exemption is the explicit human/agent
 honored at every checkpoint as allow/exempt and is not a conflict; removing the file
 does not revoke it (a human adjudicates with `--decide`).
 
-The bridge directory is stamped at sync (`__TRACKER_LIB_INTERNAL__` → the CLI's
-`lib/_internal`). The tracker gate uses it for evidence acquisition, and the
-plan-build gate uses the same seam to resolve the witness-bound recipe id. An empty
-or absent stamp skips the evidence file and leaves the recipe id unresolved (fail
-open), exactly like a missing binary.
+The CLI home is stamped at sync (`__TRACKER_CLI_HOME__`); the tracker gate runs
+`<home>/dist/ai-specs tracker slug|evidence` for evidence acquisition and
+`<home>/dist/ai-specs tracker classify` for the stdin command classifier (the hook
+carries no python3). The legacy
+`__TRACKER_LIB_INTERNAL__` stamp remains a materializer placeholder the tracker
+gate no longer reads (the plan-build gate still uses that seam to resolve the
+witness-bound recipe id). An empty or absent CLI-home stamp, or a missing
+non-executable binary, skips the evidence file (fail open), exactly like a missing
+binary; the plan-build gate leaves the recipe id unresolved.
+
+Without the CLI the tracker gate also cannot classify the hook event, so it exits 0
+without grading `apply-start` or `pr-review`. This is the accepted U-F2b behavior
+change (python3 did not need the CLI); it is fail open, never a block.
 
 The verdict is computed from the durable binding witness at
 `<git-common-dir>/ai-specs/ledger/witness.json` and the per-identity store at

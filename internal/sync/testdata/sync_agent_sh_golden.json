@@ -1,0 +1,25 @@
+{
+  "oracle": {
+    "base": "epic/go-single-binary fba37a4",
+    "blob": "9c6c41337cf523e63707f41e91ec8dae5e81ff3c",
+    "driver": "cd pins: the last 1-based line of the shell file whose text contains the needle (the retired syncAgentScript scan); usage pin: the bytes between `<<'EOF'\\n` and the newline ending the heredoc body (the retired `body[:end+1]`)",
+    "note": "Frozen snapshot of exactly the three source-structure facts syncagent_test.go consumes from lib/sync-agent.sh at base fba37a4 (git blob 9c6c4133), captured once, twice byte-identical. The pin inventory is the hard-coded list syncAgentShGoldenPinNames; capturing again needs a human decision. No host path is frozen.",
+    "source": "lib/sync-agent.sh"
+  },
+  "pins": [
+    {
+      "name": "cd_line_target",
+      "needle": "TARGET_PATH=\"$(cd \"$TARGET_PATH\" && pwd)\"",
+      "line": 108
+    },
+    {
+      "name": "cd_line_source",
+      "needle": "SOURCE_ROOT=\"$(cd \"$SOURCE_ROOT\" && pwd)\"",
+      "line": 110
+    },
+    {
+      "name": "usage_heredoc",
+      "text": "Usage: ai-specs sync-agent [path] [--all | --<agent>...] [--adopt-brief] [-v|--verbose]\n       ai-specs sync-agent --source-root <root> --target <path> [--all | --<agent>...] [--adopt-brief] [-v|--verbose]\n\nRender per-agent configs from the root manifest.\n\nArguments:\n  path             Target path when using the legacy single-target form\n\nFlags:\n  --source-root    Root project that owns ai-specs/ai-specs.toml (default: target)\n  --target         Target directory receiving derived local artifacts\n  --resolved-hooks Pre-resolved runtime-hooks JSON (from recipe-materialize)\n  --adopt-brief   Explicitly adopt the current AGENTS.md as the managed runtime-brief baseline\n  --all            All agents listed under [agents].enabled in ai-specs.toml\n  --claude         Claude Code  (CLAUDE.md, .claude/skills, .mcp.json)\n  --cursor         Cursor       (.cursor/mcp.json)\n  --opencode       OpenCode     (opencode.json, .opencode/skills, .opencode/commands)\n  --codex          Codex        (.codex/config.toml)\n  --copilot        GitHub Copilot (.github/copilot-instructions.md)\n  --gemini         Gemini CLI   (GEMINI.md, .gemini/skills, .gemini/settings.json)\n  --pi             Pi (pi.dev)  (.pi/skills, .pi/mcp.json)\n  --omp            Oh My Pi     (.omp/skills, .omp/mcp.json, .omp/commands)\n  -v, --verbose    Print full per-step detail instead of compact summaries\n\nIf no selector is given, defaults to --all.\n"
+    }
+  ]
+}

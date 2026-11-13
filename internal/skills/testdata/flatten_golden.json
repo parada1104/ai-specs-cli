@@ -1,0 +1,133 @@
+{
+  "oracle": {
+    "entry": "main",
+    "python": "3.14.7",
+    "script": "lib/_internal/flatten-resolved-skills.py"
+  },
+  "cases": [
+    {
+      "name": "four-tiers-duplicates-nested-modes-links",
+      "compare_stderr": true,
+      "exit": 0,
+      "tree": [
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.bundled/skills/bundledonly/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.bundled/skills/shared/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.deps/dep-b/skills/depcache/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.deps/dep-b/skills/shared/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.recipe/rec-a/skills/recipeonly/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.recipe/rec-a/skills/shared/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <CACHE>/.recipe/rec-b/skills/shared/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <ROOT>/ai-specs/.deps/dep-a/skills/deponly/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <ROOT>/ai-specs/skills/localonly/SKILL.md",
+        "64896f89fd11190013b70103e603a1c5826e56b7fb7d2197ab279b0690043599  <ROOT>/ai-specs/skills/localonly/assets/deep/x.md",
+        "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf  <ROOT>/ai-specs/skills/localonly/run.sh",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <ROOT>/ai-specs/skills/shared/SKILL.md",
+        "link <ROOT>/outside/dir  <ROOT>/outside/dir",
+        "8718bfbf93c5ae4fadef9dd96f165140ca86984f7d8373eebef5c0780d76c021  <ROOT>/outside/dir/inner.txt",
+        "link <ROOT>/outside/shared.txt  <ROOT>/outside/shared.txt",
+        "1b77907d7d04a851750e7267cd600ceb0ffb6d3f6fca060253442ea32e3d446b  <ROOT>/outside/shared.txt"
+      ],
+      "stdout": "  ✓ flattened 6 skill(s) to <CACHE>/resolved-skills\n",
+      "stderr": "  ! skill 'shared' found in multiple recipes; using first-seen from 'rec-a'\n",
+      "snapshot": [
+        "dir . 20000000755 0",
+        "dir bundledonly 20000000755 1700000000000000000",
+        "dir depcache 20000000755 1700000000000000000",
+        "dir deponly 20000000755 1700000000000000000",
+        "dir localonly 20000000755 1700000000000000000",
+        "dir localonly/assets 20000000755 1700000000000000000",
+        "dir localonly/assets/deep 20000000755 1700000000000000000",
+        "dir localonly/dirlink 20000000755 1700000000000000000",
+        "dir recipeonly 20000000755 1700000000000000000",
+        "dir shared 20000000755 1700000000000000000",
+        "file bundledonly/SKILL.md 644 1700000000000000000 \"---\\nname: sample\\nversion: 1.0.0\\n---\\nbody\\n\"",
+        "file depcache/SKILL.md 644 1700000000000000000 \"---\\nname: sample\\nversion: 1.0.0\\n---\\nbody\\n\"",
+        "file deponly/SKILL.md 644 1700000000000000000 \"---\\nname: sample\\nversion: 1.0.0\\n---\\nbody\\n\"",
+        "file localonly/SKILL.md 644 1700000000000000000 \"---\\nname: sample\\nversion: 1.0.0\\n---\\nbody\\n\"",
+        "file localonly/assets/deep/x.md 644 1700000000000000000 \"deep\\n\"",
+        "file localonly/dirlink/inner.txt 644 1700000000000000000 \"dir link\\n\"",
+        "file localonly/filelink.txt 644 1700000000000000000 \"via link\\n\"",
+        "file localonly/run.sh 755 1700000000000000000 \"#!/bin/sh\\n\"",
+        "file recipeonly/SKILL.md 644 1700000000000000000 \"---\\nname: sample\\nversion: 1.0.0\\n---\\nbody\\n\"",
+        "file shared/SKILL.md 644 1700000000000000000 \"---\\nname: sample\\nversion: 1.0.0\\n---\\nbody\\n\""
+      ]
+    },
+    {
+      "name": "stale-dest-is-wiped",
+      "compare_stderr": true,
+      "exit": 0,
+      "tree": [
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <ROOT>/ai-specs/skills/only/SKILL.md"
+      ],
+      "stdout": "  ✓ flattened 1 skill(s) to <ROOT>/dest\n",
+      "stderr": "",
+      "snapshot": [
+        "dir . 20000000755 0",
+        "dir only 20000000755 1700000000000000000",
+        "file only/SKILL.md 644 1700000000000000000 \"---\\nname: sample\\nversion: 1.0.0\\n---\\nbody\\n\""
+      ]
+    },
+    {
+      "name": "no-skills",
+      "compare_stderr": true,
+      "exit": 0,
+      "tree": [],
+      "stdout": "  ✓ flattened 0 skill(s) to <ROOT>/missing-parent/dest\n",
+      "stderr": "",
+      "snapshot": [
+        "dir . 20000000755 0"
+      ]
+    },
+    {
+      "name": "dest-through-symlinked-parent",
+      "compare_stderr": true,
+      "exit": 0,
+      "tree": [
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <ROOT>/ai-specs/skills/only/SKILL.md",
+        "link <ROOT>/real  <ROOT>/real"
+      ],
+      "stdout": "  ✓ flattened 1 skill(s) to <ROOT>/real/dest\n",
+      "stderr": "",
+      "snapshot": [
+        "dir . 20000000755 0",
+        "dir only 20000000755 1700000000000000000",
+        "file only/SKILL.md 644 1700000000000000000 \"---\\nname: sample\\nversion: 1.0.0\\n---\\nbody\\n\""
+      ]
+    },
+    {
+      "name": "dangling-link-stops-after-failing-skill",
+      "compare_stderr": false,
+      "exit": 1,
+      "tree": [
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <ROOT>/ai-specs/skills/a-first/SKILL.md",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <ROOT>/ai-specs/skills/b-broken/SKILL.md",
+        "7b9a72466d3960eb2aacccfc848939453490db0678bd4725def3f789b891c919  <ROOT>/ai-specs/skills/b-broken/z-after.txt",
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <ROOT>/ai-specs/skills/c-never/SKILL.md",
+        "link <ROOT>/nowhere  <ROOT>/nowhere"
+      ],
+      "stdout": "",
+      "stderr": "",
+      "snapshot": [
+        "dir . 20000000755 0",
+        "dir a-first 20000000755 1700000000000000000",
+        "dir b-broken 20000000755 1700000000000000000",
+        "file a-first/SKILL.md 644 1700000000000000000 \"---\\nname: sample\\nversion: 1.0.0\\n---\\nbody\\n\"",
+        "file b-broken/SKILL.md 644 1700000000000000000 \"---\\nname: sample\\nversion: 1.0.0\\n---\\nbody\\n\"",
+        "file b-broken/z-after.txt 644 1700000000000000000 \"after\\n\""
+      ]
+    },
+    {
+      "name": "dest-is-a-file",
+      "compare_stderr": false,
+      "exit": 1,
+      "tree": [
+        "c35f2baf8fcbde321b29f56a3ec1c5e0ab80d5535731c20d4152c1b45a43f6f4  <ROOT>/ai-specs/skills/only/SKILL.md"
+      ],
+      "stdout": "",
+      "stderr": "",
+      "snapshot": [
+        "file . 644 0 \"not a dir\\n\""
+      ]
+    }
+  ]
+}

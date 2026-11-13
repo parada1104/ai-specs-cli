@@ -1,0 +1,86 @@
+{
+  "cases": {
+    "01-offline-no-cached-binary": {
+      "status": {
+        "attempted": true,
+        "cache_path": "<HOME>/cache/bin/worktree-gate/9.9.9/darwin-arm64/worktree-gate",
+        "installed": false,
+        "mismatch": null,
+        "platform": [
+          "darwin",
+          "arm64"
+        ],
+        "warn": "worktree-gate: offline with no cached binary; gate_impl=auto: gate is failing open (run 'ai-specs doctor')"
+      },
+      "tree": {}
+    },
+    "02-offline-local-build-no-source": {
+      "status": {
+        "attempted": true,
+        "cache_path": "<HOME>/cache/bin/worktree-gate/9.9.9/darwin-arm64/worktree-gate",
+        "installed": false,
+        "mismatch": null,
+        "platform": [
+          "darwin",
+          "arm64"
+        ],
+        "warn": "worktree-gate: local build failed (gate Go source not found at <HOME>/catalog/recipes/worktree-flow/gate); gate_impl=auto: gate is failing open (run 'ai-specs doctor')"
+      },
+      "tree": {}
+    },
+    "03-download-installs-verified": {
+      "status": {
+        "attempted": true,
+        "cache_path": "<HOME>/cache/bin/worktree-gate/9.9.9/darwin-arm64/worktree-gate",
+        "installed": true,
+        "mismatch": null,
+        "platform": [
+          "darwin",
+          "arm64"
+        ],
+        "warn": null
+      },
+      "tree": {
+        "bin/worktree-gate/9.9.9/darwin-arm64/worktree-gate": "#!/bin/sh\ncase \"$1\" in\n  --version) printf '9.9.9\\n' ;;\n  --selftest) exit 0 ;;\nesac\nexit 0\n",
+        "bin/worktree-gate/9.9.9/darwin-arm64/worktree-gate.verified": "status=verified\nversion=9.9.9\ndigest=be64ee46ce7d2a72214c29f0bf189a02139550657014804d848664f5f9cc7911\nselftest=passed\n"
+      }
+    },
+    "04-download-digest-mismatch": {
+      "status": {
+        "attempted": true,
+        "cache_path": "<HOME>/cache/bin/worktree-gate/9.9.9/darwin-arm64/worktree-gate",
+        "installed": false,
+        "mismatch": "worktree-gate: digest mismatch for worktree-gate-darwin-arm64: expected aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, got be64ee46ce7d2a72214c29f0bf189a02139550657014804d848664f5f9cc7911; artifact deleted and never executed",
+        "platform": [
+          "darwin",
+          "arm64"
+        ],
+        "warn": "worktree-gate: digest mismatch for worktree-gate-darwin-arm64: expected aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, got be64ee46ce7d2a72214c29f0bf189a02139550657014804d848664f5f9cc7911; artifact deleted and never executed"
+      },
+      "tree": {
+        "bin/worktree-gate/9.9.9/last-digest-mismatch.txt": "worktree-gate: digest mismatch for worktree-gate-darwin-arm64: expected aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, got be64ee46ce7d2a72214c29f0bf189a02139550657014804d848664f5f9cc7911; artifact deleted and never executed\n"
+      }
+    },
+    "05-unsupported-platform": {
+      "status": {
+        "attempted": true,
+        "cache_path": "",
+        "installed": false,
+        "mismatch": null,
+        "platform": [
+          "solaris",
+          "riscv"
+        ],
+        "warn": "worktree-gate: unsupported platform (solaris/riscv); no binary acquired \u2014 available: darwin/arm64, darwin/amd64, linux/amd64, linux/arm64"
+      },
+      "tree": {}
+    }
+  },
+  "oracle": "lib/_internal/gate_binary.py acquire() via the differential driver (captured once)",
+  "platform_pinned": "darwin/arm64 (cases 01-04), solaris/riscv (case 05)",
+  "tokens": {
+    "<BASE>": "loopback asset server",
+    "<HOME>": "scratch ai-specs home",
+    "<TOOLS>": "scratch PATH directory with fake go"
+  }
+}

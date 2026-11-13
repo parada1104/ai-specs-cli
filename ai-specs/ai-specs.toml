@@ -48,6 +48,8 @@ gate_mode="ask"
 enabled = true
 [recipes.git-pr-flow.config]
 base_branch = "development"
+expected_owner = "parada1104"
+auto_switch_account = true
 
 [recipes.session-context]
 enabled = true
@@ -164,8 +166,10 @@ workflow_rules = [
   "When touching Python on the active path, migrate the behavior/dependency being touched to Go where practical; Python may remain only as a thin compatibility/acquisition/JSON bridge during the transition.",
   "Keep one authoritative grader per behavior and add parity/contract tests at each migrated seam.",
   "Do not perform unrelated drive-by rewrites; the policy is incremental.",
-]
-# useful_commands_mode = "replace" keeps only the auto-generated test_command line and
+  "DELEGATION — Orca workers own change content inside their assigned worktree only. A worker never stages, commits, pushes, merges, or manages worktree lifecycle; the canonical orchestrator owns those. See the `orca-aware-delegation` skill.",
+  "DELEGATION — Never launch a worker headless (`pi -p`, `claude -p`, `opencode run`, provider API calls). Orca workers launch as visible interactive TUI sessions via `worker-start`.",
+  "DELEGATION — `worker_done` never implies terminal closure by itself. Standing human decision for this epic: release once a worker completes its change cycle, since the PR lifecycle belongs to the orchestrator. Release only after an accepted `worker_done` — never on a timeout, idle TUI, heartbeat, question, escalation, or stale report — and retain anything that escalated, asked, or failed pending inspection.",
+]# useful_commands_mode = "replace" keeps only the auto-generated test_command line and
 # project-specific manual commands; suppresses recipe fragments that would duplicate
 # the auto-generated "Full validation: ./tests/validate.sh" line.
 useful_commands_mode = "replace"

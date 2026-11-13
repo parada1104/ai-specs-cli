@@ -1,0 +1,108 @@
+{
+  "oracle": {
+    "script": "lib/_internal/cli_version.py",
+    "python": "3.14.7",
+    "note": "Frozen snapshot of the legacy cli_version.py check-sync surface, captured once; the temporary project root and cli home are tokenized as <DIR>. Regenerating it needs a human decision."
+  },
+  "cases": [
+    {
+      "name": "no pin",
+      "manifest": "[project]\nname = 'x'\n",
+      "manifest_absent": false,
+      "version": "1.2.3\n",
+      "version_absent": false,
+      "ignore": false,
+      "rc": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "matching pin",
+      "manifest": "[project]\nname = 'x'\n\n[tool]\nversion = '1.2.3'\n",
+      "manifest_absent": false,
+      "version": "1.2.3\n",
+      "version_absent": false,
+      "ignore": false,
+      "rc": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "matching min",
+      "manifest": "[project]\nname = 'x'\n\n[tool]\nmin_version = '1.0.0'\n",
+      "manifest_absent": false,
+      "version": "1.2.3\n",
+      "version_absent": false,
+      "ignore": false,
+      "rc": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "mismatching pin policy error",
+      "manifest": "[project]\nname = 'x'\n\n[tool]\nversion = '2.0.0'\n",
+      "manifest_absent": false,
+      "version": "1.2.3\n",
+      "version_absent": false,
+      "ignore": false,
+      "rc": 1,
+      "stdout": "",
+      "stderr": "ERROR: installed CLI 1.2.3 does not match pinned 2.0.0.\n       Run `ai-specs upgrade` or adjust [tool] in ai-specs.toml.\n       Pass --ignore-cli-version to sync anyway.\n"
+    },
+    {
+      "name": "below minimum policy error",
+      "manifest": "[project]\nname = 'x'\n\n[tool]\nmin_version = '2.0.0'\n",
+      "manifest_absent": false,
+      "version": "1.2.3\n",
+      "version_absent": false,
+      "ignore": false,
+      "rc": 1,
+      "stdout": "",
+      "stderr": "ERROR: installed CLI 1.2.3 is below minimum 2.0.0.\n       Run `ai-specs upgrade` or adjust [tool] in ai-specs.toml.\n       Pass --ignore-cli-version to sync anyway.\n"
+    },
+    {
+      "name": "mismatching pin with policy warn",
+      "manifest": "[project]\nname = 'x'\n\n[tool]\nversion = '2.0.0'\n",
+      "manifest_absent": false,
+      "version": "1.2.3\n",
+      "version_absent": false,
+      "ignore": true,
+      "rc": 0,
+      "stdout": "",
+      "stderr": "⚠ ai-specs: ignoring CLI version policy (installed CLI 1.2.3 does not match pinned 2.0.0)\n"
+    },
+    {
+      "name": "unknown installed version",
+      "manifest": "[project]\nname = 'x'\n\n[tool]\nversion = '1.2.3'\n",
+      "manifest_absent": false,
+      "version": "",
+      "version_absent": true,
+      "ignore": false,
+      "rc": 1,
+      "stdout": "",
+      "stderr": "ERROR: installed CLI version is unknown.\n       Run `ai-specs upgrade` or adjust [tool] in ai-specs.toml.\n       Pass --ignore-cli-version to sync anyway.\n"
+    },
+    {
+      "name": "missing manifest",
+      "manifest": "",
+      "manifest_absent": true,
+      "version": "1.2.3\n",
+      "version_absent": false,
+      "ignore": false,
+      "rc": 1,
+      "stdout": "",
+      "stderr": "ERROR: <DIR>/ai-specs/ai-specs.toml not found.\n"
+    },
+    {
+      "name": "invalid manifest",
+      "manifest": "[project]\nname = 'x'\n\n[tool]\nversion = '1.2.3'\nmin_version = '1.0.0'\n",
+      "manifest_absent": false,
+      "version": "1.2.3\n",
+      "version_absent": false,
+      "ignore": false,
+      "rc": 1,
+      "stdout": "",
+      "stderr": "ERROR: cannot set both [tool].version and [tool].min_version\n"
+    }
+  ]
+}

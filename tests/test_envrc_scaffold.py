@@ -1,66 +1,102 @@
-"""Tests for envrc-scaffold.py."""
+"""Black-box envrc scaffold tests, CLI-driven wherever a verb exposes the surface.
+
+Every file the scaffold writes (``ai-specs.env.example``, the root ``.envrc``) is
+CLI-observable through ``ai-specs sync`` (the verb that runs the
+"harness env (.envrc + ai-specs.env.example)" step) and
+``ai-specs recipe configure --inspect --json`` (the verb that exposes
+catalog config schemas). No test may import or exec ``lib/_internal`` modules.
+"""
 from __future__ import annotations
 
-import importlib.util
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import invoke, isolated_home  # noqa: E402
+
+
+def _seed_recipe(home: Path, recipe_id: str, toml: str) -> None:
+    """Seed a fixture recipe as a REAL directory in the isolated home catalog.
+
+    populate_catalog keeps per-recipe symlinks into the repository catalog for
+    existing ids; writing a fixture recipe.toml through one would touch repo
+    files. Real dirs keep every write inside the temp home.
+    """
+    recipes = home / "catalog" / "recipes"
+    recipes.mkdir(parents=True, exist_ok=True)
+    rdir = recipes / recipe_id
+    if rdir.is_symlink():
+        rdir.unlink()  # symlink inside the temp home, never repo content
+    rdir.mkdir(parents=True, exist_ok=True)
+    (rdir / "recipe.toml").write_text(toml, encoding="utf-8")
+
 ROOT = Path(__file__).resolve().parents[1]
-ENVRC_PATH = ROOT / "lib" / "_internal" / "envrc-scaffold.py"
-VENDOR = ROOT / "lib" / "_vendor"
 
 
-def _ensure_vendor_path() -> None:
-    if VENDOR.is_dir() and str(VENDOR) not in sys.path:
-        sys.path.insert(0, str(VENDOR))
+def _make_home(base: Path) -> Path:
+    """Isolated CLI install root with a REAL (not symlinked) catalog directory.
+
+    The catalog is not symlinked: recipe seeding must never resolve through a
+    symlink into repository catalog files.
+    """
+    return isolated_home(base, catalog=False)
 
 
-def load_module(path: Path, name: str):
-    _ensure_vendor_path()
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+_HOMES: dict[str, Path] = {}
+
+
+def _home_for(project: Path) -> Path:
+    """One shared isolated install root per command sequence."""
+    base = project.parent
+    key = str(base)
+    if key not in _HOMES:
+        _HOMES[key] = _make_home(base)
+    return _HOMES[key]
 
 
 class EnvrcScaffoldTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        _ensure_vendor_path()
-        cls.mod = load_module(ENVRC_PATH, "envrc_scaffold_internal")
+    def _workspace(
+        self, recipes: dict[str, tuple[str, bool]] | None = None
+    ) -> tuple[Path, Path]:
+        """Temp workspace: isolated home (no lib/) + minimal project.
 
-    def _project_with_recipe(
-        self,
-        root: Path,
-        *,
-        recipe_id: str,
-        recipe_toml: str,
-        enabled: bool = True,
-    ) -> Path:
-        catalog = root / "catalog" / "recipes" / recipe_id
-        catalog.mkdir(parents=True)
-        (catalog / "recipe.toml").write_text(recipe_toml, encoding="utf-8")
+        Recipe TOMLs are seeded into the home's own catalog via
+        populate_catalog (per-recipe symlinks); repo catalog files are never
+        touched. Returns (project, home).
+        """
+        td = tempfile.TemporaryDirectory(prefix="ai-specs-envrc-")
+        self.addCleanup(td.cleanup)
+        root = Path(td.name)
         project = root / "project"
+        home = _home_for(project)
+        manifest = '[project]\nname = "p"\n'
+        for recipe_id, (toml, enabled) in (recipes or {}).items():
+            _seed_recipe(home, recipe_id, toml)
+            flag = "true" if enabled else "false"
+            manifest += (
+                f'\n[recipes.{recipe_id}]\nenabled = {flag}\nversion = "1.0"\n'
+            )
         (project / "ai-specs").mkdir(parents=True)
-        flag = "true" if enabled else "false"
         (project / "ai-specs" / "ai-specs.toml").write_text(
-            '[project]\nname = "p"\n\n'
-            f"[recipes.{recipe_id}]\nenabled = {flag}\nversion = \"1.0\"\n",
-            encoding="utf-8",
+            manifest, encoding="utf-8"
         )
-        return project
+        return project, home
+
+    def _sync(self, project: Path, home: Path):
+        result = invoke(project, "sync", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result
+
+    def _example(self, project: Path) -> str:
+        return (project / "ai-specs.env.example").read_text(encoding="utf-8")
 
     def test_collect_from_mcp_env(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._project_with_recipe(
-                root,
-                recipe_id="trello-mcp-workflow",
-                recipe_toml=(
+        project, home = self._workspace(
+            {
+                "trello-mcp-workflow": (
                     "[recipe]\n"
                     'id = "trello-mcp-workflow"\n'
                     'name = "Trello"\n'
@@ -69,25 +105,23 @@ class EnvrcScaffoldTests(unittest.TestCase):
                     "[[provides.mcp]]\n"
                     'id = "trello"\n'
                     'command = "npx"\n'
-                    "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\", TRELLO_TOKEN = \"$TRELLO_TOKEN\" }\n"
-                ),
-            )
-            import os
-            from unittest.mock import patch
-
-            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
-                vars_map = self.mod.collect_env_vars(project)
-            self.assertIn("TRELLO_API_KEY", vars_map)
-            self.assertIn("TRELLO_TOKEN", vars_map)
-            self.assertIn("trello-mcp-workflow", vars_map["TRELLO_API_KEY"])
+                    "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\", "
+                    "TRELLO_TOKEN = \"$TRELLO_TOKEN\" }\n",
+                    True,
+                )
+            }
+        )
+        self._sync(project, home)
+        text = self._example(project)
+        # Collected vars carry the declaring recipe's id in their purpose.
+        self.assertIn("TRELLO_API_KEY=", text)
+        self.assertIn("TRELLO_TOKEN=", text)
+        self.assertIn("required by trello (trello-mcp-workflow)", text)
 
     def test_non_reference_env_ignored(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._project_with_recipe(
-                root,
-                recipe_id="literal-env",
-                recipe_toml=(
+        project, home = self._workspace(
+            {
+                "literal-env": (
                     "[recipe]\n"
                     'id = "literal-env"\n'
                     'name = "L"\n'
@@ -96,24 +130,20 @@ class EnvrcScaffoldTests(unittest.TestCase):
                     "[[provides.mcp]]\n"
                     'id = "svc"\n'
                     'command = "echo"\n'
-                    'env = { MODE = "production", TOKEN = "$TOKEN" }\n'
-                ),
-            )
-            import os
-            from unittest.mock import patch
-
-            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
-                vars_map = self.mod.collect_env_vars(project)
-            self.assertNotIn("MODE", vars_map)
-            self.assertIn("TOKEN", vars_map)
+                    'env = { MODE = "production", TOKEN = "$TOKEN" }\n',
+                    True,
+                )
+            }
+        )
+        self._sync(project, home)
+        text = self._example(project)
+        self.assertNotIn("MODE", text)
+        self.assertIn("TOKEN", text)
 
     def test_generate_writes_export_lines(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._project_with_recipe(
-                root,
-                recipe_id="trello-mcp-workflow",
-                recipe_toml=(
+        project, home = self._workspace(
+            {
+                "trello-mcp-workflow": (
                     "[recipe]\n"
                     'id = "trello-mcp-workflow"\n'
                     'name = "Trello"\n'
@@ -122,29 +152,26 @@ class EnvrcScaffoldTests(unittest.TestCase):
                     "[[provides.mcp]]\n"
                     'id = "trello"\n'
                     'command = "npx"\n'
-                    "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\", TRELLO_TOKEN = \"$TRELLO_TOKEN\" }\n"
-                ),
-            )
-            import os
-            from unittest.mock import patch
-
-            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
-                path = self.mod.generate_envrc_example(project)
-            text = path.read_text(encoding="utf-8")
-            self.assertTrue(str(path).endswith("ai-specs.env.example"))
-            self.assertIn("TRELLO_API_KEY=", text)
-            self.assertIn("TRELLO_TOKEN=", text)
-            self.assertTrue(text.index("TRELLO_API_KEY") < text.index("TRELLO_TOKEN"))
-            self.assertIn("required by trello", text)
-            self.assertNotIn("export ", text)
+                    "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\", "
+                    "TRELLO_TOKEN = \"$TRELLO_TOKEN\" }\n",
+                    True,
+                )
+            }
+        )
+        self._sync(project, home)
+        path = project / "ai-specs.env.example"
+        self.assertTrue(str(path).endswith("ai-specs.env.example"))
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("TRELLO_API_KEY=", text)
+        self.assertIn("TRELLO_TOKEN=", text)
+        self.assertTrue(text.index("TRELLO_API_KEY") < text.index("TRELLO_TOKEN"))
+        self.assertIn("required by trello", text)
+        self.assertNotIn("export ", text)
 
     def test_envrc_never_written(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._project_with_recipe(
-                root,
-                recipe_id="trello-mcp-workflow",
-                recipe_toml=(
+        project, home = self._workspace(
+            {
+                "trello-mcp-workflow": (
                     "[recipe]\n"
                     'id = "trello-mcp-workflow"\n'
                     'name = "Trello"\n'
@@ -153,26 +180,21 @@ class EnvrcScaffoldTests(unittest.TestCase):
                     "[[provides.mcp]]\n"
                     'id = "trello"\n'
                     'command = "npx"\n'
-                    "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\" }\n"
-                ),
-            )
-            import os
-            from unittest.mock import patch
-
-            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
-                self.mod.generate_envrc_example(project)
-            self.assertFalse((project / "ai-specs" / ".envrc").exists())
-            self.assertTrue((project / "ai-specs.env.example").is_file())
-            self.assertFalse((project / "ai-specs" / ".envrc.example").exists())
-            self.assertFalse((project / "ai-specs" / ".env.example").exists())
+                    "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\" }\n",
+                    True,
+                )
+            }
+        )
+        self._sync(project, home)
+        self.assertFalse((project / "ai-specs" / ".envrc").exists())
+        self.assertTrue((project / "ai-specs.env.example").is_file())
+        self.assertFalse((project / "ai-specs" / ".envrc.example").exists())
+        self.assertFalse((project / "ai-specs" / ".env.example").exists())
 
     def test_existing_example_backed_up(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._project_with_recipe(
-                root,
-                recipe_id="trello-mcp-workflow",
-                recipe_toml=(
+        project, home = self._workspace(
+            {
+                "trello-mcp-workflow": (
                     "[recipe]\n"
                     'id = "trello-mcp-workflow"\n'
                     'name = "Trello"\n'
@@ -181,53 +203,43 @@ class EnvrcScaffoldTests(unittest.TestCase):
                     "[[provides.mcp]]\n"
                     'id = "trello"\n'
                     'command = "npx"\n'
-                    "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\" }\n"
-                ),
-            )
-            example = project / "ai-specs.env.example"
-            example.write_text("OLD CONTENT\n", encoding="utf-8")
-            import os
-            from unittest.mock import patch
-
-            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
-                self.mod.generate_envrc_example(project)
-            bak = project / "ai-specs.env.example.bak"
-            self.assertTrue(bak.is_file())
-            self.assertEqual(bak.read_text(encoding="utf-8"), "OLD CONTENT\n")
-            self.assertIn("TRELLO_API_KEY", example.read_text(encoding="utf-8"))
+                    "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\" }\n",
+                    True,
+                )
+            }
+        )
+        example = project / "ai-specs.env.example"
+        example.write_text("OLD CONTENT\n", encoding="utf-8")
+        self._sync(project, home)
+        bak = project / "ai-specs.env.example.bak"
+        self.assertTrue(bak.is_file())
+        self.assertEqual(bak.read_text(encoding="utf-8"), "OLD CONTENT\n")
+        self.assertIn("TRELLO_API_KEY", example.read_text(encoding="utf-8"))
 
     def test_no_enabled_mcp_recipes_writes_empty_template(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._project_with_recipe(
-                root,
-                recipe_id="session-context",
-                recipe_toml=(
+        project, home = self._workspace(
+            {
+                "session-context": (
                     "[recipe]\n"
                     'id = "session-context"\n'
                     'name = "Session"\n'
                     'description = "D"\n'
-                    'version = "1.0"\n'
-                ),
-            )
-            import os
-            from unittest.mock import patch
-
-            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
-                path = self.mod.generate_envrc_example(project)
-            text = path.read_text(encoding="utf-8")
-            self.assertIn("no env vars required", text)
-            self.assertFalse((project / "ai-specs" / ".envrc").exists())
-            self.assertTrue(str(path).endswith("ai-specs.env.example"))
+                    'version = "1.0"\n',
+                    True,
+                )
+            }
+        )
+        self._sync(project, home)
+        path = project / "ai-specs.env.example"
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("no env vars required", text)
+        self.assertFalse((project / "ai-specs" / ".envrc").exists())
+        self.assertTrue(str(path).endswith("ai-specs.env.example"))
 
     def test_disabled_recipe_excluded(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._project_with_recipe(
-                root,
-                recipe_id="trello-mcp-workflow",
-                enabled=False,
-                recipe_toml=(
+        project, home = self._workspace(
+            {
+                "trello-mcp-workflow": (
                     "[recipe]\n"
                     'id = "trello-mcp-workflow"\n'
                     'name = "Trello"\n'
@@ -236,65 +248,21 @@ class EnvrcScaffoldTests(unittest.TestCase):
                     "[[provides.mcp]]\n"
                     'id = "trello"\n'
                     'command = "npx"\n'
-                    "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\" }\n"
-                ),
-            )
-            import os
-            from unittest.mock import patch
-
-            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
-                vars_map = self.mod.collect_env_vars(project)
-            self.assertEqual(vars_map, {})
-
-    def test_prompt_env_vars_uses_password_api_for_secrets(self):
-        """Regression: password= kwarg crashes questionary 2.x; use password()."""
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._project_with_recipe(
-                root,
-                recipe_id="trello-mcp-workflow",
-                recipe_toml=(
-                    "[recipe]\n"
-                    'id = "trello-mcp-workflow"\n'
-                    'name = "Trello"\n'
-                    'description = "D"\n'
-                    'version = "1.0"\n\n'
-                    "[[provides.mcp]]\n"
-                    'id = "trello"\n'
-                    'command = "npx"\n'
-                    "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\", MODE = \"$MODE\" }\n"
-                ),
-            )
-            import os
-            from unittest.mock import MagicMock, patch
-
-            password = MagicMock()
-            password.return_value.ask.return_value = "secret-key"
-            text = MagicMock()
-            text.return_value.ask.return_value = "plain"
-            confirm = MagicMock()
-            confirm.return_value.ask.return_value = True
-            q = MagicMock(password=password, text=text, confirm=confirm)
-
-            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}), patch.dict(
-                "sys.modules", {"questionary": q}
-            ):
-                result = self.mod.prompt_env_vars(project)
-
-            self.assertEqual(result["TRELLO_API_KEY"], "secret-key")
-            self.assertEqual(result["MODE"], "plain")
-            password.assert_called()
-            # Secrets must not go through text(..., password=...)
-            for call in text.call_args_list:
-                self.assertNotIn("password", call.kwargs)
+                    "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\" }\n",
+                    False,
+                )
+            }
+        )
+        self._sync(project, home)
+        text = self._example(project)
+        self.assertNotIn("TRELLO_API_KEY", text)
+        self.assertNotIn("TRELLO_TOKEN", text)
+        self.assertIn("no env vars required", text)
 
     def test_generate_includes_env_var_help_comments(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            project = self._project_with_recipe(
-                root,
-                recipe_id="trello-mcp-workflow",
-                recipe_toml=(
+        project, home = self._workspace(
+            {
+                "trello-mcp-workflow": (
                     "[recipe]\n"
                     'id = "trello-mcp-workflow"\n'
                     'name = "Trello"\n'
@@ -303,33 +271,73 @@ class EnvrcScaffoldTests(unittest.TestCase):
                     "[[provides.mcp]]\n"
                     'id = "trello"\n'
                     'command = "npx"\n'
-                    "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\", TRELLO_TOKEN = \"$TRELLO_TOKEN\" }\n"
-                ),
-            )
-            import os
-            from unittest.mock import patch
-
-            with patch.dict(os.environ, {"AI_SPECS_HOME": str(root)}):
-                path = self.mod.generate_envrc_example(project)
-            text = path.read_text(encoding="utf-8")
-            self.assertTrue(str(path).endswith("ai-specs.env.example"))
-            self.assertIn("trello.com/power-ups/admin", text)
-            self.assertIn("TRELLO_API_KEY", text)
-            self.assertIn("TRELLO_TOKEN", text)
+                    "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\", "
+                    "TRELLO_TOKEN = \"$TRELLO_TOKEN\" }\n",
+                    True,
+                )
+            }
+        )
+        self._sync(project, home)
+        path = project / "ai-specs.env.example"
+        self.assertTrue(str(path).endswith("ai-specs.env.example"))
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("trello.com/power-ups/admin", text)
+        self.assertIn("TRELLO_API_KEY", text)
+        self.assertIn("TRELLO_TOKEN", text)
 
     def test_env_var_help_map_has_known_vars(self):
-        self.assertIn("TRELLO_API_KEY", self.mod.ENV_VAR_HELP)
-        self.assertIn("TRELLO_TOKEN", self.mod.ENV_VAR_HELP)
-        self.assertIn("CANONICAL_VAULT_PATH", self.mod.ENV_VAR_HELP)
-        self.assertIn("https://trello.com/power-ups/admin", self.mod.ENV_VAR_HELP["TRELLO_API_KEY"])
+        """Help text for known vars renders into the generated example.
+
+        The help map is only CLI-observable through the example comments, so
+        this drives sync with the recipes that declare all three known vars
+        (trello + vault) and asserts the help needles.
+        """
+        project, home = self._workspace(
+            {
+                "trello-mcp-workflow": (
+                    "[recipe]\n"
+                    'id = "trello-mcp-workflow"\n'
+                    'name = "Trello"\n'
+                    'description = "D"\n'
+                    'version = "1.0"\n\n'
+                    "[[provides.mcp]]\n"
+                    'id = "trello"\n'
+                    'command = "npx"\n'
+                    "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\", "
+                    "TRELLO_TOKEN = \"$TRELLO_TOKEN\" }\n",
+                    True,
+                ),
+                "vault-canonical-store": (
+                    "[recipe]\n"
+                    'id = "vault-canonical-store"\n'
+                    'name = "Vault"\n'
+                    'description = "D"\n'
+                    'version = "1.0"\n\n'
+                    "[[provides.mcp]]\n"
+                    'id = "vault"\n'
+                    'command = "npx"\n'
+                    'env = { CANONICAL_VAULT_PATH = "$CANONICAL_VAULT_PATH" }\n',
+                    True,
+                ),
+            }
+        )
+        self._sync(project, home)
+        text = self._example(project)
+        self.assertIn("TRELLO_API_KEY=", text)
+        self.assertIn("https://trello.com/power-ups/admin", text)
+        self.assertIn("TRELLO_TOKEN=", text)
+        self.assertIn("Power-Up → API key page → Token", text)
+        self.assertIn("CANONICAL_VAULT_PATH=", text)
+        self.assertIn("project-scoped vault folder", text)
 
     def test_catalog_config_fields_have_help_text(self):
-        """Key catalog ConfigFields must ship wizard help_text."""
-        schema = load_module(
-            ROOT / "lib" / "_internal" / "recipe_schema.py",
-            "recipe_schema_help_check",
-        )
-        catalog = ROOT / "catalog" / "recipes"
+        """Key catalog ConfigFields must ship wizard help_text.
+
+        The recipe config schema is CLI-observable through
+        ``ai-specs recipe configure <id> --inspect --json`` (schema.fields),
+        read from the isolated home's catalog (a read-only symlink to the
+        repository catalog).
+        """
         required = {
             "trello-mcp-workflow": ["board_id", "default_list", "epic_list"],
             "worktree-flow": ["integration_branch", "worktrees_dir", "gate_mode"],
@@ -339,12 +347,26 @@ class EnvrcScaffoldTests(unittest.TestCase):
             "vault-canonical-store": ["vault_scope", "decisions_folder", "sessions_folder"],
             "tdd-flow": ["test_command"],
         }
+        td = tempfile.TemporaryDirectory(prefix="ai-specs-envrc-schema-")
+        self.addCleanup(td.cleanup)
+        project = Path(td.name) / "project"
+        (project / "ai-specs").mkdir(parents=True)
+        (project / "ai-specs" / "ai-specs.toml").write_text(
+            '[project]\nname = "p"\n', encoding="utf-8"
+        )
         for recipe_id, keys in required.items():
-            recipe = schema.load_recipe_toml(catalog / recipe_id / "recipe.toml")
+            result = invoke(
+                project, "recipe", "configure", recipe_id, "--inspect", "--json"
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            fields = {
+                field["key"]: field
+                for field in json.loads(result.stdout)["schema"]["fields"]
+            }
             for key in keys:
-                field = recipe.config_schema.fields[key]
+                self.assertIn(key, fields, f"{recipe_id}.{key} missing from schema")
                 self.assertTrue(
-                    field.help_text and field.help_text.strip(),
+                    fields[key]["help_text"] and fields[key]["help_text"].strip(),
                     f"{recipe_id}.{key} missing help_text",
                 )
 

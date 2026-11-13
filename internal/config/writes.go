@@ -1,0 +1,431 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+
+	"ai-specs.dev/ai-specs/internal/toml"
+)
+
+// Surgical manifest writes: byte-exact ports of the python3 heredocs in
+// lib/skills-add.sh, lib/recipe-remove.sh, and lib/skills-remove.sh, plus
+// recipe-add.py's own write step (AppendRecipeSegments — literal append and
+// parse-validate-and-restore, GO-20 U6b).
+//
+// All operations work on raw bytes and never re-serialize parsed TOML;
+// internal/toml.Parse is used only for the valid→invalid validate-guard.
+// All writes are atomic (temp file in the target's directory + rename),
+// preserving the original file mode (0o7777 mask).
+
+// segment is one block of the manifest: an optional column-0 '[' header
+// line plus every following line until the next such header. The preamble
+// before the first header is its own segment (no header). An indented
+// "  [other.table]" line is invisible to the segmenter and stays attached
+// to the preceding block — mirroring the Python heredocs exactly.
+type segment struct {
+	header    string
+	hasHeader bool
+	lines     []string // includes the header line and each line's ending
+}
+
+// splitLinesKeepEnds ports Python str.splitlines(keepends=True): split on
+// \n, \r\n, \r, \v, \f, \x1c-\x1e, NEL (U+0085), U+2028, U+2029, keeping
+// each line's original ending. A file without a trailing newline keeps its
+// final unterminated line.
+func splitLinesKeepEnds(s string) []string {
+	var lines []string
+	start := 0
+	i := 0
+	runes := []rune(s)
+	for i < len(runes) {
+		r := runes[i]
+		var end int
+		switch r {
+		case '\r':
+			end = i + 1
+			if end < len(runes) && runes[end] == '\n' {
+				end++
+			}
+		case '\n', '\v', '\f', 0x1c, 0x1d, 0x1e, 0x85, '\u2028', '\u2029':
+			end = i + 1
+		default:
+			i++
+			continue
+		}
+		lines = append(lines, string(runes[start:end]))
+		start = end
+		i = end
+	}
+	if start < len(runes) {
+		lines = append(lines, string(runes[start:]))
+	}
+	return lines
+}
+
+// splitSegments ports the heredocs' segmenter: a new segment begins at each
+// line whose FIRST character is '['.
+func splitSegments(content string) []segment {
+	var segments []segment
+	current := segment{}
+	for _, line := range splitLinesKeepEnds(content) {
+		if strings.HasPrefix(line, "[") {
+			if len(current.lines) > 0 || current.hasHeader {
+				segments = append(segments, current)
+			}
+			current = segment{header: line, hasHeader: true, lines: []string{line}}
+		} else {
+			current.lines = append(current.lines, line)
+		}
+	}
+	if len(current.lines) > 0 || current.hasHeader {
+		segments = append(segments, current)
+	}
+	return segments
+}
+
+// joinSegments reassembles content from remaining segments, verbatim.
+func joinSegments(segments []segment) string {
+	var sb strings.Builder
+	for _, seg := range segments {
+		for _, line := range seg.lines {
+			sb.WriteString(line)
+		}
+	}
+	return sb.String()
+}
+
+// guardValidToInvalid refuses a write that regresses a valid manifest into
+// an invalid one. A manifest that is ALREADY invalid may still be edited
+// (frozen parity contract): only the valid→invalid regression is guarded.
+// The error text mirrors the heredocs; the embedded parse-error detail is
+// diagnostic (ADR 0002).
+func guardValidToInvalid(original, newContent, errPrefix string) error {
+	if _, err := toml.Parse([]byte(original)); err != nil {
+		return nil // already invalid — guard does not fire
+	}
+	if _, err := toml.Parse([]byte(newContent)); err != nil {
+		return fmt.Errorf("%s%s", errPrefix, err)
+	}
+	return nil
+}
+
+// readManifestText ports pathlib.Path.read_text's universal-newline
+// translation: \r\n and lone \r become \n in memory before any
+// segmentation — including inside multi-line string values. This is why a
+// CRLF manifest round-tripped through a write op comes out LF-normalized,
+// mirroring the python3 heredocs byte-for-byte.
+func readManifestText(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	s := strings.ReplaceAll(string(data), "\r\n", "\n")
+	return strings.ReplaceAll(s, "\r", "\n"), nil
+}
+
+// atomicWrite replaces path with content via a temp file in the target's
+// parent directory + rename, preserving the original file mode (0o7777
+// mask, mirroring mkstemp + chmod + os.replace in the heredocs).
+func atomicWrite(path, content string) error {
+	// Resolve a symlinked manifest to its target: renaming a temp file over the
+	// path would replace the link with a regular file. Only the final component
+	// is checked; a symlinked parent directory still routes the rename through
+	// the real directory on its own.
+	target := path
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		resolved, rerr := filepath.EvalSymlinks(path)
+		if rerr != nil {
+			return rerr
+		}
+		target = resolved
+	}
+
+	var mode os.FileMode = 0o644
+	if info, err := os.Stat(target); err == nil {
+		m := info.Mode()
+		mode = m.Perm() | m&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky)
+		// Refuse to overwrite a manifest nobody can write: temp + rename would
+		// bypass the mode the user set. The test is every write bit, because that
+		// is what the message claims — a manifest whose write bit sits on group
+		// or other is writable by the rename, so refusing it would be a false
+		// refusal. Root ignores the bit, so skip there.
+		if m.Perm()&0o222 == 0 && os.Geteuid() != 0 {
+			return fmt.Errorf("refusing to overwrite read-only manifest %s: %w", path, os.ErrPermission)
+		}
+	}
+	f, err := os.CreateTemp(filepath.Dir(target), ".ai-specs.toml.*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	if _, err := f.WriteString(content); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Chmod(tmp, mode); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, target); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// AppendDepsBlock is the port of the skills-add.sh heredoc: append a
+// rendered [[deps]] block at EOF. Values are rendered with the heredoc's
+// s() (backslash-then-quote escaping). Like the Python original, this does
+// NO validation — its non-validation is recorded-defect behavior and is
+// mirrored, not fixed.
+func AppendDepsBlock(manifestPath, depID, url, subdir, scopeCSV, trigger, license, attribution, ref string) (string, error) {
+	s := func(x string) string {
+		return `"` + strings.ReplaceAll(strings.ReplaceAll(x, `\`, `\\`), `"`, `\"`) + `"`
+	}
+
+	var scopes []string
+	for _, x := range strings.Split(scopeCSV, ",") {
+		if x = strings.TrimSpace(x); x != "" {
+			scopes = append(scopes, x)
+		}
+	}
+	if len(scopes) == 0 {
+		scopes = []string{"root"}
+	}
+	scopeParts := make([]string, len(scopes))
+	for i, x := range scopes {
+		scopeParts[i] = s(x)
+	}
+
+	block := []string{"", "[[deps]]"}
+	block = append(block, "id = "+s(depID))
+	block = append(block, "source = "+s(url))
+	if subdir != "" {
+		block = append(block, "path = "+s(subdir))
+	}
+	block = append(block, "scope = ["+strings.Join(scopeParts, ", ")+"]")
+	if trigger != "" {
+		block = append(block, "auto_invoke = ["+s(trigger)+"]")
+	}
+	if license != "" {
+		block = append(block, "license = "+s(license))
+	}
+	if attribution != "" {
+		block = append(block, "vendor_attribution = "+s(attribution))
+	}
+	if ref != "" {
+		block = append(block, "ref = "+s(ref))
+	}
+	block = append(block, "")
+
+	text, err := readManifestText(manifestPath)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	newContent := text + strings.Join(block, "\n")
+	if err := atomicWrite(manifestPath, newContent); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("  ✓ appended [[deps]] for '%s' to %s", depID, manifestPath), nil
+}
+
+// RemoveRecipeSegments is the port of the recipe-remove.sh heredoc: remove
+// ALL [recipes.<id>] / [recipes.<id>.*] segments matching the heredoc's
+// header regex. When no segment matches, the file is untouched.
+func RemoveRecipeSegments(manifestPath, recipeID string) (int, string, error) {
+	original, err := readManifestText(manifestPath)
+	if err != nil {
+		return 0, "", err
+	}
+	segments := splitSegments(original)
+
+	pattern := regexp.MustCompile(
+		`^\s*\[\s*recipes\s*\.\s*` + regexp.QuoteMeta(recipeID) + `(\s*[.\]]|\s*$)`)
+	var targets []int
+	for i, seg := range segments {
+		if !seg.hasHeader {
+			continue
+		}
+		// TOML allows comments: [recipes.foo] # comment
+		if pattern.MatchString(strings.TrimSpace(seg.header)) {
+			targets = append(targets, i)
+		}
+	}
+	if len(targets) == 0 {
+		return 0, "", fmt.Errorf("  ✗ recipe '%s' not found in %s", recipeID, manifestPath)
+	}
+
+	drop := make(map[int]bool, len(targets))
+	for _, i := range targets {
+		drop[i] = true
+	}
+	remaining := make([]segment, 0, len(segments)-len(targets))
+	for i, seg := range segments {
+		if !drop[i] {
+			remaining = append(remaining, seg)
+		}
+	}
+	newContent := joinSegments(remaining)
+
+	if err := guardValidToInvalid(string(original), newContent,
+		fmt.Sprintf("ERROR: removing recipe '%s' would produce invalid TOML: ", recipeID)); err != nil {
+		return 0, "", err
+	}
+	if err := atomicWrite(manifestPath, newContent); err != nil {
+		return 0, "", err
+	}
+	return len(targets), fmt.Sprintf("  ✓ removed %d section(s) for recipe '%s' from %s", len(targets), recipeID, manifestPath), nil
+}
+
+// RemoveDepSegment is the port of the skills-remove.sh heredoc: delete the
+// FIRST [[deps]] segment whose id line matches the target depID. When no
+// segment matches, the file is untouched.
+func RemoveDepSegment(manifestPath, depID string) (string, error) {
+	original, err := readManifestText(manifestPath)
+	if err != nil {
+		return "", err
+	}
+	segments := splitSegments(original)
+
+	idRe := regexp.MustCompile(`(?m)^\s*id\s*=\s*"` + regexp.QuoteMeta(depID) + `"\s*$`)
+	targetIdx := -1
+	for i, seg := range segments {
+		if !seg.hasHeader {
+			continue
+		}
+		// TOML allows inline comments after section headers: [[deps]] # comment
+		if !strings.HasPrefix(strings.TrimSpace(seg.header), "[[deps]]") {
+			continue
+		}
+		if idRe.MatchString(joinSegments([]segment{seg})) {
+			targetIdx = i
+			break
+		}
+	}
+	if targetIdx < 0 {
+		return "", fmt.Errorf("  ✗ dep '%s' not found in %s", depID, manifestPath)
+	}
+
+	remaining := make([]segment, 0, len(segments)-1)
+	for i, seg := range segments {
+		if i != targetIdx {
+			remaining = append(remaining, seg)
+		}
+	}
+	newContent := joinSegments(remaining)
+
+	if err := guardValidToInvalid(string(original), newContent,
+		fmt.Sprintf("ERROR: removing skill '%s' would produce invalid TOML: ", depID)); err != nil {
+		return "", err
+	}
+	if err := atomicWrite(manifestPath, newContent); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("  ✓ removed [[deps]] '%s' from %s", depID, manifestPath), nil
+}
+
+// RecipeConfigField is one [config.<key>] placeholder line of the
+// [recipes.<id>.config] block `recipe add` appends: the CLI converts the
+// parsed schema field (internal/schema owns that read, S6) and this file
+// owns the rendering, so the appended bytes have exactly one author — no
+// second writer in the CLI package.
+type RecipeConfigField struct {
+	Key      string
+	Required bool
+	// Default is field.default; nil mirrors `default is None` (TOML has no
+	// null, so an absent default and a nil default are the same fact).
+	Default any
+}
+
+// AppendRecipeSegments is the port of recipe-add.py's write step: the
+// literal append at EOF of "\n[recipes.<id>]\nenabled = true\n" plus the
+// [recipes.<id>.config] placeholder block (keys in Python's sorted() order;
+// required → `key = ""  # REQUIRED`, a default → key = toml_value(default),
+// otherwise the commented `# key = ""  # optional` line — required WINS
+// over a default, exactly what the if/elif chain decides), followed by the
+// parity contract §3 (docs/go-migration-parity-contract.md)
+// parse-validate-and-restore: the appended text is written atomically,
+// validated, and on failure the ORIGINAL text is restored atomically with
+// recipe-add.py's frozen guard message — including the universal-newline
+// normalization Path.read_text / write_text(original_text) leave behind, so
+// a malformed append never survives as the manifest.
+//
+// Unlike guardValidToInvalid this guard is UNCONDITIONAL: recipe-add.py
+// tomllib.loads the appended text whatever the base looks like (an
+// already-invalid base still refuses — test_recipe_add's rollback fixture),
+// which is why the remove heredocs' shared guard is not reused here (S6: one
+// grader per behaviour).
+func AppendRecipeSegments(manifestPath, recipeID string, fields []RecipeConfigField) error {
+	original, err := readManifestText(manifestPath)
+	if err != nil {
+		return err
+	}
+	block, err := renderRecipeSection(recipeID, fields)
+	if err != nil {
+		// A default toml_value cannot serialize: Python raises its TypeError
+		// at the same site, before anything is written.
+		return err
+	}
+	text := original
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	text += block
+	if err := atomicWrite(manifestPath, text); err != nil {
+		return err
+	}
+	if _, perr := toml.Parse([]byte(text)); perr != nil {
+		// Restore the original text (the normalized copy recipe-add.py
+		// holds), so the refusal leaves the manifest exactly where it was.
+		if rerr := atomicWrite(manifestPath, original); rerr != nil {
+			return fmt.Errorf("adding '%s' would produce an invalid TOML manifest, and restoring the original failed: %w", recipeID, rerr)
+		}
+		return fmt.Errorf("Error: adding '%s' would produce an invalid TOML manifest (%s). ai-specs.toml was not modified.", recipeID, perr)
+	}
+	return nil
+}
+
+// renderRecipeSection builds recipe-add.py's section string: the enabled
+// block, then — only when the recipe declares config fields (has_config is
+// `bool(config_schema.fields)`) — the placeholder table with the keys
+// sorted the way Python's sorted() orders them.
+func renderRecipeSection(recipeID string, fields []RecipeConfigField) (string, error) {
+	var sb strings.Builder
+	sb.WriteString("\n[recipes." + recipeID + "]\nenabled = true\n")
+	if len(fields) == 0 {
+		return sb.String(), nil
+	}
+	ordered := make([]RecipeConfigField, len(fields))
+	copy(ordered, fields)
+	slices.SortFunc(ordered, func(a, b RecipeConfigField) int {
+		return strings.Compare(a.Key, b.Key)
+	})
+	sb.WriteString("\n[recipes." + recipeID + ".config]\n")
+	for _, f := range ordered {
+		switch {
+		case f.Required:
+			sb.WriteString(f.Key + " = \"\"  # REQUIRED\n")
+		case f.Default != nil:
+			v, err := toml.TOMLValue(f.Default)
+			if err != nil {
+				return "", err
+			}
+			sb.WriteString(f.Key + " = " + v + "\n")
+		default:
+			sb.WriteString("# " + f.Key + " = \"\"  # optional\n")
+		}
+	}
+	return sb.String(), nil
+}

@@ -1,0 +1,229 @@
+{
+  "oracle": {
+    "note": "Frozen snapshot of the legacy vendor-skills.py surface for both routes, captured once. The temporary project root and cli home are tokenized as \u003cDIR\u003e and the missing dep source as \u003cMISSING\u003e; directory modes are omitted because they follow the process umask; SKILL.md carries the token \"umask\" because it is a 0o666 create; a null stderr means the case's stderr text is git's own and only its presence is required. The dep-with-ref case clones the stable fixture URL from an offline git fixture root, so no rendered byte or lock hash carries a host path. Regenerating it needs a human decision.",
+    "python": "3.14.7",
+    "script": "lib/_internal/vendor-skills.py"
+  },
+  "sync_cases": [
+    {
+      "name": "no deps",
+      "input_project": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'vendor-diff'\n\n[agents]\nenabled = ['claude']\n",
+          "mode": "0644"
+        }
+      ],
+      "rc": 0,
+      "stdout": "  (no [[deps]] declared — nothing to vendor)\n",
+      "stderr": "",
+      "project": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'vendor-diff'\n\n[agents]\nenabled = ['claude']\n",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "name": "dep with ref",
+      "input_project": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'vendor-diff'\n\n[agents]\nenabled = ['claude']\n\n[[deps]]\nid = 'dep-ref'\nsource = 'https://github.com/kepano/obsidian-skills.git'\nref = 'v1'\n",
+          "mode": "0644"
+        }
+      ],
+      "rc": 0,
+      "stdout": "  ▸ dep-ref  ←  https://github.com/kepano/obsidian-skills.git  (ref: v1)\n  ✓ vendored 1 dep(s)\n",
+      "stderr": null,
+      "project": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[deps.\"dep-ref\".skills.\"dep-ref\"]\n\"SKILL.md\" = \"87817aa0ec87e169fc72a1d721d15645052d5f1ae19bbdeca7515862c69615a9\"\n",
+          "mode": "0600"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/dep-ref",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/dep-ref/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/dep-ref/skills/dep-ref",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/dep-ref/skills/dep-ref/SKILL.md",
+          "content": "---\nname: dep-ref\ndescription: \u003e\n  git dep\nlicense: Unknown\nmetadata:\n  author: \"upstream\"\n  version: \"1.0\"\n  source: \"https://github.com/kepano/obsidian-skills.git\"\n  scope: [root]\n---\n\n# git\n",
+          "mode": "umask"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'vendor-diff'\n\n[agents]\nenabled = ['claude']\n\n[[deps]]\nid = 'dep-ref'\nsource = 'https://github.com/kepano/obsidian-skills.git'\nref = 'v1'\n",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "name": "dep with path and ancillary dirs",
+      "input_project": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'vendor-diff'\n\n[agents]\nenabled = ['claude']\n\n[[deps]]\nid = 'dep-path'\nsource = 'https://github.com/kepano/obsidian-skills.git'\npath = 'skills/obsidian-markdown'\n",
+          "mode": "0644"
+        }
+      ],
+      "rc": 0,
+      "stdout": "  ▸ dep-path  ←  https://github.com/kepano/obsidian-skills.git  (path: skills/obsidian-markdown)\n  ✓ vendored 1 dep(s)\n",
+      "stderr": "",
+      "project": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[deps.\"dep-path\".skills.\"dep-path\"]\n\"SKILL.md\" = \"8902d0f8aa7700d55448d11eeea4394c5086416ea684fff01b18e703189e9ce5\"\n\"references/PROPERTIES.md\" = \"c5f704e2075da71fe08f54d1c62c147e012e9d177894f4cb1da77b72062c4159\"\n",
+          "mode": "0600"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/dep-path",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/dep-path/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/dep-path/skills/dep-path",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/dep-path/skills/dep-path/SKILL.md",
+          "content": "---\nname: dep-path\ndescription: \u003e\n  Fixture skill for obsidian-markdown\nlicense: Unknown\nmetadata:\n  author: \"upstream\"\n  version: \"1.0\"\n  source: \"https://github.com/kepano/obsidian-skills.git\"\n  scope: [root]\n---\n\n# obsidian-markdown\n\nFixture body for offline vendor tests.\n",
+          "mode": "umask"
+        },
+        {
+          "path": "ai-specs/.deps/dep-path/skills/dep-path/references",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/dep-path/skills/dep-path/references/PROPERTIES.md",
+          "content": "# props\n",
+          "mode": "0644"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'vendor-diff'\n\n[agents]\nenabled = ['claude']\n\n[[deps]]\nid = 'dep-path'\nsource = 'https://github.com/kepano/obsidian-skills.git'\npath = 'skills/obsidian-markdown'\n",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "name": "missing source",
+      "input_project": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'vendor-diff'\n\n[agents]\nenabled = ['claude']\n\n[[deps]]\nid = 'dep-missing'\nsource = '\u003cMISSING\u003e'\n",
+          "mode": "0644"
+        }
+      ],
+      "rc": 1,
+      "stdout": "  ▸ dep-missing  ←  \u003cMISSING\u003e\n",
+      "stderr": null,
+      "project": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'vendor-diff'\n\n[agents]\nenabled = ['claude']\n\n[[deps]]\nid = 'dep-missing'\nsource = '\u003cMISSING\u003e'\n",
+          "mode": "0644"
+        }
+      ]
+    }
+  ],
+  "recipe_cases": [
+    {
+      "name": "recipe dep skill",
+      "input_project": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'x'\n",
+          "mode": "0644"
+        }
+      ],
+      "rc": 0,
+      "stdout": "  ▸ dep1  ←  https://github.com/kepano/obsidian-skills.git  (path: skills/obsidian-markdown)\n",
+      "stderr": "",
+      "cache": [
+        {
+          "path": "dep1",
+          "dir": true
+        },
+        {
+          "path": "dep1/skills",
+          "dir": true
+        },
+        {
+          "path": "dep1/skills/dep1",
+          "dir": true
+        },
+        {
+          "path": "dep1/skills/dep1/SKILL.md",
+          "content": "---\nname: dep1\ndescription: \u003e\n  Fixture skill for obsidian-markdown\nlicense: Unknown\nmetadata:\n  author: \"upstream\"\n  version: \"1.0\"\n  source: \"https://github.com/kepano/obsidian-skills.git\"\n  scope: [root]\n---\n\n# obsidian-markdown\n\nFixture body for offline vendor tests.\n",
+          "mode": "umask"
+        },
+        {
+          "path": "dep1/skills/dep1/references",
+          "dir": true
+        },
+        {
+          "path": "dep1/skills/dep1/references/PROPERTIES.md",
+          "content": "# props\n",
+          "mode": "0644"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+[recipe]
+id = "x"
+name = "N"
+description = "D"
+version = "1.0"
+
+[config.reconcile]
+scope_field = "board_id"
+max_age_seconds = 900
+
+[[config.reconcile.expectations]]
+event = "delivery"
+property = "list"
+config_field = "default_list"
+
+[[config.reconcile.expectations]]
+event = "merge"
+property = "list"
+config_field = "done_list"
+config_field_when_set = "published_list"

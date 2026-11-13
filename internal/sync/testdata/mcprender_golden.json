@@ -1,0 +1,399 @@
+{
+  "comment": "Frozen oracle bundle for the native mcp-render port (GO-20 U2e T5 PR2-B S11). Captured once from the live Python 3.14.7 oracle (testdata/mcprender_ref.py driving lib/_internal/mcp-render.py) through the same in-package helper the live differential used. Frozen properties: rc, stdout, stderr and the written target bytes, exactly what the live test compared. For the traceback records (exc_marker set) Python stderr is an uncaught traceback embedding host paths, so it is DROPPED and only the exception-type marker is frozen, exactly the containment check the live test made. Each dropped stderr was verified to contain a host path. Restore from a pristine copy, never re-encode.",
+  "names": [
+    "claude .mcp.json mcpServers",
+    "cursor .cursor/mcp.json mcpServers",
+    "opencode opencode.json mcp",
+    "codex .codex/config.toml mcp_servers",
+    "gemini .gemini/settings.json mcpServers",
+    "pi .pi/mcp.json mcpServers",
+    "omp .omp/mcp.json mcpServers",
+    "existing json preserves keys order duplicates and unicode",
+    "existing json numeric extremes round-trip",
+    "invalid json becomes empty object",
+    "json array becomes empty object",
+    "json scalar becomes empty object",
+    "opencode schema not first is promoted",
+    "opencode schema default inserted",
+    "opencode schema null preserved",
+    "recipe mcp merges and overrides",
+    "recipe mcp big integer json agent",
+    "recipe mcp big integer codex toml",
+    "recipe mcp non-object json ignored",
+    "recipe mcp missing file is ignored",
+    "codex strips prior blocks and keeps user tables",
+    "codex CRLF lines",
+    "env ref quirks generic",
+    "env ref quirks opencode local",
+    "opencode remote url stays literal",
+    "missing manifest rc 1",
+    "manifest without mcp entries skips",
+    "dry-run json",
+    "dry-run toml",
+    "target unreadable json",
+    "target unreadable toml",
+    "target invalid utf8 json",
+    "target invalid utf8 toml",
+    "target is a directory",
+    "recipe mcp unreadable",
+    "recipe mcp invalid utf8",
+    "recipe mcp invalid json ignored",
+    "manifest unreadable",
+    "manifest invalid utf8",
+    "json nan infinity literals",
+    "json lone surrogate escape",
+    "json raw control char rejected",
+    "recipe json nan json agent",
+    "recipe json nan codex toml",
+    "recipe lone surrogate codex toml",
+    "surrogate server name codex toml truncates existing target",
+    "surrogate server name codex toml creates empty target",
+    "surrogate env key codex toml truncates existing target",
+    "surrogate server name json escaped is unaffected"
+  ],
+  "cases": [
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ claude → <TEMP>/.mcp.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJucHgiLAogICAgICAiYXJncyI6IFsKICAgICAgICAiLXkiLAogICAgICAgICJAc2NvcGUvc2VydmVyIgogICAgICBdLAogICAgICAiZW52IjogewogICAgICAgICJUT0tFTiI6ICIke0FMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICIke0hPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0KICB9Cn0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ cursor → <TEMP>/.cursor/mcp.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJucHgiLAogICAgICAiYXJncyI6IFsKICAgICAgICAiLXkiLAogICAgICAgICJAc2NvcGUvc2VydmVyIgogICAgICBdLAogICAgICAiZW52IjogewogICAgICAgICJUT0tFTiI6ICIke0FMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICIke0hPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0KICB9Cn0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ opencode → <TEMP>/opencode.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICIkc2NoZW1hIjogImh0dHBzOi8vb3BlbmNvZGUuYWkvY29uZmlnLmpzb24iLAogICJtY3AiOiB7CiAgICAiYWxwaGEiOiB7CiAgICAgICJ0eXBlIjogImxvY2FsIiwKICAgICAgImNvbW1hbmQiOiBbCiAgICAgICAgIm5weCIsCiAgICAgICAgIi15IiwKICAgICAgICAiQHNjb3BlL3NlcnZlciIKICAgICAgXSwKICAgICAgImVudmlyb25tZW50IjogewogICAgICAgICJUT0tFTiI6ICJ7ZW52OkFMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICJ7ZW52OkhPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogInJlbW90ZSIsCiAgICAgICJ1cmwiOiAiaHR0cHM6Ly9leGFtcGxlLnRlc3QvbWNwIiwKICAgICAgInRpbWVvdXQiOiAzMCwKICAgICAgImhlYWRlcnMiOiB7CiAgICAgICAgIkF1dGhvcml6YXRpb24iOiAie2VudjpCRVRBX1RPS0VOfSIsCiAgICAgICAgIlhCYXJlIjogIntlbnY6QkFSRX0iCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJ0eXBlIjogImxvY2FsIiwKICAgICAgImNvbW1hbmQiOiBbCiAgICAgICAgIm5vZGUiLAogICAgICAgICJzZXJ2ZXIuanMiCiAgICAgIF0KICAgIH0KICB9Cn0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ codex → <TEMP>/.codex/config.toml (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "W21jcF9zZXJ2ZXJzLmFscGhhXQpjb21tYW5kID0gIm5weCIKYXJncyA9IFsiLXkiLCAiQHNjb3BlL3NlcnZlciJdCmVudiA9IHsgVE9LRU4gPSAiJHtBTFBIQV9UT0tFTn0iLCBQTEFJTiA9ICJ2YWx1ZSIsIEhPTUUgPSAiJHtIT01FfSIgfQoKW21jcF9zZXJ2ZXJzLmJldGFdCnR5cGUgPSAiaHR0cCIKdXJsID0gImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIKdGltZW91dCA9IDMwCmhlYWRlcnMgPSB7IEF1dGhvcml6YXRpb24gPSAiJHtlbnY6QkVUQV9UT0tFTn0iLCBYQmFyZSA9ICIkQkFSRSIgfQoKW21jcF9zZXJ2ZXJzLmdhbW1hXQpjb21tYW5kID0gWyJub2RlIiwgInNlcnZlci5qcyJdCmFyZ3MgPSBbXQplbnYgPSB7ICB9Cg=="
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ gemini → <TEMP>/.gemini/settings.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJucHgiLAogICAgICAiYXJncyI6IFsKICAgICAgICAiLXkiLAogICAgICAgICJAc2NvcGUvc2VydmVyIgogICAgICBdLAogICAgICAiZW52IjogewogICAgICAgICJUT0tFTiI6ICIke0FMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICIke0hPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0KICB9Cn0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ pi → <TEMP>/.pi/mcp.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJucHgiLAogICAgICAiYXJncyI6IFsKICAgICAgICAiLXkiLAogICAgICAgICJAc2NvcGUvc2VydmVyIgogICAgICBdLAogICAgICAiZW52IjogewogICAgICAgICJUT0tFTiI6ICIke0FMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICIke0hPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0KICB9Cn0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ omp → <TEMP>/.omp/mcp.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJucHgiLAogICAgICAiYXJncyI6IFsKICAgICAgICAiLXkiLAogICAgICAgICJAc2NvcGUvc2VydmVyIgogICAgICBdLAogICAgICAiZW52IjogewogICAgICAgICJUT0tFTiI6ICIke0FMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICIke0hPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0KICB9Cn0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ claude → <TEMP>/.mcp.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJlbW9qaSI6ICJcdWQ4M2RcdWRlODAiLAogICJjYWZcdTAwZTkiOiAibmFcdTAwZWZ2ZSIsCiAgImR1cCI6IDMsCiAgInoiOiAyLAogICJwaSI6IDMuMTQsCiAgIm4iOiA3LAogICJ3aG9sZSI6IDIuMCwKICAiZXhwIjogMTAwMC4wLAogICJuZWciOiAwLAogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJucHgiLAogICAgICAiYXJncyI6IFsKICAgICAgICAiLXkiLAogICAgICAgICJAc2NvcGUvc2VydmVyIgogICAgICBdLAogICAgICAiZW52IjogewogICAgICAgICJUT0tFTiI6ICIke0FMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICIke0hPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0KICB9Cn0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ claude → <TEMP>/.mcp.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJiaWciOiAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTAsCiAgIm92ZiI6IEluZmluaXR5LAogICJub3ZmIjogLUluZmluaXR5LAogICJuZWd6ZXJvIjogMCwKICAidGlueSI6IDAuMCwKICAibWNwU2VydmVycyI6IHsKICAgICJhbHBoYSI6IHsKICAgICAgImNvbW1hbmQiOiAibnB4IiwKICAgICAgImFyZ3MiOiBbCiAgICAgICAgIi15IiwKICAgICAgICAiQHNjb3BlL3NlcnZlciIKICAgICAgXSwKICAgICAgImVudiI6IHsKICAgICAgICAiVE9LRU4iOiAiJHtBTFBIQV9UT0tFTn0iLAogICAgICAgICJQTEFJTiI6ICJ2YWx1ZSIsCiAgICAgICAgIkhPTUUiOiAiJHtIT01FfSIKICAgICAgfQogICAgfSwKICAgICJiZXRhIjogewogICAgICAidHlwZSI6ICJodHRwIiwKICAgICAgInVybCI6ICJodHRwczovL2V4YW1wbGUudGVzdC9tY3AiLAogICAgICAidGltZW91dCI6IDMwLAogICAgICAiaGVhZGVycyI6IHsKICAgICAgICAiQXV0aG9yaXphdGlvbiI6ICIke2VudjpCRVRBX1RPS0VOfSIsCiAgICAgICAgIlhCYXJlIjogIiRCQVJFIgogICAgICB9CiAgICB9LAogICAgImdhbW1hIjogewogICAgICAiY29tbWFuZCI6IFsKICAgICAgICAibm9kZSIsCiAgICAgICAgInNlcnZlci5qcyIKICAgICAgXSwKICAgICAgImFyZ3MiOiBbXSwKICAgICAgImVudiI6IHt9CiAgICB9CiAgfQp9Cg=="
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ claude → <TEMP>/.mcp.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJucHgiLAogICAgICAiYXJncyI6IFsKICAgICAgICAiLXkiLAogICAgICAgICJAc2NvcGUvc2VydmVyIgogICAgICBdLAogICAgICAiZW52IjogewogICAgICAgICJUT0tFTiI6ICIke0FMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICIke0hPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0KICB9Cn0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ claude → <TEMP>/.mcp.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJucHgiLAogICAgICAiYXJncyI6IFsKICAgICAgICAiLXkiLAogICAgICAgICJAc2NvcGUvc2VydmVyIgogICAgICBdLAogICAgICAiZW52IjogewogICAgICAgICJUT0tFTiI6ICIke0FMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICIke0hPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0KICB9Cn0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ claude → <TEMP>/.mcp.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJucHgiLAogICAgICAiYXJncyI6IFsKICAgICAgICAiLXkiLAogICAgICAgICJAc2NvcGUvc2VydmVyIgogICAgICBdLAogICAgICAiZW52IjogewogICAgICAgICJUT0tFTiI6ICIke0FMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICIke0hPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0KICB9Cn0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ opencode → <TEMP>/opencode.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICIkc2NoZW1hIjogImh0dHBzOi8vY3VzdG9tL3NjaGVtYS5qc29uIiwKICAidGhlbWUiOiAiZGFyayIsCiAgIm90aGVyIjogMSwKICAibWNwIjogewogICAgImFscGhhIjogewogICAgICAidHlwZSI6ICJsb2NhbCIsCiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJucHgiLAogICAgICAgICIteSIsCiAgICAgICAgIkBzY29wZS9zZXJ2ZXIiCiAgICAgIF0sCiAgICAgICJlbnZpcm9ubWVudCI6IHsKICAgICAgICAiVE9LRU4iOiAie2VudjpBTFBIQV9UT0tFTn0iLAogICAgICAgICJQTEFJTiI6ICJ2YWx1ZSIsCiAgICAgICAgIkhPTUUiOiAie2VudjpIT01FfSIKICAgICAgfQogICAgfSwKICAgICJiZXRhIjogewogICAgICAidHlwZSI6ICJyZW1vdGUiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIntlbnY6QkVUQV9UT0tFTn0iLAogICAgICAgICJYQmFyZSI6ICJ7ZW52OkJBUkV9IgogICAgICB9CiAgICB9LAogICAgImdhbW1hIjogewogICAgICAidHlwZSI6ICJsb2NhbCIsCiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdCiAgICB9CiAgfQp9Cg=="
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ opencode → <TEMP>/opencode.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICIkc2NoZW1hIjogImh0dHBzOi8vb3BlbmNvZGUuYWkvY29uZmlnLmpzb24iLAogICJ0aGVtZSI6ICJkYXJrIiwKICAibWNwIjogewogICAgImFscGhhIjogewogICAgICAidHlwZSI6ICJsb2NhbCIsCiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJucHgiLAogICAgICAgICIteSIsCiAgICAgICAgIkBzY29wZS9zZXJ2ZXIiCiAgICAgIF0sCiAgICAgICJlbnZpcm9ubWVudCI6IHsKICAgICAgICAiVE9LRU4iOiAie2VudjpBTFBIQV9UT0tFTn0iLAogICAgICAgICJQTEFJTiI6ICJ2YWx1ZSIsCiAgICAgICAgIkhPTUUiOiAie2VudjpIT01FfSIKICAgICAgfQogICAgfSwKICAgICJiZXRhIjogewogICAgICAidHlwZSI6ICJyZW1vdGUiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIntlbnY6QkVUQV9UT0tFTn0iLAogICAgICAgICJYQmFyZSI6ICJ7ZW52OkJBUkV9IgogICAgICB9CiAgICB9LAogICAgImdhbW1hIjogewogICAgICAidHlwZSI6ICJsb2NhbCIsCiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdCiAgICB9CiAgfQp9Cg=="
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ opencode → <TEMP>/opencode.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICIkc2NoZW1hIjogbnVsbCwKICAibWNwIjogewogICAgImFscGhhIjogewogICAgICAidHlwZSI6ICJsb2NhbCIsCiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJucHgiLAogICAgICAgICIteSIsCiAgICAgICAgIkBzY29wZS9zZXJ2ZXIiCiAgICAgIF0sCiAgICAgICJlbnZpcm9ubWVudCI6IHsKICAgICAgICAiVE9LRU4iOiAie2VudjpBTFBIQV9UT0tFTn0iLAogICAgICAgICJQTEFJTiI6ICJ2YWx1ZSIsCiAgICAgICAgIkhPTUUiOiAie2VudjpIT01FfSIKICAgICAgfQogICAgfSwKICAgICJiZXRhIjogewogICAgICAidHlwZSI6ICJyZW1vdGUiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIntlbnY6QkVUQV9UT0tFTn0iLAogICAgICAgICJYQmFyZSI6ICJ7ZW52OkJBUkV9IgogICAgICB9CiAgICB9LAogICAgImdhbW1hIjogewogICAgICAidHlwZSI6ICJsb2NhbCIsCiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdCiAgICB9CiAgfQp9Cg=="
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ claude → <TEMP>/.mcp.json (4 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJvdmVycmlkZSIsCiAgICAgICJhcmdzIjogWwogICAgICAgICJ6IgogICAgICBdCiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0sCiAgICAiZGVsdGEiOiB7CiAgICAgICJjb21tYW5kIjogImQiLAogICAgICAiZW52IjogewogICAgICAgICJLIjogIiR7RF9WQVJ9IgogICAgICB9CiAgICB9CiAgfQp9Cg=="
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ claude → <TEMP>/.mcp.json (4 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJucHgiLAogICAgICAiYXJncyI6IFsKICAgICAgICAiLXkiLAogICAgICAgICJAc2NvcGUvc2VydmVyIgogICAgICBdLAogICAgICAiZW52IjogewogICAgICAgICJUT0tFTiI6ICIke0FMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICIke0hPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0sCiAgICAiYmlnIjogewogICAgICAiY29tbWFuZCI6ICJkIiwKICAgICAgInRpbWVvdXQiOiAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTAKICAgIH0KICB9Cn0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ codex → <TEMP>/.codex/config.toml (4 server(s))\n",
+      "stderr": "",
+      "target_b64": "W21jcF9zZXJ2ZXJzLmFscGhhXQpjb21tYW5kID0gIm5weCIKYXJncyA9IFsiLXkiLCAiQHNjb3BlL3NlcnZlciJdCmVudiA9IHsgVE9LRU4gPSAiJHtBTFBIQV9UT0tFTn0iLCBQTEFJTiA9ICJ2YWx1ZSIsIEhPTUUgPSAiJHtIT01FfSIgfQoKW21jcF9zZXJ2ZXJzLmJldGFdCnR5cGUgPSAiaHR0cCIKdXJsID0gImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIKdGltZW91dCA9IDMwCmhlYWRlcnMgPSB7IEF1dGhvcml6YXRpb24gPSAiJHtlbnY6QkVUQV9UT0tFTn0iLCBYQmFyZSA9ICIkQkFSRSIgfQoKW21jcF9zZXJ2ZXJzLmdhbW1hXQpjb21tYW5kID0gWyJub2RlIiwgInNlcnZlci5qcyJdCmFyZ3MgPSBbXQplbnYgPSB7ICB9CgpbbWNwX3NlcnZlcnMuYmlnXQpjb21tYW5kID0gImQiCnRpbWVvdXQgPSAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTAK"
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ claude → <TEMP>/.mcp.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJucHgiLAogICAgICAiYXJncyI6IFsKICAgICAgICAiLXkiLAogICAgICAgICJAc2NvcGUvc2VydmVyIgogICAgICBdLAogICAgICAiZW52IjogewogICAgICAgICJUT0tFTiI6ICIke0FMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICIke0hPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0KICB9Cn0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ claude → <TEMP>/.mcp.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJucHgiLAogICAgICAiYXJncyI6IFsKICAgICAgICAiLXkiLAogICAgICAgICJAc2NvcGUvc2VydmVyIgogICAgICBdLAogICAgICAiZW52IjogewogICAgICAgICJUT0tFTiI6ICIke0FMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICIke0hPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0KICB9Cn0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ codex → <TEMP>/.codex/config.toml (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "IyB1c2VyIGNvbW1lbnQKClt1c2VyX3RhYmxlXQp4ID0gMQoKW2FmdGVyXQp5ID0gMgoKW21jcF9zZXJ2ZXJzLmFscGhhXQpjb21tYW5kID0gIm5weCIKYXJncyA9IFsiLXkiLCAiQHNjb3BlL3NlcnZlciJdCmVudiA9IHsgVE9LRU4gPSAiJHtBTFBIQV9UT0tFTn0iLCBQTEFJTiA9ICJ2YWx1ZSIsIEhPTUUgPSAiJHtIT01FfSIgfQoKW21jcF9zZXJ2ZXJzLmJldGFdCnR5cGUgPSAiaHR0cCIKdXJsID0gImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIKdGltZW91dCA9IDMwCmhlYWRlcnMgPSB7IEF1dGhvcml6YXRpb24gPSAiJHtlbnY6QkVUQV9UT0tFTn0iLCBYQmFyZSA9ICIkQkFSRSIgfQoKW21jcF9zZXJ2ZXJzLmdhbW1hXQpjb21tYW5kID0gWyJub2RlIiwgInNlcnZlci5qcyJdCmFyZ3MgPSBbXQplbnYgPSB7ICB9Cg=="
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ codex → <TEMP>/.codex/config.toml (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "W3VzZXJfdGFibGVdCnggPSAxCgpbbWNwX3NlcnZlcnMuYWxwaGFdCmNvbW1hbmQgPSAibnB4IgphcmdzID0gWyIteSIsICJAc2NvcGUvc2VydmVyIl0KZW52ID0geyBUT0tFTiA9ICIke0FMUEhBX1RPS0VOfSIsIFBMQUlOID0gInZhbHVlIiwgSE9NRSA9ICIke0hPTUV9IiB9CgpbbWNwX3NlcnZlcnMuYmV0YV0KdHlwZSA9ICJodHRwIgp1cmwgPSAiaHR0cHM6Ly9leGFtcGxlLnRlc3QvbWNwIgp0aW1lb3V0ID0gMzAKaGVhZGVycyA9IHsgQXV0aG9yaXphdGlvbiA9ICIke2VudjpCRVRBX1RPS0VOfSIsIFhCYXJlID0gIiRCQVJFIiB9CgpbbWNwX3NlcnZlcnMuZ2FtbWFdCmNvbW1hbmQgPSBbIm5vZGUiLCAic2VydmVyLmpzIl0KYXJncyA9IFtdCmVudiA9IHsgIH0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ claude → <TEMP>/.mcp.json (1 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgInEiOiB7CiAgICAgICJjb21tYW5kIjogIngiLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52IjogewogICAgICAgICJBIjogIiR7QUxQSEF9IiwKICAgICAgICAiQiI6ICIke0JFVEF9IiwKICAgICAgICAiQyI6ICIke0dBTU1BfSIsCiAgICAgICAgIkQiOiAiREVMVEF9IiwKICAgICAgICAiRSI6ICIkbG93ZXIiLAogICAgICAgICJGIjogIiQxQkFEIiwKICAgICAgICAiRyI6ICIkIiwKICAgICAgICAiSCI6ICIke09LfVxuIgogICAgICB9CiAgICB9CiAgfQp9Cg=="
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ opencode → <TEMP>/opencode.json (1 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICIkc2NoZW1hIjogImh0dHBzOi8vb3BlbmNvZGUuYWkvY29uZmlnLmpzb24iLAogICJtY3AiOiB7CiAgICAicSI6IHsKICAgICAgInR5cGUiOiAibG9jYWwiLAogICAgICAiY29tbWFuZCI6IFsKICAgICAgICAieCIsCiAgICAgICAgIntlbnY6QX0iLAogICAgICAgICJ7ZW52OkJ9IiwKICAgICAgICAie2Vudjpsb3dlcn0iLAogICAgICAgICJwbGFpbiIKICAgICAgXSwKICAgICAgImVudmlyb25tZW50IjogewogICAgICAgICJBIjogIntlbnY6QUxQSEF9IiwKICAgICAgICAiQiI6ICJ7ZW52OkJFVEF9IiwKICAgICAgICAiSCI6ICJ7ZW52Ok9LfVxuIgogICAgICB9CiAgICB9CiAgfQp9Cg=="
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ opencode → <TEMP>/opencode.json (1 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICIkc2NoZW1hIjogImh0dHBzOi8vb3BlbmNvZGUuYWkvY29uZmlnLmpzb24iLAogICJtY3AiOiB7CiAgICAiciI6IHsKICAgICAgInR5cGUiOiAicmVtb3RlIiwKICAgICAgInVybCI6ICJodHRwczovL3gvJFRPS0VOLyR7ZW52Ok9USEVSfSIsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJIIjogIntlbnY6WH0iCiAgICAgIH0KICAgIH0KICB9Cn0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 1,
+      "stdout": "",
+      "stderr": "error: <TEMP>/ai-specs/ai-specs.toml not found\n",
+      "target_b64": null
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "",
+      "stderr": "info: no [mcp.*] entries — skipping claude\n",
+      "target_b64": null
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "--- <TEMP>/.mcp.json (dry-run) ---\n{\n  \"mcpServers\": {\n    \"alpha\": {\n      \"command\": \"npx\",\n      \"args\": [\n        \"-y\",\n        \"@scope/server\"\n      ],\n      \"env\": {\n        \"TOKEN\": \"${ALPHA_TOKEN}\",\n        \"PLAIN\": \"value\",\n        \"HOME\": \"${HOME}\"\n      }\n    },\n    \"beta\": {\n      \"type\": \"http\",\n      \"url\": \"https://example.test/mcp\",\n      \"timeout\": 30,\n      \"headers\": {\n        \"Authorization\": \"${env:BETA_TOKEN}\",\n        \"XBare\": \"$BARE\"\n      }\n    },\n    \"gamma\": {\n      \"command\": [\n        \"node\",\n        \"server.js\"\n      ],\n      \"args\": [],\n      \"env\": {}\n    }\n  }\n}\n\n",
+      "stderr": "",
+      "target_b64": null
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "--- <TEMP>/.codex/config.toml (dry-run) ---\n[mcp_servers.alpha]\ncommand = \"npx\"\nargs = [\"-y\", \"@scope/server\"]\nenv = { TOKEN = \"${ALPHA_TOKEN}\", PLAIN = \"value\", HOME = \"${HOME}\" }\n\n[mcp_servers.beta]\ntype = \"http\"\nurl = \"https://example.test/mcp\"\ntimeout = 30\nheaders = { Authorization = \"${env:BETA_TOKEN}\", XBare = \"$BARE\" }\n\n[mcp_servers.gamma]\ncommand = [\"node\", \"server.js\"]\nargs = []\nenv = {  }\n\n",
+      "stderr": "",
+      "target_b64": null
+    },
+    {
+      "kind": "differential",
+      "rc": 1,
+      "stdout": "",
+      "exc_marker": "PermissionError",
+      "target_b64": "eyJrZWVwIjogMX0="
+    },
+    {
+      "kind": "differential",
+      "rc": 1,
+      "stdout": "",
+      "exc_marker": "PermissionError",
+      "target_b64": "W3VzZXJdCnggPSAxCg=="
+    },
+    {
+      "kind": "differential",
+      "rc": 1,
+      "stdout": "",
+      "exc_marker": "UnicodeDecodeError",
+      "target_b64": "//57fQ=="
+    },
+    {
+      "kind": "differential",
+      "rc": 1,
+      "stdout": "",
+      "exc_marker": "UnicodeDecodeError",
+      "target_b64": "//5bdXNlcl0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 1,
+      "stdout": "",
+      "exc_marker": "IsADirectoryError",
+      "target_b64": null
+    },
+    {
+      "kind": "differential",
+      "rc": 1,
+      "stdout": "",
+      "exc_marker": "PermissionError",
+      "target_b64": null
+    },
+    {
+      "kind": "differential",
+      "rc": 1,
+      "stdout": "",
+      "exc_marker": "UnicodeDecodeError",
+      "target_b64": null
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ claude → <TEMP>/.mcp.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJucHgiLAogICAgICAiYXJncyI6IFsKICAgICAgICAiLXkiLAogICAgICAgICJAc2NvcGUvc2VydmVyIgogICAgICBdLAogICAgICAiZW52IjogewogICAgICAgICJUT0tFTiI6ICIke0FMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICIke0hPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0KICB9Cn0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 1,
+      "stdout": "",
+      "exc_marker": "PermissionError",
+      "target_b64": null
+    },
+    {
+      "kind": "differential",
+      "rc": 1,
+      "stdout": "",
+      "exc_marker": "UnicodeDecodeError",
+      "target_b64": null
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ claude → <TEMP>/.mcp.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJuIjogTmFOLAogICJwIjogSW5maW5pdHksCiAgIm0iOiAtSW5maW5pdHksCiAgIm1jcFNlcnZlcnMiOiB7CiAgICAiYWxwaGEiOiB7CiAgICAgICJjb21tYW5kIjogIm5weCIsCiAgICAgICJhcmdzIjogWwogICAgICAgICIteSIsCiAgICAgICAgIkBzY29wZS9zZXJ2ZXIiCiAgICAgIF0sCiAgICAgICJlbnYiOiB7CiAgICAgICAgIlRPS0VOIjogIiR7QUxQSEFfVE9LRU59IiwKICAgICAgICAiUExBSU4iOiAidmFsdWUiLAogICAgICAgICJIT01FIjogIiR7SE9NRX0iCiAgICAgIH0KICAgIH0sCiAgICAiYmV0YSI6IHsKICAgICAgInR5cGUiOiAiaHR0cCIsCiAgICAgICJ1cmwiOiAiaHR0cHM6Ly9leGFtcGxlLnRlc3QvbWNwIiwKICAgICAgInRpbWVvdXQiOiAzMCwKICAgICAgImhlYWRlcnMiOiB7CiAgICAgICAgIkF1dGhvcml6YXRpb24iOiAiJHtlbnY6QkVUQV9UT0tFTn0iLAogICAgICAgICJYQmFyZSI6ICIkQkFSRSIKICAgICAgfQogICAgfSwKICAgICJnYW1tYSI6IHsKICAgICAgImNvbW1hbmQiOiBbCiAgICAgICAgIm5vZGUiLAogICAgICAgICJzZXJ2ZXIuanMiCiAgICAgIF0sCiAgICAgICJhcmdzIjogW10sCiAgICAgICJlbnYiOiB7fQogICAgfQogIH0KfQo="
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ claude → <TEMP>/.mcp.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJzIjogIlx1ZDgwMCIsCiAgInBhaXIiOiAiXHVkODNkXHVkZTAwIiwKICAibWNwU2VydmVycyI6IHsKICAgICJhbHBoYSI6IHsKICAgICAgImNvbW1hbmQiOiAibnB4IiwKICAgICAgImFyZ3MiOiBbCiAgICAgICAgIi15IiwKICAgICAgICAiQHNjb3BlL3NlcnZlciIKICAgICAgXSwKICAgICAgImVudiI6IHsKICAgICAgICAiVE9LRU4iOiAiJHtBTFBIQV9UT0tFTn0iLAogICAgICAgICJQTEFJTiI6ICJ2YWx1ZSIsCiAgICAgICAgIkhPTUUiOiAiJHtIT01FfSIKICAgICAgfQogICAgfSwKICAgICJiZXRhIjogewogICAgICAidHlwZSI6ICJodHRwIiwKICAgICAgInVybCI6ICJodHRwczovL2V4YW1wbGUudGVzdC9tY3AiLAogICAgICAidGltZW91dCI6IDMwLAogICAgICAiaGVhZGVycyI6IHsKICAgICAgICAiQXV0aG9yaXphdGlvbiI6ICIke2VudjpCRVRBX1RPS0VOfSIsCiAgICAgICAgIlhCYXJlIjogIiRCQVJFIgogICAgICB9CiAgICB9LAogICAgImdhbW1hIjogewogICAgICAiY29tbWFuZCI6IFsKICAgICAgICAibm9kZSIsCiAgICAgICAgInNlcnZlci5qcyIKICAgICAgXSwKICAgICAgImFyZ3MiOiBbXSwKICAgICAgImVudiI6IHt9CiAgICB9CiAgfQp9Cg=="
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ claude → <TEMP>/.mcp.json (3 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJucHgiLAogICAgICAiYXJncyI6IFsKICAgICAgICAiLXkiLAogICAgICAgICJAc2NvcGUvc2VydmVyIgogICAgICBdLAogICAgICAiZW52IjogewogICAgICAgICJUT0tFTiI6ICIke0FMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICIke0hPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0KICB9Cn0K"
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ claude → <TEMP>/.mcp.json (4 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJucHgiLAogICAgICAiYXJncyI6IFsKICAgICAgICAiLXkiLAogICAgICAgICJAc2NvcGUvc2VydmVyIgogICAgICBdLAogICAgICAiZW52IjogewogICAgICAgICJUT0tFTiI6ICIke0FMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICIke0hPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0sCiAgICAiZGVsdGEiOiB7CiAgICAgICJjb21tYW5kIjogImQiLAogICAgICAiZW52IjogewogICAgICAgICJLIjogTmFOLAogICAgICAgICJJIjogSW5maW5pdHksCiAgICAgICAgIkoiOiAtSW5maW5pdHkKICAgICAgfQogICAgfQogIH0KfQo="
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ codex → <TEMP>/.codex/config.toml (4 server(s))\n",
+      "stderr": "",
+      "target_b64": "W21jcF9zZXJ2ZXJzLmFscGhhXQpjb21tYW5kID0gIm5weCIKYXJncyA9IFsiLXkiLCAiQHNjb3BlL3NlcnZlciJdCmVudiA9IHsgVE9LRU4gPSAiJHtBTFBIQV9UT0tFTn0iLCBQTEFJTiA9ICJ2YWx1ZSIsIEhPTUUgPSAiJHtIT01FfSIgfQoKW21jcF9zZXJ2ZXJzLmJldGFdCnR5cGUgPSAiaHR0cCIKdXJsID0gImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIKdGltZW91dCA9IDMwCmhlYWRlcnMgPSB7IEF1dGhvcml6YXRpb24gPSAiJHtlbnY6QkVUQV9UT0tFTn0iLCBYQmFyZSA9ICIkQkFSRSIgfQoKW21jcF9zZXJ2ZXJzLmdhbW1hXQpjb21tYW5kID0gWyJub2RlIiwgInNlcnZlci5qcyJdCmFyZ3MgPSBbXQplbnYgPSB7ICB9CgpbbWNwX3NlcnZlcnMuZGVsdGFdCmNvbW1hbmQgPSAiZCIKZW52ID0geyBLID0gbmFuLCBJID0gaW5mLCBKID0gLWluZiB9Cg=="
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ codex → <TEMP>/.codex/config.toml (4 server(s))\n",
+      "stderr": "",
+      "target_b64": "W21jcF9zZXJ2ZXJzLmFscGhhXQpjb21tYW5kID0gIm5weCIKYXJncyA9IFsiLXkiLCAiQHNjb3BlL3NlcnZlciJdCmVudiA9IHsgVE9LRU4gPSAiJHtBTFBIQV9UT0tFTn0iLCBQTEFJTiA9ICJ2YWx1ZSIsIEhPTUUgPSAiJHtIT01FfSIgfQoKW21jcF9zZXJ2ZXJzLmJldGFdCnR5cGUgPSAiaHR0cCIKdXJsID0gImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIKdGltZW91dCA9IDMwCmhlYWRlcnMgPSB7IEF1dGhvcml6YXRpb24gPSAiJHtlbnY6QkVUQV9UT0tFTn0iLCBYQmFyZSA9ICIkQkFSRSIgfQoKW21jcF9zZXJ2ZXJzLmdhbW1hXQpjb21tYW5kID0gWyJub2RlIiwgInNlcnZlci5qcyJdCmFyZ3MgPSBbXQplbnYgPSB7ICB9CgpbbWNwX3NlcnZlcnMuZGVsdGFdCmNvbW1hbmQgPSAiZCIKZW52ID0geyBLID0gIlx1ZDgwMCIgfQo="
+    },
+    {
+      "kind": "differential",
+      "rc": 1,
+      "stdout": "",
+      "exc_marker": "UnicodeEncodeError",
+      "target_b64": ""
+    },
+    {
+      "kind": "differential",
+      "rc": 1,
+      "stdout": "",
+      "exc_marker": "UnicodeEncodeError",
+      "target_b64": ""
+    },
+    {
+      "kind": "differential",
+      "rc": 1,
+      "stdout": "",
+      "exc_marker": "UnicodeEncodeError",
+      "target_b64": ""
+    },
+    {
+      "kind": "differential",
+      "rc": 0,
+      "stdout": "  ✓ claude → <TEMP>/.mcp.json (4 server(s))\n",
+      "stderr": "",
+      "target_b64": "ewogICJtY3BTZXJ2ZXJzIjogewogICAgImFscGhhIjogewogICAgICAiY29tbWFuZCI6ICJucHgiLAogICAgICAiYXJncyI6IFsKICAgICAgICAiLXkiLAogICAgICAgICJAc2NvcGUvc2VydmVyIgogICAgICBdLAogICAgICAiZW52IjogewogICAgICAgICJUT0tFTiI6ICIke0FMUEhBX1RPS0VOfSIsCiAgICAgICAgIlBMQUlOIjogInZhbHVlIiwKICAgICAgICAiSE9NRSI6ICIke0hPTUV9IgogICAgICB9CiAgICB9LAogICAgImJldGEiOiB7CiAgICAgICJ0eXBlIjogImh0dHAiLAogICAgICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS50ZXN0L21jcCIsCiAgICAgICJ0aW1lb3V0IjogMzAsCiAgICAgICJoZWFkZXJzIjogewogICAgICAgICJBdXRob3JpemF0aW9uIjogIiR7ZW52OkJFVEFfVE9LRU59IiwKICAgICAgICAiWEJhcmUiOiAiJEJBUkUiCiAgICAgIH0KICAgIH0sCiAgICAiZ2FtbWEiOiB7CiAgICAgICJjb21tYW5kIjogWwogICAgICAgICJub2RlIiwKICAgICAgICAic2VydmVyLmpzIgogICAgICBdLAogICAgICAiYXJncyI6IFtdLAogICAgICAiZW52Ijoge30KICAgIH0sCiAgICAiXHVkODAwIjogewogICAgICAiY29tbWFuZCI6ICJkIgogICAgfQogIH0KfQo="
+    }
+  ]
+}

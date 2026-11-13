@@ -1,0 +1,26 @@
+# Differential corpus 03: numbers, keys, nested array-of-tables.
+
+hex = 0xDEADBEEF
+octal = 0o755
+binary = 0b1010
+with_underscores = 1_000_000
+neg = -17
+exp = 5e22
+neg_exp = -2E-2
+
+"quoted key" = "ok"
+'literal key' = "ok"
+dotted.key = "leaf"
+dotted."quoted sub" = 2
+
+[[provides.templates]]
+source = "a.md"
+
+[provides.templates.meta]
+deep = true
+
+[[provides.templates]]
+source = "b.md"
+
+[recipes."dotted.id"]
+enabled = false

@@ -2,38 +2,30 @@
 
 `gate_impl` config validation and stamping (`auto | go` only), sentinel-upgrade
 of pre-Go materialized gates, and invalid-value rejection. `gate_impl=bash` is
-retired: validation must raise naming bash as removed.
+retired: sync must fail closed naming bash as removed.
+
+Every materialize assertion goes through the native `ai-specs sync` verb (the
+only producer of the stamped launcher); the retired `python3
+lib/_internal/recipe-materialize.py` transport is gone. The digest-recheck half
+of this suite moved to `internal/gatebinary` with the port.
 """
 from __future__ import annotations
 
-import importlib.util
-import io
 import json
 import os
+import platform
 import subprocess
 import sys
 import tempfile
 import tomllib
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import invoke, isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 RECIPE_DIR = ROOT / "catalog" / "recipes" / "worktree-flow"
-RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
-RECIPE_SCHEMA_PATH = ROOT / "lib" / "_internal" / "recipe_schema.py"
-
-sys.path.insert(0, str(ROOT / "tests"))
-from _fixture_catalog import populate_catalog  # noqa: E402
-
-
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 def recipe_version() -> str:
@@ -42,36 +34,34 @@ def recipe_version() -> str:
 
 
 def _cache_platform() -> str:
-    """Host `<goos>-<goarch>` segment for the launcher's version-keyed cache,
-    computed the same way gate acquisition does (Rosetta-aware), so these
-    launcher-resolution tests stay portable off darwin-arm64."""
-    gb = load_module(
-        ROOT / "lib" / "_internal" / "gate_binary.py",
-        "gate_binary_dist_config_under_test",
-    )
-    goos, goarch = gb.detect_platform()
+    """Host `<goos>-<goarch>` segment for the launcher's version-keyed cache.
+
+    Mirrors the launcher's own `uname` mapping (catalog/recipes/worktree-flow/
+    hooks/worktree-gate.sh) so these launcher-resolution tests stay portable off
+    darwin-arm64 without importing any lib/ module.
+    """
+    goos = {"Darwin": "darwin", "Linux": "linux"}.get(platform.system(), "")
+    goarch = {
+        "arm64": "arm64", "aarch64": "arm64",
+        "x86_64": "amd64", "amd64": "amd64",
+    }.get(platform.machine().lower(), "")
     if not goos or not goarch:
         raise unittest.SkipTest(f"unsupported platform {goos}/{goarch}")
     return f"{goos}-{goarch}"
 
 
 class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.schema = load_module(RECIPE_SCHEMA_PATH, "recipe_schema_p3_internal")
-        cls.materialize = load_module(
-            RECIPE_MATERIALIZE_PATH, "recipe_materialize_p3_internal"
-        )
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.home = Path(self.tmp.name) / "home"
-        populate_catalog(self.home / "catalog" / "recipes")
+        self.base = Path(self.tmp.name)
+        # A real VERSION file: the test pins stamped_gate_version to it.
+        self.home = isolated_home(self.base)
+        (self.home / "VERSION").unlink()
         (self.home / "VERSION").write_text("0.21.0\n")
 
     def _project(self, config_block: str = "") -> Path:
-        proj = Path(self.tmp.name) / "proj"
+        proj = self.base / "proj"
         (proj / "ai-specs").mkdir(parents=True)
         (proj / "ai-specs" / "skills").mkdir()
         (proj / "ai-specs" / "commands").mkdir()
@@ -86,21 +76,20 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         (proj / "ai-specs" / "ai-specs.toml").write_text(text)
         return proj
 
+    def _sync(self, proj: Path, *args: str):
+        result = invoke(proj, "sync", *args, cli_home=self.home)
+        return result
+
     def _hook(self, proj: Path) -> Path:
         return proj / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
 
     def _legacy_hook(self, proj: Path) -> Path:
         return proj / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate-legacy.sh"
 
-    def test_recipe_declares_gate_impl_enum_with_default_auto(self):
-        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
-        field = recipe.config_schema.fields["gate_impl"]
-        self.assertEqual(field.default, "auto")
-        self.assertEqual(field.enum, ["auto", "go"])
-
     def test_gate_impl_defaults_to_auto_and_stamps(self):
         proj = self._project()
-        self.assertEqual(self.materialize.materialize_recipes(proj, self.home), 0)
+        result = self._sync(proj)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         content = self._hook(proj).read_text()
         self.assertIn('stamped_gate_impl="auto"', content)
         self.assertIn('stamped_gate_version="0.21.0"', content)
@@ -112,12 +101,9 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         proj = self._project(
             '[recipes.worktree-flow.config]\ngate_impl = "bash"'
         )
-        proc = subprocess.run(
-            ["python3", str(RECIPE_MATERIALIZE_PATH), str(proj), str(self.home)],
-            capture_output=True, text=True,
-        )
-        self.assertEqual(proc.returncode, 1)
-        combined = proc.stderr + proc.stdout
+        result = self._sync(proj)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        combined = result.stderr + result.stdout
         self.assertIn("bash", combined)
         self.assertIn("removed", combined)
         self.assertIn("auto | go", combined)
@@ -130,7 +116,8 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         proj = self._project(
             '[recipes.worktree-flow.config]\ngate_impl = "go"'
         )
-        self.assertEqual(self.materialize.materialize_recipes(proj, self.home), 0)
+        result = self._sync(proj)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn(
             'stamped_gate_impl="go"', self._hook(proj).read_text()
         )
@@ -141,7 +128,8 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
 
     def test_ordinary_sync_never_creates_legacy_hook(self):
         proj = self._project()
-        self.assertEqual(self.materialize.materialize_recipes(proj, self.home), 0)
+        result = self._sync(proj)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(self._hook(proj).is_file())
         cleanup = (
             proj / "ai-specs" / "recipes" / "worktree-flow"
@@ -157,7 +145,8 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         marker = b"LEFTOVER-INERT-BYTES-MUST-STAY\n"
         leftover.write_bytes(marker)
         leftover.chmod(0o644)
-        self.assertEqual(self.materialize.materialize_recipes(proj, self.home), 0)
+        result = self._sync(proj)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(leftover.read_bytes(), marker)
         self.assertFalse(os.access(leftover, os.X_OK),
                          "leftover must not be classified/refreshed to executable catalog bytes")
@@ -166,22 +155,12 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         proj = self._project(
             '[recipes.worktree-flow.config]\ngate_impl = "rust"'
         )
-        proc = subprocess.run(
-            ["python3", str(RECIPE_MATERIALIZE_PATH), str(proj), str(self.home)],
-            capture_output=True, text=True,
-        )
-        self.assertEqual(proc.returncode, 1)
-        combined = proc.stderr + proc.stdout
+        result = self._sync(proj)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        combined = result.stderr + result.stdout
         self.assertIn("rust", combined)
         self.assertIn("auto | go", combined)
         self.assertNotIn(" | bash", combined)
-
-    def test_merge_config_rejects_invalid_gate_impl(self):
-        recipe = self.schema.load_recipe_toml(RECIPE_DIR / "recipe.toml")
-        with self.assertRaisesRegex(RuntimeError, r"auto \| go"):
-            self.materialize.merge_config(recipe, {"gate_impl": "rust"})
-        with self.assertRaisesRegex(RuntimeError, r"bash.*removed|removed.*bash"):
-            self.materialize.merge_config(recipe, {"gate_impl": "bash"})
 
     def test_sentinel_upgrade_replaces_pre_go_gate(self):
         # A pre-Go materialized gate (the e080483 gate, which already carries
@@ -200,17 +179,15 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
             'exit 0\n'
         )
         hook.write_text(pre_go)
-        stream = io.StringIO()
-        with patch("sys.stderr", stream):
-            self.assertEqual(self.materialize.materialize_recipes(proj, self.home), 0)
+
+        result = self._sync(proj)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(hook.read_text(), pre_go,
                          "unknown provenance must preserve the pre-Go gate")
-        self.assertIn("no recorded provenance", stream.getvalue())
+        self.assertIn("no recorded provenance", result.stderr)
 
-        self.assertEqual(
-            self.materialize.materialize_recipes(proj, self.home, refresh_gates=True),
-            0,
-        )
+        result = self._sync(proj, "--refresh-gates")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         content = hook.read_text()
         self.assertIn('stamped_gate_scope="', content, "launcher must keep the sentinel")
         self.assertIn("--gate-mode", content, "must be replaced by the launcher")
@@ -230,8 +207,8 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
                                  "shell mode resolution belongs in Go's ResolveGateMode")
 
     def test_launcher_keeps_literal_staleness_sentinel(self):
-        # Task 3.2: recipe-materialize.py:494-508 upgrades existing projects
-        # when the literal `stamped_gate_scope="` token is present.
+        # Task 3.2: sync upgrades existing projects when the literal
+        # `stamped_gate_scope="` token is present.
         src = (RECIPE_DIR / "hooks" / "worktree-gate.sh").read_text()
         self.assertIn('stamped_gate_scope="', src)
         # And the launcher source itself is bash-3.2 clean (no mapfile, no
@@ -409,126 +386,6 @@ class WorktreeGateLauncherResolutionTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 2)
             self.assertIn("is not executable", proc.stderr)
             self.assertIn("refusing", proc.stderr)
-
-class ResolveVerifiedBinaryDigestRecheckTests(unittest.TestCase):
-    """A `.verified` sidecar alone is not evidence: the cache bytes must still
-    match the committed SHA256SUMS trust root.
-
-    The sidecar records the acquisition verdict at acquisition time; it says
-    nothing about bytes replaced afterwards (a stale release left in a reused
-    home fail-opens on new flags, e.g. exits 0 with empty stdout for
-    ``--plan-merge-config``). A mismatched cache binary resolves as not-verified
-    so ``acquire`` refreshes it; the WORKTREE_GATE_BIN override and homes
-    without a committed digest keep their current behavior.
-    """
-
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.gb = load_module(
-            ROOT / "lib" / "_internal" / "gate_binary.py",
-            "gate_binary_digest_recheck",
-        )
-        pin = patch.dict(os.environ)
-        pin.start()
-        self.addCleanup(pin.stop)
-        os.environ.pop("WORKTREE_GATE_BIN", None)
-        self.home = Path(tmp.name)
-        goos, goarch = self.gb.detect_platform()
-        if not goos or not goarch:
-            self.skipTest(f"unsupported platform {goos}/{goarch}")
-        self.asset_name = f"worktree-gate-{goos}-{goarch}"
-        self.candidate = self.gb.cache_bin_path(self.home)
-        self.candidate.parent.mkdir(parents=True, exist_ok=True)
-
-    def _cache(self, payload: bytes) -> None:
-        self.candidate.write_bytes(payload)
-        self.candidate.chmod(0o755)
-        self.gb.verification_record_path(self.candidate).touch()
-
-    def _write_sums(self, digest: str) -> None:
-        sums = (
-            self.home / "catalog" / "recipes" / "worktree-flow"
-            / "bin" / "SHA256SUMS"
-        )
-        sums.parent.mkdir(parents=True, exist_ok=True)
-        sums.write_text(f"{digest}  {self.asset_name}\n", encoding="utf-8")
-
-    def test_stale_cache_binary_with_sidecar_is_not_resolved(self):
-        """Bytes differing from the trust root are not-verified despite the
-        sidecar; acquire is then free to refresh the cache."""
-        self._cache(b"#!/bin/sh\nstale-bytes\n")
-        self._write_sums("0" * 64)  # committed digest differs from the bytes
-        self.assertIsNone(self.gb.resolve_verified_binary(self.home))
-
-    def test_matching_cache_binary_with_sidecar_still_resolves(self):
-        self._cache(b"#!/bin/sh\ntrue\n")
-        self._write_sums(self.gb._sha256_of(self.candidate))
-        self.assertEqual(self.gb.resolve_verified_binary(self.home), self.candidate)
-
-    def test_no_committed_digest_keeps_sidecar_acceptance(self):
-        """Homes without a trust root keep the historical sidecar behavior."""
-        self._cache(b"#!/bin/sh\ntrue\n")
-        self.assertEqual(self.gb.resolve_verified_binary(self.home), self.candidate)
-
-    def _write_sums_bytes(self, payload: bytes) -> Path:
-        sums = (
-            self.home / "catalog" / "recipes" / "worktree-flow"
-            / "bin" / "SHA256SUMS"
-        )
-        sums.parent.mkdir(parents=True, exist_ok=True)
-        sums.write_bytes(payload)
-        return sums
-
-    def test_unreadable_sums_degrades_to_not_verified(self):
-        """An unreadable trust root must fail closed (doctor calls the resolver
-        unguarded, so a raise here would crash the doctor ledger check)."""
-        self._cache(b"#!/bin/sh\ntrue\n")
-        sums = self._write_sums_bytes(b"0000  worktree-gate-digest\n")
-        sums.chmod(0o000)
-        self.assertIsNone(self.gb.resolve_verified_binary(self.home))
-
-    def test_non_utf8_sums_degrades_to_not_verified(self):
-        """Non-UTF-8 SHA256SUMS bytes degrade to not-verified, never raise."""
-        self._cache(b"#!/bin/sh\ntrue\n")
-        self._write_sums_bytes(b"\xff\xfe\x00broken\n")
-        self.assertIsNone(self.gb.resolve_verified_binary(self.home))
-
-
-class WorktreeGateRollbackTests(unittest.TestCase):
-    """Predecessor rollback rehearsal converted to the bash-rejection contract."""
-
-    def test_gate_impl_bash_rejected_instead_of_rollback_rehearsal(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        home = Path(tmp.name) / "home"
-        populate_catalog(home / "catalog" / "recipes")
-        (home / "VERSION").write_text("0.21.0\n")
-        proj = Path(tmp.name) / "proj"
-        (proj / "ai-specs").mkdir(parents=True)
-        (proj / "ai-specs" / "skills").mkdir()
-        (proj / "ai-specs" / "commands").mkdir()
-        ver = recipe_version()
-        (proj / "ai-specs" / "ai-specs.toml").write_text(
-            "[project]\nname = 'rb'\n\n"
-            "[agents]\nenabled = ['claude']\n\n"
-            f"[recipes.worktree-flow]\nenabled = true\nversion = \"{ver}\"\n"
-            "[recipes.worktree-flow.config]\ngate_impl = 'bash'\n"
-        )
-        proc = subprocess.run(
-            ["python3", str(RECIPE_MATERIALIZE_PATH), str(proj), str(home)],
-            capture_output=True, text=True,
-        )
-        self.assertEqual(proc.returncode, 1)
-        combined = proc.stderr + proc.stdout
-        self.assertIn("bash", combined)
-        self.assertIn("removed", combined)
-        self.assertIn("auto | go", combined)
-        legacy = (
-            proj / "ai-specs" / "recipes" / "worktree-flow"
-            / "hooks" / "worktree-gate-legacy.sh"
-        )
-        self.assertFalse(legacy.exists())
 
 
 if __name__ == "__main__":

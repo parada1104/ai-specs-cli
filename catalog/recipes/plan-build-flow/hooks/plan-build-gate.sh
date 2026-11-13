@@ -22,31 +22,15 @@ input="$(cat)"
 # Normalize the target once. realpath is intentionally non-strict: destination
 # components that do not exist yet remain in the canonical path, while existing
 # symlink ancestors and final targets are resolved before any boundary decision.
-parsed="$(printf '%s' "$input" | python3 -c '
-import json
-import os
-import sys
-
-try:
-    event = json.load(sys.stdin)
-    tool_input = event.get("tool_input", {}) or {}
-    file_path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
-    if not isinstance(file_path, str) or not file_path:
-        sys.exit(0)
-    cwd = event.get("cwd") or os.getcwd()
-    if not isinstance(cwd, str):
-        sys.exit(0)
-    base = cwd if os.path.isabs(cwd) else os.path.abspath(cwd)
-    target = os.path.realpath(file_path if os.path.isabs(file_path) else os.path.join(base, file_path))
-    probe = os.path.dirname(target)
-    while probe and not os.path.isdir(probe) and probe != os.path.dirname(probe):
-        probe = os.path.dirname(probe)
-    if not os.path.isdir(probe):
-        sys.exit(0)
-    print((event.get("tool_name", "") or "") + "\t" + target + "\t" + os.path.realpath(probe))
-except Exception:
-    sys.exit(0)
-' 2>/dev/null)" || exit 0
+# The native CLI (dist/ai-specs, installed by install.sh and upgrade) normalizes
+# the target. A missing or non-executable binary, or an event with no string
+# target, prints nothing: the hook exits 0 (fail open), as a python failure did.
+cli_bin="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"
+parsed=""
+if [ -x "$cli_bin" ]; then
+  parsed="$(printf '%s' "$input" | "$cli_bin" hook normalize-path 2>/dev/null)" || parsed=""
+fi
+[ -n "$parsed" ] || exit 0
 
 tool_name="${parsed%%$'\t'*}"
 rest="${parsed#*$'\t'}"
@@ -115,39 +99,27 @@ _ledger_binary() {
 }
 
 _ledger_field() {
-  # stdin: verdict JSON. $1: top-level key.
-  python3 -c '
-import json, sys
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    raise SystemExit(1)
-value = data.get(sys.argv[1], "")
-if isinstance(value, bool):
-    print("1" if value else "0")
-elif value is None:
-    print("")
-else:
-    print(value)
-' "$1" 2>/dev/null
+  # stdin: verdict JSON. $1: top-level key, read through `hook field`. Without
+  # the CLI there is no verdict to read: empty output, the caller allows.
+  [ -x "$cli_bin" ] || return 1
+  "$cli_bin" hook field "$1" 2>/dev/null
 }
 
 _ledger_ask() {
-  # $1 bin, $2 checkpoint, $3 root, $4 prefix; stdin: prompt JSON. The follow-up
-  # `--decide` carries no mode: Go re-resolves the same effective mode it graded
-  # with.
+  # $1 bin, $2 checkpoint, $3 root, $4 prefix; stdin: the full verdict JSON. The
+  # display lines read `prompt.*` through `hook field`; without the CLI they are
+  # skipped and the opt-out flow runs unchanged.
   local bin="$1" checkpoint="$2" root="$3" prefix="$4"
-  python3 -c '
-import json, sys
-try:
-    prompt = json.load(sys.stdin) or {}
-except Exception:
-    prompt = {}
-ev = prompt.get("evidence") or {}
-for side in ("local", "remote", "code", "git"):
-    print("  %s: %s" % (side, ev.get(side) or "(unavailable)"))
-print("  choices: " + ", ".join(prompt.get("choices") or []))
-' >&2 2>/dev/null
+  local payload side value
+  payload="$(cat)"
+  if [ -x "$cli_bin" ]; then
+    for side in local remote code git; do
+      value="$(printf '%s' "$payload" | "$cli_bin" hook field "prompt.evidence.$side" 2>/dev/null)"
+      printf '  %s: %s\n' "$side" "${value:-(unavailable)}" >&2
+    done
+    value="$(printf '%s' "$payload" | "$cli_bin" hook field prompt.choices 2>/dev/null)"
+    printf '  choices: %s\n' "$value" >&2
+  fi
   if ! { exec 3</dev/tty; } 2>/dev/null; then
     echo "${prefix}: ${checkpoint} needs a decision but no terminal is available; no opt-out was recorded; blocking." >&2
     return 2
@@ -198,8 +170,7 @@ _ledger_grade() {
     return 0
   fi
   if [ "$decision" = ask ]; then
-    printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get("prompt")))' 2>/dev/null \
-      | _ledger_ask "$bin" "$checkpoint" "$root" "$prefix"
+    printf '%s' "$out" | _ledger_ask "$bin" "$checkpoint" "$root" "$prefix"
     return $?
   fi
   if [ "$active" = 1 ] && [ "$decision" != allow ]; then
@@ -238,34 +209,17 @@ has_active_plan() {
 central_root=""
 central_sub=""
 central_root_proof() {
-  local bin out parsed cand sub
+  local bin out cand sub
   bin="$(_ledger_binary)" || return 1
   # Go resolves upward from the current directory, so the query must run from
   # the probe directory (the target's nearest existing ancestor).
   out="$(cd "$probe_dir" 2>/dev/null && "$bin" --resolve-central-root 2>/dev/null)" || return 1
   [ -n "$out" ] || return 1
-  parsed="$(printf '%s' "$out" | python3 -c '
-import json, os, sys
-
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    raise SystemExit(1)
-if not isinstance(data, dict):
-    raise SystemExit(1)
-central = data.get("central_root")
-sub = data.get("submodule")
-if not isinstance(central, str) or not isinstance(sub, str):
-    raise SystemExit(1)
-if not central or not os.path.isabs(central):
-    raise SystemExit(1)
-if any(ch in central or ch in sub for ch in "\t\r\n"):
-    raise SystemExit(1)
-sys.stdout.write(central + "\t" + sub)
-' 2>/dev/null)" || return 1
-  [ -n "$parsed" ] || return 1
-  cand="${parsed%%$'\t'*}"
-  sub="${parsed#*$'\t'}"
+  [ -x "$cli_bin" ] || return 1
+  cand="$(printf '%s' "$out" | "$cli_bin" hook field --string central_root 2>/dev/null)" || return 1
+  sub="$(printf '%s' "$out" | "$cli_bin" hook field --string submodule 2>/dev/null)" || return 1
+  case "$cand" in /*) ;; *) return 1 ;; esac
+  case "$cand$sub" in *$'\t'*|*$'\r'*|*$'\n'*) return 1 ;; esac
   cand="$(cd "$cand" 2>/dev/null && pwd -P)" || return 1
   is_under "$cand" "$repo_root" || return 1
   [ "$cand" != "$repo_root" ] || return 1

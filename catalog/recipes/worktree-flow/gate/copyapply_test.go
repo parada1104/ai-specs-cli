@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // Contract tests for the --apply-copy copy actuator (GO-08 WU2, strangler
@@ -26,13 +28,13 @@ import (
 func runApplyCopyCLI(t *testing.T, envelopeJSON string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := runApplyCopy(strings.NewReader(envelopeJSON), &stdout, &stderr)
+	code := shared.RunApplyCopy(strings.NewReader(envelopeJSON), &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
 }
 
 type applyCopyEnvelope struct {
-	Results []copyResult `json:"results"`
-	Error   *string      `json:"error"`
+	Results []shared.CopyResult `json:"results"`
+	Error   *string             `json:"error"`
 }
 
 func decodeApplyCopyEnvelope(t *testing.T, out string) applyCopyEnvelope {
@@ -162,7 +164,7 @@ func TestApplyCopyBundledSkillReplacesDestWholesale(t *testing.T) {
 		t.Fatalf("exit = %d, stderr = %q", code, stderr)
 	}
 	got := decodeApplyCopyEnvelope(t, out)
-	want := []copyResult{{ID: "my-skill", Status: "ok"}}
+	want := []shared.CopyResult{{ID: "my-skill", Status: "ok"}}
 	if len(got.Results) != 1 || got.Results[0] != want[0] {
 		t.Fatalf("results = %+v, want %+v", got.Results, want)
 	}
@@ -271,8 +273,8 @@ func TestApplyCopyCommandDestDirectorySignalsOverwrite(t *testing.T) {
 	// fallback (where shutil.copy2 copies INTO the directory, exactly like
 	// the reference). The decision data — overwrite=true — is still the
 	// contract under test, so drive it through the decision seam directly.
-	item := copyItem{Kind: "command", ID: "cmd", Src: src, Dest: dest}
-	result, err := applyCopyDecision(&item)
+	item := shared.CopyItem{Kind: "command", ID: "cmd", Src: src, Dest: dest}
+	result, err := shared.ApplyCopyDecision(&item)
 	if err != nil {
 		t.Fatalf("applyCopyDecision: %v", err)
 	}
@@ -465,41 +467,6 @@ func TestApplyCopyItemExecutionFailureExits2(t *testing.T) {
 	}
 }
 
-// --- copytree/copy2 primitives ---
-
-func TestCopyFileStatPreservesModeAndMtime(t *testing.T) {
-	tmp := t.TempDir()
-	src := filepath.Join(tmp, "src.sh")
-	dest := filepath.Join(tmp, "dest", "dest.sh")
-	if err := os.WriteFile(src, []byte("#!/bin/sh\necho hi\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	past := time.Date(2023, 1, 2, 3, 4, 5, 0, time.UTC)
-	if err := os.Chtimes(src, past, past); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := copyFileStat(src, dest); err != nil {
-		t.Fatalf("copyFileStat: %v", err)
-	}
-	info, err := os.Stat(dest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o755 {
-		t.Fatalf("mode = %v, want 0755", info.Mode().Perm())
-	}
-	if !info.ModTime().Equal(past) {
-		t.Fatalf("mtime = %v, want %v", info.ModTime(), past)
-	}
-	body, _ := os.ReadFile(dest)
-	if string(body) != "#!/bin/sh\necho hi\n" {
-		t.Fatalf("content = %q", body)
-	}
-}
-
 // jsonEscape embeds a path into a JSON string literal.
 func jsonEscape(path string) string {
 	encoded, err := json.Marshal(path)
@@ -507,73 +474,4 @@ func jsonEscape(path string) string {
 		panic(err)
 	}
 	return strings.Trim(string(encoded), `"`)
-}
-
-// --- dir-mode parity (GO-08 findings fix) ---
-
-// TestCopyTreeDirModeParity pins the copytree dir-mode contract: the
-// directory is created with the umask-filtered default mode and the source's
-// S_IMODE bits are applied by the copystat step after the children. A 0o777
-// source directory (which a 022 umask would strip from any creation mode)
-// must therefore still land at 0o777 on the dest side.
-func TestCopyTreeDirModeParity(t *testing.T) {
-	tmp := t.TempDir()
-	src := filepath.Join(tmp, "src")
-	dest := filepath.Join(tmp, "dest")
-	if err := os.Mkdir(src, 0o777); err != nil {
-		t.Fatal(err)
-	}
-	// Mkdir is umask-filtered; chmod is not, so this pins a genuine 0o777
-	// source mode regardless of the test process's umask.
-	if err := os.Chmod(src, 0o777); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(src, "a.md"), []byte("a"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := copyTree(src, dest); err != nil {
-		t.Fatalf("copyTree: %v", err)
-	}
-	info, err := os.Stat(dest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o777 {
-		t.Fatalf("dest dir mode = %o, want 777 (copystat parity, umask-independent)", info.Mode().Perm())
-	}
-}
-
-// TestCopyTreePreservesSetgidDirBit pins statMode's S_IMODE parity: the
-// setgid bit on a source directory (which copystat preserves and plain
-// Perm() drops) survives the copy via the post-children chmod.
-func TestCopyTreePreservesSetgidDirBit(t *testing.T) {
-	tmp := t.TempDir()
-	src := filepath.Join(tmp, "src")
-	dest := filepath.Join(tmp, "dest")
-	if err := os.Mkdir(src, 0o775); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(src, 0o775|os.ModeSetgid); err != nil {
-		t.Fatal(err)
-	}
-	srcInfo, err := os.Stat(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if srcInfo.Mode()&os.ModeSetgid == 0 {
-		t.Skip("setgid bits not preserved in this environment")
-	}
-	if err := os.WriteFile(filepath.Join(src, "a.md"), []byte("a"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := copyTree(src, dest); err != nil {
-		t.Fatalf("copyTree: %v", err)
-	}
-	destInfo, err := os.Stat(dest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if destInfo.Mode()&os.ModeSetgid == 0 || destInfo.Mode().Perm() != 0o775 {
-		t.Fatalf("dest dir mode = %v, want setgid + 0755 (copystat S_IMODE parity)", destInfo.Mode())
-	}
 }

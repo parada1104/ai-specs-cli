@@ -1,0 +1,585 @@
+{
+  "cases": [
+    {
+      "name": "fresh project",
+      "input_project": [
+        {
+          "path": "ai-specs",
+          "content": ""
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'x'\n",
+          "mode": "0644"
+        }
+      ],
+      "input_home": [
+        {
+          "path": "bundled-commands",
+          "content": ""
+        },
+        {
+          "path": "bundled-commands/cmd-a.md",
+          "content": "# cmd a\n",
+          "mode": "0644"
+        },
+        {
+          "path": "bundled-skills",
+          "content": ""
+        },
+        {
+          "path": "bundled-skills/alpha",
+          "content": ""
+        },
+        {
+          "path": "bundled-skills/alpha/SKILL.md",
+          "content": "# alpha\n",
+          "mode": "0644"
+        },
+        {
+          "path": "bundled-skills/alpha/reference.md",
+          "content": "ref\n",
+          "mode": "0644"
+        },
+        {
+          "path": "bundled-skills/alpha/run.sh",
+          "content": "#!/bin/sh\n",
+          "mode": "0755"
+        }
+      ],
+      "rc": 0,
+      "stdout": "  ⇢ flattened 1 bundled skill(s) → cache/.bundled/skills\n  ⇢ flattened 1 bundled command(s) → cache/.bundled/commands\n",
+      "stderr": "",
+      "project": [
+        {
+          "path": "ai-specs",
+          "content": ""
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n",
+          "mode": "0600"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'x'\n",
+          "mode": "0644"
+        }
+      ],
+      "cache": [
+        {
+          "path": ".bundled",
+          "content": ""
+        },
+        {
+          "path": ".bundled/commands",
+          "content": ""
+        },
+        {
+          "path": ".bundled/commands/cmd-a.md",
+          "content": "# cmd a\n",
+          "mode": "0644"
+        },
+        {
+          "path": ".bundled/skills",
+          "content": ""
+        },
+        {
+          "path": ".bundled/skills/alpha",
+          "content": ""
+        },
+        {
+          "path": ".bundled/skills/alpha/SKILL.md",
+          "content": "# alpha\n",
+          "mode": "0644"
+        },
+        {
+          "path": ".bundled/skills/alpha/reference.md",
+          "content": "ref\n",
+          "mode": "0644"
+        },
+        {
+          "path": ".bundled/skills/alpha/run.sh",
+          "content": "#!/bin/sh\n",
+          "mode": "0755"
+        }
+      ]
+    },
+    {
+      "name": "all bundled up to date",
+      "input_project": [
+        {
+          "path": "ai-specs",
+          "content": ""
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'x'\n",
+          "mode": "0644"
+        }
+      ],
+      "input_home": [],
+      "rc": 0,
+      "stdout": "  = all bundled up-to-date\n",
+      "stderr": "",
+      "project": [
+        {
+          "path": "ai-specs",
+          "content": ""
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n",
+          "mode": "0600"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'x'\n",
+          "mode": "0644"
+        }
+      ],
+      "cache": []
+    },
+    {
+      "name": "stale cache rebuilt",
+      "input_project": [
+        {
+          "path": "ai-specs",
+          "content": ""
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'x'\n",
+          "mode": "0644"
+        }
+      ],
+      "input_home": [
+        {
+          "path": "bundled-commands",
+          "content": ""
+        },
+        {
+          "path": "bundled-commands/cmd-a.md",
+          "content": "# cmd a\n",
+          "mode": "0644"
+        },
+        {
+          "path": "bundled-skills",
+          "content": ""
+        },
+        {
+          "path": "bundled-skills/alpha",
+          "content": ""
+        },
+        {
+          "path": "bundled-skills/alpha/SKILL.md",
+          "content": "# alpha\n",
+          "mode": "0644"
+        },
+        {
+          "path": "bundled-skills/alpha/reference.md",
+          "content": "ref\n",
+          "mode": "0644"
+        },
+        {
+          "path": "bundled-skills/alpha/run.sh",
+          "content": "#!/bin/sh\n",
+          "mode": "0755"
+        },
+        {
+          "path": "cache",
+          "content": ""
+        },
+        {
+          "path": "cache/projects",
+          "content": ""
+        },
+        {
+          "path": "cache/projects/\u003cCACHE\u003e",
+          "content": ""
+        },
+        {
+          "path": "cache/projects/\u003cCACHE\u003e/.bundled",
+          "content": ""
+        },
+        {
+          "path": "cache/projects/\u003cCACHE\u003e/.bundled/commands",
+          "content": ""
+        },
+        {
+          "path": "cache/projects/\u003cCACHE\u003e/.bundled/commands/stale.md",
+          "content": "stale\n",
+          "mode": "0644"
+        },
+        {
+          "path": "cache/projects/\u003cCACHE\u003e/.bundled/skills",
+          "content": ""
+        },
+        {
+          "path": "cache/projects/\u003cCACHE\u003e/.bundled/skills/stale",
+          "content": ""
+        },
+        {
+          "path": "cache/projects/\u003cCACHE\u003e/.bundled/skills/stale/SKILL.md",
+          "content": "stale\n",
+          "mode": "0644"
+        }
+      ],
+      "rc": 0,
+      "stdout": "  ⇢ flattened 1 bundled skill(s) → cache/.bundled/skills\n  ⇢ flattened 1 bundled command(s) → cache/.bundled/commands\n",
+      "stderr": "",
+      "project": [
+        {
+          "path": "ai-specs",
+          "content": ""
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n",
+          "mode": "0600"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'x'\n",
+          "mode": "0644"
+        }
+      ],
+      "cache": [
+        {
+          "path": ".bundled",
+          "content": ""
+        },
+        {
+          "path": ".bundled/commands",
+          "content": ""
+        },
+        {
+          "path": ".bundled/commands/cmd-a.md",
+          "content": "# cmd a\n",
+          "mode": "0644"
+        },
+        {
+          "path": ".bundled/skills",
+          "content": ""
+        },
+        {
+          "path": ".bundled/skills/alpha",
+          "content": ""
+        },
+        {
+          "path": ".bundled/skills/alpha/SKILL.md",
+          "content": "# alpha\n",
+          "mode": "0644"
+        },
+        {
+          "path": ".bundled/skills/alpha/reference.md",
+          "content": "ref\n",
+          "mode": "0644"
+        },
+        {
+          "path": ".bundled/skills/alpha/run.sh",
+          "content": "#!/bin/sh\n",
+          "mode": "0755"
+        }
+      ]
+    },
+    {
+      "name": "legacy copies removed and lock normalized",
+      "input_project": [
+        {
+          "path": "ai-specs",
+          "content": ""
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "[meta]\ncli_version = \"1.0.0\"\nsynced_at = \"2026-01-01T00:00:00Z\"\n\n[skills.alpha]\n\"SKILL.md\" = \"a6098732ccd311fb1f4cf46a2e05389ac24f7207f9be513a0d1d423d8109b2c7\"\n\n[commands]\n\"cmd-a.md\" = \"e2cc0657ff71ccc1788c66abcbd2c6294e0cb9c071be661f23bcf2f8660066ad\"\n\n[agents.claude]\n\"CLAUDE.md\" = \"deadbeef\"\n",
+          "mode": "0644"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'x'\n",
+          "mode": "0644"
+        },
+        {
+          "path": "ai-specs/commands",
+          "content": ""
+        },
+        {
+          "path": "ai-specs/commands/cmd-a.md",
+          "content": "old command\n",
+          "mode": "0644"
+        },
+        {
+          "path": "ai-specs/skills",
+          "content": ""
+        },
+        {
+          "path": "ai-specs/skills/alpha",
+          "content": ""
+        },
+        {
+          "path": "ai-specs/skills/alpha/SKILL.md",
+          "content": "# alpha\n",
+          "mode": "0644"
+        }
+      ],
+      "input_home": [
+        {
+          "path": "bundled-commands",
+          "content": ""
+        },
+        {
+          "path": "bundled-commands/cmd-a.md",
+          "content": "# cmd a\n",
+          "mode": "0644"
+        },
+        {
+          "path": "bundled-skills",
+          "content": ""
+        },
+        {
+          "path": "bundled-skills/alpha",
+          "content": ""
+        },
+        {
+          "path": "bundled-skills/alpha/SKILL.md",
+          "content": "# alpha\n",
+          "mode": "0644"
+        },
+        {
+          "path": "bundled-skills/alpha/reference.md",
+          "content": "ref\n",
+          "mode": "0644"
+        },
+        {
+          "path": "bundled-skills/alpha/run.sh",
+          "content": "#!/bin/sh\n",
+          "mode": "0755"
+        }
+      ],
+      "rc": 0,
+      "stdout": "  ✓ removed leftover bundled skill ai-specs/skills/alpha/\n  ✓ removed leftover bundled command ai-specs/commands/cmd-a.md\n  ⇢ flattened 1 bundled skill(s) → cache/.bundled/skills\n  ⇢ flattened 1 bundled command(s) → cache/.bundled/commands\n",
+      "stderr": "",
+      "project": [
+        {
+          "path": "ai-specs",
+          "content": ""
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"1.0.0\"\nsynced_at = \"2026-01-01T00:00:00Z\"\n\n[agents.\"claude\"]\n\"CLAUDE.md\" = \"deadbeef\"\n",
+          "mode": "0600"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'x'\n",
+          "mode": "0644"
+        },
+        {
+          "path": "ai-specs/commands",
+          "content": ""
+        },
+        {
+          "path": "ai-specs/skills",
+          "content": ""
+        }
+      ],
+      "cache": [
+        {
+          "path": ".bundled",
+          "content": ""
+        },
+        {
+          "path": ".bundled/commands",
+          "content": ""
+        },
+        {
+          "path": ".bundled/commands/cmd-a.md",
+          "content": "# cmd a\n",
+          "mode": "0644"
+        },
+        {
+          "path": ".bundled/skills",
+          "content": ""
+        },
+        {
+          "path": ".bundled/skills/alpha",
+          "content": ""
+        },
+        {
+          "path": ".bundled/skills/alpha/SKILL.md",
+          "content": "# alpha\n",
+          "mode": "0644"
+        },
+        {
+          "path": ".bundled/skills/alpha/reference.md",
+          "content": "ref\n",
+          "mode": "0644"
+        },
+        {
+          "path": ".bundled/skills/alpha/run.sh",
+          "content": "#!/bin/sh\n",
+          "mode": "0755"
+        }
+      ]
+    },
+    {
+      "name": "lock without meta",
+      "input_project": [
+        {
+          "path": "ai-specs",
+          "content": ""
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "[managed.\"ai-specs/foo.md\"]\nsha256 = \"  deadbeef  \"\nrecipe = \"r\"\n\n[agents.claude]\n\"CLAUDE.md\" = \"deadbeef\"\n",
+          "mode": "0644"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'x'\n",
+          "mode": "0644"
+        }
+      ],
+      "input_home": [
+        {
+          "path": "bundled-commands",
+          "content": ""
+        },
+        {
+          "path": "bundled-commands/cmd-a.md",
+          "content": "# cmd a\n",
+          "mode": "0644"
+        },
+        {
+          "path": "bundled-skills",
+          "content": ""
+        },
+        {
+          "path": "bundled-skills/alpha",
+          "content": ""
+        },
+        {
+          "path": "bundled-skills/alpha/SKILL.md",
+          "content": "# alpha\n",
+          "mode": "0644"
+        },
+        {
+          "path": "bundled-skills/alpha/reference.md",
+          "content": "ref\n",
+          "mode": "0644"
+        },
+        {
+          "path": "bundled-skills/alpha/run.sh",
+          "content": "#!/bin/sh\n",
+          "mode": "0755"
+        }
+      ],
+      "rc": 0,
+      "stdout": "  ⇢ flattened 1 bundled skill(s) → cache/.bundled/skills\n  ⇢ flattened 1 bundled command(s) → cache/.bundled/commands\n",
+      "stderr": "",
+      "project": [
+        {
+          "path": "ai-specs",
+          "content": ""
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[managed.\"ai-specs/foo.md\"]\nsha256 = \"deadbeef\"\nrecipe = \"r\"\n\n[agents.\"claude\"]\n\"CLAUDE.md\" = \"deadbeef\"\n",
+          "mode": "0600"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = 'x'\n",
+          "mode": "0644"
+        }
+      ],
+      "cache": [
+        {
+          "path": ".bundled",
+          "content": ""
+        },
+        {
+          "path": ".bundled/commands",
+          "content": ""
+        },
+        {
+          "path": ".bundled/commands/cmd-a.md",
+          "content": "# cmd a\n",
+          "mode": "0644"
+        },
+        {
+          "path": ".bundled/skills",
+          "content": ""
+        },
+        {
+          "path": ".bundled/skills/alpha",
+          "content": ""
+        },
+        {
+          "path": ".bundled/skills/alpha/SKILL.md",
+          "content": "# alpha\n",
+          "mode": "0644"
+        },
+        {
+          "path": ".bundled/skills/alpha/reference.md",
+          "content": "ref\n",
+          "mode": "0644"
+        },
+        {
+          "path": ".bundled/skills/alpha/run.sh",
+          "content": "#!/bin/sh\n",
+          "mode": "0755"
+        }
+      ]
+    },
+    {
+      "name": "missing ai-specs directory",
+      "input_project": [],
+      "input_home": [
+        {
+          "path": "bundled-commands",
+          "content": ""
+        },
+        {
+          "path": "bundled-commands/cmd-a.md",
+          "content": "# cmd a\n",
+          "mode": "0644"
+        },
+        {
+          "path": "bundled-skills",
+          "content": ""
+        },
+        {
+          "path": "bundled-skills/alpha",
+          "content": ""
+        },
+        {
+          "path": "bundled-skills/alpha/SKILL.md",
+          "content": "# alpha\n",
+          "mode": "0644"
+        },
+        {
+          "path": "bundled-skills/alpha/reference.md",
+          "content": "ref\n",
+          "mode": "0644"
+        },
+        {
+          "path": "bundled-skills/alpha/run.sh",
+          "content": "#!/bin/sh\n",
+          "mode": "0755"
+        }
+      ],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "ERROR: \u003cDIR\u003e/ai-specs not found. Run `ai-specs init` first.\n",
+      "project": [],
+      "cache": []
+    }
+  ],
+  "oracle": {
+    "note": "Frozen snapshot of the legacy refresh-bundled.py surface, captured once; the temporary project root and cli home are tokenized as \u003cDIR\u003e, the per-project cache key as \u003cCACHE\u003e, and directory modes are omitted because they follow the process umask. Regenerating it needs a human decision.",
+    "python": "3.14.7",
+    "script": "lib/_internal/refresh-bundled.py"
+  }
+}

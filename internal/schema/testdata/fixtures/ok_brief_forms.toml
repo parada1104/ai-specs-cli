@@ -1,0 +1,16 @@
+[recipe]
+id = "x"
+name = "N"
+description = "D"
+version = "1.0"
+
+[provides.brief]
+workflow_rules = ["rule one", "rule two"]
+
+[[provides.brief.context_sources]]
+key = "k1"
+text = "t1"
+
+[[provides.brief.runtime_flow]]
+key = "k2"
+text = 5

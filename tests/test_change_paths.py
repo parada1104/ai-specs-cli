@@ -14,7 +14,6 @@ which stayed green even if the guard's own assertion was deleted. The pair
 
 from __future__ import annotations
 
-import importlib.util
 import re
 import sys
 import tempfile
@@ -24,7 +23,8 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _change_paths import change_artifact, change_dir
+from _change_paths import change_artifact, change_dir  # noqa: E402
+from tests import test_bitbucket_pr_flow_recipe as bitbucket_flow_tests  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SLUG = "bitbucket-bb-cli-alignment"
@@ -32,21 +32,6 @@ GUARD_TEST_NAME = "test_apply_progress_omits_absolute_host_and_worktree_paths"
 ABSOLUTE_PATH_RE = r"(?m)(/Users/|/home/|/opt/homebrew/)"
 DIRTY_ARTIFACT = "worktree: /Users/someone/dev\n"
 CLEAN_ARTIFACT = "worktree: .worktrees/bitbucket-golden-archive-aware\n"
-
-BITBUCKET_TEST_PATH = Path(__file__).resolve().parent / "test_bitbucket_pr_flow_recipe.py"
-
-
-def _load_guard_module():
-    """Load the bitbucket test module so its real guard can be invoked."""
-    name = "bitbucket_guard_under_test"
-    if name in sys.modules:
-        return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, BITBUCKET_TEST_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 class ChangePathsTests(unittest.TestCase):
@@ -151,7 +136,7 @@ class ChangePathsTests(unittest.TestCase):
         Deleting the guard's ``assertIsNone`` turns this test red, so the guard has a
         regression tripwire instead of relying on the resolver's tests to imply it.
         """
-        module = _load_guard_module()
+        module = bitbucket_flow_tests
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self._write_artifact(
@@ -164,7 +149,7 @@ class ChangePathsTests(unittest.TestCase):
 
     def test_guard_accepts_a_clean_resolved_artifact(self):
         """The same invocation must pass on a clean artifact, so the pair is not one-sided."""
-        module = _load_guard_module()
+        module = bitbucket_flow_tests
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self._write_artifact(

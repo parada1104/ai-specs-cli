@@ -1,0 +1,9 @@
+[recipe]
+id = "x"
+name = "N"
+description = "D"
+version = "1.0"
+
+[config.foo]
+required = true
+help_text = 5

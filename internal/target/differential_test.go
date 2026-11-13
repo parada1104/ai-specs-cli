@@ -1,0 +1,954 @@
+package target
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	"ai-specs.dev/ai-specs/internal/toml"
+)
+
+// repoRoot returns the worktree root (the go test process runs with cwd =
+// the package directory internal/target).
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		t.Fatalf("repo root %s does not contain go.mod: %v", root, err)
+	}
+	return root
+}
+
+type cliResult struct {
+	stdout string
+	stderr string
+	code   int
+}
+
+// Frozen oracle: testdata/target_golden.json holds the exit code, stdout and
+// stderr of the legacy target-resolve.py for every case of this file, captured
+// once with each case's scratch base normalized to <TMP>. No Python runs here.
+type frozenRecord struct {
+	Code   int    `json:"code"`
+	Stdout string `json:"stdout"`
+	Stderr string `json:"stderr"`
+}
+
+func loadTargetGolden(t *testing.T) map[string]frozenRecord {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "target_golden.json"))
+	if err != nil {
+		t.Fatalf("read frozen oracle: %v", err)
+	}
+	var g map[string]frozenRecord
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatalf("decode frozen oracle: %v", err)
+	}
+	return g
+}
+
+// pathValueKeys are the JSON fields whose value is an absolute scratch path in
+// the plan output. Only these values are rewritten; every other byte is compared
+// as written. The same rule is applied by the capture script.
+const pathValueKeys = `(?:root|manifest|planning_root|path|manifest_source|derived_ai_specs)`
+
+// normalizeBase rewrites a case's scratch base to <TMP> only where it is a path
+// value: a path field of the JSON plan, or the prefix of an "error: " line on
+// stderr. The resolved form is rewritten first (macOS /var -> /private/var).
+func normalizeBase(s, base string) string {
+	paths := []string{base}
+	if resolved, err := filepath.EvalSymlinks(base); err == nil && resolved != base {
+		paths = []string{resolved, base}
+	}
+	for _, p := range paths {
+		q := regexp.QuoteMeta(p)
+		s = regexp.MustCompile(`("`+pathValueKeys+`": ")`+q).ReplaceAllString(s, "${1}<TMP>")
+		s = regexp.MustCompile(`(?m)^(error: )`+q).ReplaceAllString(s, "${1}<TMP>")
+	}
+	return s
+}
+
+// runGoCLI drives the Go Run with the same argument list (program name
+// excluded; Run owns the identical usage line).
+func runGoCLI(t *testing.T, args ...string) cliResult {
+	t.Helper()
+	var outBuf, errBuf bytes.Buffer
+	code := Run(args, &outBuf, &errBuf)
+	return cliResult{outBuf.String(), errBuf.String(), code}
+}
+
+// firstMismatch describes the first difference between the frozen record and
+// the Go result, or returns "" when exit code, stdout and stderr are identical.
+func firstMismatch(want, got cliResult) string {
+	switch {
+	case want.code != got.code:
+		return fmt.Sprintf("exit code: frozen=%d go=%d", want.code, got.code)
+	case want.stdout != got.stdout:
+		return "stdout bytes differ (" + firstDiff(want.stdout, got.stdout) + ")"
+	case want.stderr != got.stderr:
+		return "stderr bytes differ (" + firstDiff(want.stderr, got.stderr) + ")"
+	}
+	return ""
+}
+
+// compareDifferential asserts byte-identical stdout, stderr, and exit code
+// against the frozen record, printing both sides on a mismatch.
+func compareDifferential(t *testing.T, name string, want, got cliResult) {
+	t.Helper()
+	if m := firstMismatch(want, got); m != "" {
+		t.Errorf("%s: %s\n--- frozen stdout ---\n%s\n--- go stdout ---\n%s\n--- frozen stderr ---\n%q\n--- go stderr ---\n%q",
+			name, m, want.stdout, got.stdout, want.stderr, got.stderr)
+	}
+}
+
+// firstDiff returns a short human-readable pointer at the first differing byte.
+func firstDiff(a, b string) string {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		if a[i] != b[i] {
+			return fmt.Sprintf("first diff at byte %d: %q vs %q", i, a[max(0, i-20):i+20], b[max(0, i-20):i+20])
+		}
+	}
+	return fmt.Sprintf("lengths differ: %d vs %d", len(a), len(b))
+}
+
+// --- test tree helpers ------------------------------------------------------
+
+type tree struct {
+	manifest string
+	dirs     []string
+	files    []string
+	links    map[string]string // link path -> target (absolute or relative)
+}
+
+// buildTree writes a manifest + dirs/files/symlinks under root.
+func buildTree(t *testing.T, root string, spec tree) {
+	t.Helper()
+	for _, d := range spec.dirs {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range spec.files {
+		p := filepath.Join(root, f)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for link, target := range spec.links {
+		p := filepath.Join(root, link)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if spec.manifest != "" {
+		dir := filepath.Join(root, "ai-specs")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "ai-specs.toml"), []byte(spec.manifest), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func copyDir(t *testing.T, src, dst string) {
+	t.Helper()
+	err := filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// runFrozen runs the Go CLI with args, normalizes its scratch base, and asserts
+// byte-identical stdout, stderr and exit code against the frozen record `name`.
+// It returns the frozen record for the caller's own assertions.
+func runFrozen(t *testing.T, name, base string, args ...string) cliResult {
+	t.Helper()
+	rec, ok := loadTargetGolden(t)[name]
+	if !ok {
+		t.Fatalf("%s: no frozen record in testdata/target_golden.json", name)
+	}
+	oracle := cliResult{rec.Stdout, rec.Stderr, rec.Code}
+	gRes := runGoCLI(t, args...)
+	gRes.stdout = normalizeBase(gRes.stdout, base)
+	gRes.stderr = normalizeBase(gRes.stderr, base)
+	compareDifferential(t, name, oracle, gRes)
+	return oracle
+}
+
+// --- TestDifferentialPlanJSON ------------------------------------------------
+
+// TestDifferentialPlanJSON compares the full plan JSON byte-for-byte for the
+// two committed fixtures plus ≥8 synthetic roots covering the normalization,
+// validation, worktrees_dir, and topology surfaces.
+func TestDifferentialPlanJSON(t *testing.T) {
+	root := repoRoot(t)
+
+	// Committed fixtures, copied to temp dirs (both CLIs run against the copy).
+	for _, fixture := range []string{"root-only", "multi-target"} {
+		t.Run("fixture-"+fixture, func(t *testing.T) {
+			tmp := t.TempDir()
+			dir := filepath.Join(tmp, fixture)
+			copyDir(t, filepath.Join(root, "tests", "fixtures", "target-resolve", fixture), dir)
+			runFrozen(t, "fixture-"+fixture, tmp, dir)
+		})
+	}
+
+	cases := []struct {
+		name string
+		tree tree
+	}{
+		{
+			// "./" prefix, backslashes, and duplicate collapse via normpath.
+			name: "backslash-and-duplicate",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\nsubrepos = [\"./pkg\\\\a\", \"pkg\\\\a\"]\n",
+				dirs:     []string{"pkg/a"},
+			},
+		},
+		{
+			// Trailing slash + dot segments normalize to the same rel.
+			name: "normpath-collapse",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\nsubrepos = [\"dup\", \"./dup\", \"dup/\", \"d1/../dup\"]\n",
+				dirs:     []string{"dup", "d1"},
+			},
+		},
+		{
+			// Empty and whitespace entries are dropped by read_project.
+			name: "empty-entries",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\nsubrepos = [\"\", \"   \"]\n",
+			},
+		},
+		{
+			// Non-string TOML scalars are filtered by read_project before
+			// target-resolve sees them (pins the filter on both sides).
+			name: "non-string-filtered",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\nsubrepos = [1, true, 0.5]\n",
+			},
+		},
+		{
+			name: "absolute-path-error",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\nsubrepos = [\"/etc\"]\n",
+			},
+		},
+		{
+			name: "escape-error",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\nsubrepos = [\"../outside\"]\n",
+			},
+		},
+		{
+			name: "missing-dir-error",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\nsubrepos = [\"ghost\"]\n",
+			},
+		},
+		{
+			name: "not-a-dir-error",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\nsubrepos = [\"f.txt\"]\n",
+				files:    []string{"f.txt"},
+			},
+		},
+		{
+			name: "worktrees-config-dict",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\n[recipes.worktree-flow]\nenabled = true\nversion = \"1\"\n[recipes.worktree-flow.config]\nworktrees_dir = \"custom-wt\"\n",
+			},
+		},
+		{
+			name: "worktrees-flat-style",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\n[recipes.worktree-flow]\nenabled = true\nworktrees_dir = \"flat-wt\"\n",
+			},
+		},
+		{
+			// Falsy worktrees_dir falls back to ".worktrees" on both sides.
+			name: "worktrees-falsy",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\n[recipes.worktree-flow.config]\nworktrees_dir = \"\"\n",
+			},
+		},
+		{
+			// Non-string worktrees_dir goes through str(value).
+			name: "worktrees-int",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\n[recipes.worktree-flow.config]\nworktrees_dir = 3\n",
+			},
+		},
+		{
+			// A table value goes through str(dict): document-order keys,
+			// repr-composed values.
+			name: "worktrees-dict",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\n[recipes.worktree-flow.config]\nworktrees_dir = {a = 1, b = \"two\"}\n",
+			},
+		},
+		{
+			// Explicit monorepo-apps config: via=config, source=project.
+			name: "topology-project",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\nrepo_topology = \"monorepo-apps\"\n",
+			},
+		},
+		{
+			// Legacy recipe key: source=legacy-recipe, via=config.
+			name: "topology-legacy-recipe",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\n[recipes.worktree-flow.config]\nrepo_topology = \"standalone\"\n",
+			},
+		},
+		{
+			// Unknown topology value takes the auto branch (configured
+			// reported as "auto") but source stays "project".
+			name: "topology-bogus",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\nrepo_topology = \"bogus\"\n",
+			},
+		},
+		{
+			// Symlink inside the tree resolves to the real dir.
+			name: "symlink-inside",
+			tree: tree{
+				manifest: "[project]\nname = \"t\"\nsubrepos = [\"alias\"]\n",
+				dirs:     []string{"real"},
+				links:    map[string]string{"alias": "real"},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "proj")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			buildTree(t, dir, tc.tree)
+			runFrozen(t, tc.name, filepath.Dir(dir), dir)
+		})
+	}
+
+	// Error classes with cross-root symlinks need a sibling outside the root.
+	t.Run("symlink-escape", func(t *testing.T) {
+		tmp := t.TempDir()
+		dir := filepath.Join(tmp, "proj")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		outside := filepath.Join(tmp, "outside")
+		if err := os.MkdirAll(outside, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		buildTree(t, dir, tree{
+			manifest: "[project]\nname = \"t\"\nsubrepos = [\"sneaky\"]\n",
+			links:    map[string]string{"sneaky": outside},
+		})
+		runFrozen(t, "symlink-escape", tmp, dir)
+	})
+
+	t.Run("symlink-dangling-outside", func(t *testing.T) {
+		tmp := t.TempDir()
+		dir := filepath.Join(tmp, "proj")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		outside := filepath.Join(tmp, "outside")
+		if err := os.MkdirAll(outside, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		buildTree(t, dir, tree{
+			manifest: "[project]\nname = \"t\"\nsubrepos = [\"dangle\"]\n",
+			links:    map[string]string{"dangle": filepath.Join(outside, "nope")},
+		})
+		runFrozen(t, "symlink-dangling-outside", tmp, dir)
+	})
+
+	t.Run("symlink-to-file", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "proj")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		buildTree(t, dir, tree{
+			manifest: "[project]\nname = \"t\"\nsubrepos = [\"lfile\"]\n",
+			files:    []string{"f.txt"},
+			links:    map[string]string{"lfile": "f.txt"},
+		})
+		runFrozen(t, "symlink-to-file", filepath.Dir(dir), dir)
+	})
+
+	t.Run("nonexistent-root", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "missing")
+		py := runFrozen(t, "nonexistent-root", filepath.Dir(dir), dir)
+		if py.code != 1 {
+			t.Errorf("nonexistent-root: want exit 1, got %d", py.code)
+		}
+	})
+}
+
+// --- TestDifferentialTopologySubmodules --------------------------------------
+
+func gitRun(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	full := append([]string{"-c", "user.email=test@example.com", "-c", "user.name=Test"}, args...)
+	cmd := exec.CommandContext(ctx, "git", full...)
+	cmd.Dir = dir
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git %v in %s: %v\nstdout: %s\nstderr: %s", args, dir, err, out.String(), errb.String())
+	}
+}
+
+func TestDifferentialTopologySubmodules(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	t.Run("super-with-submodule", func(t *testing.T) {
+		tmp := t.TempDir()
+		child := filepath.Join(tmp, "child")
+		super := filepath.Join(tmp, "super")
+
+		if err := os.MkdirAll(child, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(child, "lib.txt"), []byte("c\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gitRun(t, child, "init", "-q", ".")
+		gitRun(t, child, "add", "-A")
+		gitRun(t, child, "commit", "-q", "-m", "child init")
+
+		if err := os.MkdirAll(super, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(super, "README.md"), []byte("s\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gitRun(t, super, "init", "-q", ".")
+		gitRun(t, super, "add", "-A")
+		gitRun(t, super, "commit", "-q", "-m", "super init")
+		gitRun(t, super, "-c", "protocol.file.allow=always", "submodule", "add", child, "sub")
+		gitRun(t, super, "add", "-A")
+		gitRun(t, super, "commit", "-q", "-m", "add sub")
+
+		buildTree(t, super, tree{
+			manifest: "[project]\nname = \"super\"\nsubrepos = [\"sub\"]\n",
+		})
+		py := runFrozen(t, "super-with-submodule", tmp, super)
+		if py.code != 0 {
+			t.Fatalf("super-with-submodule: expected exit 0, got %d (stderr: %s)", py.code, py.stderr)
+		}
+		for _, want := range []string{`"monorepo-submodules"`, `"via": "auto"`, `"sub"`} {
+			if !strings.Contains(py.stdout, want) {
+				t.Errorf("super-with-submodule: stdout missing %s", want)
+			}
+		}
+	})
+
+	t.Run("super-without-submodules", func(t *testing.T) {
+		tmp := t.TempDir()
+		super := filepath.Join(tmp, "plain")
+		if err := os.MkdirAll(super, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		gitRun(t, super, "init", "-q", ".")
+		buildTree(t, super, tree{manifest: "[project]\nname = \"plain\"\nsubrepos = []\n"})
+		py := runFrozen(t, "super-without-submodules", tmp, super)
+		if !strings.Contains(py.stdout, `"resolved": "standalone"`) {
+			t.Errorf("super-without-submodules: stdout missing standalone topology:\n%s", py.stdout)
+		}
+	})
+}
+
+// --- TestDifferentialErrors --------------------------------------------------
+
+func TestDifferentialErrors(t *testing.T) {
+	t.Run("missing-manifest", func(t *testing.T) {
+		dir := t.TempDir()
+		py := runFrozen(t, "missing-manifest", dir, dir)
+		want := "error: <TMP>/ai-specs/ai-specs.toml not found\n"
+		if py.stderr != want || py.code != 1 {
+			t.Errorf("missing-manifest: code=%d stderr=%q want %q", py.code, py.stderr, want)
+		}
+	})
+
+	t.Run("usage-zero-args", func(t *testing.T) {
+		py := runFrozen(t, "usage-zero-args", t.TempDir())
+		want := "Usage: lib/_internal/target-resolve.py <project_root>\n"
+		if py.stderr != want || py.code != 2 {
+			t.Errorf("usage: code=%d stderr=%q want %q", py.code, py.stderr, want)
+		}
+	})
+
+	t.Run("usage-two-args", func(t *testing.T) {
+		dir := t.TempDir()
+		py := runFrozen(t, "usage-two-args", dir, dir, "extra")
+		if py.code != 2 {
+			t.Errorf("usage-two-args: want exit 2, got %d", py.code)
+		}
+	})
+
+	// ResolutionError JSON envelope, byte-for-byte, per invalid-entry class.
+	classes := []struct {
+		name     string
+		manifest string
+		tree     tree
+		wantSub  string
+	}{
+		{
+			name:     "absolute-path",
+			manifest: "[project]\nname = \"t\"\nsubrepos = [\"/abs\"]\n",
+			wantSub:  `{"error": {"path": "/abs", "reason": "must be relative to the root"}}`,
+		},
+		{
+			name:     "escape",
+			manifest: "[project]\nname = \"t\"\nsubrepos = [\"../out\"]\n",
+			wantSub:  `{"error": {"path": "../out", "reason": "escapes the root"}}`,
+		},
+		{
+			name:     "missing-dir",
+			manifest: "[project]\nname = \"t\"\nsubrepos = [\"ghost\"]\n",
+			wantSub:  `{"error": {"path": "ghost", "reason": "directory does not exist"}}`,
+		},
+		{
+			name:     "not-a-dir",
+			manifest: "[project]\nname = \"t\"\nsubrepos = [\"f.txt\"]\n",
+			tree:     tree{files: []string{"f.txt"}},
+			wantSub:  `{"error": {"path": "f.txt", "reason": "path is not a directory"}}`,
+		},
+	}
+	for _, tc := range classes {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "proj")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			buildTree(t, dir, tree{manifest: tc.manifest, files: tc.tree.files, dirs: tc.tree.dirs, links: tc.tree.links})
+			py := runFrozen(t, "errors/"+tc.name, filepath.Dir(dir), dir)
+			if !strings.Contains(py.stderr, tc.wantSub) || py.code != 1 {
+				t.Errorf("%s: code=%d stderr=%q want substring %q", tc.name, py.code, py.stderr, tc.wantSub)
+			}
+		})
+	}
+}
+
+// TestFrozenNormalizeControls runs the real topology-bogus case and proves that
+// the comparison still fails when a field that is not a path diverges, and that
+// the normalizer does not hide a scratch path written into such a field.
+func TestFrozenNormalizeControls(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "proj")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	buildTree(t, dir, tree{manifest: "[project]\nname = \"t\"\nrepo_topology = \"bogus\"\n"})
+	rec, ok := loadTargetGolden(t)["topology-bogus"]
+	if !ok {
+		t.Fatal("no frozen record topology-bogus")
+	}
+	want := cliResult{rec.Stdout, rec.Stderr, rec.Code}
+	raw := runGoCLI(t, dir)
+
+	run := func(mutate func(string) string) cliResult {
+		got := raw
+		got.stdout = normalizeBase(mutate(raw.stdout), base)
+		got.stderr = normalizeBase(raw.stderr, base)
+		return got
+	}
+	if m := firstMismatch(want, run(func(s string) string { return s })); m != "" {
+		t.Fatalf("unmutated control must match the frozen record: %s", m)
+	}
+	replaceField := func(from, to string) func(string) string {
+		return func(s string) string {
+			if !strings.Contains(s, from) {
+				t.Fatalf("control needle %q missing from the Go output", from)
+			}
+			return strings.Replace(s, from, to, 1)
+		}
+	}
+	// A divergence in a field that is not a path must still fail.
+	if m := firstMismatch(want, run(replaceField(`"via": "auto"`, `"via": "mutated"`))); m == "" {
+		t.Error("non-path field divergence was not detected")
+	}
+	// A scratch path written into a non-path field must not be rewritten away.
+	// The frozen copy holds <TMP> in that field, so only a normalizer that
+	// rewrites path values alone keeps the raw path and the record apart.
+	wantLeak := want
+	wantLeak.stdout = strings.Replace(want.stdout, `"configured": "auto"`, `"configured": "<TMP>/proj"`, 1)
+	if m := firstMismatch(wantLeak, run(replaceField(`"configured": "auto"`, `"configured": "`+dir+`"`))); m == "" {
+		t.Error("scratch path in a non-path field was hidden by the normalizer")
+	}
+}
+
+// --- Go-only pins ------------------------------------------------------------
+
+func mustParseTOML(t *testing.T, src string) *toml.Table {
+	t.Helper()
+	data, err := toml.Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("parse test toml: %v", err)
+	}
+	return data
+}
+
+// TestGitFailureDegradationGoOnly pins that git absence/failure degrades to
+// (gitmodules_present=true, no submodules) inside detectSubmodules without
+// erroring — resolve_repo_topology swallows and reports standalone.
+func TestGitFailureDegradationGoOnly(t *testing.T) {
+	dir := t.TempDir()
+	// .gitmodules present but git is unreachable via PATH.
+	if err := os.WriteFile(filepath.Join(dir, ".gitmodules"), []byte("[submodule \"x\"]\n\tpath = x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	emptyPath := t.TempDir()
+	t.Setenv("PATH", emptyPath)
+	present, subs := detectSubmodules(dir)
+	if !present {
+		t.Errorf("gitmodules_present = false, want true")
+	}
+	if len(subs) != 0 {
+		t.Errorf("submodules = %v, want empty", subs)
+	}
+	res := resolveRepoTopology(dir, "auto")
+	if res.Resolved != "standalone" || res.Via != "auto" {
+		t.Errorf("resolveRepoTopology degraded to %+v, want standalone/auto", res)
+	}
+}
+
+// TestNormalizeDeclaredRelpathGoOnly pins the pre-normalization candidate in
+// error payloads and the posixpath.normpath edge cases.
+func TestNormalizeDeclaredRelpathGoOnly(t *testing.T) {
+	// posixpath.normpath edge cases plus error-candidate pinning.
+	ok := map[string]string{
+		"a//b":     "a/b",
+		"a/./b":    "a/b",
+		"a/b/../c": "a/c",
+		"./":       ".",
+		"  a  ":    "a",
+		"a\\b":     "a/b",
+		"a/..":     ".",
+	}
+	for raw, want := range ok {
+		got, err := normalizeDeclaredRelpath(raw)
+		if err != nil {
+			t.Errorf("normalize(%q): unexpected error %v", raw, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("normalize(%q) = %q, want %q", raw, got, want)
+		}
+	}
+	if _, err := normalizeDeclaredRelpath("a/../.."); err == nil || err.(*ResolutionError).Reason != "escapes the root" {
+		t.Errorf("normalize(\"a/../..\"): want escapes-the-root error, got %v", err)
+	}
+	if _, err := normalizeDeclaredRelpath(int64(1)); err == nil {
+		t.Error("normalize(int 1): want must-be-a-string error")
+	} else if err.(*ResolutionError).Rel != "1" {
+		t.Errorf("normalize(int 1): rel = %q, want \"1\" (python repr)", err.(*ResolutionError).Rel)
+	}
+	if _, err := normalizeDeclaredRelpath(true); err == nil || err.(*ResolutionError).Rel != "True" {
+		t.Errorf("normalize(true): want rel \"True\", got %v", err)
+	}
+	if _, err := normalizeDeclaredRelpath(0.5); err == nil || err.(*ResolutionError).Rel != "0.5" {
+		t.Errorf("normalize(0.5): want rel \"0.5\", got %v", err)
+	}
+}
+
+// TestTopologyUnitGoOnly pins topology_config source precedence without
+// driving the CLI.
+func TestTopologyUnitGoOnly(t *testing.T) {
+	data := mustParseTOML(t, "[project]\nrepo_topology = \" monorepo-apps \"\n")
+	configured, source, dep := topologyConfig(data)
+	if configured != "monorepo-apps" || source != "project" || dep != "" {
+		t.Errorf("topologyConfig = (%q, %q, %q)", configured, source, dep)
+	}
+
+	data = mustParseTOML(t, "[recipes.worktree-flow]\nenabled = true\nrepo_topology = \"standalone\"\n")
+	configured, source, dep = topologyConfig(data)
+	if configured != "standalone" || source != "legacy-recipe" || dep == "" {
+		t.Errorf("topologyConfig legacy = (%q, %q, %q)", configured, source, dep)
+	}
+
+	data = mustParseTOML(t, "[project]\nname = \"x\"\n")
+	configured, source, dep = topologyConfig(data)
+	if configured != "auto" || source != "default" || dep != "" {
+		t.Errorf("topologyConfig default = (%q, %q, %q)", configured, source, dep)
+	}
+
+	// Project value wins over legacy recipe.
+	data = mustParseTOML(t, "[project]\nrepo_topology = \"standalone\"\n[recipes.worktree-flow.config]\nrepo_topology = \"monorepo-apps\"\n")
+	configured, source, _ = topologyConfig(data)
+	if configured != "standalone" || source != "project" {
+		t.Errorf("topologyConfig precedence = (%q, %q)", configured, source)
+	}
+}
+
+// TestDeclaredOnlyTargetSetGoOnly pins the declared-only target set the frozen
+// oracle cannot carry: declared entries are trimmed and de-duplicated, and
+// .gitmodules never expands (or shrinks) the fan-out.
+func TestDeclaredOnlyTargetSetGoOnly(t *testing.T) {
+	cases := []struct {
+		name       string
+		manifest   string
+		dirs       []string
+		gitmodules string
+		wantFanout []string
+		wantRels   []string
+	}{
+		{
+			// " packages/a " trims, "packages//b" normalizes, "" and 7 are
+			// dropped: read_project filters before target-resolve sees them.
+			name:       "padded-whitespace-and-non-strings",
+			manifest:   "[project]\nname = \"t\"\nsubrepos = [\" packages/a \", \"packages/a\", \"\", \"packages//b\", 7]\n",
+			dirs:       []string{"packages/a", "packages/b"},
+			wantFanout: []string{"packages/a", "packages/b"},
+			wantRels:   []string{".", "packages/a", "packages/b"},
+		},
+		{
+			name:       "empty-subrepos-with-gitmodules",
+			manifest:   "[project]\nname = \"t\"\nsubrepos = []\n",
+			gitmodules: "[submodule \"apps/api\"]\n\tpath = apps/api\n\turl = ../api.git\n",
+			wantFanout: []string{},
+			wantRels:   []string{"."},
+		},
+		{
+			name:       "gitmodules-never-expands",
+			manifest:   "[project]\nname = \"t\"\nsubrepos = [\"packages/a\"]\n",
+			dirs:       []string{"packages/a"},
+			gitmodules: "[submodule \"packages/b\"]\n\tpath = packages/b\n\turl = ../b.git\n",
+			wantFanout: []string{"packages/a"},
+			wantRels:   []string{".", "packages/a"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "proj")
+			buildTree(t, dir, tree{manifest: tc.manifest, dirs: tc.dirs})
+			if tc.gitmodules != "" {
+				if err := os.WriteFile(filepath.Join(dir, ".gitmodules"), []byte(tc.gitmodules), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			res := runGoCLI(t, dir)
+			if res.code != 0 {
+				t.Fatalf("exit = %d, stderr = %q", res.code, res.stderr)
+			}
+			var plan struct {
+				DeclaredOnly bool     `json:"declared_only"`
+				Fanout       []string `json:"fanout_targets"`
+				Targets      []struct {
+					Rel string `json:"rel"`
+				} `json:"targets"`
+			}
+			if err := json.Unmarshal([]byte(res.stdout), &plan); err != nil {
+				t.Fatalf("decode plan: %v", err)
+			}
+			if !plan.DeclaredOnly {
+				t.Error("declared_only = false, want true")
+			}
+			if !slices.Equal(plan.Fanout, tc.wantFanout) {
+				t.Errorf("fanout_targets = %v, want %v", plan.Fanout, tc.wantFanout)
+			}
+			rels := make([]string, len(plan.Targets))
+			for i, target := range plan.Targets {
+				rels[i] = target.Rel
+			}
+			if !slices.Equal(rels, tc.wantRels) {
+				t.Errorf("target rels = %v, want %v", rels, tc.wantRels)
+			}
+		})
+	}
+}
+
+func TestSubmoduleDetectionUnitGoOnly(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	tmp := t.TempDir()
+	super := filepath.Join(tmp, "super")
+	child := filepath.Join(tmp, "child")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(child, "f"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, child, "init", "-q", ".")
+	gitRun(t, child, "add", "-A")
+	gitRun(t, child, "commit", "-q", "-m", "c")
+	if err := os.MkdirAll(super, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, super, "init", "-q", ".")
+	gitRun(t, super, "-c", "protocol.file.allow=always", "submodule", "add", child, "a-sub")
+	gitRun(t, super, "-c", "protocol.file.allow=always", "submodule", "add", child, "b-sub")
+	// a-sub left uninitialized (- prefix), b-sub initialized.
+	gitRun(t, super, "submodule", "deinit", "-f", "a-sub")
+
+	present, subs := detectSubmodules(super)
+	if !present {
+		t.Error("gitmodules_present = false, want true")
+	}
+	want := []string{"b-sub"}
+	if fmt.Sprint(subs) != fmt.Sprint(want) {
+		t.Errorf("submodules = %v, want %v (a-sub uninitialized must be skipped)", subs, want)
+	}
+	sort.Strings(subs)
+}
+
+// TestRepoTopologyResolutionGoOnly pins the topology legs the frozen oracle
+// cannot carry, mirroring legacy tests/test_repo_topology.py: an explicit
+// config value bypasses detection, a blank/absent value is auto, auto never
+// resolves to monorepo-apps, and detect_submodules counts '+', ignores a
+// phantom .gitmodules entry, and yields no submodules when every one is
+// uninitialized.
+func TestRepoTopologyResolutionGoOnly(t *testing.T) {
+	t.Run("explicit config bypasses detection", func(t *testing.T) {
+		dir := t.TempDir()
+		for _, value := range []string{"standalone", "monorepo-apps"} {
+			res := resolveRepoTopology(dir, value)
+			if res.Resolved != value {
+				t.Errorf("%s: resolved = %q, want %q", value, res.Resolved, value)
+			}
+			// An explicit value is the config route: detection never runs.
+			if res.Via != "config" {
+				t.Errorf("%s: via = %q, want config", value, res.Via)
+			}
+			if len(res.Submodules) != 0 {
+				t.Errorf("%s: submodules = %v, want none", value, res.Submodules)
+			}
+			if res.GitmodulesPresent {
+				t.Errorf("%s: gitmodules_present = true, want false", value)
+			}
+		}
+	})
+
+	t.Run("blank config is auto", func(t *testing.T) {
+		dir := t.TempDir()
+		for _, value := range []string{"", "   ", "\t"} {
+			res := resolveRepoTopology(dir, value)
+			if res.Configured != "auto" || res.Via != "auto" {
+				t.Errorf("%q: configured/via = %q/%q, want auto/auto", value, res.Configured, res.Via)
+			}
+		}
+	})
+
+	t.Run("auto never resolves to monorepo-apps", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, ".gitmodules"), []byte("[submodule \"x\"]\n\tpath = x\n\turl = ../x.git\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if res := resolveRepoTopology(dir, "auto"); res.Resolved != "standalone" {
+			t.Errorf("resolved = %q, want standalone (not a git repo)", res.Resolved)
+		}
+	})
+
+	t.Run("detection prefixes, phantom entries and uninitialized", func(t *testing.T) {
+		if _, err := exec.LookPath("git"); err != nil {
+			t.Skip("git not available")
+		}
+		tmp := t.TempDir()
+		child := filepath.Join(tmp, "child")
+		super := filepath.Join(tmp, "super")
+		if err := os.MkdirAll(child, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(child, "f"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gitRun(t, child, "init", "-q", ".")
+		gitRun(t, child, "add", "-A")
+		gitRun(t, child, "commit", "-q", "-m", "c")
+		if err := os.MkdirAll(super, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		gitRun(t, super, "init", "-q", ".")
+		gitRun(t, super, "-c", "protocol.file.allow=always", "submodule", "add", child, "sub")
+		gitRun(t, super, "commit", "-q", "-m", "add sub")
+
+		if present, subs := detectSubmodules(super); !present || fmt.Sprint(subs) != "[sub]" {
+			t.Fatalf("initialized = %v/%v, want true/[sub]", present, subs)
+		}
+		if res := resolveRepoTopology(super, "auto"); res.Resolved != "monorepo-submodules" {
+			t.Errorf("auto with an initialized submodule: resolved = %q", res.Resolved)
+		}
+
+		// A .gitmodules entry that `git submodule status` never lists is ignored.
+		raw, err := os.ReadFile(filepath.Join(super, ".gitmodules"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ghost := string(raw) + "\n[submodule \"ghost\"]\n\tpath = ghost\n\turl = ../ghost.git\n"
+		if err := os.WriteFile(filepath.Join(super, ".gitmodules"), []byte(ghost), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, subs := detectSubmodules(super); fmt.Sprint(subs) != "[sub]" {
+			t.Errorf("phantom path not filtered: %v", subs)
+		}
+
+		// '+' (submodule HEAD ahead of the superproject index) counts as initialized.
+		gitRun(t, filepath.Join(super, "sub"), "commit", "--allow-empty", "-q", "-m", "ahead")
+		if _, subs := detectSubmodules(super); fmt.Sprint(subs) != "[sub]" {
+			t.Errorf("'+' prefix not counted as initialized: %v", subs)
+		}
+
+		// Uninitialized-only: present but no submodules, and auto is standalone.
+		gitRun(t, super, "submodule", "deinit", "-f", "sub")
+		present, subs := detectSubmodules(super)
+		if !present || len(subs) != 0 {
+			t.Errorf("deinitialized = %v/%v, want true/[]", present, subs)
+		}
+		if res := resolveRepoTopology(super, "auto"); res.Resolved != "standalone" {
+			t.Errorf("auto with only uninitialized submodules: resolved = %q, want standalone", res.Resolved)
+		}
+	})
+}

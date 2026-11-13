@@ -1,0 +1,29 @@
+{
+  "oracle": {
+    "script": "lib/_internal/env_scaffold.py",
+    "python": "3.14.7",
+    "note": "Frozen snapshot of the legacy env_scaffold.py main() surface, captured once; the temporary project root is tokenized as <ROOT> and the produced files are frozen as relative paths. Regenerating it needs a human decision."
+  },
+  "cases": [
+    {
+      "name": "presets recipe enabled",
+      "recipe_id": "env-fixture",
+      "recipe_body": "[recipe]\nid = \"env-fixture\"\nname = \"Env Fixture\"\ndescription = \"d\"\nversion = \"1.0.0\"\n\n[[provides.mcp]]\nid = \"envpreset\"\ncommand = \"npx\"\nenv = { TRELLO_TOKEN = \"$TRELLO_TOKEN\", OPENPROJECT_AUTH = \"$OPENPROJECT_AUTH\" }\n",
+      "enabled": true,
+      "manifest": "[project]\nname = \"p\"\n\n[recipes.env-fixture]\nenabled = true\nversion = \"1.0.0\"\n",
+      "rc": 0,
+      "stdout": "Wrote <ROOT>/ai-specs.env.example\n",
+      "stderr": "! OPENPROJECT_AUTH has no value in ai-specs.env — run ai-specs configure-recipes\n! TRELLO_TOKEN has no value in ai-specs.env — run ai-specs configure-recipes\n",
+      "files": [
+        {
+          "path": ".envrc",
+          "content": "# .envrc — direnv entry for this project\n# Harness block managed by ai-specs; safe to add custom lines outside it.\n\n# managed-by: ai-specs (do not remove block)\ndotenv_if_exists .env\ndotenv_if_exists ai-specs.env\n# end managed-by: ai-specs\n"
+        },
+        {
+          "path": "ai-specs.env.example",
+          "content": "# ai-specs.env.example — committed template (safe to regenerate).\n# Copy values into ai-specs.env (gitignored). Root .envrc loads it via direnv.\n# Generated from enabled recipes' [[provides.mcp]] env references.\n\nOPENPROJECT_AUTH=basic  # required by envpreset (env-fixture) Optional — `basic` is the provider's effective default when unset; use `bearer` for Bearer tokens\nTRELLO_TOKEN=  # required by envpreset (env-fixture) Trello token — generate from https://trello.com/power-ups/admin (Power-Up → API key page → Token)\n"
+        }
+      ]
+    }
+  ]
+}

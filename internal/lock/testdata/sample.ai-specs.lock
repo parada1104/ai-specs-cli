@@ -1,0 +1,37 @@
+# Representative .ai-specs.lock fixture for LoadLock normalization tests.
+# Sections: meta, managed, deps, agents, recipes, plus the legacy [skills]
+# section the writer drops on BOTH sides (Python + Go parity).
+
+[meta]
+cli_version = "  0.24.0  "
+synced_at = "2026-07-14T00:00:00Z"
+
+[skills."legacy-skill"]
+"SKILL.md" = "legacyhash"
+
+[recipes."worktree-flow".skills."hook-sync"]
+"hooks/gate.sh" = "hookhash"
+"scripts/run.sh" = "runhash"
+
+[recipes."other-recipe".skills."top"]
+"TOP.md" = "tophash"
+
+[deps."vendored-demo".skills."vendored-demo"]
+"SKILL.md" = "skillhash"
+"scripts/run.sh" = "scripthash"
+
+[agents.claude]
+"AGENTS.md" = "agenthash"
+
+[agents."pi \"agent\""]
+"file\\name.md" = "pihash"
+
+[managed."AGENTS.md"]
+sha256 = "  abchash  "
+recipe = "worktree-flow"
+source = "AGENTS.tpl.md"
+kind = "template"
+policy = "auto"
+
+[managed."partial.md"]
+sha256 = "partialhash"

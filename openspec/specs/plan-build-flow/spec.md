@@ -901,7 +901,7 @@ There is no bypass flag.
 Plan Build owns the review-branch tail of a change and MUST run it in this order:
 verify evidence → promote canonical delta specs → run the read-only artifact
 guardian → archive the change folder. Canonical delta-spec promotion is the
-explicit writer (`lib/_internal/spec_promotion.py`): before the first pre-archive
+explicit writer (`ai-specs specs promote <slug> --root <root>`): before the first pre-archive
 guardian and before the change folder moves, it composes every applicable
 ADDED/MODIFIED/REMOVED delta requirement into the matching
 `openspec/specs/<domain>/spec.md`, preserving unrelated canonical requirements
@@ -946,9 +946,7 @@ promotion blocker is invented for them.
 Before merge, missing tier artifacts, a still-active change folder, an
 unresolvable archive, a failing promotion-parity check, or (for Standard and
 Full) missing verify evidence per the staged verify gate is a hard stop. Agents
-MUST invoke
-`$AI_SPECS_HOME/lib/_internal/premerge_guardian.py` (defaulting
-`AI_SPECS_HOME` to `$HOME/.ai-specs` when unset) with the propagated planning
+MUST invoke `ai-specs gates premerge` with the propagated planning
 root as defined by this requirement. Sync MUST NOT materialize a per-project
 copy under `ai-specs/bin/`.
 
@@ -1080,7 +1078,7 @@ changes.
 
 - GIVEN `plan-build-flow` is enabled
 - WHEN an agent runs the pre-merge guardian
-- THEN it uses `${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/premerge_guardian.py`
+- THEN it uses `ai-specs gates premerge`
 - AND the recipe does not target `ai-specs/bin/premerge_guardian.py`
 
 #### Scenario: Light archive requires proposal

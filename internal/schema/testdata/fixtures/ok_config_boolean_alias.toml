@@ -1,0 +1,10 @@
+[recipe]
+id = "x"
+name = "N"
+description = "D"
+version = "1.0"
+
+[config.enabled]
+required = true
+type = "boolean"
+default = false

@@ -5,21 +5,24 @@ A consumer can reach a recipe through several user-facing surfaces: the
 helper, ``sync``/``doctor``, the top-level CLI help, and the interactive Hub.
 This module freezes the contract that those surfaces resolve the *same*
 catalog, manifest state, and materialization for the standalone Jinna recipe,
-and pins the two user-facing labels that had drifted from the underlying
-command:
+and pins the two user-facing configure surfaces that had drifted apart:
 
 * ``ai-specs --help`` must advertise ``recipe configure`` because the recipe
   dispatcher already implements it;
-* the Hub Recipes submenu "configure" entry must describe the whole-project
-  ``configure-recipes`` action it actually delegates to.
+* the per-recipe ``recipe configure`` surface and the whole-project
+  ``configure-recipes`` surface stay distinct and both reachable (the Hub
+  Recipes submenu "configure" entry delegates to the whole-project action).
 
-Everything runs network-free against a temporary consumer whose
+Black-box contract: every assertion drives ``bin/ai-specs`` through its
+process boundary; the interactive Hub surface is pinned via dispatcher
+dispatch parity (advertised subcommands, ``--help`` handling, unknown
+subcommand exit codes). Everything runs network-free against a temporary
+consumer whose
 ``AI_SPECS_HOME`` symlinks back to this worktree (reusing the Jinna consumer
 fixture constants), and the repository dogfood manifest is asserted unchanged.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import re
@@ -32,7 +35,7 @@ from pathlib import Path
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _cache_paths import resolved_skills_dir
+from _blackbox import cache_project_dir, invoke, isolated_home  # noqa: E402
 from test_jinna_consumer_recipe import (
     CLI,
     CLI_HOME_LINKS,
@@ -43,8 +46,6 @@ from test_jinna_consumer_recipe import (
     RECIPE_ID,
     ROOT,
 )
-
-HUB_PY = ROOT / "lib" / "_internal" / "hub.py"
 
 # ``recipe-list.sh`` prints ``[status]  id  version  name``.
 _LIST_ROW_RE = re.compile(
@@ -65,15 +66,6 @@ def _parse_recipe_list(output: str) -> dict[str, dict[str, str]]:
 
 def _parse_init_brief(output: str) -> dict[str, str]:
     return {m.group("key").strip(): m.group("value") for m in _INIT_FIELD_RE.finditer(output)}
-
-
-def _load_hub():
-    spec = importlib.util.spec_from_file_location("hub_entrypoint_parity", HUB_PY)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 class RecipeEntrypointLifecycleParityTests(unittest.TestCase):
@@ -130,6 +122,7 @@ class RecipeEntrypointLifecycleParityTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=300,
+            stdin=subprocess.DEVNULL,
         )
         cls.outputs[key] = result
         if result.returncode != 0:
@@ -198,7 +191,8 @@ class RecipeEntrypointLifecycleParityTests(unittest.TestCase):
         readme = self.consumer / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
         self.assertTrue(readme.is_file() and readme.read_text(encoding="utf-8").strip())
         skill = (
-            resolved_skills_dir(self.consumer, cli_home=self.cli_home)
+            cache_project_dir(self.consumer, self.cli_home)
+            / "resolved-skills"
             / JINNA_SKILL_ID
             / "SKILL.md"
         )
@@ -238,69 +232,72 @@ class RecipeEntrypointLifecycleParityTests(unittest.TestCase):
 class RecipeEntrypointSurfaceContractTests(unittest.TestCase):
     """Help, dispatch, and label contract for the non-interactive surfaces."""
 
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory(prefix="recipe-entrypoint-surface-")
+        cls.addClassCleanup(cls.tmp.cleanup)
+        cls.home = isolated_home(Path(cls.tmp.name))
+
+    @classmethod
+    def _invoke(cls, *args: str):
+        return invoke(ROOT, *args, cli_home=cls.home, append_root=False)
+
     def test_top_level_help_advertises_recipe_configure(self):
-        result = subprocess.run(
-            [str(CLI), "--help"], capture_output=True, text=True, check=False
-        )
+        result = self._invoke("--help")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("recipe configure", result.stdout)
 
     def test_recipe_dispatcher_help_advertises_configure(self):
-        result = subprocess.run(
-            [str(CLI), "recipe", "--help"], capture_output=True, text=True, check=False
-        )
+        result = self._invoke("recipe", "--help")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("configure", result.stdout)
 
     def test_configure_recipes_help_and_dispatch_are_non_interactive(self):
-        help_result = subprocess.run(
-            [str(CLI), "configure-recipes", "--help"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        help_result = self._invoke("configure-recipes", "--help")
         self.assertEqual(help_result.returncode, 0, help_result.stderr)
         self.assertIn("Usage: ai-specs configure-recipes", help_result.stdout)
 
-        bad_flag = subprocess.run(
-            [str(CLI), "configure-recipes", "--not-a-flag"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        bad_flag = self._invoke("configure-recipes", "--not-a-flag")
         self.assertEqual(bad_flag.returncode, 2)
         self.assertIn("unknown flag", bad_flag.stderr)
 
     def test_hub_help_and_dispatch_are_non_interactive(self):
-        help_result = subprocess.run(
-            [str(CLI), "hub", "--help"], capture_output=True, text=True, check=False
-        )
+        help_result = self._invoke("hub", "--help")
         self.assertEqual(help_result.returncode, 0, help_result.stderr)
         self.assertIn("Usage: ai-specs hub", help_result.stdout)
 
-        bad_flag = subprocess.run(
-            [str(CLI), "hub", "--not-a-flag"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        bad_flag = self._invoke("hub", "--not-a-flag")
         self.assertEqual(bad_flag.returncode, 2)
         self.assertIn("unknown flag", bad_flag.stderr)
 
-    def test_hub_recipes_submenu_configure_label_names_the_whole_project_action(self):
-        hub = _load_hub()
-        choices = {value: label for label, value in hub.recipes_submenu_choices()}
-        self.assertIn("configure", choices)
-        label = choices["configure"]
-        self.assertIn("configure-recipes", label)
-        self.assertIn("whole project", label.lower())
+    def test_recipe_dispatcher_dispatch_parity_and_configure_surface_split(self):
+        """Black-box stand-in for the Hub Recipes submenu label contract.
 
-        # The Recipes menu must not advertise a per-catalog-recipe configure it
-        # does not offer; that action lives in its own whole-project entry.
-        recipes_menu = next(
-            desc for action, _title, desc in hub._MENU if action is hub.Action.RECIPES
-        )
-        self.assertNotIn("configure", recipes_menu.lower())
+        The Hub Recipes submenu "configure" entry delegates to the whole-project
+        ``configure-recipes`` action, while the ``recipe`` dispatcher itself only
+        offers the per-recipe ``recipe configure``. Both surfaces must stay
+        distinct and reachable through the CLI, and an unknown subcommand must
+        fail loudly instead of falling through to a default action.
+        """
+        dispatcher = self._invoke("recipe", "--help")
+        self.assertEqual(dispatcher.returncode, 0, dispatcher.stderr)
+        for subcommand in ("list", "add", "init", "remove", "configure"):
+            self.assertIn(subcommand, dispatcher.stdout)
+        # The per-recipe dispatcher must not advertise the whole-project action
+        # under its own subcommand list; that surface has its own entry point.
+        self.assertNotIn("configure-recipes", dispatcher.stdout)
+
+        per_recipe = self._invoke("recipe", "configure", "--help")
+        self.assertEqual(per_recipe.returncode, 0, per_recipe.stderr)
+        self.assertIn("recipe_id", per_recipe.stdout)
+
+        whole_project = self._invoke("configure-recipes", "--help")
+        self.assertEqual(whole_project.returncode, 0, whole_project.stderr)
+        self.assertIn("Usage: ai-specs configure-recipes", whole_project.stdout)
+
+        unknown = self._invoke("recipe", "definitely-not-a-subcommand")
+        self.assertEqual(unknown.returncode, 1)
+        self.assertIn("unknown subcommand", unknown.stderr)
 
 
 if __name__ == "__main__":

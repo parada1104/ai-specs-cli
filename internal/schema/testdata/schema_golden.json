@@ -1,0 +1,3036 @@
+{
+ "clean": {
+  "catalog/recipes/bitbucket-pr-flow/recipe.toml": {
+   "author": "ai-specs",
+   "brief": {
+    "workflow_rules": [
+     {
+      "key": null,
+      "text": "Use a PR-based merge workflow; all changes to `{config.base_branch}` go through a pull request."
+     },
+     {
+      "key": null,
+      "text": "VCS/PR provider: Bitbucket (bb CLI). Use bb for all PR operations."
+     },
+     {
+      "key": null,
+      "text": "Do not push directly to `{config.base_branch}`; always open a PR from a feature branch."
+     },
+     {
+      "key": null,
+      "text": "After a merged PR, remove the feature worktree and delete the local branch (`git branch -D` after squash); delete the remote branch if it still exists."
+     },
+     {
+      "key": null,
+      "text": "After a merged PR, sync `{config.base_branch}` in the main worktree before further work: `git checkout {config.base_branch}` then `git pull --ff-only`."
+     }
+    ]
+   },
+   "capabilities": [
+    "vcs-pr-flow"
+   ],
+   "cli_deps": [
+    {
+     "binary": "bb",
+     "install_url": "https://bb-cli.github.io",
+     "installer": "",
+     "min_version": "1.4.1",
+     "purpose": "Create and manage Bitbucket pull requests",
+     "release_policy": "",
+     "repository": "",
+     "required": true,
+     "version_check": "bb --version"
+    }
+   ],
+   "commands": [
+    {
+     "id": "bb-pr-create",
+     "path": "commands/bb-pr-create.md"
+    }
+   ],
+   "config": {
+    "extra": {},
+    "fields": {
+     "auto_switch_account": {
+      "default": false,
+      "enum": null,
+      "help_text": "PHP bb-cli has no `bb auth switch`. Leave false; a mismatch blocks and the user must run `bb auth save`. See https://bb-cli.github.io/authentication",
+      "type": "bool",
+      "validation": {}
+     },
+     "base_branch": {
+      "default": "development",
+      "enum": null,
+      "help_text": "Integration/base branch for PRs (e.g. main or development). PRs target this branch.",
+      "type": "string",
+      "validation": {}
+     },
+     "expected_owner": {
+      "default": "",
+      "enum": null,
+      "help_text": "Bitbucket workspace or user that should own the remote (multi-account). Leave empty to skip.",
+      "type": "string",
+      "validation": {}
+     }
+    },
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "Bitbucket PR and merge flow for feature branches (via bb CLI)",
+   "docs": [
+    {
+     "source": "README.md",
+     "target": "ai-specs/recipes/bitbucket-pr-flow/README.md"
+    }
+   ],
+   "hooks": [
+    {
+     "action": "validate-config",
+     "event": "on-sync"
+    }
+   ],
+   "id": "bitbucket-pr-flow",
+   "init": null,
+   "license": "MIT",
+   "mcp": [],
+   "name": "Bitbucket PR Flow",
+   "runtime_hooks": [],
+   "skills": [
+    {
+     "id": "bitbucket-merge-workflow",
+     "path": "",
+     "source": "bundled",
+     "url": ""
+    }
+   ],
+   "tags": [
+    "vcs",
+    "bitbucket"
+   ],
+   "templates": [],
+   "version": "1.3.0"
+  },
+  "catalog/recipes/git-pr-flow/recipe.toml": {
+   "author": "ai-specs",
+   "brief": {
+    "workflow_rules": [
+     {
+      "key": null,
+      "text": "Use a PR-based merge workflow; all changes to `{config.base_branch}` go through a pull request."
+     },
+     {
+      "key": null,
+      "text": "VCS/PR provider: GitHub (gh CLI). Use gh for all PR operations."
+     },
+     {
+      "key": null,
+      "text": "Do not push directly to `{config.base_branch}`; always open a PR from a feature branch."
+     },
+     {
+      "key": null,
+      "text": "After a merged PR, remove the feature worktree and delete the local branch (`git branch -D` after squash); delete the remote branch if it still exists."
+     },
+     {
+      "key": null,
+      "text": "After a merged PR, sync `{config.base_branch}` in the main worktree before further work: `git checkout {config.base_branch}` then `git pull --ff-only`."
+     }
+    ]
+   },
+   "capabilities": [
+    "vcs-pr-flow"
+   ],
+   "cli_deps": [
+    {
+     "binary": "gh",
+     "install_url": "https://cli.github.com/",
+     "installer": "",
+     "min_version": "2.0.0",
+     "purpose": "Create and manage GitHub pull requests",
+     "release_policy": "",
+     "repository": "",
+     "required": true,
+     "version_check": "gh --version"
+    }
+   ],
+   "commands": [
+    {
+     "id": "pr-create",
+     "path": "commands/pr-create.md"
+    }
+   ],
+   "config": {
+    "extra": {},
+    "fields": {
+     "auto_switch_account": {
+      "default": false,
+      "enum": null,
+      "help_text": "If true, try gh auth switch when the active account does not match expected_owner. Requires gh CLI: https://cli.github.com/",
+      "type": "bool",
+      "validation": {}
+     },
+     "base_branch": {
+      "default": "main",
+      "enum": null,
+      "help_text": "Integration/base branch for PRs (e.g. main or development). PRs target this branch.",
+      "type": "string",
+      "validation": {}
+     },
+     "expected_owner": {
+      "default": "",
+      "enum": null,
+      "help_text": "GitHub org or user that should own the remote (for multi-account gh). Leave empty to skip owner checks. See: gh auth status / gh auth switch.",
+      "type": "string",
+      "validation": {}
+     }
+    },
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "GitHub PR and merge flow for feature branches (via gh CLI)",
+   "docs": [
+    {
+     "source": "README.md",
+     "target": "ai-specs/recipes/git-pr-flow/README.md"
+    }
+   ],
+   "hooks": [
+    {
+     "action": "validate-config",
+     "event": "on-sync"
+    }
+   ],
+   "id": "git-pr-flow",
+   "init": null,
+   "license": "MIT",
+   "mcp": [],
+   "name": "Git PR Flow",
+   "runtime_hooks": [],
+   "skills": [
+    {
+     "id": "git-merge-workflow",
+     "path": "",
+     "source": "bundled",
+     "url": ""
+    }
+   ],
+   "tags": [
+    "vcs",
+    "github"
+   ],
+   "templates": [],
+   "version": "1.5.0"
+  },
+  "catalog/recipes/gitlab-mr-flow/recipe.toml": {
+   "author": "ai-specs",
+   "brief": {
+    "workflow_rules": [
+     {
+      "key": null,
+      "text": "Use a MR-based merge workflow; all changes to `{config.base_branch}` go through a merge request."
+     },
+     {
+      "key": null,
+      "text": "VCS/MR provider: GitLab (glab CLI). Use glab for all MR operations."
+     },
+     {
+      "key": null,
+      "text": "Do not push directly to `{config.base_branch}`; always open an MR from a feature branch."
+     },
+     {
+      "key": null,
+      "text": "After a merged MR, remove the feature worktree and delete the local branch (`git branch -D` after squash); delete the remote branch if it still exists."
+     },
+     {
+      "key": null,
+      "text": "After a merged MR, sync `{config.base_branch}` in the main worktree before further work: `git checkout {config.base_branch}` then `git pull --ff-only`."
+     }
+    ]
+   },
+   "capabilities": [
+    "vcs-pr-flow"
+   ],
+   "cli_deps": [
+    {
+     "binary": "glab",
+     "install_url": "https://gitlab.com/gitlab-org/cli#installation",
+     "installer": "",
+     "min_version": "1.0.0",
+     "purpose": "Create and manage GitLab merge requests",
+     "release_policy": "",
+     "repository": "",
+     "required": true,
+     "version_check": "glab --version"
+    },
+    {
+     "binary": "jq",
+     "install_url": "https://jqlang.github.io/jq/download/",
+     "installer": "",
+     "min_version": "",
+     "purpose": "Parse GitLab API JSON responses in the MR flow",
+     "release_policy": "",
+     "repository": "",
+     "required": true,
+     "version_check": ""
+    }
+   ],
+   "commands": [
+    {
+     "id": "mr-create",
+     "path": "commands/mr-create.md"
+    }
+   ],
+   "config": {
+    "extra": {},
+    "fields": {
+     "auto_switch_account": {
+      "default": false,
+      "enum": null,
+      "help_text": "If true, prefer re-auth when the active glab account does not match expected_owner. Install: https://gitlab.com/gitlab-org/cli#installation",
+      "type": "bool",
+      "validation": {}
+     },
+     "base_branch": {
+      "default": "development",
+      "enum": null,
+      "help_text": "Integration/base branch for MRs (e.g. main or development). MRs target this branch.",
+      "type": "string",
+      "validation": {}
+     },
+     "expected_owner": {
+      "default": "",
+      "enum": null,
+      "help_text": "GitLab group or user that should own the remote (multi-account). Leave empty to skip. See: glab auth status — https://gitlab.com/gitlab-org/cli",
+      "type": "string",
+      "validation": {}
+     }
+    },
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "GitLab MR and merge flow for feature branches (via glab CLI)",
+   "docs": [
+    {
+     "source": "README.md",
+     "target": "ai-specs/recipes/gitlab-mr-flow/README.md"
+    }
+   ],
+   "hooks": [
+    {
+     "action": "validate-config",
+     "event": "on-sync"
+    }
+   ],
+   "id": "gitlab-mr-flow",
+   "init": null,
+   "license": "MIT",
+   "mcp": [],
+   "name": "GitLab MR Flow",
+   "runtime_hooks": [],
+   "skills": [
+    {
+     "id": "gitlab-merge-workflow",
+     "path": "",
+     "source": "bundled",
+     "url": ""
+    }
+   ],
+   "tags": [
+    "vcs",
+    "gitlab"
+   ],
+   "templates": [],
+   "version": "1.4.0"
+  },
+  "catalog/recipes/jinna-mcp-recipe/recipe.toml": {
+   "author": "ai-specs",
+   "brief": {
+    "mcp_descriptions": [
+     {
+      "key": "jinna",
+      "text": "Local OpenProject provider MCP server using the direct APIv3 client."
+     }
+    ],
+    "workflow_rules": [
+     {
+      "key": "jinna-provider-installation",
+      "text": "Use the local OpenProject provider binary `jinna`; if it is unavailable, use the explicit verified GitHub Release installation flow before configuring its MCP server."
+     },
+     {
+      "key": "openproject-remote-service",
+      "text": "OpenProject is a remote Self-Hosted service configured through OPENPROJECT_BASE_URL and OPENPROJECT_API_TOKEN; it is not a local executable dependency."
+     },
+     {
+      "key": "jinna-mcp-no-fallback",
+      "text": "Use local `jinna mcp` explicitly. Do not proxy, switch, or replay writes through OpenProject's official remote /mcp endpoint automatically."
+     }
+    ]
+   },
+   "capabilities": [],
+   "cli_deps": [
+    {
+     "binary": "jinna",
+     "install_url": "https://github.com/parada1104/jinna-provider/releases",
+     "installer": "github-release",
+     "min_version": "0.1.0",
+     "purpose": "Run the local OpenProject provider MCP server",
+     "release_policy": "latest-stable",
+     "repository": "parada1104/jinna-provider",
+     "required": true,
+     "version_check": "jinna version"
+    }
+   ],
+   "commands": [],
+   "config": {
+    "extra": {},
+    "fields": {},
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "Install and configure the local Go provider for OpenProject",
+   "docs": [
+    {
+     "source": "README.md",
+     "target": "ai-specs/recipes/jinna-mcp-recipe/README.md"
+    }
+   ],
+   "hooks": [],
+   "id": "jinna-mcp-recipe",
+   "init": {
+    "description": "Install the OpenProject provider and configure its local MCP server",
+    "needs_manifest": true,
+    "needs_mcp": [
+     "jinna"
+    ],
+    "prompt": "init.md"
+   },
+   "license": "MIT",
+   "mcp": [
+    {
+     "config": {
+      "args": [
+       "mcp"
+      ],
+      "command": "{dep:jinna}",
+      "env": {
+       "OPENPROJECT_API_TOKEN": "$OPENPROJECT_API_TOKEN",
+       "OPENPROJECT_AUTH": "$OPENPROJECT_AUTH",
+       "OPENPROJECT_BASE_URL": "$OPENPROJECT_BASE_URL"
+      },
+      "env_allowed": {
+       "OPENPROJECT_AUTH": [
+        "basic",
+        "bearer"
+       ]
+      },
+      "timeout": 30000
+     },
+     "id": "jinna"
+    }
+   ],
+   "name": "OpenProject Provider MCP",
+   "runtime_hooks": [],
+   "skills": [
+    {
+     "id": "jinna-mcp-recipe",
+     "path": "",
+     "source": "bundled",
+     "url": ""
+    }
+   ],
+   "tags": [
+    "mcp",
+    "openproject",
+    "provider"
+   ],
+   "templates": [],
+   "version": "1.0.0"
+  },
+  "catalog/recipes/plan-build-flow/recipe.toml": {
+   "author": "ai-specs",
+   "brief": {
+    "workflow_rules": [
+     {
+      "key": null,
+      "text": "Classify each substantial change (full planning chain, spec+tasks, or tasks-only) before writing production code; compute the signal depth, compare any explicit requested depth, ask on conflicts, and annotate requested/signal/decided depth in tasks.md before authorization."
+     },
+     {
+      "key": null,
+      "text": "Direct implementation requests without a change folder still require planning at the classified depth; approval verbs do not skip the plan step."
+     },
+     {
+      "key": null,
+      "text": "Do not open a PR until the change folder on the branch contains the tier minimum planning files (Light: proposal.md + tasks.md; Standard: proposal.md + tasks.md + specs/**/*.md; Full: tasks.md plus proposal.md or design.md plus specs/**/*.md), committed."
+     },
+     {
+      "key": null,
+      "text": "After authorization, implement and validate in the change worktree when isolated worktrees are enabled."
+     },
+     {
+      "key": null,
+      "text": "Before merge on the review branch: run verify evidence (Standard/Full block without a conforming verify-report.md; Light is advisory), then promote canonical specs so every delta under specs/<domain>/spec.md is composed into openspec/specs/<domain>/spec.md (the promoter is the only writer and the guardian only validates), then pass the pre-archive guardian, then archive the change folder at openspec/changes/archive/YYYY-MM-DD-<slug>/ using a valid ISO calendar date, then run the pre-merge guardian again; an unpromoted or unresolved delta blocks Standard/Full, exact undated archive/<slug>/ is legacy fallback only, ambiguity and malformed or near-match candidates block, and archive is never deferred until after merge."
+     },
+     {
+      "key": null,
+      "text": "Default artifact store for this project's planning artifacts: `{config.artifact_store_default}`. When a session asks where planning artifacts should live, answer with this value unless the user overrides it. The store is a persistence preference only: plan-build readiness is always proven by the file-backed canonical change-folder tree, never by a memory-only store."
+     },
+     {
+      "key": null,
+      "text": "For recognized submodule worktrees, use the topology-derived central planning tree in the superproject; standalone repositories keep their own planning tree."
+     },
+     {
+      "key": null,
+      "text": "Full planning runs logical phases explore -> proposal -> spec/design -> tasks; use a host-advertised executor for the current phase when available, otherwise run that phase inline; never skip phases."
+     },
+     {
+      "key": null,
+      "text": "Phase executor results that are malformed, partial, or blocked stop and preserve planning state; unavailable executors may use inline fallback. Standard and Light behavior remains collapsed and unchanged."
+     },
+     {
+      "key": null,
+      "text": "Consume one session-level preflight for execution mode, artifact store, review budget, delivery strategy, and chain strategy; never recollect or override those values."
+     },
+     {
+      "key": null,
+      "text": "Present an artifact-derived plan with intent, scope, key decisions, affected areas, risks, open questions, and labeled recommendations/assumptions; ask accept, adjust, or stop and block unresolved product decisions."
+     }
+    ]
+   },
+   "capabilities": [
+    "plan-build-flow"
+   ],
+   "cli_deps": [],
+   "commands": [],
+   "config": {
+    "extra": {},
+    "fields": {
+     "artifact_store_default": {
+      "default": "openspec",
+      "enum": [
+       "openspec",
+       "engram",
+       "both"
+      ],
+      "help_text": "External-session persistence preference for this project's planning artifacts: openspec, engram, or both. Plan-build readiness is always proven by file-backed artifacts in the canonical change-folder tree.",
+      "type": "string",
+      "validation": {}
+     }
+    },
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "Ambient change workflow: depth classifier, silent planning artifacts, PR/archive gates",
+   "docs": [
+    {
+     "source": "README.md",
+     "target": "ai-specs/recipes/plan-build-flow/README.md"
+    }
+   ],
+   "hooks": [
+    {
+     "action": "validate-config",
+     "event": "on-sync"
+    }
+   ],
+   "id": "plan-build-flow",
+   "init": null,
+   "license": "MIT",
+   "mcp": [],
+   "name": "Plan / Build Flow",
+   "runtime_hooks": [
+    {
+     "blocking": true,
+     "description": "Block production edits until an active change folder with a tasks.md plan exists",
+     "event": "pre-tool-use",
+     "id": "plan-build-gate",
+     "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+     "script": "hooks/plan-build-gate.sh"
+    }
+   ],
+   "skills": [
+    {
+     "id": "plan-build-flow",
+     "path": "",
+     "source": "bundled",
+     "url": ""
+    }
+   ],
+   "tags": [
+    "workflow"
+   ],
+   "templates": [],
+   "version": "1.8.0"
+  },
+  "catalog/recipes/playwright-mcp/recipe.toml": {
+   "author": "ai-specs",
+   "brief": {
+    "mcp_descriptions": [
+     {
+      "key": "playwright",
+      "text": "Interactive browser automation for UI exploration, debugging, and locator discovery."
+     }
+    ],
+    "workflow_rules": [
+     {
+      "key": "ui-explore-via-mcp",
+      "text": "For interactive UI exploration, debugging, or locator discovery, prefer the Playwright MCP tools over ad-hoc browser drivers."
+     }
+    ]
+   },
+   "capabilities": [],
+   "cli_deps": [
+    {
+     "binary": "npx",
+     "install_url": "https://nodejs.org/en/download",
+     "installer": "",
+     "min_version": "",
+     "purpose": "Run the @playwright/mcp server",
+     "release_policy": "",
+     "repository": "",
+     "required": true,
+     "version_check": "npx --version"
+    }
+   ],
+   "commands": [],
+   "config": {
+    "extra": {},
+    "fields": {},
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "Exploratory browser automation surface via @playwright/mcp (augments playwright-ui-flow)",
+   "docs": [
+    {
+     "source": "README.md",
+     "target": "ai-specs/recipes/playwright-mcp/README.md"
+    }
+   ],
+   "hooks": [],
+   "id": "playwright-mcp",
+   "init": {
+    "description": "Install browsers and select headless/browser via the manifest MCP override",
+    "needs_manifest": false,
+    "needs_mcp": [
+     "playwright"
+    ],
+    "prompt": "init.md"
+   },
+   "license": "MIT",
+   "mcp": [
+    {
+     "config": {
+      "args": [
+       "-y",
+       "@playwright/mcp@latest",
+       "--headless"
+      ],
+      "command": "npx",
+      "timeout": 30000
+     },
+     "id": "playwright"
+    }
+   ],
+   "name": "Playwright MCP",
+   "runtime_hooks": [],
+   "skills": [
+    {
+     "id": "playwright-mcp",
+     "path": "",
+     "source": "bundled",
+     "url": ""
+    }
+   ],
+   "tags": [
+    "mcp",
+    "browser-automation"
+   ],
+   "templates": [],
+   "version": "1.0.0"
+  },
+  "catalog/recipes/playwright-ui-flow/recipe.toml": {
+   "author": "ai-specs",
+   "brief": {
+    "useful_commands": [
+     {
+      "key": null,
+      "text": "Run UI smokes via the command configured at `[recipes.playwright-ui-flow.config].ui_smoke_command` (or `ui_test_command` for the full suite); if unset, discover the project's Playwright script and propose a config value."
+     }
+    ],
+    "workflow_rules": [
+     {
+      "key": "ui-suites-via-cli",
+      "text": "Run UI suites and smokes via the CLI/project test command; use the browser MCP only for exploratory navigation, debugging, and locator discovery."
+     },
+     {
+      "key": "ui-evidence-before-done",
+      "text": "Record the UI smoke/suite command and its pass/fail result as evidence before treating UI verification as done."
+     }
+    ]
+   },
+   "capabilities": [
+    "ui-browser-testing"
+   ],
+   "cli_deps": [
+    {
+     "binary": "npx",
+     "install_url": "https://nodejs.org/en/download",
+     "installer": "",
+     "min_version": "",
+     "purpose": "Run the project's Playwright UI test/smoke command",
+     "release_policy": "",
+     "repository": "",
+     "required": true,
+     "version_check": "npx --version"
+    }
+   ],
+   "commands": [
+    {
+     "id": "ui-smoke",
+     "path": "commands/ui-smoke.md"
+    }
+   ],
+   "config": {
+    "extra": {},
+    "fields": {
+     "playwright_config": {
+      "default": null,
+      "enum": null,
+      "help_text": "Optional path to playwright.config.* when non-standard.",
+      "type": "string",
+      "validation": {}
+     },
+     "ui_smoke_command": {
+      "default": null,
+      "enum": null,
+      "help_text": "Fast smoke subset (e.g. `npx playwright test --grep @smoke`).",
+      "type": "string",
+      "validation": {}
+     },
+     "ui_test_command": {
+      "default": null,
+      "enum": null,
+      "help_text": "Full UI suite command (e.g. `npx playwright test`). Leave unset to have init discover it.",
+      "type": "string",
+      "validation": {}
+     }
+    },
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "Playwright UI test/smoke discipline + CLI surface for agents",
+   "docs": [
+    {
+     "source": "README.md",
+     "target": "ai-specs/recipes/playwright-ui-flow/README.md"
+    }
+   ],
+   "hooks": [
+    {
+     "action": "validate-config",
+     "event": "on-sync"
+    }
+   ],
+   "id": "playwright-ui-flow",
+   "init": {
+    "description": "Discover the project's Playwright test/smoke command and propose config",
+    "needs_manifest": true,
+    "needs_mcp": [],
+    "prompt": "init.md"
+   },
+   "license": "MIT",
+   "mcp": [],
+   "name": "Playwright UI Flow",
+   "runtime_hooks": [],
+   "skills": [
+    {
+     "id": "ui-browser-testing",
+     "path": "",
+     "source": "bundled",
+     "url": ""
+    },
+    {
+     "id": "playwright-cli",
+     "path": "",
+     "source": "bundled",
+     "url": ""
+    }
+   ],
+   "tags": [
+    "ui-testing"
+   ],
+   "templates": [],
+   "version": "1.0.0"
+  },
+  "catalog/recipes/session-context/recipe.toml": {
+   "author": "ai-specs",
+   "brief": {
+    "conflict_policy": [
+     {
+      "key": "conflict-policy-source-authority",
+      "text": "Current explicit human instruction controls the immediate scope unless it conflicts with safety, secrets, or a higher-authority project rule."
+     },
+     {
+      "key": "conflict-policy-source-hierarchy",
+      "text": "Tracker controls work state; vault controls canonical decisions and handoffs; repo docs and manifests control versioned project contracts. Agent plans are lowest authority until accepted and recorded."
+     }
+    ],
+    "workflow_rules": [
+     {
+      "key": null,
+      "text": "A session works on one explicit user request or tracker card; resolve focus from memory and tracker before starting."
+     }
+    ]
+   },
+   "capabilities": [
+    "session-bootstrap",
+    "conflict-policy"
+   ],
+   "cli_deps": [],
+   "commands": [],
+   "config": {
+    "extra": {},
+    "fields": {},
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "Foundational session-start discipline: bootstrap focus from the memory/tracker capabilities and resolve source conflicts (tool-agnostic)",
+   "docs": [
+    {
+     "source": "README.md",
+     "target": "ai-specs/recipes/session-context/README.md"
+    }
+   ],
+   "hooks": [
+    {
+     "action": "validate-config",
+     "event": "on-sync"
+    }
+   ],
+   "id": "session-context",
+   "init": null,
+   "license": "MIT",
+   "mcp": [],
+   "name": "Session Context",
+   "runtime_hooks": [],
+   "skills": [
+    {
+     "id": "session-bootstrap",
+     "path": "",
+     "source": "bundled",
+     "url": ""
+    },
+    {
+     "id": "context-precedence",
+     "path": "",
+     "source": "bundled",
+     "url": ""
+    }
+   ],
+   "tags": [
+    "infra"
+   ],
+   "templates": [],
+   "version": "2.0.0"
+  },
+  "catalog/recipes/tdd-flow/recipe.toml": {
+   "author": "ai-specs",
+   "brief": {
+    "useful_commands": [
+     {
+      "key": null,
+      "text": "Run tests: `{config.test_command}`"
+     }
+    ],
+    "workflow_rules": [
+     {
+      "key": null,
+      "text": "Follow red-green-refactor discipline: write a failing test first, then implement, then clean up."
+     },
+     {
+      "key": null,
+      "text": "Run the full test suite before committing; do not leave the suite in a failing state."
+     }
+    ]
+   },
+   "capabilities": [
+    "test-runner"
+   ],
+   "cli_deps": [],
+   "commands": [
+    {
+     "id": "tdd",
+     "path": "commands/tdd.md"
+    }
+   ],
+   "config": {
+    "extra": {},
+    "fields": {
+     "test_command": {
+      "default": null,
+      "enum": null,
+      "help_text": "Shell command that runs the project's test suite (e.g. ./tests/validate.sh or npm test). Used by tdd-flow RED/GREEN cycles.",
+      "type": "string",
+      "validation": {}
+     }
+    },
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "Red-green-refactor discipline with a configurable test command",
+   "docs": [
+    {
+     "source": "README.md",
+     "target": "ai-specs/recipes/tdd-flow/README.md"
+    }
+   ],
+   "hooks": [
+    {
+     "action": "validate-config",
+     "event": "on-sync"
+    }
+   ],
+   "id": "tdd-flow",
+   "init": null,
+   "license": "MIT",
+   "mcp": [],
+   "name": "TDD Flow",
+   "runtime_hooks": [],
+   "skills": [
+    {
+     "id": "tdd-flow",
+     "path": "",
+     "source": "bundled",
+     "url": ""
+    }
+   ],
+   "tags": [
+    "quality"
+   ],
+   "templates": [],
+   "version": "1.0.0"
+  },
+  "catalog/recipes/trello-mcp-workflow/recipe.toml": {
+   "author": "",
+   "brief": {
+    "context_sources": [
+     {
+      "key": "trello-source-of-truth",
+      "text": "Trello is the source of truth for work state and dependencies."
+     }
+    ],
+    "mcp_descriptions": [
+     {
+      "key": "trello",
+      "text": "Project tracking via the configured Trello board."
+     }
+    ],
+    "workflow_rules": [
+     {
+      "key": null,
+      "text": "Inspect the active Trello card before resuming work and keep card state in sync with actual progress."
+     },
+     {
+      "key": null,
+      "text": "Before apply/production work on a structured change, create or link a Trello card and record it in the ## Tracker section of the change's proposal.md (or tasks.md) — card_id + url. openspec/** writes are never gated — write the link section there first."
+     },
+     {
+      "key": null,
+      "text": "On SDD phase transitions, move the card and update its phase label; post a progress comment at milestones."
+     },
+     {
+      "key": null,
+      "text": "The tracker gate is advisory: a warn/block/ask verdict is a prompt to create/link the card and write the ## Tracker section — never bypass via shell writes, and never claim 'Trello unavailable' when the real gap is a missing link section. A missing card is an availability failure only when the MCP/network is genuinely down."
+     },
+     {
+      "key": null,
+      "text": "Only omit a card by writing openspec/changes/<slug>/tracker.none with a one-line reason; this is logged and rare."
+     },
+     {
+      "key": null,
+      "text": "Tracker lifecycle checkpoints are Plan Build-independent: grade them with the tracker gate's direct host mode `ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh --root <root> --checkpoint pre-merge|archive-close [slug]`; no openspec/ tree is required, and `archive-close` is tracker item closure, never an OpenSpec archive."
+     },
+     {
+      "key": null,
+      "text": "Provider tracker recipes only map native state through `[config.reconcile]`; they never enable, configure, or implement the ledger, and they never grade items."
+     }
+    ]
+   },
+   "capabilities": [
+    "tracker",
+    "trello-session-bootstrap",
+    "trello-card-linking",
+    "trello-state-sync",
+    "trello-progress-comment"
+   ],
+   "cli_deps": [
+    {
+     "binary": "npx",
+     "install_url": "https://nodejs.org/en/download",
+     "installer": "",
+     "min_version": "8.0.0",
+     "purpose": "Run the Trello MCP server (@delorenj/mcp-server-trello)",
+     "release_policy": "",
+     "repository": "",
+     "required": true,
+     "version_check": "npx --version"
+    }
+   ],
+   "commands": [
+    {
+     "id": "trello-workflow",
+     "path": "commands/trello-workflow.md"
+    }
+   ],
+   "config": {
+    "extra": {
+     "board_isolation": {
+      "card_validation_required": true,
+      "forbidden_tools": [
+       "trello_get_my_cards",
+       "trello_list_boards"
+      ],
+      "restricted_tools": [
+       "trello_set_active_board"
+      ]
+     }
+    },
+    "fields": {
+     "board_id": {
+      "default": null,
+      "enum": null,
+      "help_text": "Trello board ID: 24 hex chars (e.g. 69ec097f13e2d38ecd89a557). Not the 8-char shortLink in https://trello.com/b/<shortLink>/.... Tip: trello_get_active_board_info → id, or Board menu → More → Close board URL.",
+      "type": "string",
+      "validation": {
+       "regex": "^[0-9a-fA-F]{24}$"
+      }
+     },
+     "default_list": {
+      "default": "In Progress",
+      "enum": null,
+      "help_text": "Default list where new cards land. Must match an existing list name on your Trello board.",
+      "type": "string",
+      "validation": {}
+     },
+     "done_list": {
+      "default": "Done",
+      "enum": null,
+      "help_text": "List a card must reach when the merge lifecycle event reconciles. Must match an existing list on your Trello board.",
+      "type": "string",
+      "validation": {}
+     },
+     "epic_list": {
+      "default": "Epic",
+      "enum": null,
+      "help_text": "List name for epic-type cards. Must match an existing list on your Trello board (create the list first if needed).",
+      "type": "string",
+      "validation": {}
+     },
+     "gate_mode": {
+      "default": "warn",
+      "enum": [
+       "off",
+       "warn",
+       "always"
+      ],
+      "help_text": "Deprecated compatibility only: the Trello tracker is advisory and never blocks source changes. Legacy off (skip the Tracker checkpoints), warn (report only), or always (strictest verdict). Consulted only when ledger_mode is unset; prefer ledger_mode.",
+      "type": "string",
+      "validation": {}
+     },
+     "ledger_mode": {
+      "default": "warn",
+      "enum": [
+       "always",
+       "ask",
+       "warn"
+      ],
+      "help_text": "Canonical Tracker ledger mode: always (strictest verdict; the Plan Build work-start checkpoint may still block on it), ask (prompt at each checkpoint; an opt-out is lifecycle-scoped), or warn (report on stderr — default). Tracker checkpoints never block source changes: a block/ask/needs-item is reported and the host continues. Overrides gate_mode when set; gate_mode off still skips the Tracker checkpoints.",
+      "type": "string",
+      "validation": {}
+     },
+     "published_list": {
+      "default": null,
+      "enum": null,
+      "help_text": "Optional list that means the merge was also published/released (e.g. Published). Leave it unset when the board has no such list: the merge event then reconciles against done_list. No default is invented, and an unset value is never treated as configured.",
+      "type": "string",
+      "validation": {}
+     },
+     "review_list": {
+      "default": "Review",
+      "enum": null,
+      "help_text": "List a card must reach when the review lifecycle event reconciles. Must match an existing list on your Trello board.",
+      "type": "string",
+      "validation": {}
+     }
+    },
+    "tables": {
+     "reconcile": {
+      "shape": {
+       "expectations": [
+        {
+         "config_field": "string",
+         "config_field_when_set": "string",
+         "event": "string",
+         "property": "string"
+        }
+       ],
+       "max_age_seconds": "integer",
+       "scope_field": "string"
+      },
+      "values": {
+       "expectations": [
+        {
+         "config_field": "default_list",
+         "event": "delivery",
+         "property": "list"
+        },
+        {
+         "config_field": "review_list",
+         "event": "review",
+         "property": "list"
+        },
+        {
+         "config_field": "done_list",
+         "config_field_when_set": "published_list",
+         "event": "merge",
+         "property": "list"
+        }
+       ],
+       "max_age_seconds": 900,
+       "scope_field": "board_id"
+      }
+     }
+    }
+   },
+   "conflicts_with": [],
+   "description": "Automated Trello board integration for ai-specs SDD workflows",
+   "docs": [
+    {
+     "source": "README.md",
+     "target": "ai-specs/recipes/trello-mcp-workflow/README.md"
+    }
+   ],
+   "hooks": [
+    {
+     "action": "validate-config",
+     "event": "on-sync"
+    },
+    {
+     "action": "bootstrap-board",
+     "event": "on-sync"
+    },
+    {
+     "action": "link-trello-card",
+     "event": "on-sync"
+    },
+    {
+     "action": "sync-card-state",
+     "event": "on-sync"
+    },
+    {
+     "action": "comment-verification",
+     "event": "on-sync"
+    }
+   ],
+   "id": "trello-mcp-workflow",
+   "init": {
+    "description": "Configure Trello board and list mappings before sync",
+    "needs_manifest": true,
+    "needs_mcp": [
+     "trello"
+    ],
+    "prompt": "init.md"
+   },
+   "license": "",
+   "mcp": [
+    {
+     "config": {
+      "args": [
+       "-y",
+       "@delorenj/mcp-server-trello"
+      ],
+      "command": "npx",
+      "env": {
+       "TRELLO_API_KEY": "$TRELLO_API_KEY",
+       "TRELLO_TOKEN": "$TRELLO_TOKEN"
+      },
+      "timeout": 30000
+     },
+     "id": "trello"
+    }
+   ],
+   "name": "Trello MCP Workflow",
+   "runtime_hooks": [
+    {
+     "blocking": false,
+     "description": "Advisory: report a production edit's apply-start ledger verdict through the verified Go predicate; a block/ask/needs-item is reported and never blocks source work; fail open",
+     "event": "pre-tool-use",
+     "id": "tracker-card-gate",
+     "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+     "script": "hooks/tracker-card-gate.sh"
+    },
+    {
+     "blocking": false,
+     "description": "Advisory: report a `gh pr create` pr-review ledger verdict through the verified Go predicate; never blocks; does not gate shell writes",
+     "event": "pre-tool-use",
+     "id": "tracker-card-gate-shell",
+     "matcher": "Bash|Shell|Execute|Terminal",
+     "script": "hooks/tracker-card-gate.sh"
+    }
+   ],
+   "skills": [
+    {
+     "id": "trello-mcp-workflow",
+     "path": "",
+     "source": "bundled",
+     "url": ""
+    }
+   ],
+   "tags": [
+    "tracker",
+    "trello"
+   ],
+   "templates": [
+    {
+     "condition": "not_exists",
+     "source": "templates/card-feature.md",
+     "target": "ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-feature.md",
+     "update_policy": "auto"
+    },
+    {
+     "condition": "not_exists",
+     "source": "templates/card-bug.md",
+     "target": "ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-bug.md",
+     "update_policy": "auto"
+    },
+    {
+     "condition": "not_exists",
+     "source": "templates/card-spike.md",
+     "target": "ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-spike.md",
+     "update_policy": "auto"
+    },
+    {
+     "condition": "not_exists",
+     "source": "templates/card-epic.md",
+     "target": "ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-epic.md",
+     "update_policy": "auto"
+    },
+    {
+     "condition": "not_exists",
+     "source": "templates/card-handoff.md",
+     "target": "ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-handoff.md",
+     "update_policy": "auto"
+    },
+    {
+     "condition": "not_exists",
+     "source": "templates/card-decision.md",
+     "target": "ai-specs/recipes/trello-mcp-workflow/overrides/templates/card-decision.md",
+     "update_policy": "auto"
+    }
+   ],
+   "version": "1.4.0"
+  },
+  "catalog/recipes/vault-canonical-store/recipe.toml": {
+   "author": "ai-specs",
+   "brief": {
+    "context_sources": [
+     {
+      "key": "vault-canonical-note-taker",
+      "text": "Vault is the canonical note-taker for decisions, handoffs, and structured project context."
+     }
+    ],
+    "mcp_descriptions": [
+     {
+      "key": "vault-canonical",
+      "text": "Canonical project notes in the vault (scoped to the project path)."
+     }
+    ]
+   },
+   "capabilities": [
+    "canonical-store"
+   ],
+   "cli_deps": [
+    {
+     "binary": "npx",
+     "install_url": "https://nodejs.org/en/download",
+     "installer": "",
+     "min_version": "8.0.0",
+     "purpose": "Run the filesystem MCP server for the canonical vault store",
+     "release_policy": "",
+     "repository": "",
+     "required": true,
+     "version_check": "npx --version"
+    }
+   ],
+   "commands": [],
+   "config": {
+    "extra": {},
+    "fields": {
+     "decisions_folder": {
+      "default": "decisiones",
+      "enum": null,
+      "help_text": "Folder name under vault_scope for durable decision notes.",
+      "type": "string",
+      "validation": {}
+     },
+     "sessions_folder": {
+      "default": "sessions",
+      "enum": null,
+      "help_text": "Folder name under vault_scope for session handoffs / summaries.",
+      "type": "string",
+      "validation": {}
+     },
+     "vault_scope": {
+      "default": null,
+      "enum": null,
+      "help_text": "Relative path under the vault root for this project (e.g. nnodes/proyectos/ai-specs). Combined with CANONICAL_VAULT_PATH / Obsidian vault.",
+      "type": "string",
+      "validation": {}
+     }
+    },
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "Durable decisions and handoffs in a configured vault MCP (e.g. Obsidian / filesystem)",
+   "docs": [
+    {
+     "source": "README.md",
+     "target": "ai-specs/recipes/vault-canonical-store/README.md"
+    }
+   ],
+   "hooks": [
+    {
+     "action": "validate-config",
+     "event": "on-sync"
+    }
+   ],
+   "id": "vault-canonical-store",
+   "init": null,
+   "license": "MIT",
+   "mcp": [
+    {
+     "config": {
+      "args": [
+       "ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh"
+      ],
+      "command": "bash",
+      "env": {
+       "CANONICAL_VAULT_PATH": "$CANONICAL_VAULT_PATH"
+      },
+      "timeout": 30000
+     },
+     "id": "vault-canonical"
+    }
+   ],
+   "name": "Vault Canonical Store",
+   "runtime_hooks": [],
+   "skills": [
+    {
+     "id": "vault-context",
+     "path": "",
+     "source": "bundled",
+     "url": ""
+    },
+    {
+     "id": "obsidian-markdown",
+     "path": "skills/obsidian-markdown",
+     "source": "dep",
+     "url": "https://github.com/kepano/obsidian-skills.git"
+    },
+    {
+     "id": "obsidian-bases",
+     "path": "skills/obsidian-bases",
+     "source": "dep",
+     "url": "https://github.com/kepano/obsidian-skills.git"
+    },
+    {
+     "id": "json-canvas",
+     "path": "skills/json-canvas",
+     "source": "dep",
+     "url": "https://github.com/kepano/obsidian-skills.git"
+    },
+    {
+     "id": "obsidian-cli",
+     "path": "skills/obsidian-cli",
+     "source": "dep",
+     "url": "https://github.com/kepano/obsidian-skills.git"
+    },
+    {
+     "id": "defuddle",
+     "path": "skills/defuddle",
+     "source": "dep",
+     "url": "https://github.com/kepano/obsidian-skills.git"
+    }
+   ],
+   "tags": [
+    "storage"
+   ],
+   "templates": [
+    {
+     "condition": "not_exists",
+     "source": "templates/vault-fs-mcp.sh",
+     "target": "ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh",
+     "update_policy": "auto"
+    }
+   ],
+   "version": "1.2.0"
+  },
+  "catalog/recipes/worktree-flow/recipe.toml": {
+   "author": "ai-specs",
+   "brief": {
+    "workflow_rules": [
+     {
+      "key": null,
+      "text": "Protected-branch writes are governed by the effective worktree `gate_mode = {config.gate_mode}`: `always` requires a dedicated worktree before writing; `ask` requires the orchestrator to ask the user to choose a destination (a dedicated worktree, a feature branch in the current checkout, or an explicit protected-branch override); `off` permits writing where the user directs. Pure exploration can proceed without a worktree when it writes no files."
+     },
+     {
+      "key": null,
+      "text": "Do not merge or push to `{config.integration_branch}` without a PR and explicit human instruction."
+     },
+     {
+      "key": null,
+      "text": "Preserve unrelated worktree changes; never revert changes you did not make."
+     },
+     {
+      "key": null,
+      "text": "Before dispatching a write-capable subagent or task, verify which git repository, worktree, and branch yourself (`git rev-parse --show-toplevel`, `git branch --show-current`, `git worktree list`). Under monorepo-submodules, confirming which-repo via show-toplevel is mandatory. Do not rely solely on runtime pre-tool-use hooks — they may not fire for delegated/subprocess tool calls on opencode/pi/omp."
+     },
+     {
+      "key": null,
+      "text": "If a structured Edit/Write/MultiEdit call is blocked or errors for any reason while on a protected branch, that is never grounds to retry the write via bash/shell (heredoc, `python3 -c`, `cat >`, `tee`, `sed -i`). With `gate_mode = always`, create a dedicated worktree first (e.g. `/worktree-new`) and write there instead; with `gate_mode = ask`, ask the user which destination to use — worktree (recommended), feature branch in place, or explicit protected-branch override — and wait; with `gate_mode = off`, the gate does not block."
+     }
+    ]
+   },
+   "capabilities": [
+    "worktree-isolation",
+    "worktree-cleanup"
+   ],
+   "cli_deps": [
+    {
+     "binary": "git",
+     "install_url": "https://git-scm.com/downloads",
+     "installer": "",
+     "min_version": "2.20.0",
+     "purpose": "Create and manage git worktrees under .worktrees/",
+     "release_policy": "",
+     "repository": "",
+     "required": true,
+     "version_check": "git --version"
+    }
+   ],
+   "commands": [
+    {
+     "id": "worktree-new",
+     "path": "commands/worktree-new.md"
+    },
+    {
+     "id": "worktree-clean",
+     "path": "commands/worktree-clean.md"
+    }
+   ],
+   "config": {
+    "extra": {},
+    "fields": {
+     "WORKTREE_GATE_PROTECTED": {
+      "default": "main development",
+      "enum": null,
+      "help_text": "Space-separated branch names the worktree gate protects in the main worktree (writes blocked unless gate_mode allows).",
+      "type": "string",
+      "validation": {}
+     },
+     "auto_remove_merged": {
+      "default": true,
+      "enum": null,
+      "help_text": "If true, worktree cleanup removes worktrees whose branches are fully merged into the integration branch.",
+      "type": "bool",
+      "validation": {}
+     },
+     "gate_impl": {
+      "default": "auto",
+      "enum": [
+       "auto",
+       "go"
+      ],
+      "help_text": "Worktree gate implementation: auto (use the Go binary when the CLI can provide it) or go (explicit Go pin). Both acquire the verified binary and fail open with a doctor ERROR when none resolves. The bash value has been removed.",
+      "type": "string",
+      "validation": {}
+     },
+     "gate_mode": {
+      "default": "always",
+      "enum": [
+       "always",
+       "ask",
+       "off"
+      ],
+      "help_text": "Worktree gate behavior: always (block + worktree guidance), ask (block and ask the user for a destination: worktree / feature branch / explicit protected-branch override), or off (disabled).",
+      "type": "string",
+      "validation": {}
+     },
+     "gate_scope": {
+      "default": "auto",
+      "enum": [
+       "auto",
+       "superrepo",
+       "subrepo"
+      ],
+      "help_text": "Repository scope for worktree-gate: auto (proven topology), superrepo (canonical central planning only), or subrepo (initialized submodule protection); independent from gate_mode and repo_topology.",
+      "type": "string",
+      "validation": {}
+     },
+     "integration_branch": {
+      "default": "main",
+      "enum": null,
+      "help_text": "Branch worktrees are created from and merged into (e.g. main or development). Must already exist in the repo.",
+      "type": "string",
+      "validation": {}
+     },
+     "repo_topology": {
+      "default": "auto",
+      "enum": [
+       "auto",
+       "standalone",
+       "monorepo-apps",
+       "monorepo-submodules"
+      ],
+      "help_text": "Deprecated alias of [project].repo_topology (still honored for one migration window; recipe-only values warn). Prefer the project field: auto (detect initialized submodules → monorepo-submodules, else standalone), standalone, monorepo-apps (naming-only; same mechanics as standalone), or monorepo-submodules (per-submodule worktrees under shared worktrees_dir).",
+      "type": "string",
+      "validation": {}
+     },
+     "worktrees_dir": {
+      "default": ".worktrees",
+      "enum": null,
+      "help_text": "Directory for isolated git worktrees (relative to project root). Usually .worktrees/ and gitignored.",
+      "type": "string",
+      "validation": {}
+     }
+    },
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "Isolated git worktrees under .worktrees/ with post-merge cleanup for ai-specs change work",
+   "docs": [
+    {
+     "source": "README.md",
+     "target": "ai-specs/recipes/worktree-flow/README.md"
+    }
+   ],
+   "hooks": [
+    {
+     "action": "validate-config",
+     "event": "on-sync"
+    }
+   ],
+   "id": "worktree-flow",
+   "init": null,
+   "license": "MIT",
+   "mcp": [],
+   "name": "Worktree Flow",
+   "runtime_hooks": [
+    {
+     "blocking": true,
+     "description": "Block writes to the main worktree on a protected branch",
+     "event": "pre-tool-use",
+     "id": "worktree-gate",
+     "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+     "script": "hooks/worktree-gate.sh"
+    },
+    {
+     "blocking": true,
+     "description": "Best-effort block shell commands that write into the main worktree on a protected branch (bash-bypass coverage)",
+     "event": "pre-tool-use",
+     "id": "worktree-gate-shell",
+     "matcher": "Bash|Shell|Execute|Terminal",
+     "script": "hooks/worktree-gate.sh"
+    }
+   ],
+   "skills": [
+    {
+     "id": "worktree-flow",
+     "path": "",
+     "source": "bundled",
+     "url": ""
+    }
+   ],
+   "tags": [
+    "infra",
+    "worktree"
+   ],
+   "templates": [
+    {
+     "condition": "not_exists",
+     "source": "templates/worktree-cleanup.sh",
+     "target": "ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh",
+     "update_policy": "auto"
+    },
+    {
+     "condition": "not_exists",
+     "source": "templates/post-merge.sh",
+     "target": ".git/hooks/post-merge",
+     "update_policy": "auto"
+    }
+   ],
+   "version": "1.6.0"
+  },
+  "tests/fixtures/recipes/test-cmd-conflict-a/recipe.toml": {
+   "author": "",
+   "brief": null,
+   "capabilities": [],
+   "cli_deps": [],
+   "commands": [
+    {
+     "id": "shared-cmd",
+     "path": "commands/shared.md"
+    }
+   ],
+   "config": {
+    "extra": {},
+    "fields": {},
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "Declares a conflicting command.",
+   "docs": [],
+   "hooks": [],
+   "id": "test-cmd-conflict-a",
+   "init": null,
+   "license": "",
+   "mcp": [],
+   "name": "Test Cmd Conflict A",
+   "runtime_hooks": [],
+   "skills": [],
+   "tags": [],
+   "templates": [],
+   "version": "1.0.0"
+  },
+  "tests/fixtures/recipes/test-cmd-conflict-b/recipe.toml": {
+   "author": "",
+   "brief": null,
+   "capabilities": [],
+   "cli_deps": [],
+   "commands": [
+    {
+     "id": "shared-cmd",
+     "path": "commands/shared.md"
+    }
+   ],
+   "config": {
+    "extra": {},
+    "fields": {},
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "Also declares the same conflicting command.",
+   "docs": [],
+   "hooks": [],
+   "id": "test-cmd-conflict-b",
+   "init": null,
+   "license": "",
+   "mcp": [],
+   "name": "Test Cmd Conflict B",
+   "runtime_hooks": [],
+   "skills": [],
+   "tags": [],
+   "templates": [],
+   "version": "1.0.0"
+  },
+  "tests/fixtures/recipes/test-conflict-a/recipe.toml": {
+   "author": "",
+   "brief": null,
+   "capabilities": [],
+   "cli_deps": [],
+   "commands": [],
+   "config": {
+    "extra": {},
+    "fields": {},
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "Declares a conflicting primitive.",
+   "docs": [],
+   "hooks": [],
+   "id": "test-conflict-a",
+   "init": null,
+   "license": "",
+   "mcp": [],
+   "name": "Test Conflict A",
+   "runtime_hooks": [],
+   "skills": [
+    {
+     "id": "shared-skill",
+     "path": "",
+     "source": "bundled",
+     "url": ""
+    }
+   ],
+   "tags": [],
+   "templates": [],
+   "version": "1.0.0"
+  },
+  "tests/fixtures/recipes/test-conflict-b/recipe.toml": {
+   "author": "",
+   "brief": null,
+   "capabilities": [],
+   "cli_deps": [],
+   "commands": [],
+   "config": {
+    "extra": {},
+    "fields": {},
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "Also declares the same conflicting primitive.",
+   "docs": [],
+   "hooks": [],
+   "id": "test-conflict-b",
+   "init": null,
+   "license": "",
+   "mcp": [],
+   "name": "Test Conflict B",
+   "runtime_hooks": [],
+   "skills": [
+    {
+     "id": "shared-skill",
+     "path": "",
+     "source": "bundled",
+     "url": ""
+    }
+   ],
+   "tags": [],
+   "templates": [],
+   "version": "1.0.0"
+  },
+  "tests/fixtures/recipes/test-fixture/recipe.toml": {
+   "author": "ai-specs",
+   "brief": null,
+   "capabilities": [],
+   "cli_deps": [],
+   "commands": [
+    {
+     "id": "test-command",
+     "path": "commands/test-command.md"
+    }
+   ],
+   "config": {
+    "extra": {},
+    "fields": {},
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "A minimal recipe fixture for integration tests.",
+   "docs": [
+    {
+     "source": "docs/test-doc.md",
+     "target": "docs/test-doc-output.md"
+    }
+   ],
+   "hooks": [],
+   "id": "test-fixture",
+   "init": null,
+   "license": "MIT",
+   "mcp": [
+    {
+     "config": {
+      "args": [
+       "-y",
+       "@test/mcp-server"
+      ],
+      "command": "npx"
+     },
+     "id": "test-mcp"
+    }
+   ],
+   "name": "Test Fixture Recipe",
+   "runtime_hooks": [],
+   "skills": [
+    {
+     "id": "test-skill",
+     "path": "",
+     "source": "bundled",
+     "url": ""
+    }
+   ],
+   "tags": [],
+   "templates": [
+    {
+     "condition": "not_exists",
+     "source": "templates/test-template.md",
+     "target": "docs/test-template-output.md",
+     "update_policy": "auto"
+    }
+   ],
+   "version": "1.0.0"
+  },
+  "tests/fixtures/recipes/test-mcp-conflict-a/recipe.toml": {
+   "author": "",
+   "brief": null,
+   "capabilities": [],
+   "cli_deps": [],
+   "commands": [],
+   "config": {
+    "extra": {},
+    "fields": {},
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "Declares a conflicting MCP preset.",
+   "docs": [],
+   "hooks": [],
+   "id": "test-mcp-conflict-a",
+   "init": null,
+   "license": "",
+   "mcp": [
+    {
+     "config": {
+      "command": "npx"
+     },
+     "id": "shared-mcp"
+    }
+   ],
+   "name": "Test MCP Conflict A",
+   "runtime_hooks": [],
+   "skills": [],
+   "tags": [],
+   "templates": [],
+   "version": "1.0.0"
+  },
+  "tests/fixtures/recipes/test-mcp-conflict-b/recipe.toml": {
+   "author": "",
+   "brief": null,
+   "capabilities": [],
+   "cli_deps": [],
+   "commands": [],
+   "config": {
+    "extra": {},
+    "fields": {},
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "Also declares the same conflicting MCP preset.",
+   "docs": [],
+   "hooks": [],
+   "id": "test-mcp-conflict-b",
+   "init": null,
+   "license": "",
+   "mcp": [
+    {
+     "config": {
+      "command": "npx"
+     },
+     "id": "shared-mcp"
+    }
+   ],
+   "name": "Test MCP Conflict B",
+   "runtime_hooks": [],
+   "skills": [],
+   "tags": [],
+   "templates": [],
+   "version": "1.0.0"
+  },
+  "tests/fixtures/recipes/test-tracker-ledger-conflict/recipe.toml": {
+   "author": "",
+   "brief": null,
+   "capabilities": [
+    "tracker"
+   ],
+   "cli_deps": [],
+   "commands": [],
+   "config": {
+    "extra": {},
+    "fields": {},
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "Internal fixture declaring the tracker capability to create an ambiguous binding.",
+   "docs": [],
+   "hooks": [],
+   "id": "test-tracker-ledger-conflict",
+   "init": null,
+   "license": "",
+   "mcp": [],
+   "name": "Test Tracker Ledger Conflict",
+   "runtime_hooks": [],
+   "skills": [],
+   "tags": [],
+   "templates": [],
+   "version": "1.0.0"
+  },
+  "tests/fixtures/recipes/test-tracker-ledger/recipe.toml": {
+   "author": "",
+   "brief": null,
+   "capabilities": [
+    "tracker"
+   ],
+   "cli_deps": [],
+   "commands": [],
+   "config": {
+    "extra": {},
+    "fields": {},
+    "tables": {}
+   },
+   "conflicts_with": [],
+   "description": "Internal fixture declaring the tracker capability for witness tests.",
+   "docs": [],
+   "hooks": [],
+   "id": "test-tracker-ledger",
+   "init": null,
+   "license": "",
+   "mcp": [],
+   "name": "Test Tracker Ledger",
+   "runtime_hooks": [],
+   "skills": [],
+   "tags": [],
+   "templates": [],
+   "version": "1.0.0"
+  }
+ },
+ "fixtures": {
+  "err_blank_name.toml": {
+   "error": "[recipe]: missing or invalid required field 'name'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_brief_item_int.toml": {
+   "error": "[provides.brief].runtime_flow[0]: expected string or inline-table, got int",
+   "mode": "-",
+   "ok": false
+  },
+  "err_brief_missing_key.toml": {
+   "error": "[provides.brief].runtime_flow[0]: missing required field 'key'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_brief_missing_text.toml": {
+   "error": "[provides.brief].runtime_flow[0]: missing required field 'text'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_brief_mixed.toml": {
+   "error": "[provides.brief]: section 'runtime_flow' mixes string-array and inline-table forms",
+   "mode": "-",
+   "ok": false
+  },
+  "err_brief_not_array.toml": {
+   "error": "[provides.brief].runtime_flow: expected array, got str",
+   "mode": "-",
+   "ok": false
+  },
+  "err_brief_project_only.toml": {
+   "error": "[provides.brief].intro: section is project-only; recipes MUST NOT contribute it",
+   "mode": "-",
+   "ok": false
+  },
+  "err_brief_unknown_section.toml": {
+   "error": "[provides.brief].bad_section: unknown section 'bad_section'; valid: runtime_flow, context_sources, conflict_policy, workflow_rules, useful_commands, mcp_descriptions",
+   "mode": "-",
+   "ok": false
+  },
+  "err_capabilities_dup.toml": {
+   "error": ".capabilities[1]: duplicate capability id 'c'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_capabilities_item.toml": {
+   "mode": "-",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "err_capabilities_missing_id.toml": {
+   "error": ".capabilities[0]: missing or invalid required field 'id'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_clideps_installer.toml": {
+   "error": "[deps.cli][0].installer: unsupported installer 'npm'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_clideps_item_not_table.toml": {
+   "error": "[deps.cli][0]: expected table, got int",
+   "mode": "-",
+   "ok": false
+  },
+  "err_clideps_not_array.toml": {
+   "error": "[deps.cli]: expected array of tables, got str",
+   "mode": "-",
+   "ok": false
+  },
+  "err_clideps_release_policy.toml": {
+   "error": "[deps.cli][0].release_policy: expected 'latest-stable'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_clideps_repo_no_installer.toml": {
+   "error": "[deps.cli][0]: repository/release_policy require installer 'github-release'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_clideps_repository.toml": {
+   "error": "[deps.cli][0].repository: only 'parada1104/jinna-provider' is allowed",
+   "mode": "-",
+   "ok": false
+  },
+  "err_clideps_required_str.toml": {
+   "error": "[deps.cli][0].required: expected boolean, got str",
+   "mode": "-",
+   "ok": false
+  },
+  "err_clideps_unknown_key.toml": {
+   "error": "[deps.cli][0]: unknown key 'foo'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_commands_item_not_dict.toml": {
+   "error": "[provides].commands[0]: expected object, got str",
+   "mode": "-",
+   "ok": false
+  },
+  "err_commands_missing_path.toml": {
+   "error": "[provides].commands[0]: missing or invalid required field 'path'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_config_enum_blank.toml": {
+   "error": ".config.foo.enum[0]: expected non-empty string",
+   "mode": "-",
+   "ok": false
+  },
+  "err_config_enum_not_array.toml": {
+   "error": ".config.foo.enum: expected array of strings, got str",
+   "mode": "-",
+   "ok": false
+  },
+  "err_config_help_text_int.toml": {
+   "error": ".config.foo.help_text: expected string, got int",
+   "mode": "-",
+   "ok": false
+  },
+  "err_config_key_not_table.toml": {
+   "mode": "-",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "err_config_required_not_bool.toml": {
+   "error": ".config.foo: missing or invalid 'required' (must be boolean)",
+   "mode": "-",
+   "ok": false
+  },
+  "err_config_unknown_key.toml": {
+   "error": ".config.foo: unknown key 'bar'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_config_validation_not_table.toml": {
+   "error": ".config.foo.validation: expected table, got str",
+   "mode": "-",
+   "ok": false
+  },
+  "err_config_validation_unknown.toml": {
+   "error": ".config.foo.validation: unknown key 'len'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_conflicts_not_array.toml": {
+   "error": "[recipe]: 'conflicts_with' must be an array of strings, got int",
+   "mode": "-",
+   "ok": false
+  },
+  "err_conflicts_self.toml": {
+   "error": "[recipe]: 'conflicts_with' must not reference the recipe itself ('self')",
+   "mode": "-",
+   "ok": false
+  },
+  "err_docs_item_not_dict.toml": {
+   "error": "[provides].docs[0]: expected object, got str",
+   "mode": "-",
+   "ok": false
+  },
+  "err_hooks_blocking_int.toml": {
+   "error": "[provides].hooks[0].blocking: expected boolean, got int",
+   "mode": "-",
+   "ok": false
+  },
+  "err_hooks_dup_id.toml": {
+   "error": "[provides].hooks[1]: duplicate hook id 'h'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_hooks_escape_dir.toml": {
+   "error": "[provides].hooks[0].script: hook script paths must stay inside the recipe directory (got '../evil.sh')",
+   "mode": "temp:err_hooks_escape_dir.toml",
+   "ok": false
+  },
+  "err_hooks_escape_nodir.toml": {
+   "error": "[provides].hooks[0].script: hook script paths must stay inside the recipe directory (got '../evil.sh')",
+   "mode": "-",
+   "ok": false
+  },
+  "err_hooks_escape_symlink.toml": {
+   "error": "[provides].hooks[0].script: hook script paths must stay inside the recipe directory (got 'hooks/x.sh')",
+   "mode": "temp:err_hooks_escape_symlink.toml",
+   "ok": false
+  },
+  "err_hooks_item_not_dict.toml": {
+   "error": "[provides].hooks[0]: expected object, got str",
+   "mode": "-",
+   "ok": false
+  },
+  "err_hooks_missing_action.toml": {
+   "error": ".hooks[0]: missing or invalid required field 'action'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_hooks_missing_script.toml": {
+   "error": "[provides].hooks[0]: missing or invalid required field 'script'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_hooks_script_absolute.toml": {
+   "error": "[provides].hooks[0].script: hook script paths must be relative to the recipe directory (got absolute path '/etc/x.sh')",
+   "mode": "-",
+   "ok": false
+  },
+  "err_hooks_unknown_event.toml": {
+   "error": "[provides].hooks[0]: unknown event 'on-commit'; known events: pre-tool-use, post-tool-use, session-start, stop",
+   "mode": "-",
+   "ok": false
+  },
+  "err_init_description_int.toml": {
+   "error": "[init].description: expected string, got int",
+   "mode": "-",
+   "ok": false
+  },
+  "err_init_missing_prompt.toml": {
+   "error": "[init].prompt: missing or invalid required field 'prompt'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_init_needs_manifest_int.toml": {
+   "error": "[init].needs_manifest: expected boolean, got int",
+   "mode": "-",
+   "ok": false
+  },
+  "err_init_needs_mcp_blank.toml": {
+   "error": "[init].needs_mcp[0]: expected non-empty string",
+   "mode": "-",
+   "ok": false
+  },
+  "err_init_needs_mcp_not_list.toml": {
+   "error": "[init].needs_mcp: expected array of strings",
+   "mode": "-",
+   "ok": false
+  },
+  "err_init_not_table.toml": {
+   "mode": "-",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "err_init_prompt_absolute.toml": {
+   "error": "[init].prompt: init prompt paths must be relative to the recipe directory",
+   "mode": "temp:err_init_prompt_absolute.toml",
+   "ok": false
+  },
+  "err_init_prompt_escape.toml": {
+   "error": "[init].prompt: init prompt paths must stay inside the recipe directory",
+   "mode": "temp:err_init_prompt_escape.toml",
+   "ok": false
+  },
+  "err_init_prompt_is_dir.toml": {
+   "error": "[init].prompt: init prompt path must be a file: subdir",
+   "mode": "temp:err_init_prompt_is_dir.toml",
+   "ok": false
+  },
+  "err_init_prompt_not_found.toml": {
+   "error": "[init].prompt: init prompt file not found: missing.md",
+   "mode": "temp:err_init_prompt_not_found.toml",
+   "ok": false
+  },
+  "err_init_prompt_symlink_escape.toml": {
+   "error": "[init].prompt: init prompt paths must stay inside the recipe directory",
+   "mode": "temp:err_init_prompt_symlink_escape.toml",
+   "ok": false
+  },
+  "err_init_unsupported_field.toml": {
+   "error": "[init]: unsupported init field 'foo'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_mcp_item_not_dict.toml": {
+   "error": "[provides].mcp[0]: expected object, got str",
+   "mode": "-",
+   "ok": false
+  },
+  "err_missing_id.toml": {
+   "error": "[recipe]: missing or invalid required field 'id'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_recipe_not_table.toml": {
+   "error": "[recipe] must be a table",
+   "mode": "-",
+   "ok": false
+  },
+  "err_reconcile_expectations_item_missing_property.toml": {
+   "mode": "-",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {
+      "reconcile": {
+       "shape": {
+        "expectations": [
+         {
+          "config_field": "string",
+          "config_field_when_set": "string",
+          "event": "string",
+          "property": "string"
+         }
+        ],
+        "max_age_seconds": "integer",
+        "scope_field": "string"
+       },
+       "values": {
+        "expectations": [
+         {
+          "event": "e"
+         }
+        ],
+        "max_age_seconds": 900,
+        "scope_field": "a"
+       }
+      }
+     }
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "err_reconcile_expectations_long.toml": {
+   "error": "[config.reconcile].expectations: expected at most 32 entries, got 33",
+   "mode": "-",
+   "ok": false
+  },
+  "err_reconcile_expectations_not_array.toml": {
+   "error": "[config.reconcile].expectations: expected array, got str",
+   "mode": "-",
+   "ok": false
+  },
+  "err_reconcile_scalar.toml": {
+   "error": "[config.reconcile].scope_field: expected string, got int",
+   "mode": "-",
+   "ok": false
+  },
+  "err_reconcile_unknown_key.toml": {
+   "error": "[config.reconcile]: unknown key 'foo'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_skills_dep_no_url.toml": {
+   "error": "[provides].skills[0]: source='dep' requires 'url'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_skills_item_not_dict.toml": {
+   "error": "[provides].skills[0]: expected object, got str",
+   "mode": "-",
+   "ok": false
+  },
+  "err_skills_missing_source.toml": {
+   "mode": "-",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "err_tags_item_blank.toml": {
+   "error": "[recipe]: 'tags'[0] must be a non-empty string",
+   "mode": "-",
+   "ok": false
+  },
+  "err_tags_item_int.toml": {
+   "error": "[recipe]: 'tags'[0] must be a string, got int",
+   "mode": "-",
+   "ok": false
+  },
+  "err_tags_not_array.toml": {
+   "error": "[recipe]: 'tags' must be an array of strings, got str",
+   "mode": "-",
+   "ok": false
+  },
+  "err_templates_bad_policy.toml": {
+   "error": "[provides].templates[0].update_policy: invalid value 'sometimes'; expected auto | confirm | never-force",
+   "mode": "-",
+   "ok": false
+  },
+  "err_templates_missing_target.toml": {
+   "error": "[provides].templates[0]: missing or invalid required field 'target'",
+   "mode": "-",
+   "ok": false
+  },
+  "err_templates_policy_apostrophe.toml": {
+   "error": "[provides].templates[0].update_policy: invalid value \"au'to\"; expected auto | confirm | never-force",
+   "mode": "-",
+   "ok": false
+  },
+  "err_templates_policy_backslash.toml": {
+   "error": "[provides].templates[0].update_policy: invalid value 'back\\\\slash'; expected auto | confirm | never-force",
+   "mode": "-",
+   "ok": false
+  },
+  "err_templates_policy_both_quotes.toml": {
+   "error": "[provides].templates[0].update_policy: invalid value 'b\\'\"oth'; expected auto | confirm | never-force",
+   "mode": "-",
+   "ok": false
+  },
+  "err_templates_policy_controls.toml": {
+   "error": "[provides].templates[0].update_policy: invalid value 'a\\x01b\\x7fc\\x85d\\ne'; expected auto | confirm | never-force",
+   "mode": "-",
+   "ok": false
+  },
+  "err_templates_policy_int.toml": {
+   "error": "[provides].templates[0].update_policy: invalid value 1; expected auto | confirm | never-force",
+   "mode": "-",
+   "ok": false
+  },
+  "err_templates_policy_quote.toml": {
+   "error": "[provides].templates[0].update_policy: invalid value 'sa\"ying'; expected auto | confirm | never-force",
+   "mode": "-",
+   "ok": false
+  },
+  "err_templates_policy_unicode.toml": {
+   "error": "[provides].templates[0].update_policy: invalid value 'café👍'; expected auto | confirm | never-force",
+   "mode": "-",
+   "ok": false
+  },
+  "ok_author_coercion.toml": {
+   "mode": "-",
+   "ok": true,
+   "recipe": {
+    "author": "True",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "0.5",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "ok_brief_forms.toml": {
+   "mode": "-",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": {
+     "context_sources": [
+      {
+       "key": "k1",
+       "text": "t1"
+      }
+     ],
+     "runtime_flow": [
+      {
+       "key": "k2",
+       "text": 5
+      }
+     ],
+     "workflow_rules": [
+      {
+       "key": null,
+       "text": "rule one"
+      },
+      {
+       "key": null,
+       "text": "rule two"
+      }
+     ]
+    },
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "ok_cli_deps_github_release.toml": {
+   "mode": "-",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [
+     {
+      "binary": "jprovider",
+      "install_url": "",
+      "installer": "github-release",
+      "min_version": "",
+      "purpose": "Jinna provider",
+      "release_policy": "latest-stable",
+      "repository": "parada1104/jinna-provider",
+      "required": true,
+      "version_check": ""
+     },
+     {
+      "binary": "npx",
+      "install_url": "https://example.com",
+      "installer": "",
+      "min_version": "8.0.0",
+      "purpose": "Run server",
+      "release_policy": "",
+      "repository": "",
+      "required": false,
+      "version_check": "npx --version"
+     }
+    ],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "ok_config_boolean_alias.toml": {
+   "mode": "-",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {
+      "enabled": {
+       "default": false,
+       "enum": null,
+       "help_text": "",
+       "type": "bool",
+       "validation": {}
+      }
+     },
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "ok_config_extra.toml": {
+   "mode": "-",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {
+      "board_isolation": {
+       "card_validation_required": true,
+       "forbidden_tools": [
+        "a",
+        "b"
+       ],
+       "restricted_tools": [
+        "c"
+       ]
+      }
+     },
+     "fields": {},
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "ok_config_reconcile.toml": {
+   "mode": "-",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {
+      "reconcile": {
+       "shape": {
+        "expectations": [
+         {
+          "config_field": "string",
+          "config_field_when_set": "string",
+          "event": "string",
+          "property": "string"
+         }
+        ],
+        "max_age_seconds": "integer",
+        "scope_field": "string"
+       },
+       "values": {
+        "expectations": [
+         {
+          "config_field": "default_list",
+          "event": "delivery",
+          "property": "list"
+         },
+         {
+          "config_field": "done_list",
+          "config_field_when_set": "published_list",
+          "event": "merge",
+          "property": "list"
+         }
+        ],
+        "max_age_seconds": 900,
+        "scope_field": "board_id"
+       }
+      }
+     }
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "ok_hooks_dotted_path.toml": {
+   "mode": "temp:ok_hooks_dotted_path.toml",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [
+     {
+      "blocking": false,
+      "description": "",
+      "event": "stop",
+      "id": "h",
+      "matcher": "",
+      "script": "sub/../ok.sh"
+     }
+    ],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "ok_hooks_full.toml": {
+   "mode": "temp:ok_hooks_full.toml",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [
+     {
+      "blocking": true,
+      "description": "gate",
+      "event": "pre-tool-use",
+      "id": "h1",
+      "matcher": "Edit|Write",
+      "script": "hooks/ok.sh"
+     }
+    ],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "ok_hooks_symlink_inside.toml": {
+   "mode": "temp:ok_hooks_symlink_inside.toml",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [
+     {
+      "blocking": false,
+      "description": "",
+      "event": "stop",
+      "id": "h",
+      "matcher": "",
+      "script": "hooks/x.sh"
+     }
+    ],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "ok_init_full.toml": {
+   "mode": "temp:ok_init_full.toml",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": {
+     "description": "pad",
+     "needs_manifest": true,
+     "needs_mcp": [
+      "trello"
+     ],
+     "prompt": "init.md"
+    },
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "ok_init_prompt_symlink_inside.toml": {
+   "mode": "temp:ok_init_prompt_symlink_inside.toml",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": {
+     "description": "d",
+     "needs_manifest": false,
+     "needs_mcp": [],
+     "prompt": "prompts/p.md"
+    },
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "ok_mcp_config.toml": {
+   "mode": "-",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "",
+    "mcp": [
+     {
+      "config": {
+       "args": [
+        "-y",
+        "@x/y"
+       ],
+       "command": "npx",
+       "env": {
+        "A": "$A",
+        "B": "1"
+       },
+       "timeout": 30000
+      },
+      "id": "m"
+     }
+    ],
+    "name": "N",
+    "runtime_hooks": [],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "ok_silent_non_tables.toml": {
+   "mode": "-",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [],
+    "skills": [],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "ok_skills_url_int.toml": {
+   "mode": "-",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [],
+    "skills": [
+     {
+      "id": "s",
+      "path": "1",
+      "source": "dep",
+      "url": "7"
+     }
+    ],
+    "tags": [],
+    "templates": [],
+    "version": "1.0"
+   }
+  },
+  "ok_templates_condition_int.toml": {
+   "mode": "-",
+   "ok": true,
+   "recipe": {
+    "author": "",
+    "brief": null,
+    "capabilities": [],
+    "cli_deps": [],
+    "commands": [],
+    "config": {
+     "extra": {},
+     "fields": {},
+     "tables": {}
+    },
+    "conflicts_with": [],
+    "description": "D",
+    "docs": [],
+    "hooks": [],
+    "id": "x",
+    "init": null,
+    "license": "",
+    "mcp": [],
+    "name": "N",
+    "runtime_hooks": [],
+    "skills": [],
+    "tags": [],
+    "templates": [
+     {
+      "condition": "3",
+      "source": "a",
+      "target": "b",
+      "update_policy": "auto"
+     }
+    ],
+    "version": "1.0"
+   }
+  }
+ }
+}

@@ -1,0 +1,64 @@
+{
+ "repr_golden": {
+  "repr-string-00": {
+   "repr": "'plain'"
+  },
+  "repr-string-01": {
+   "repr": "\"it's\""
+  },
+  "repr-string-02": {
+   "repr": "'say \"hi\"'"
+  },
+  "repr-string-03": {
+   "repr": "'both \\'\"'"
+  },
+  "repr-string-04": {
+   "repr": "'back\\\\slash'"
+  },
+  "repr-string-05": {
+   "repr": "'\\x01'"
+  },
+  "repr-string-06": {
+   "repr": "'\\x1f'"
+  },
+  "repr-string-07": {
+   "repr": "'\\x7f'"
+  },
+  "repr-string-08": {
+   "repr": "'\\x85'"
+  },
+  "repr-string-09": {
+   "repr": "'\\x9f'"
+  },
+  "repr-string-10": {
+   "repr": "'\\t'"
+  },
+  "repr-string-11": {
+   "repr": "'\\n'"
+  },
+  "repr-string-12": {
+   "repr": "'\\r'"
+  },
+  "repr-string-13": {
+   "repr": "'café'"
+  },
+  "repr-string-14": {
+   "repr": "'👍'"
+  },
+  "repr-string-15": {
+   "repr": "'\\xa0'"
+  },
+  "repr-string-16": {
+   "repr": "'\\u2028'"
+  },
+  "repr-string-17": {
+   "repr": "'a\\rb'"
+  },
+  "repr-string-18": {
+   "repr": "'tab\\there'"
+  },
+  "repr-string-19": {
+   "repr": "''"
+  }
+ }
+}

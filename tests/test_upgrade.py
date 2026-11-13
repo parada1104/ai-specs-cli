@@ -1,13 +1,26 @@
+"""Black-box tests for `ai-specs upgrade` (native Go engine, GO-20 U2d).
+
+The engine resolves its install from the EXECUTABLE path (it compares the
+running binary against $HOME/.ai-specs and ~/.local/bin/ai-specs), so every
+fixture copies the native binary into a scratch install under a fake HOME and
+runs that copy. The operator's real installation is never touched: HOME,
+AI_SPECS_HOME and PATH are always redirected into the fixture.
+"""
+
 import os
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cli_path  # noqa: E402
+
 
 ROOT = Path(__file__).resolve().parents[1]
-BIN_AI_SPECS = ROOT / "bin" / "ai-specs"
-LIB_UPGRADE = ROOT / "lib" / "upgrade.sh"
+LEGACY_LAUNCHER = ROOT / "bin" / "ai-specs"
 
 
 def run(args, cwd=None, env=None, check=True, capture_output=True):
@@ -22,47 +35,36 @@ def run(args, cwd=None, env=None, check=True, capture_output=True):
     return result
 
 
-def run_ai_specs(args, cwd=None, env=None, check=True):
-    """Run bin/ai-specs with the given args in the given env."""
-    cmd = ["bash", str(BIN_AI_SPECS)] + args
-    return run(cmd, cwd=cwd, env=env, check=check)
-
-
-def run_upgrade(cwd=None, env=None, check=True):
-    """Run lib/upgrade.sh directly with the given env."""
-    # Use the copied script in the fake install when AI_SPECS_HOME is set
-    if env and env.get("AI_SPECS_HOME"):
-        script = Path(env["AI_SPECS_HOME"]) / "lib" / "upgrade.sh"
-    else:
-        script = LIB_UPGRADE
-    cmd = ["bash", str(script)]
-    return run(cmd, cwd=cwd, env=env, check=check)
-
-
 class UpgradeTests(unittest.TestCase):
     def fake_home(self):
-        """Create a temp directory to act as HOME, return its Path."""
+        """Create a temp directory to act as HOME, return its resolved Path.
+
+        Resolved so the engine's physical-path comparisons match the paths it
+        receives (macOS /var -> /private/var).
+        """
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        return Path(tmp.name)
+        return Path(os.path.realpath(tmp.name))
+
+    def native_binary(self):
+        binary = cli_path()
+        if binary == LEGACY_LAUNCHER:
+            self.fail("native Go binary unavailable: the upgrade route cannot be exercised")
+        return binary
 
     def setup_global_install(self, home: Path, version="1.0.0"):
         """
         Create a fake global install under home/.ai-specs with a git repo.
+        The native binary is the installed entry point, reached through the
+        ~/.local/bin/ai-specs symlink as on a real machine.
         Returns (ai_specs_home, bin_dir).
         """
         ai_specs = home / ".ai-specs"
         ai_specs.mkdir()
         bin_dir = ai_specs / "bin"
         bin_dir.mkdir()
-        lib_dir = ai_specs / "lib"
-        lib_dir.mkdir()
-        # Copy the real bin/ai-specs into the fake install
-        (bin_dir / "ai-specs").write_text(BIN_AI_SPECS.read_text())
+        shutil.copy2(self.native_binary(), bin_dir / "ai-specs")
         (bin_dir / "ai-specs").chmod(0o755)
-        # Copy lib/upgrade.sh into the fake install so it resolves inside ~/.ai-specs
-        (lib_dir / "upgrade.sh").write_text(LIB_UPGRADE.read_text())
-        (lib_dir / "upgrade.sh").chmod(0o755)
         # Write VERSION
         (ai_specs / "VERSION").write_text(version + "\n")
         # Symlink from ~/.local/bin/ai-specs -> ~/.ai-specs/bin/ai-specs
@@ -70,7 +72,9 @@ class UpgradeTests(unittest.TestCase):
         local_bin.mkdir(parents=True)
         local_bin_link = local_bin / "ai-specs"
         local_bin_link.symlink_to(bin_dir / "ai-specs")
-        # Init git repo
+        # Init git repo; the binary stays out of version control, as the
+        # installed entry is not a tracked source file of the fixture.
+        (ai_specs / ".gitignore").write_text("bin/\n")
         run(["git", "init"], cwd=ai_specs)
         run(["git", "config", "user.email", "test@test.com"], cwd=ai_specs)
         run(["git", "config", "user.name", "Test"], cwd=ai_specs)
@@ -95,9 +99,27 @@ class UpgradeTests(unittest.TestCase):
             env.update(extra)
         return env
 
+    def run_upgrade(self, home: Path, env, args=(), check=True):
+        """Run the installed native binary: `<install>/bin/ai-specs upgrade ...`."""
+        binary = home / ".ai-specs" / "bin" / "ai-specs"
+        return run([str(binary), "upgrade", *args], env=env, check=check)
+
+    def publish_upstream_version(self, home: Path, version: str):
+        """Push a new VERSION commit to the bare origin (simulated upstream)."""
+        bare = home / "origin.git"
+        clone = home / "upstream_clone"
+        run(["git", "clone", str(bare), str(clone)])
+        (clone / "VERSION").write_text(version + "\n")
+        run(["git", "add", "VERSION"], cwd=clone)
+        run(["git", "commit", "-m", "v" + version], cwd=clone)
+        run(["git", "push", "origin", "main"], cwd=clone)
+
     # --- 1. Help lists upgrade ---
     def test_help_lists_upgrade(self):
-        result = run_ai_specs(["help"], check=True)
+        home = self.fake_home()
+        self.setup_global_install(home)
+        env = self.make_env(home)
+        result = run([str(self.native_binary()), "help"], env=env, check=True)
         self.assertIn("upgrade", result.stdout)
         self.assertIn("installation", result.stdout.lower())
 
@@ -106,11 +128,9 @@ class UpgradeTests(unittest.TestCase):
         home = self.fake_home()
         self.setup_global_install(home)
         env = self.make_env(home)
-        result = run_upgrade(env=env, check=False)
-        # Dry-run by default? Actually --help should print dry-run and force.
-        # lib/upgrade.sh without args should run normally; let's test --help
-        script = Path(env["AI_SPECS_HOME"]) / "lib" / "upgrade.sh"
-        result = run(["bash", str(script), "--help"], env=env, check=False)
+        # A plain upgrade on a fresh install is a no-op against the local origin.
+        self.run_upgrade(home, env, check=False)
+        result = self.run_upgrade(home, env, args=["--help"], check=False)
         self.assertEqual(result.returncode, 0)
         self.assertIn("--dry-run", result.stdout)
         self.assertIn("--force", result.stdout)
@@ -118,46 +138,53 @@ class UpgradeTests(unittest.TestCase):
     # --- 3. Valid global install detection ---
     def test_valid_global_install_proceeds(self):
         home = self.fake_home()
-        ai_specs, _ = self.setup_global_install(home)
+        self.setup_global_install(home)
         env = self.make_env(home)
         # Run upgrade --dry-run (safe, read-only)
-        script = ai_specs / "lib" / "upgrade.sh"
-        result = run(["bash", str(script), "--dry-run"], env=env, check=False)
+        result = self.run_upgrade(home, env, args=["--dry-run"], check=False)
         # Should succeed because install is valid, even though origin/main has no new commits
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("up to date", result.stdout.lower())
 
-    # --- 4. Missing/broken install detection ---
-    def test_missing_ai_specs_home(self):
+    # --- 4. AI_SPECS_HOME is derived from the executable, as the launcher did ---
+    def test_missing_ai_specs_home_is_derived_from_executable(self):
+        # The legacy `lib/upgrade.sh` refused when AI_SPECS_HOME was unset, but
+        # only when run directly: the public `ai-specs upgrade` launcher always
+        # exported it, deriving it from the executable location. The native
+        # binary does the same derivation, so the unset and set environments
+        # must behave identically. The refusal branch itself is pinned by the
+        # Go unit test TestDetectMissingHome (internal/upgrade/upgrade_test.go).
         home = self.fake_home()
-        ai_specs, _ = self.setup_global_install(home)
+        self.setup_global_install(home)
         env = self.make_env(home)
-        del env["AI_SPECS_HOME"]
-        script = ai_specs / "lib" / "upgrade.sh"
-        result = run(["bash", str(script)], env=env, check=False)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("install.sh", result.stderr)
+        with_home = self.run_upgrade(home, env, args=["--dry-run"], check=False)
+        unset_env = dict(env)
+        del unset_env["AI_SPECS_HOME"]
+        without_home = self.run_upgrade(home, unset_env, args=["--dry-run"], check=False)
+        self.assertEqual(with_home.returncode, 0, msg=with_home.stderr)
+        self.assertEqual(without_home.returncode, with_home.returncode)
+        self.assertEqual(without_home.stdout, with_home.stdout)
+        self.assertEqual(without_home.stderr, with_home.stderr)
 
     def test_missing_git_dir(self):
         home = self.fake_home()
         ai_specs, _ = self.setup_global_install(home)
         env = self.make_env(home)
         # Remove .git
-        import shutil
         shutil.rmtree(ai_specs / ".git")
-        result = run_upgrade(env=env, check=False)
+        result = self.run_upgrade(home, env, check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("install.sh", result.stderr)
 
     def test_broken_symlink(self):
         home = self.fake_home()
-        ai_specs, _ = self.setup_global_install(home)
+        self.setup_global_install(home)
         env = self.make_env(home)
         # Break the symlink
         local_bin_link = home / ".local" / "bin" / "ai-specs"
         local_bin_link.unlink()
         local_bin_link.symlink_to("/nonexistent")
-        result = run_upgrade(env=env, check=False)
+        result = self.run_upgrade(home, env, check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("install.sh", result.stderr)
 
@@ -166,29 +193,21 @@ class UpgradeTests(unittest.TestCase):
         home = self.fake_home()
         # Set up a dev checkout outside ~/.ai-specs
         dev = home / "dev" / "ai-specs"
-        dev.mkdir(parents=True)
         bin_dir = dev / "bin"
-        bin_dir.mkdir()
-        lib_dir = dev / "lib"
-        lib_dir.mkdir()
-        (bin_dir / "ai-specs").write_text(BIN_AI_SPECS.read_text())
+        bin_dir.mkdir(parents=True)
+        shutil.copy2(self.native_binary(), bin_dir / "ai-specs")
         (bin_dir / "ai-specs").chmod(0o755)
-        (lib_dir / "upgrade.sh").write_text(LIB_UPGRADE.read_text())
-        (lib_dir / "upgrade.sh").chmod(0o755)
         (dev / "VERSION").write_text("dev\n")
         # Symlink from ~/.local/bin/ai-specs -> dev checkout
         local_bin = home / ".local" / "bin"
         local_bin.mkdir(parents=True)
         local_bin_link = local_bin / "ai-specs"
-        if local_bin_link.exists() or local_bin_link.is_symlink():
-            local_bin_link.unlink()
         local_bin_link.symlink_to(bin_dir / "ai-specs")
         env = os.environ.copy()
         env["HOME"] = str(home)
         env["AI_SPECS_HOME"] = str(dev)
         env["PATH"] = str(local_bin) + ":" + env.get("PATH", "")
-        script = dev / "lib" / "upgrade.sh"
-        result = run(["bash", str(script)], env=env, check=False)
+        result = run([str(bin_dir / "ai-specs"), "upgrade"], env=env, check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("manual", result.stderr.lower())
         self.assertIn("git pull", result.stderr.lower())
@@ -196,12 +215,10 @@ class UpgradeTests(unittest.TestCase):
     # --- 6. Dirty working tree blocks upgrade ---
     def test_dirty_working_tree_blocks(self):
         home = self.fake_home()
-        self.setup_global_install(home)
+        ai_specs, _ = self.setup_global_install(home)
         env = self.make_env(home)
-        # Make a dirty change
-        ai_specs = home / ".ai-specs"
         (ai_specs / "foo.txt").write_text("dirty")
-        result = run_upgrade(env=env, check=False)
+        result = self.run_upgrade(home, env, check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("dirty", result.stderr.lower())
         self.assertIn("--force", result.stderr)
@@ -211,12 +228,10 @@ class UpgradeTests(unittest.TestCase):
         home = self.fake_home()
         ai_specs, _ = self.setup_global_install(home)
         env = self.make_env(home)
-        ai_specs = home / ".ai-specs"
         (ai_specs / "foo.txt").write_text("dirty")
         run(["git", "add", "foo.txt"], cwd=ai_specs)
-        script = ai_specs / "lib" / "upgrade.sh"
-        result = run(["bash", str(script), "--force"], env=env, check=False)
         # Up-to-date but dirty; with --force should warn and succeed (since already up to date)
+        result = self.run_upgrade(home, env, args=["--force"], check=False)
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("warning", (result.stdout + result.stderr).lower())
 
@@ -225,16 +240,9 @@ class UpgradeTests(unittest.TestCase):
         home = self.fake_home()
         ai_specs, _ = self.setup_global_install(home, version="1.0.0")
         env = self.make_env(home)
-        # Create a new commit on the bare remote (simulate upstream update)
-        bare = home / "origin.git"
-        clone = home / "upstream_clone"
-        run(["git", "clone", str(bare), str(clone)])
-        (clone / "VERSION").write_text("2.0.0\n")
-        run(["git", "add", "VERSION"], cwd=clone)
-        run(["git", "commit", "-m", "v2"], cwd=clone)
-        run(["git", "push", "origin", "main"], cwd=clone)
+        self.publish_upstream_version(home, "2.0.0")
         # Now the local repo is behind
-        result = run_upgrade(env=env, check=False)
+        result = self.run_upgrade(home, env, check=False)
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("1.0.0", result.stdout)
         self.assertIn("2.0.0", result.stdout)
@@ -250,7 +258,7 @@ class UpgradeTests(unittest.TestCase):
         (ai_specs / "local.txt").write_text("local change")
         run(["git", "add", "local.txt"], cwd=ai_specs)
         run(["git", "commit", "-m", "local"], cwd=ai_specs)
-        result = run_upgrade(env=env, check=False)
+        result = self.run_upgrade(home, env, check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("diverged", (result.stdout + result.stderr).lower())
 
@@ -259,18 +267,10 @@ class UpgradeTests(unittest.TestCase):
         home = self.fake_home()
         ai_specs, _ = self.setup_global_install(home, version="1.0.0")
         env = self.make_env(home)
-        # Push v2 to remote
-        bare = home / "origin.git"
-        clone = home / "upstream_clone"
-        run(["git", "clone", str(bare), str(clone)])
-        (clone / "VERSION").write_text("2.0.0\n")
-        run(["git", "add", "VERSION"], cwd=clone)
-        run(["git", "commit", "-m", "v2"], cwd=clone)
-        run(["git", "push", "origin", "main"], cwd=clone)
+        self.publish_upstream_version(home, "2.0.0")
         # Fetch in the local repo so origin/main is up to date for dry-run preview
         run(["git", "fetch", "origin", "main"], cwd=ai_specs)
-        script = ai_specs / "lib" / "upgrade.sh"
-        result = run(["bash", str(script), "--dry-run"], env=env, check=False)
+        result = self.run_upgrade(home, env, args=["--dry-run"], check=False)
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("1.0.0", result.stdout)
         self.assertIn("2.0.0", result.stdout)
@@ -281,16 +281,10 @@ class UpgradeTests(unittest.TestCase):
     # --- 11. Version diff printed after upgrade ---
     def test_version_diff_after_upgrade(self):
         home = self.fake_home()
-        ai_specs, _ = self.setup_global_install(home, version="1.0.0")
+        self.setup_global_install(home, version="1.0.0")
         env = self.make_env(home)
-        bare = home / "origin.git"
-        clone = home / "upstream_clone"
-        run(["git", "clone", str(bare), str(clone)])
-        (clone / "VERSION").write_text("2.0.0\n")
-        run(["git", "add", "VERSION"], cwd=clone)
-        run(["git", "commit", "-m", "v2"], cwd=clone)
-        run(["git", "push", "origin", "main"], cwd=clone)
-        result = run_upgrade(env=env, check=False)
+        self.publish_upstream_version(home, "2.0.0")
+        result = self.run_upgrade(home, env, check=False)
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("1.0.0", result.stdout)
         self.assertIn("2.0.0", result.stdout)
@@ -298,16 +292,10 @@ class UpgradeTests(unittest.TestCase):
     # --- 12. Symlink integrity after upgrade ---
     def test_symlink_integrity_after_upgrade(self):
         home = self.fake_home()
-        ai_specs, _ = self.setup_global_install(home, version="1.0.0")
+        self.setup_global_install(home, version="1.0.0")
         env = self.make_env(home)
-        bare = home / "origin.git"
-        clone = home / "upstream_clone"
-        run(["git", "clone", str(bare), str(clone)])
-        (clone / "VERSION").write_text("2.0.0\n")
-        run(["git", "add", "VERSION"], cwd=clone)
-        run(["git", "commit", "-m", "v2"], cwd=clone)
-        run(["git", "push", "origin", "main"], cwd=clone)
-        result = run_upgrade(env=env, check=False)
+        self.publish_upstream_version(home, "2.0.0")
+        result = self.run_upgrade(home, env, check=False)
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("symlink", result.stdout.lower())
 
@@ -316,7 +304,7 @@ class UpgradeTests(unittest.TestCase):
         home = self.fake_home()
         self.setup_global_install(home, version="1.0.0")
         env = self.make_env(home)
-        result = run_upgrade(env=env, check=False)
+        result = self.run_upgrade(home, env, check=False)
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("up to date", result.stdout.lower())
 

@@ -1,0 +1,7 @@
+[recipe]
+id = "x"
+name = "N"
+description = "D"
+version = "1.0"
+author = true
+license = 0.5

@@ -1,5 +1,5 @@
 # Expected SHA-256 digests of the published worktree-gate release assets
-# (v0.24.0). This file is the trust root (D5): the network supplies only
+# (v0.25.0). This file is the trust root (D5): the network supplies only
 # bytes, the repository supplies the expected digest. A downloaded asset
 # whose SHA-256 does not match is deleted and never executed.
 #
@@ -11,7 +11,7 @@
 # CANONICAL TOOLCHAIN: Go builds are deterministic for a given toolchain, but
 # different Go releases compile different stdlib bytes. These digests were
 # generated with go1.24.13 — the same version the release CI pins
-# (.github/workflows/release-worktree-gate.yml) — and MUST be regenerated with
+# (.github/workflows/release-binaries.yml) — and MUST be regenerated with
 # exactly that version, or the CI checksum gate fails the release.
 #
 # The four executable assets are intentionally CI/release outputs, not tracked
@@ -136,12 +136,116 @@
 # key and writes partial/missing snapshots atomically via temp+Sync+rename; no
 # new asset, no second trust root), with the canonical go1.24.13 toolchain via
 # the same command above.
+# Regenerated for the fix-deps-layer deps lock re-extension (the same four-arch
+# asset's --write-lock now emits the re-extended [deps."<id>".skills."<skill>"]
+# dep content-hash section, byte-identical with lib/_internal/lock.py; no new
+# asset, no second trust root), with the canonical go1.24.13 toolchain via the
+# same command above.
 #
-# Regenerated for release v0.24.5 (the same four-arch asset carries the GO-07–GO-10
-# actuators and the Go gate query migrations merged since v0.24.0, and the release
-# version stamped at link time); no new asset, no second trust root, with the
+# Regenerated for the SX0a shared-package extraction (the gate main package now
+# invokes the orphans planner and deletion actuator in-process through the
+# importable shared package; no behavior change, no new asset, no second trust
+# root), with the canonical go1.24.13 toolchain via the same command above.
+#
+# Regenerated for the SX0b shared-package extraction (the gate main package now
+# invokes the lock writer in-process through the importable shared package;
+# no behavior change, no new asset, no second trust root), with the canonical
+# go1.24.13 toolchain via the same command above.
+#
+# Regenerated for the SX0d shared-package extraction (the gate main package now
+# imports the pure tag and primitive conflict graders from the importable shared
+# package; no behavior change, no new asset, no second trust root), with the
 # canonical go1.24.13 toolchain via the same command above.
-3935039288a7b128da006394e4634345f641c33435c8a474b017e934f987ad4b  worktree-gate-darwin-amd64
-bc9ead02cbcb7c86ede637959062c7e60881eb6b473ca8284fd52f4e81832b4e  worktree-gate-darwin-arm64
-da1eaf059fe7fb2402e6d813b310759a04ff9723fe789ef7ea1c20c89d0a2cd7  worktree-gate-linux-amd64
-9dbfa71426a1a5e3a0f12a4c3aadacbf991169d8d4c5857e3254083ee4973a96  worktree-gate-linux-arm64
+#
+# Regenerated for the SX0e shared-package extraction (the gate main package now
+# imports the shared pure reconcile-stamp planner instead of its local copy and
+# consumes the exported source type; no behavior change, no new asset, no second
+# trust root), with the canonical go1.24.13 toolchain via the same command above.
+# Regenerated for the SX0c.1 copy-primitive extraction. SX0c.1 moves statMode,
+# copyFileStat and copyTree into the shared package. The gate command layer now
+# calls one copy authority. No behavior changes. No new asset and no second
+# trust root. The canonical go1.24.13 toolchain ran the same command above.
+# Regenerated for the SX0c.2 copy-apply command-layer extraction. SX0c.2 moves
+# the copy-apply types, the decision, the execution and the command entry point
+# into the shared package, and the gate dispatch calls the exported entry point.
+# No behavior change, no new asset and no second trust root. The canonical
+# go1.24.13 toolchain ran the same command above.
+# Regenerated for the SX0f.1 classify extraction. SX0f.1 moves the managed-override
+# classify decision core and its helpers (state constants, input/result types,
+# Sha256Bytes and ReadRegularFile, and the --plan-classify entry point) into the
+# shared package, and the gate main package and both actuators call the exported
+# forms. No behavior change, no new asset and no second trust root. The canonical
+# go1.24.13 toolchain ran the same command above.
+# Regenerated for the go-07 S13 PR1 bindings + durable tracker witness
+# shared-package extraction (the gate main package now imports the capability
+# binding decision core and the durable tracker witness writer from the
+# importable shared package, and the root native sync authority consumes the same
+# core; no gate behavior change, no new asset, no second trust root), with the
+# canonical go1.24.13 toolchain via the same command above.
+# Regenerated for the go-07 S13 PR2 merge-config shared-package extraction (the
+# gate main package now imports the ordered container and the merge-config
+# decision core, including the CPython repr parity helpers, from the importable
+# shared package, and the recipe-config writer consumes the shared ordered
+# container with no behavior change; no new asset and no second trust root), with
+# the canonical go1.24.13 toolchain via the same command above.
+# Regenerated for the go-07 S13 PR3 go-resolved-config strangler slice: the
+# gate main package now imports the resolved-config projection core from the
+# importable shared package with the git fact forwarded through the established
+# seam, and the new root native sync authority consumes the same core in-process.
+# This delivery also removes three gate wrappers that the extraction left
+# unreferenced (legacyRepoTopology, nonEmptyString, detectSubmodules); every
+# wrapper the gate still needs keeps its historical name as a thin alias over the
+# shared core. No gate JSON contract change, no new asset, no second trust root,
+# with the canonical go1.24.13 toolchain via the same command above.
+# Regenerated for the go-07 S14 PR1 divergence closure (the same four-arch asset's
+# shared merge-config core no longer rejects a keyless field/table/manifest entry,
+# and the resolved-config projection keeps an empty [recipes.<id>] table, resolves
+# a flat-versus-[config] collision deterministically to the nested value, and
+# coerces a truthy non-string [[bindings]] capability/recipe as Python does; no new
+# asset, no second trust root), with the canonical go1.24.13 toolchain via the same
+# command above.
+# Regenerated for the go-07 S14a materialize writer promotion, step 1 of 2 (the
+# importable shared package gains the recipe-config TOML writer core that the next
+# commit wires the gate binary to; no behavior change yet, no new asset, no second
+# trust root), with the canonical go1.24.13 toolchain via the same command above.
+# Regenerated for the go-07 S14a materialize writer promotion, step 2 of 2 (the gate
+# binary now calls the shared writer core and its local copy is deleted, so the gate
+# and the materialize spine share one grader; no behavior change, no new asset, no
+# second trust root), with the canonical go1.24.13 toolchain via the same command above.
+# Regenerated for the go-07 S14a materialize reader promotion (the same four-arch
+# asset no longer carries local copies of the tag-metadata and primitive-claim TOML
+# readers: both moved into the importable shared package behind
+# shared.LoadRecipeTagMetadata and shared.LoadRecipePrimitives, so the gate binary and
+# the root native materializer acquire through one implementation; the gate's tag and
+# primitive commands delegate to the shared readers and their JSON contracts are
+# unchanged; no behavior change, no new asset, no second trust root), with the
+# canonical go1.24.13 toolchain via the same command above.
+# Regenerated for GO-20 U2e T5 (the gate's recipe-config writer and ledger-reconcile
+# manifest reads parse TOML in process instead of spawning an ambient `python3 -c`
+# tomllib helper, through a reader copy of the root module's internal/toml that the
+# gate module cannot import; the frozen refusal framings are unchanged and the parse
+# error detail is TOLERANT per docs/go-migration-parity-contract.md; no new asset, no
+# second trust root), with the canonical go1.24.13 toolchain via the same command above.
+# Regenerated for GO-20 U2e T5 PR4b, the atomic lib/ deletion (the same four-arch
+# asset loses the 14 bridge flags that existed only so lib/ could call Go:
+# --resolve-bindings, --plan-classify, --apply-copy, --materialize-hook,
+# --write-lock, --plan-orphans, --apply-orphans, --plan-merge-config,
+# --write-recipe-config, --resolve-primitive-conflicts, --plan-reconcile-stamps,
+# --plan-resolved-config, --resolve-tag-conflicts, --materialize-template; the two
+# live recipe.toml readers now parse in process so the gate needs no ambient
+# python3 at all, and the retired __TRACKER_LIB_INTERNAL__ hook stamp is gone. The
+# wheel file API, the shared cores the root module imports and every surviving
+# command contract are unchanged; the parse-error detail is TOLERANT per
+# docs/go-migration-parity-contract.md. No new asset, no second trust root), with
+# the canonical go1.24.13 toolchain via the same command above.
+667210941499c28f0e7ab5953bc1fe3a2140409e63cd32ed1435ca949d994058  worktree-gate-darwin-amd64
+ef90a30093e80915953614133c2592e64f9500cf0b997c1d3a9d5866daba88d7  worktree-gate-darwin-arm64
+550a1b2fbe8d766a086d5579f8f407ba7030db3f0e3b4d7e2162d340fd7e1b02  worktree-gate-linux-amd64
+2b184a3001bdfb314438c3923c51cf7a294ba998a19f0203320c46bc685f238f  worktree-gate-linux-arm64
+
+# Regenerated for the v0.25.0 version bump (GO-20 U2e T5): build-gate.sh
+# injects $VERSION at link time (-X main.version), so the 0.24.0 -> 0.25.0
+# bump alone changes all four digests. Same canonical go1.24.13 toolchain via:
+#   scripts/build-gate.sh
+#   cd dist && shasum -a 256 worktree-gate-darwin-amd64 worktree-gate-darwin-arm64 \
+#     worktree-gate-linux-amd64 worktree-gate-linux-arm64

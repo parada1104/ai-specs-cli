@@ -1,0 +1,217 @@
+{
+  "comment": "Frozen output of lib/_internal/lock.py (_write_lock_python) for the TestWriteLockDifferential case matrix. Captured once; regenerating it is a human decision, not a test side effect.",
+  "cases": [
+    {
+      "index": 0,
+      "name": "empty lock",
+      "spec": "{\"meta\": {}, \"managed\": {}, \"deps\": {}, \"agents\": {}}",
+      "outcome": "ok",
+      "file": {
+        "encoding": "text",
+        "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n"
+      }
+    },
+    {
+      "index": 1,
+      "name": "meta only",
+      "spec": "{\"meta\": {\"cli_version\": \"0.24.0\", \"synced_at\": \"2026-07-14T00:00:00Z\"}}",
+      "outcome": "ok",
+      "file": {
+        "encoding": "text",
+        "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.24.0\"\nsynced_at = \"2026-07-14T00:00:00Z\"\n"
+      }
+    },
+    {
+      "index": 2,
+      "name": "meta blank values keep header",
+      "spec": "{\"meta\": {\"cli_version\": \"\", \"synced_at\": \"\"}}",
+      "outcome": "ok",
+      "file": {
+        "encoding": "text",
+        "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\n"
+      }
+    },
+    {
+      "index": 3,
+      "name": "meta synced_at only",
+      "spec": "{\"meta\": {\"synced_at\": \"2026-07-14T00:00:00Z\"}}",
+      "outcome": "ok",
+      "file": {
+        "encoding": "text",
+        "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\nsynced_at = \"2026-07-14T00:00:00Z\"\n"
+      }
+    },
+    {
+      "index": 4,
+      "name": "all sections",
+      "spec": "{\"meta\": {\"cli_version\": \"0.24.0\"}, \"managed\": {\"AGENTS.md\": {\"sha256\": \"abc\", \"recipe\": \"wf\", \"source\": \"tpl.md\", \"kind\": \"gate\", \"policy\": \"auto\"}}, \"deps\": {\"dep1\": {\"skill1\": {\"SKILL.md\": \"h1\", \"scripts/run.sh\": \"h2\"}}}, \"agents\": {\"claude\": {\"AGENTS.md\": \"ah\"}}}",
+      "outcome": "ok",
+      "file": {
+        "encoding": "text",
+        "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.24.0\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"abc\"\nrecipe = \"wf\"\nsource = \"tpl.md\"\nkind = \"gate\"\npolicy = \"auto\"\n\n[deps.\"dep1\".skills.\"skill1\"]\n\"SKILL.md\" = \"h1\"\n\"scripts/run.sh\" = \"h2\"\n\n[agents.\"claude\"]\n\"AGENTS.md\" = \"ah\"\n"
+      }
+    },
+    {
+      "index": 5,
+      "name": "managed sha256 only",
+      "spec": "{\"managed\": {\"a.md\": {\"sha256\": \"abc\"}, \"b.md\": {\"sha256\": \"def\", \"recipe\": \"\", \"source\": \"\", \"kind\": \"\", \"policy\": \"\"}}}",
+      "outcome": "ok",
+      "file": {
+        "encoding": "text",
+        "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[managed.\"a.md\"]\nsha256 = \"abc\"\n\n[managed.\"b.md\"]\nsha256 = \"def\"\n"
+      }
+    },
+    {
+      "index": 6,
+      "name": "managed entry without sha256 skipped",
+      "spec": "{\"managed\": {\"nosha.md\": {\"recipe\": \"x\", \"kind\": \"template\"}, \"yes.md\": {\"sha256\": \"s\"}}, \"meta\": {\"cli_version\": \"1.0\"}}",
+      "outcome": "ok",
+      "file": {
+        "encoding": "text",
+        "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"1.0\"\n\n[managed.\"yes.md\"]\nsha256 = \"s\"\n"
+      }
+    },
+    {
+      "index": 7,
+      "name": "escaping quotes and backslashes",
+      "spec": "{\"managed\": {\"we\\\"ird\\\\path\": {\"sha256\": \"ha\\\\\\\"sh\"}}, \"agents\": {\"my \\\"agent\\\"\": {\"file\\\\name.md\": \"h\\\"ash\"}}, \"deps\": {\"d\\\\1\": {\"s\\\"2\": {\"re\\\\l.md\": \"h\"}}}}",
+      "outcome": "ok",
+      "file": {
+        "encoding": "text",
+        "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[managed.\"we\\\"ird\\\\path\"]\nsha256 = \"ha\\\\\\\"sh\"\n\n[deps.\"d\\\\1\".skills.\"s\\\"2\"]\n\"re\\\\l.md\" = \"h\"\n\n[agents.\"my \\\"agent\\\"\"]\n\"file\\\\name.md\" = \"h\\\"ash\"\n"
+      }
+    },
+    {
+      "index": 8,
+      "name": "unicode",
+      "spec": "{\"agents\": {\"cl\u00e9\": {\"caf\u00e9.md\": \"h\u00e9llo\"}}, \"managed\": {\"\u00fcn\u00efcode/\u6587\u4ef6.md\": {\"sha256\": \"s\u00fcm\"}}}",
+      "outcome": "ok",
+      "file": {
+        "encoding": "text",
+        "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[managed.\"\u00fcn\u00efcode/\u6587\u4ef6.md\"]\nsha256 = \"s\u00fcm\"\n\n[agents.\"cl\u00e9\"]\n\"caf\u00e9.md\" = \"h\u00e9llo\"\n"
+      }
+    },
+    {
+      "index": 9,
+      "name": "empty maps skipped",
+      "spec": "{\"deps\": {\"d1\": {\"s1\": {}, \"s2\": {\"a.md\": \"h\"}}}, \"agents\": {\"empty\": {}, \"claude\": {\"AGENTS.md\": \"h\"}}, \"meta\": {\"cli_version\": \"1.0\"}}",
+      "outcome": "ok",
+      "file": {
+        "encoding": "text",
+        "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"1.0\"\n\n[deps.\"d1\".skills.\"s2\"]\n\"a.md\" = \"h\"\n\n[agents.\"claude\"]\n\"AGENTS.md\" = \"h\"\n"
+      }
+    },
+    {
+      "index": 10,
+      "name": "unsorted insertion order sorts",
+      "spec": "{\"managed\": {\"zz.md\": {\"sha256\": \"z\"}, \"aa.md\": {\"sha256\": \"a\"}, \"mm.md\": {\"sha256\": \"m\"}}, \"agents\": {\"zsh\": {\"b.md\": \"zb\", \"a.md\": \"za\"}, \"claude\": {\"z.md\": \"cz\", \"a.md\": \"ca\"}}, \"deps\": {\"z-dep\": {\"s\": {\"z.md\": \"1\", \"a.md\": \"2\"}}, \"a-dep\": {\"s\": {\"m.md\": \"3\"}}}, \"meta\": {\"synced_at\": \"T\", \"cli_version\": \"9.9\"}}",
+      "outcome": "ok",
+      "file": {
+        "encoding": "text",
+        "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"9.9\"\nsynced_at = \"T\"\n\n[managed.\"aa.md\"]\nsha256 = \"a\"\n\n[managed.\"mm.md\"]\nsha256 = \"m\"\n\n[managed.\"zz.md\"]\nsha256 = \"z\"\n\n[deps.\"a-dep\".skills.\"s\"]\n\"m.md\" = \"3\"\n\n[deps.\"z-dep\".skills.\"s\"]\n\"a.md\" = \"2\"\n\"z.md\" = \"1\"\n\n[agents.\"claude\"]\n\"a.md\" = \"ca\"\n\"z.md\" = \"cz\"\n\n[agents.\"zsh\"]\n\"a.md\" = \"za\"\n\"b.md\" = \"zb\"\n"
+      }
+    },
+    {
+      "index": 11,
+      "name": "refusal meta newline",
+      "spec": "{\"meta\": {\"cli_version\": \"0.1\\n0\"}}",
+      "outcome": "error",
+      "error": "value for meta.cli_version contains a control character"
+    },
+    {
+      "index": 12,
+      "name": "refusal managed value control char",
+      "spec": "{\"managed\": {\"a.md\": {\"sha256\": \"abc\", \"recipe\": \"wf\\u0007x\"}}, \"agents\": {\"claude\": {\"A.md\": \"h\"}}}",
+      "outcome": "error",
+      "error": "value for managed.recipe contains a control character"
+    },
+    {
+      "index": 13,
+      "name": "refusal agents hash DEL",
+      "spec": "{\"agents\": {\"claude\": {\"AGENTS.md\": \"h\\u007fsh\"}}}",
+      "outcome": "error",
+      "error": "value for agents hash contains a control character"
+    },
+    {
+      "index": 14,
+      "name": "refusal deps skill name newline",
+      "spec": "{\"deps\": {\"d\": {\"s\\nk\": {\"a.md\": \"h\"}}}}",
+      "outcome": "error",
+      "error": "value for deps skill name contains a control character"
+    },
+    {
+      "index": 15,
+      "name": "refusal deps hash newline",
+      "spec": "{\"deps\": {\"d\": {\"s\": {\"a.md\": \"h\\nash\"}}}}",
+      "outcome": "error",
+      "error": "value for deps hash contains a control character"
+    },
+    {
+      "index": 16,
+      "name": "refusal order agents before deps",
+      "spec": "{\"agents\": {\"cl\\naude\": {\"A.md\": \"h\"}}, \"deps\": {\"d\": {\"s\": {\"a\\n.md\": \"h\"}}}}",
+      "outcome": "error",
+      "error": "value for agents harness contains a control character"
+    },
+    {
+      "index": 17,
+      "name": "agents hash scalar types",
+      "spec": "{\"agents\": {\"claude\": {\"a.md\": true, \"b.md\": false, \"c.md\": 42, \"d.md\": 1.5, \"e.md\": 1e22, \"f.md\": 100.0, \"g.md\": 0.1, \"h.md\": -0.0}}}",
+      "outcome": "ok",
+      "file": {
+        "encoding": "text",
+        "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[agents.\"claude\"]\n\"a.md\" = \"True\"\n\"b.md\" = \"False\"\n\"c.md\" = \"42\"\n\"d.md\" = \"1.5\"\n\"e.md\" = \"1e+22\"\n\"f.md\" = \"100.0\"\n\"g.md\" = \"0.1\"\n\"h.md\" = \"-0.0\"\n"
+      }
+    },
+    {
+      "index": 18,
+      "name": "agents hash list and dict",
+      "spec": "{\"agents\": {\"claude\": {\"l.md\": [\"a\", 1], \"n.md\": [\"x\", [\"y\"]], \"d.md\": {\"k\": \"v\", \"n\": 1}, \"nd.md\": [\"a\\nb\"]}}}",
+      "outcome": "ok",
+      "file": {
+        "encoding": "text",
+        "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[agents.\"claude\"]\n\"d.md\" = \"{'k': 'v', 'n': 1}\"\n\"l.md\" = \"['a', 1]\"\n\"n.md\" = \"['x', ['y']]\"\n\"nd.md\" = \"['a\\\\nb']\"\n"
+      }
+    },
+    {
+      "index": 19,
+      "name": "deps hash non-string",
+      "spec": "{\"deps\": {\"d\": {\"s\": {\"a.md\": 7, \"b.md\": [\"x\\ny\"]}}}}",
+      "outcome": "ok",
+      "file": {
+        "encoding": "text",
+        "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[deps.\"d\".skills.\"s\"]\n\"a.md\" = \"7\"\n\"b.md\" = \"['x\\\\ny']\"\n"
+      }
+    },
+    {
+      "index": 20,
+      "name": "managed fields non-string",
+      "spec": "{\"managed\": {\"a.md\": {\"sha256\": \"s\", \"recipe\": 3, \"source\": 2.5, \"kind\": true, \"policy\": false}}}",
+      "outcome": "ok",
+      "file": {
+        "encoding": "text",
+        "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[managed.\"a.md\"]\nsha256 = \"s\"\nrecipe = \"3\"\nsource = \"2.5\"\nkind = \"True\"\npolicy = \"False\"\n"
+      }
+    },
+    {
+      "index": 21,
+      "name": "managed sha256 falsy entries skipped",
+      "spec": "{\"managed\": {\"zero.md\": {\"sha256\": 0, \"recipe\": \"r\"}, \"false.md\": {\"sha256\": false}, \"empty.md\": {\"sha256\": []}, \"ok.md\": {\"sha256\": \"s\"}}}",
+      "outcome": "ok",
+      "file": {
+        "encoding": "text",
+        "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[managed.\"ok.md\"]\nsha256 = \"s\"\n"
+      }
+    },
+    {
+      "index": 22,
+      "name": "agents hash falsy stringified",
+      "spec": "{\"agents\": {\"c\": {\"z.md\": 0, \"a.md\": false, \"e.md\": []}}}",
+      "outcome": "ok",
+      "file": {
+        "encoding": "text",
+        "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[agents.\"c\"]\n\"a.md\" = \"False\"\n\"e.md\" = \"[]\"\n\"z.md\" = \"0\"\n"
+      }
+    }
+  ]
+}

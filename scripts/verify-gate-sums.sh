@@ -3,7 +3,7 @@
 # release (CI checksum gate, task 0.6 / spec "Binary acquisition, verification
 # and cache layout").
 #
-# The CI release workflow (.github/workflows/release-worktree-gate.yml) emits
+# The CI release workflow (.github/workflows/release-binaries.yml) emits
 #
 #   sha256sum worktree-gate-* > SHA256SUMS
 #

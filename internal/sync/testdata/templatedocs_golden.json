@@ -1,0 +1,850 @@
+{
+  "oracle": {
+    "driver": "materialize_doc + _python_materialize_template with load_lock / write_lock / warn / info / go_apply_copy sinks patched, over the scenario matrix below; resolve_template_dest + _python_materialize_template for the .git-destination leg",
+    "note": "Frozen snapshot of the legacy template + doc authority over the cases below, captured once, twice byte-identical. Every host-dependent path segment is the token <BASE> (and the POSIX doubled-slash spelling <//BASE>). The matrix leg freezes no mode; the git leg freezes only the written hook's 0755, which the shared write path chmods explicitly. No directory mode is frozen. Regenerating it needs a human decision.",
+    "python": "3.14.7",
+    "script": "lib/_internal/recipe-materialize.py"
+  },
+  "matrix": {
+    "fixture": {
+      "doc_sha256": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+      "project_root": "project",
+      "recipe_dir": "catalog/worktree-flow",
+      "template_sha256": "e514edf039e5478120455a6f6c3803d1ffee73a907a02a4655c78f725fc5929f"
+    },
+    "cases": [
+      {
+        "name": "template_t1.sh",
+        "input": {
+          "kind": "template",
+          "target": "ai-specs/recipes/worktree-flow/overrides/bin/t1.sh",
+          "source": "templates/run.sh",
+          "recipe_id": "worktree-flow",
+          "condition": "not_exists",
+          "update_policy": "auto",
+          "config": {
+            "repo_topology": "auto"
+          }
+        },
+        "outcome": {
+          "wrote": true,
+          "dest": "",
+          "record": {
+            "kind": "template",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "0a3e7125bf4171c82b316cda360e651d78cbc928fa48862caa2221c45ca03f50",
+            "source": "templates/run.sh",
+            "target": "ai-specs/recipes/worktree-flow/overrides/bin/t1.sh"
+          },
+          "disk_sha": "0a3e7125bf4171c82b316cda360e651d78cbc928fa48862caa2221c45ca03f50",
+          "lines": [
+            "msg:✓ template ai-specs/recipes/worktree-flow/overrides/bin/t1.sh"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "template_t2.sh",
+        "input": {
+          "kind": "template",
+          "target": "ai-specs/recipes/worktree-flow/overrides/bin/t2.sh",
+          "source": "templates/run.sh",
+          "recipe_id": "worktree-flow",
+          "condition": "not_exists",
+          "update_policy": "auto",
+          "config": {
+            "repo_topology": "auto"
+          },
+          "seed_sha256": "0a3e7125bf4171c82b316cda360e651d78cbc928fa48862caa2221c45ca03f50"
+        },
+        "outcome": {
+          "wrote": false,
+          "dest": "",
+          "record": {
+            "kind": "template",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "0a3e7125bf4171c82b316cda360e651d78cbc928fa48862caa2221c45ca03f50",
+            "source": "templates/run.sh",
+            "target": "ai-specs/recipes/worktree-flow/overrides/bin/t2.sh"
+          },
+          "disk_sha": "0a3e7125bf4171c82b316cda360e651d78cbc928fa48862caa2221c45ca03f50",
+          "lines": [
+            "msg:· template skipped (exists) ai-specs/recipes/worktree-flow/overrides/bin/t2.sh"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "template_t3.sh",
+        "input": {
+          "kind": "template",
+          "target": "ai-specs/recipes/worktree-flow/overrides/bin/t3.sh",
+          "source": "templates/run.sh",
+          "recipe_id": "worktree-flow",
+          "condition": "not_exists",
+          "update_policy": "auto",
+          "config": {
+            "repo_topology": "auto"
+          },
+          "seed_sha256": "e514edf039e5478120455a6f6c3803d1ffee73a907a02a4655c78f725fc5929f"
+        },
+        "outcome": {
+          "wrote": false,
+          "dest": "",
+          "record": {
+            "kind": "template",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "e514edf039e5478120455a6f6c3803d1ffee73a907a02a4655c78f725fc5929f",
+            "source": "templates/run.sh",
+            "target": "ai-specs/recipes/worktree-flow/overrides/bin/t3.sh"
+          },
+          "disk_sha": "e514edf039e5478120455a6f6c3803d1ffee73a907a02a4655c78f725fc5929f",
+          "lines": [
+            "msg:· template skipped (exists) ai-specs/recipes/worktree-flow/overrides/bin/t3.sh"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "template_t4.sh",
+        "input": {
+          "kind": "template",
+          "target": "ai-specs/recipes/worktree-flow/overrides/bin/t4.sh",
+          "source": "templates/run.sh",
+          "recipe_id": "worktree-flow",
+          "condition": "not_exists",
+          "update_policy": "auto",
+          "config": {
+            "repo_topology": "auto"
+          },
+          "seed_sha256": "efb83f2a277e9f49b38efd505f5cbb93885e721b6bd16b788937c9396174c006"
+        },
+        "outcome": {
+          "wrote": false,
+          "dest": "",
+          "record": null,
+          "disk_sha": "efb83f2a277e9f49b38efd505f5cbb93885e721b6bd16b788937c9396174c006",
+          "lines": [
+            "warn:override metadata missing for ai-specs/recipes/worktree-flow/overrides/bin/t4.sh; preserving existing file without assigning ownership. To preserve this local file, leave it unchanged. To replace it with the current recipe version, remove it and run sync again:\n  rm ai-specs/recipes/worktree-flow/overrides/bin/t4.sh && ai-specs sync",
+            "msg:· template skipped (exists) ai-specs/recipes/worktree-flow/overrides/bin/t4.sh"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "template_t5.sh",
+        "input": {
+          "kind": "template",
+          "target": "ai-specs/recipes/worktree-flow/overrides/bin/t5.sh",
+          "source": "templates/run.sh",
+          "recipe_id": "worktree-flow",
+          "condition": "not_exists",
+          "update_policy": "auto",
+          "config": {
+            "repo_topology": "auto"
+          },
+          "managed_entry": {
+            "sha256": "0a3e7125bf4171c82b316cda360e651d78cbc928fa48862caa2221c45ca03f50"
+          },
+          "seed_sha256": "0a3e7125bf4171c82b316cda360e651d78cbc928fa48862caa2221c45ca03f50"
+        },
+        "outcome": {
+          "wrote": false,
+          "dest": "",
+          "record": {
+            "kind": "template",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "0a3e7125bf4171c82b316cda360e651d78cbc928fa48862caa2221c45ca03f50",
+            "source": "templates/run.sh",
+            "target": "ai-specs/recipes/worktree-flow/overrides/bin/t5.sh"
+          },
+          "disk_sha": "0a3e7125bf4171c82b316cda360e651d78cbc928fa48862caa2221c45ca03f50",
+          "lines": [
+            "msg:· template skipped (exists) ai-specs/recipes/worktree-flow/overrides/bin/t5.sh"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "template_t6.sh",
+        "input": {
+          "kind": "template",
+          "target": "ai-specs/recipes/worktree-flow/overrides/bin/t6.sh",
+          "source": "templates/run.sh",
+          "recipe_id": "worktree-flow",
+          "condition": "not_exists",
+          "update_policy": "auto",
+          "config": {
+            "repo_topology": "auto"
+          },
+          "managed_entry": {
+            "sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+          },
+          "seed_sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+        },
+        "outcome": {
+          "wrote": true,
+          "dest": "",
+          "record": {
+            "kind": "template",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "0a3e7125bf4171c82b316cda360e651d78cbc928fa48862caa2221c45ca03f50",
+            "source": "templates/run.sh",
+            "target": "ai-specs/recipes/worktree-flow/overrides/bin/t6.sh"
+          },
+          "disk_sha": "0a3e7125bf4171c82b316cda360e651d78cbc928fa48862caa2221c45ca03f50",
+          "lines": [
+            "info:refreshed managed template ai-specs/recipes/worktree-flow/overrides/bin/t6.sh",
+            "msg:· template skipped (exists) ai-specs/recipes/worktree-flow/overrides/bin/t6.sh"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "template_t7.sh",
+        "input": {
+          "kind": "template",
+          "target": "ai-specs/recipes/worktree-flow/overrides/bin/t7.sh",
+          "source": "templates/run.sh",
+          "recipe_id": "worktree-flow",
+          "condition": "not_exists",
+          "update_policy": "confirm",
+          "config": {
+            "repo_topology": "auto"
+          },
+          "managed_entry": {
+            "sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+          },
+          "seed_sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+        },
+        "outcome": {
+          "wrote": false,
+          "dest": "",
+          "record": null,
+          "disk_sha": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee",
+          "lines": [
+            "warn:override managed-stale (confirm-required): ai-specs/recipes/worktree-flow/overrides/bin/t7.sh was not refreshed. Refresh with:\n  rm ai-specs/recipes/worktree-flow/overrides/bin/t7.sh && ai-specs sync",
+            "msg:· template skipped (exists) ai-specs/recipes/worktree-flow/overrides/bin/t7.sh"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "template_t8.sh",
+        "input": {
+          "kind": "template",
+          "target": "ai-specs/recipes/worktree-flow/overrides/bin/t8.sh",
+          "source": "templates/run.sh",
+          "recipe_id": "worktree-flow",
+          "condition": "not_exists",
+          "update_policy": "auto",
+          "config": {
+            "repo_topology": "auto"
+          },
+          "managed_entry": {
+            "sha256": "7e4fa2eb8c7ac089739d5defc4489fad68a100d92082ca35c6b40a4524821f87"
+          },
+          "seed_sha256": "efb83f2a277e9f49b38efd505f5cbb93885e721b6bd16b788937c9396174c006"
+        },
+        "outcome": {
+          "wrote": false,
+          "dest": "",
+          "record": null,
+          "disk_sha": "efb83f2a277e9f49b38efd505f5cbb93885e721b6bd16b788937c9396174c006",
+          "lines": [
+            "warn:override user-modified: ai-specs/recipes/worktree-flow/overrides/bin/t8.sh was not refreshed. Refresh with:\n  rm ai-specs/recipes/worktree-flow/overrides/bin/t8.sh && ai-specs sync",
+            "msg:· template skipped (exists) ai-specs/recipes/worktree-flow/overrides/bin/t8.sh"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d1.md",
+        "input": {
+          "kind": "doc",
+          "target": "ai-specs/recipes/worktree-flow/docs/d1.md",
+          "source": "README.md",
+          "recipe_id": "worktree-flow"
+        },
+        "outcome": {
+          "wrote": true,
+          "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/docs/d1.md",
+          "record": {
+            "kind": "doc",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+            "source": "README.md",
+            "target": "ai-specs/recipes/worktree-flow/docs/d1.md"
+          },
+          "disk_sha": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+          "lines": [
+            "msg:✓ doc ai-specs/recipes/worktree-flow/docs/d1.md"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d2.md",
+        "input": {
+          "kind": "doc",
+          "target": "ai-specs/recipes/worktree-flow/docs/d2.md",
+          "source": "README.md",
+          "recipe_id": "worktree-flow",
+          "seed_sha256": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d"
+        },
+        "outcome": {
+          "wrote": false,
+          "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/docs/d2.md",
+          "record": {
+            "kind": "doc",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+            "source": "README.md",
+            "target": "ai-specs/recipes/worktree-flow/docs/d2.md"
+          },
+          "disk_sha": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+          "lines": [
+            "msg:· doc skipped (exists) ai-specs/recipes/worktree-flow/docs/d2.md"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d3.md",
+        "input": {
+          "kind": "doc",
+          "target": "ai-specs/recipes/worktree-flow/docs/d3.md",
+          "source": "README.md",
+          "recipe_id": "worktree-flow",
+          "seed_sha256": "efb83f2a277e9f49b38efd505f5cbb93885e721b6bd16b788937c9396174c006"
+        },
+        "outcome": {
+          "wrote": false,
+          "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/docs/d3.md",
+          "record": null,
+          "disk_sha": "efb83f2a277e9f49b38efd505f5cbb93885e721b6bd16b788937c9396174c006",
+          "lines": [
+            "warn:override metadata missing for ai-specs/recipes/worktree-flow/docs/d3.md; preserving existing file without assigning ownership. To preserve this local file, leave it unchanged. To replace it with the current recipe version, remove it and run sync again:\n  rm ai-specs/recipes/worktree-flow/docs/d3.md && ai-specs sync",
+            "msg:· doc skipped (exists) ai-specs/recipes/worktree-flow/docs/d3.md"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d4.md",
+        "input": {
+          "kind": "doc",
+          "target": "ai-specs/recipes/worktree-flow/docs/d4.md",
+          "source": "README.md",
+          "recipe_id": "worktree-flow",
+          "managed_entry": {
+            "policy": "auto",
+            "sha256": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d"
+          },
+          "seed_sha256": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d"
+        },
+        "outcome": {
+          "wrote": false,
+          "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/docs/d4.md",
+          "record": {
+            "kind": "doc",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+            "source": "README.md",
+            "target": "ai-specs/recipes/worktree-flow/docs/d4.md"
+          },
+          "disk_sha": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+          "lines": [
+            "msg:· doc skipped (exists) ai-specs/recipes/worktree-flow/docs/d4.md"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d5.md",
+        "input": {
+          "kind": "doc",
+          "target": "ai-specs/recipes/worktree-flow/docs/d5.md",
+          "source": "README.md",
+          "recipe_id": "worktree-flow",
+          "managed_entry": {
+            "policy": "auto",
+            "sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+          },
+          "seed_sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+        },
+        "outcome": {
+          "wrote": true,
+          "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/docs/d5.md",
+          "record": {
+            "kind": "doc",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+            "source": "README.md",
+            "target": "ai-specs/recipes/worktree-flow/docs/d5.md"
+          },
+          "disk_sha": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+          "lines": [
+            "info:refreshed managed doc ai-specs/recipes/worktree-flow/docs/d5.md",
+            "msg:· doc skipped (exists) ai-specs/recipes/worktree-flow/docs/d5.md"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d6.md",
+        "input": {
+          "kind": "doc",
+          "target": "ai-specs/recipes/worktree-flow/docs/d6.md",
+          "source": "README.md",
+          "recipe_id": "worktree-flow",
+          "managed_entry": {
+            "policy": "confirm",
+            "sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+          },
+          "seed_sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+        },
+        "outcome": {
+          "wrote": false,
+          "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/docs/d6.md",
+          "record": null,
+          "disk_sha": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee",
+          "lines": [
+            "warn:override managed-stale (confirm-required): ai-specs/recipes/worktree-flow/docs/d6.md was not refreshed. Refresh with:\n  rm ai-specs/recipes/worktree-flow/docs/d6.md && ai-specs sync",
+            "msg:· doc skipped (exists) ai-specs/recipes/worktree-flow/docs/d6.md"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d7.md",
+        "input": {
+          "kind": "doc",
+          "target": "ai-specs/recipes/worktree-flow/docs/d7.md",
+          "source": "README.md",
+          "recipe_id": "worktree-flow",
+          "managed_entry": {
+            "policy": "auto",
+            "sha256": "7e4fa2eb8c7ac089739d5defc4489fad68a100d92082ca35c6b40a4524821f87"
+          },
+          "seed_sha256": "efb83f2a277e9f49b38efd505f5cbb93885e721b6bd16b788937c9396174c006"
+        },
+        "outcome": {
+          "wrote": false,
+          "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/docs/d7.md",
+          "record": null,
+          "disk_sha": "efb83f2a277e9f49b38efd505f5cbb93885e721b6bd16b788937c9396174c006",
+          "lines": [
+            "warn:override user-modified: ai-specs/recipes/worktree-flow/docs/d7.md was not refreshed. Refresh with:\n  rm ai-specs/recipes/worktree-flow/docs/d7.md && ai-specs sync",
+            "msg:· doc skipped (exists) ai-specs/recipes/worktree-flow/docs/d7.md"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d8-dir",
+        "input": {
+          "kind": "doc",
+          "target": "ai-specs/recipes/worktree-flow/docs/d8-dir",
+          "source": "README.md",
+          "recipe_id": "worktree-flow",
+          "dest_kind": "dir"
+        },
+        "outcome": {
+          "wrote": false,
+          "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/docs/d8-dir",
+          "record": null,
+          "disk_sha": "",
+          "lines": [
+            "warn:override metadata missing for ai-specs/recipes/worktree-flow/docs/d8-dir; preserving existing directory without assigning ownership."
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d9-link",
+        "input": {
+          "kind": "doc",
+          "target": "ai-specs/recipes/worktree-flow/docs/d9-link",
+          "source": "README.md",
+          "recipe_id": "worktree-flow",
+          "dest_kind": "symlink"
+        },
+        "outcome": {
+          "wrote": false,
+          "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/docs/d9-link",
+          "record": null,
+          "disk_sha": "922e77203577a854eb6ac2e383bc9fb7b8fb19be37bba31c5d912a3adf1cd336",
+          "lines": [
+            "warn:override metadata missing for ai-specs/recipes/worktree-flow/docs/d9-link; preserving existing symlink without assigning ownership."
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d10.md",
+        "input": {
+          "kind": "doc",
+          "target": "ai-specs/recipes/worktree-flow/docs/d10.md",
+          "source": "README.md",
+          "recipe_id": "worktree-flow",
+          "managed_entry": {
+            "policy": "",
+            "sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+          },
+          "seed_sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+        },
+        "outcome": {
+          "wrote": false,
+          "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/docs/d10.md",
+          "record": null,
+          "disk_sha": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee",
+          "lines": [
+            "warn:override managed-stale (confirm-required): ai-specs/recipes/worktree-flow/docs/d10.md was not refreshed. Refresh with:\n  rm ai-specs/recipes/worktree-flow/docs/d10.md && ai-specs sync",
+            "msg:· doc skipped (exists) ai-specs/recipes/worktree-flow/docs/d10.md"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d11.md",
+        "input": {
+          "kind": "doc",
+          "target": "ai-specs/recipes/worktree-flow/docs/d11.md",
+          "source": "README.md",
+          "recipe_id": "worktree-flow",
+          "managed_entry": {
+            "sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+          },
+          "seed_sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+        },
+        "outcome": {
+          "wrote": true,
+          "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/docs/d11.md",
+          "record": {
+            "kind": "doc",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+            "source": "README.md",
+            "target": "ai-specs/recipes/worktree-flow/docs/d11.md"
+          },
+          "disk_sha": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+          "lines": [
+            "info:refreshed managed doc ai-specs/recipes/worktree-flow/docs/d11.md",
+            "msg:· doc skipped (exists) ai-specs/recipes/worktree-flow/docs/d11.md"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d12.md",
+        "input": {
+          "kind": "doc",
+          "target": "./ai-specs/recipes/worktree-flow/docs/d12.md",
+          "source": "README.md",
+          "recipe_id": "worktree-flow",
+          "managed_entry": {
+            "policy": "auto",
+            "sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+          },
+          "seed_sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+        },
+        "outcome": {
+          "wrote": true,
+          "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/docs/d12.md",
+          "record": {
+            "kind": "doc",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+            "source": "README.md",
+            "target": "ai-specs/recipes/worktree-flow/docs/d12.md"
+          },
+          "disk_sha": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+          "lines": [
+            "info:refreshed managed doc ./ai-specs/recipes/worktree-flow/docs/d12.md",
+            "msg:· doc skipped (exists) ./ai-specs/recipes/worktree-flow/docs/d12.md"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d13.md",
+        "input": {
+          "kind": "doc",
+          "target": "ai-specs/recipes//worktree-flow/docs/d13.md",
+          "source": "README.md",
+          "recipe_id": "worktree-flow",
+          "managed_entry": {
+            "policy": "auto",
+            "sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+          },
+          "seed_sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+        },
+        "outcome": {
+          "wrote": true,
+          "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/docs/d13.md",
+          "record": {
+            "kind": "doc",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+            "source": "README.md",
+            "target": "ai-specs/recipes/worktree-flow/docs/d13.md"
+          },
+          "disk_sha": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+          "lines": [
+            "info:refreshed managed doc ai-specs/recipes//worktree-flow/docs/d13.md",
+            "msg:· doc skipped (exists) ai-specs/recipes//worktree-flow/docs/d13.md"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d14.md",
+        "input": {
+          "kind": "doc",
+          "target": "ai-specs/recipes/worktree-flow/docs/../docs/d14.md",
+          "source": "README.md",
+          "recipe_id": "worktree-flow",
+          "managed_entry": {
+            "policy": "auto",
+            "sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+          },
+          "seed_sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+        },
+        "outcome": {
+          "wrote": true,
+          "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/docs/../docs/d14.md",
+          "record": {
+            "kind": "doc",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+            "source": "README.md",
+            "target": "ai-specs/recipes/worktree-flow/docs/../docs/d14.md"
+          },
+          "disk_sha": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+          "lines": [
+            "info:refreshed managed doc ai-specs/recipes/worktree-flow/docs/../docs/d14.md",
+            "msg:· doc skipped (exists) ai-specs/recipes/worktree-flow/docs/../docs/d14.md"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d15-dangling",
+        "input": {
+          "kind": "doc",
+          "target": "ai-specs/recipes/worktree-flow/docs/d15-dangling",
+          "source": "README.md",
+          "recipe_id": "worktree-flow",
+          "dest_kind": "dangling"
+        },
+        "outcome": {
+          "wrote": true,
+          "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/docs/d15-dangling",
+          "record": {
+            "kind": "doc",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+            "source": "README.md",
+            "target": "ai-specs/recipes/worktree-flow/docs/d15-dangling"
+          },
+          "disk_sha": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+          "lines": [
+            "msg:✓ doc ai-specs/recipes/worktree-flow/docs/d15-dangling"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "template_t9.sh",
+        "input": {
+          "kind": "template",
+          "target": "./ai-specs/recipes/worktree-flow/overrides/bin/t9.sh",
+          "source": "templates/run.sh",
+          "recipe_id": "worktree-flow",
+          "condition": "not_exists",
+          "update_policy": "auto",
+          "config": {
+            "repo_topology": "auto"
+          },
+          "managed_entry": {
+            "sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+          },
+          "seed_sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee"
+        },
+        "outcome": {
+          "wrote": true,
+          "dest": "",
+          "record": {
+            "kind": "template",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "0a3e7125bf4171c82b316cda360e651d78cbc928fa48862caa2221c45ca03f50",
+            "source": "templates/run.sh",
+            "target": "ai-specs/recipes/worktree-flow/overrides/bin/t9.sh"
+          },
+          "disk_sha": "0a3e7125bf4171c82b316cda360e651d78cbc928fa48862caa2221c45ca03f50",
+          "lines": [
+            "info:refreshed managed template ./ai-specs/recipes/worktree-flow/overrides/bin/t9.sh",
+            "msg:· template skipped (exists) ./ai-specs/recipes/worktree-flow/overrides/bin/t9.sh"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d16.md",
+        "input": {
+          "kind": "doc",
+          "target": "<BASE>/outside/d16.md",
+          "source": "README.md",
+          "recipe_id": "worktree-flow"
+        },
+        "outcome": {
+          "wrote": true,
+          "dest": "<BASE>/outside/d16.md",
+          "record": {
+            "kind": "doc",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+            "source": "README.md",
+            "target": "<BASE>/outside/d16.md"
+          },
+          "disk_sha": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+          "lines": [
+            "msg:✓ doc <BASE>/outside/d16.md"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d17.md",
+        "input": {
+          "kind": "doc",
+          "target": "<//BASE>/project/ai-specs/recipes/worktree-flow/docs/d17.md",
+          "source": "README.md",
+          "recipe_id": "worktree-flow"
+        },
+        "outcome": {
+          "wrote": true,
+          "dest": "<//BASE>/project/ai-specs/recipes/worktree-flow/docs/d17.md",
+          "record": {
+            "kind": "doc",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+            "source": "README.md",
+            "target": "<//BASE>/project/ai-specs/recipes/worktree-flow/docs/d17.md"
+          },
+          "disk_sha": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+          "lines": [
+            "msg:✓ doc <//BASE>/project/ai-specs/recipes/worktree-flow/docs/d17.md"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "doc_d18.md",
+        "input": {
+          "kind": "doc",
+          "target": "ai-specs/recipes/worktree-flow/docs/d18.md",
+          "source": "<BASE>/catalog/worktree-flow/d18.md",
+          "recipe_id": "worktree-flow"
+        },
+        "outcome": {
+          "wrote": true,
+          "dest": "<BASE>/project/ai-specs/recipes/worktree-flow/docs/d18.md",
+          "record": {
+            "kind": "doc",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+            "source": "<BASE>/catalog/worktree-flow/d18.md",
+            "target": "ai-specs/recipes/worktree-flow/docs/d18.md"
+          },
+          "disk_sha": "9f8652a52975f57632c722c5ac728f946010013c84f0435f95ae5524f73f942d",
+          "lines": [
+            "msg:✓ doc ai-specs/recipes/worktree-flow/docs/d18.md"
+          ],
+          "error": ""
+        }
+      }
+    ]
+  },
+  "gitdest": {
+    "cases": [
+      {
+        "name": "normal",
+        "input": {
+          "kind": "normal",
+          "target": ".git/hooks/pre-commit",
+          "src_rel": "templates/pre-commit",
+          "source_sha256": "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb",
+          "main": "main",
+          "project_root": "main",
+          "recipe_dir": "main/recipe"
+        },
+        "outcome": {
+          "dest_rel": ".git/hooks/pre-commit",
+          "sha": "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb",
+          "mode": "755",
+          "record": {
+            "kind": "template",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb",
+            "source": "templates/pre-commit",
+            "target": ".git/hooks/pre-commit"
+          },
+          "lines": [
+            "msg:✓ template .git/hooks/pre-commit"
+          ],
+          "error": ""
+        }
+      },
+      {
+        "name": "linked",
+        "input": {
+          "kind": "linked",
+          "target": ".git/hooks/pre-commit",
+          "src_rel": "templates/pre-commit",
+          "source_sha256": "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb",
+          "main": "main",
+          "project_root": "wt",
+          "recipe_dir": "wt/recipe"
+        },
+        "outcome": {
+          "dest_rel": ".git/hooks/pre-commit",
+          "sha": "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb",
+          "mode": "755",
+          "record": {
+            "kind": "template",
+            "policy": "auto",
+            "recipe": "worktree-flow",
+            "sha256": "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb",
+            "source": "templates/pre-commit",
+            "target": ".git/hooks/pre-commit"
+          },
+          "lines": [
+            "msg:✓ template .git/hooks/pre-commit"
+          ],
+          "error": ""
+        }
+      }
+    ]
+  }
+}
