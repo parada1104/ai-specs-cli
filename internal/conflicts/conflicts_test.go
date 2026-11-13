@@ -156,6 +156,90 @@ func loadConflictsGolden(t *testing.T) frozenConflicts {
 	return golden
 }
 
+// TestCapabilityAndTagConflictsGoOnly pins the capability and single-recipe tag
+// cases the frozen differential corpus cannot express: its catalog declares
+// capabilities inside [provides], which the recipe schema does not read, so
+// capability ambiguity and its explicit binding are pinned here against
+// top-level [[capabilities]] exactly like the retired Python fixtures.
+func TestCapabilityAndTagConflictsGoOnly(t *testing.T) {
+	dir := t.TempDir()
+	write := func(id, extra string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(dir, id), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := recipeToml(id, id, extra)
+		if err := os.WriteFile(filepath.Join(dir, id, "recipe.toml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("recipe-a", "[[capabilities]]\nid = \"tracker\"\n")
+	write("recipe-b", "[[capabilities]]\nid = \"tracker\"\n")
+	write("solo", "tags = [\"vcs\", \"vcs\"]\n")
+
+	load := func(path string) *schema.Recipe {
+		t.Helper()
+		recipe, err := schema.LoadRecipeToml(path)
+		if err != nil {
+			t.Fatalf("load %s: %v", path, err)
+		}
+		return recipe
+	}
+
+	t.Run("ambiguity is a warning", func(t *testing.T) {
+		want := []Conflict{{"capability", "tracker", []string{"recipe-a", "recipe-b"}, "warning"}}
+		got := CheckCapabilityConflicts(dir, []string{"recipe-a", "recipe-b"}, nil)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("explicit binding resolves ambiguity", func(t *testing.T) {
+		bindings := []map[string]string{{"capability": "tracker", "recipe": "recipe-a"}}
+		got := CheckCapabilityConflicts(dir, []string{"recipe-a", "recipe-b"}, bindings)
+		if want := []Conflict{}; !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("duplicate explicit binding is fatal", func(t *testing.T) {
+		bindings := []map[string]string{
+			{"capability": "tracker", "recipe": "recipe-a"},
+			{"capability": "tracker", "recipe": "recipe-b"},
+		}
+		want := []Conflict{{"capability", "tracker", []string{"recipe-a", "recipe-b"}, "fatal"}}
+		got := CheckCapabilityConflicts(dir, []string{"recipe-a", "recipe-b"}, bindings)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("single provider is not a conflict", func(t *testing.T) {
+		got := CheckCapabilityConflicts(dir, []string{"recipe-a"}, nil)
+		if want := []Conflict{}; !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("single recipe has no tag conflict", func(t *testing.T) {
+		recipes := []*schema.Recipe{load(filepath.Join(dir, "solo", "recipe.toml"))}
+		if got := CheckTagConflicts(recipes); len(got) != 0 {
+			t.Errorf("got %v, want none", got)
+		}
+	})
+
+	t.Run("catalog vcs recipes warn when enabled together", func(t *testing.T) {
+		var recipes []*schema.Recipe
+		for _, id := range []string{"git-pr-flow", "bitbucket-pr-flow"} {
+			recipes = append(recipes, load(filepath.Join("..", "..", "catalog", "recipes", id, "recipe.toml")))
+		}
+		want := []Conflict{{"tag_conflict", "vcs", []string{"bitbucket-pr-flow", "git-pr-flow"}, "warning"}}
+		if got := CheckTagConflicts(recipes); !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+}
+
 // TestConflictsDifferential compares the Go port with the frozen legacy oracle
 // across every fabricated case: the primitive conflicts or the
 // RecipeValidationError text, the capability conflicts and the tag conflicts.

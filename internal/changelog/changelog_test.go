@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -309,6 +310,46 @@ func TestPySplitLines(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+// TestRepositoryChangelogStaysScannable is the native half of the retired
+// tests/test_changelog.py "against the real changelog" cases: the parser is
+// applied to the repository CHANGELOG.md that ships with the CLI, not to the
+// frozen copy the differential corpus uses.
+func TestRepositoryChangelogStaysScannable(t *testing.T) {
+	raw, err := os.ReadFile("../../CHANGELOG.md")
+	if err != nil {
+		t.Fatalf("read repository CHANGELOG.md: %v", err)
+	}
+	text := string(raw)
+	sections := ParseSections(text)
+	got := versions(sections)
+	for _, want := range []string{"0.22.0", "0.21.0"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("released version %q missing from %v", want, got)
+		}
+	}
+	if slices.Contains(got, "Unreleased") {
+		t.Errorf("the unreleased heading was parsed as a section: %v", got)
+	}
+	seen := map[string]bool{}
+	for _, version := range got {
+		if seen[version] {
+			t.Errorf("duplicate version %q after parsing", version)
+		}
+		seen[version] = true
+	}
+	for _, section := range sections {
+		for _, bullet := range SummaryBullets(section, 3) {
+			if n := len([]rune(bullet)); n > 100 {
+				t.Errorf("%s: bullet is %d runes: %q", section.Version, n, bullet)
+			}
+		}
+	}
+	crossed := versions(CrossedVersions(text, "0.19.0", "0.22.0"))
+	if want := []string{"0.22.0", "0.21.0", "0.20.1", "0.20.0"}; !slices.Equal(crossed, want) {
+		t.Errorf("crossed 0.19.0..0.22.0 = %v, want %v", crossed, want)
 	}
 }
 
