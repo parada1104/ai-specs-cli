@@ -22,8 +22,7 @@ import (
 type routeKind int
 
 const (
-	routeShim              routeKind = iota // exec bash <home>/lib/<script>
-	routeVersion                            // native: print <home>/VERSION
+	routeVersion           routeKind = iota // native: print <home>/VERSION
 	routeHelp                               // native: print embedded help.txt
 	routeRefreshBundled                     // native compatibility stub (card [Go 06]): reports embedded provenance
 	routeSync                               // native sync spine (card [Go 07.S1])
@@ -66,21 +65,19 @@ const (
 
 // route is one dispatcher decision.
 type route struct {
-	kind      routeKind
-	script    string // lib script name for shims, e.g. "hub.sh"
+	kind routeKind
+	// script is always empty: the verb→script map is gone (U7-1 T4) and the
+	// bash exec path was deleted with lib/ (GO-20 U2e T5 PR4b). The field is
+	// kept because the route table test still pins it as empty for every verb.
+	script    string
 	invokedAs string // AI_SPECS_INVOKED_AS label (add-dep and skills add, U5c)
 }
 
 // NO SHIM MAP (U7-1 T4): the strangler's verb→script table is gone. U6e emptied
 // it — every arm of lib/recipe.sh and lib/recipe-config.sh this dispatcher
 // reached had a native route — and U7-2 ported the last verb that ever resolved
-// through it, so no verb is left for the map to route: keeping an always-empty
-// map and a lookup that can never succeed was dead code, not a mechanism.
-//
-// The EXEC path is now dead code: init.go's AI_SPECS_INIT_TUI_PY hatch was
-// retired in U2b and no route produces routeShim. Deletion is U2e. Add-dep and skills have had native routes since GO-20 U5c, the
-// CLI-dep gate stopped exec'ing anything in U7-1 T3, and `recipe init` became
-// native in U7-2.
+// through it. The bash EXEC path itself is gone too: GO-20 U2e T5 PR4b deleted
+// lib/ and with it the last route that could produce a shim.
 
 // native maps the native verbs and their aliases to their route kind.
 // Like the legacy dispatcher, version and help ignore any extra arguments
@@ -385,9 +382,10 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		fmt.Fprintf(stderr, "ai-specs: unknown command '%s'\n", args[0])
 		fmt.Fprintln(stderr, "Run 'ai-specs help' for usage.")
 		return 2
-	default:
-		return runShim(r, args, home, stdin, stdout, stderr, selfPath())
 	}
+	// Every routeKind has a case above, so this is unreachable; the dispatcher
+	// still fails closed rather than falling off the end.
+	return 2
 }
 
 // isTTY mirrors the shell's `[[ -t 0 && -t 1 ]]` and hub.py's
