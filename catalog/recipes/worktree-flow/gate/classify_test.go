@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -11,13 +12,25 @@ import (
 	"ai-specs.dev/worktree-gate/shared"
 )
 
+// classifyCLI drives the shared classify command the way the retired
+// --plan-classify bridge flag did: one JSON envelope on stdin, one on stdout.
+// GO-20 U2e T5 PR4b deleted the flag; the shared core it delegated to is the
+// subject of these contract tests.
 func classifyCLI(t *testing.T, in shared.ClassifyInput) (int, string, string) {
 	t.Helper()
 	raw, err := json.Marshal(in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return runPlanCLI(t, string(raw), "--plan-classify")
+	return classifyRaw(t, string(raw))
+}
+
+// classifyRaw feeds raw stdin bytes to the shared classify command.
+func classifyRaw(t *testing.T, stdin string) (int, string, string) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	code := shared.RunPlanClassify(bytes.NewReader([]byte(stdin)), &stdout, &stderr)
+	return code, stdout.String(), stderr.String()
 }
 
 // TestPlanClassifyCLIManagedStaleEnvelope pins the whole stdin/stdout contract:
@@ -111,7 +124,7 @@ func TestPlanClassifyCLIRejectsMalformedInput(t *testing.T) {
 		{name: "missing dest", stdin: `{"managed_entry":null}`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			code, stdout, stderr := runPlanCLI(t, tt.stdin, "--plan-classify")
+			code, stdout, stderr := classifyRaw(t, tt.stdin)
 			if code != 2 {
 				t.Fatalf("exit = %d, want 2; stderr: %s", code, stderr)
 			}
