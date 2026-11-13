@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -727,6 +728,84 @@ func TestTopologyUnitGoOnly(t *testing.T) {
 	configured, source, _ = topologyConfig(data)
 	if configured != "standalone" || source != "project" {
 		t.Errorf("topologyConfig precedence = (%q, %q)", configured, source)
+	}
+}
+
+// TestDeclaredOnlyTargetSetGoOnly pins the declared-only target set the frozen
+// oracle cannot carry: declared entries are trimmed and de-duplicated, and
+// .gitmodules never expands (or shrinks) the fan-out.
+func TestDeclaredOnlyTargetSetGoOnly(t *testing.T) {
+	cases := []struct {
+		name       string
+		manifest   string
+		dirs       []string
+		gitmodules string
+		wantFanout []string
+		wantRels   []string
+	}{
+		{
+			// " packages/a " trims, "packages//b" normalizes, "" and 7 are
+			// dropped: read_project filters before target-resolve sees them.
+			name:       "padded-whitespace-and-non-strings",
+			manifest:   "[project]\nname = \"t\"\nsubrepos = [\" packages/a \", \"packages/a\", \"\", \"packages//b\", 7]\n",
+			dirs:       []string{"packages/a", "packages/b"},
+			wantFanout: []string{"packages/a", "packages/b"},
+			wantRels:   []string{".", "packages/a", "packages/b"},
+		},
+		{
+			name:       "empty-subrepos-with-gitmodules",
+			manifest:   "[project]\nname = \"t\"\nsubrepos = []\n",
+			gitmodules: "[submodule \"apps/api\"]\n\tpath = apps/api\n\turl = ../api.git\n",
+			wantFanout: []string{},
+			wantRels:   []string{"."},
+		},
+		{
+			name:       "gitmodules-never-expands",
+			manifest:   "[project]\nname = \"t\"\nsubrepos = [\"packages/a\"]\n",
+			dirs:       []string{"packages/a"},
+			gitmodules: "[submodule \"packages/b\"]\n\tpath = packages/b\n\turl = ../b.git\n",
+			wantFanout: []string{"packages/a"},
+			wantRels:   []string{".", "packages/a"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "proj")
+			buildTree(t, dir, tree{manifest: tc.manifest, dirs: tc.dirs})
+			if tc.gitmodules != "" {
+				if err := os.WriteFile(filepath.Join(dir, ".gitmodules"), []byte(tc.gitmodules), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			res := runGoCLI(t, dir)
+			if res.code != 0 {
+				t.Fatalf("exit = %d, stderr = %q", res.code, res.stderr)
+			}
+			var plan struct {
+				DeclaredOnly bool     `json:"declared_only"`
+				Fanout       []string `json:"fanout_targets"`
+				Targets      []struct {
+					Rel string `json:"rel"`
+				} `json:"targets"`
+			}
+			if err := json.Unmarshal([]byte(res.stdout), &plan); err != nil {
+				t.Fatalf("decode plan: %v", err)
+			}
+			if !plan.DeclaredOnly {
+				t.Error("declared_only = false, want true")
+			}
+			if !slices.Equal(plan.Fanout, tc.wantFanout) {
+				t.Errorf("fanout_targets = %v, want %v", plan.Fanout, tc.wantFanout)
+			}
+			rels := make([]string, len(plan.Targets))
+			for i, target := range plan.Targets {
+				rels[i] = target.Rel
+			}
+			if !slices.Equal(rels, tc.wantRels) {
+				t.Errorf("target rels = %v, want %v", rels, tc.wantRels)
+			}
+		})
 	}
 }
 
