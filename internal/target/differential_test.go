@@ -844,3 +844,111 @@ func TestSubmoduleDetectionUnitGoOnly(t *testing.T) {
 	}
 	sort.Strings(subs)
 }
+
+// TestRepoTopologyResolutionGoOnly pins the topology legs the frozen oracle
+// cannot carry, mirroring legacy tests/test_repo_topology.py: an explicit
+// config value bypasses detection, a blank/absent value is auto, auto never
+// resolves to monorepo-apps, and detect_submodules counts '+', ignores a
+// phantom .gitmodules entry, and yields no submodules when every one is
+// uninitialized.
+func TestRepoTopologyResolutionGoOnly(t *testing.T) {
+	t.Run("explicit config bypasses detection", func(t *testing.T) {
+		dir := t.TempDir()
+		for _, value := range []string{"standalone", "monorepo-apps"} {
+			res := resolveRepoTopology(dir, value)
+			if res.Resolved != value {
+				t.Errorf("%s: resolved = %q, want %q", value, res.Resolved, value)
+			}
+			// An explicit value is the config route: detection never runs.
+			if res.Via != "config" {
+				t.Errorf("%s: via = %q, want config", value, res.Via)
+			}
+			if len(res.Submodules) != 0 {
+				t.Errorf("%s: submodules = %v, want none", value, res.Submodules)
+			}
+			if res.GitmodulesPresent {
+				t.Errorf("%s: gitmodules_present = true, want false", value)
+			}
+		}
+	})
+
+	t.Run("blank config is auto", func(t *testing.T) {
+		dir := t.TempDir()
+		for _, value := range []string{"", "   ", "\t"} {
+			res := resolveRepoTopology(dir, value)
+			if res.Configured != "auto" || res.Via != "auto" {
+				t.Errorf("%q: configured/via = %q/%q, want auto/auto", value, res.Configured, res.Via)
+			}
+		}
+	})
+
+	t.Run("auto never resolves to monorepo-apps", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, ".gitmodules"), []byte("[submodule \"x\"]\n\tpath = x\n\turl = ../x.git\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if res := resolveRepoTopology(dir, "auto"); res.Resolved != "standalone" {
+			t.Errorf("resolved = %q, want standalone (not a git repo)", res.Resolved)
+		}
+	})
+
+	t.Run("detection prefixes, phantom entries and uninitialized", func(t *testing.T) {
+		if _, err := exec.LookPath("git"); err != nil {
+			t.Skip("git not available")
+		}
+		tmp := t.TempDir()
+		child := filepath.Join(tmp, "child")
+		super := filepath.Join(tmp, "super")
+		if err := os.MkdirAll(child, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(child, "f"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gitRun(t, child, "init", "-q", ".")
+		gitRun(t, child, "add", "-A")
+		gitRun(t, child, "commit", "-q", "-m", "c")
+		if err := os.MkdirAll(super, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		gitRun(t, super, "init", "-q", ".")
+		gitRun(t, super, "-c", "protocol.file.allow=always", "submodule", "add", child, "sub")
+		gitRun(t, super, "commit", "-q", "-m", "add sub")
+
+		if present, subs := detectSubmodules(super); !present || fmt.Sprint(subs) != "[sub]" {
+			t.Fatalf("initialized = %v/%v, want true/[sub]", present, subs)
+		}
+		if res := resolveRepoTopology(super, "auto"); res.Resolved != "monorepo-submodules" {
+			t.Errorf("auto with an initialized submodule: resolved = %q", res.Resolved)
+		}
+
+		// A .gitmodules entry that `git submodule status` never lists is ignored.
+		raw, err := os.ReadFile(filepath.Join(super, ".gitmodules"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ghost := string(raw) + "\n[submodule \"ghost\"]\n\tpath = ghost\n\turl = ../ghost.git\n"
+		if err := os.WriteFile(filepath.Join(super, ".gitmodules"), []byte(ghost), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, subs := detectSubmodules(super); fmt.Sprint(subs) != "[sub]" {
+			t.Errorf("phantom path not filtered: %v", subs)
+		}
+
+		// '+' (submodule HEAD ahead of the superproject index) counts as initialized.
+		gitRun(t, filepath.Join(super, "sub"), "commit", "--allow-empty", "-q", "-m", "ahead")
+		if _, subs := detectSubmodules(super); fmt.Sprint(subs) != "[sub]" {
+			t.Errorf("'+' prefix not counted as initialized: %v", subs)
+		}
+
+		// Uninitialized-only: present but no submodules, and auto is standalone.
+		gitRun(t, super, "submodule", "deinit", "-f", "sub")
+		present, subs := detectSubmodules(super)
+		if !present || len(subs) != 0 {
+			t.Errorf("deinitialized = %v/%v, want true/[]", present, subs)
+		}
+		if res := resolveRepoTopology(super, "auto"); res.Resolved != "standalone" {
+			t.Errorf("auto with only uninitialized submodules: resolved = %q, want standalone", res.Resolved)
+		}
+	})
+}
