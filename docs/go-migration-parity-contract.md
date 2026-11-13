@@ -486,6 +486,38 @@ FROZEN and unchanged:
 
 ---
 
+### Gate TOML seam parse detail — TOLERANT (narrow, human-accepted 2026-11-13)
+
+The gate's recipe.toml readers (`shared.LoadRecipeTagMetadata`,
+`shared.LoadRecipePrimitives`, which `internal/sync` also calls) and the retired
+`--plan-resolved-config` seam used to hand each file to an ambient
+`python3 -c 'import tomllib'` helper. GO-20 U2e T5 (#526, then PR4b) made them
+parse in process. The **diagnostic TEXT of a parse failure** is TOLERANT:
+
+- The Python seam reported a dead interpreter or a rejected manifest through
+  `python3`'s own exception/exit status (`the manifest is not valid TOML (parser
+  exit status 1)`); the Go reader reports the recipe and the failing TOML line
+  (`recipe <id>: recipe.toml not found or not parseable`, `recipe <id>:
+  [recipe]: missing or invalid required field 'name'`).
+- Both forms name the FAILURE CLASS the caller acts on; neither carries file
+  content, raw stderr or a traceback.
+
+FROZEN and unchanged:
+
+- Which class fails: the tag reader OMITS a recipe it cannot fully acquire, the
+  primitive reader FAILS the whole acquisition (the Python authority raises
+  `RecipeValidationError` for the same shapes).
+- The shapes each reader swallows: a non-table `[provides]`, a non-list
+  skills/commands/mcp value, an id-less `[recipe]` for the tag reader, and a
+  timestamp value that has no JSON form.
+- Every resolved decision and every exit code on the surfaces that survive
+  (`internal/sync`'s tag-conflict warnings and primitive-conflict refusal).
+- Nothing else is normalized; the entry is diagnostic framing only, and the
+  locale-collation, resolver-plan, manifest-fatal and recipe-mcp exceptions
+  above remain separate and narrow.
+
+---
+
 ## 11. Environment variables
 
 | Var | Effect |

@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -362,41 +361,11 @@ type manifestRecipe struct {
 	Config  map[string]json.RawMessage `json:"config"`
 }
 
-// Bounded parser execution for the readers that still run through the embedded
-// Python seam (resolved_config.go, recipe_toml.go). The parser is a trust
-// boundary and an availability risk: it may not run forever, return unbounded
-// output, or have its raw failure output surfaced. The limits are fixed
-// constants, not configuration: bounding an acquisition subprocess is
-// acquisition safety, not a new grader input. The manifest read no longer takes
-// this path: it parses in process (shared.ReadManifestRecipesJSON).
-const (
-	manifestParseTimeout = 3 * time.Second
-	// acquisitionLimit is the one size budget for acquisition in and out: the
-	// parser's stdout and the observation payload share it.
-	acquisitionLimit   = 1 << 20
-	manifestErrorLimit = 4 << 10
-)
-
-// cappedBuffer buffers at most max bytes and records that anything more arrived.
-// It always reports a full write so a verbose child sees a healthy pipe instead of
-// a short-write error, and never grows past max.
-type cappedBuffer struct {
-	buf       bytes.Buffer
-	max       int
-	truncated bool
-}
-
-func (w *cappedBuffer) Write(p []byte) (int, error) {
-	if room := w.max - w.buf.Len(); room > 0 {
-		if len(p) <= room {
-			w.buf.Write(p)
-			return len(p), nil
-		}
-		w.buf.Write(p[:room])
-	}
-	w.truncated = true
-	return len(p), nil
-}
+// acquisitionLimit is the one size budget for acquisition in and out: a read
+// or a reconciled observation payload may not exceed it. It is a fixed
+// constant, not configuration: bounding acquisition is acquisition safety, not
+// a new grader input.
+const acquisitionLimit = 1 << 20
 
 // readManifestRecipeConfig loads the bound recipe's config table from the project
 // manifest through the standard parser. Every failure is returned so the caller
@@ -441,41 +410,6 @@ func readManifestRecipes(path string) (map[string]manifestRecipe, error) {
 		return nil, fmt.Errorf("deserialized recipes: %w", err)
 	}
 	return recipes, nil
-}
-
-// manifestInterpreter resolves the ambient python3 without executing it and
-// refuses an interpreter that lives inside the project root, where repository
-// content could shadow the system interpreter. Resolution failures are named so
-// a missing interpreter and a suspicious one are distinguishable without leaking
-// filesystem detail beyond the resolved path class. It serves the readers that
-// still run through the embedded Python seam (resolved_config.go, recipe_toml.go).
-func manifestInterpreter(root string) (string, error) {
-	interpreter, err := exec.LookPath("python3")
-	if err != nil {
-		return "", fmt.Errorf("standard TOML parser is unavailable: %v", err)
-	}
-	if abs, absErr := filepath.Abs(interpreter); absErr == nil {
-		if absRoot, rootErr := filepath.Abs(root); rootErr == nil && (absRoot == abs || strings.HasPrefix(abs+string(filepath.Separator), absRoot)) {
-			return "", errors.New("standard TOML parser interpreter resolves inside the project root")
-		}
-	}
-	return interpreter, nil
-}
-
-// classifyManifestParserError names the failure without reproducing parser
-// output: a missing interpreter and a rejected manifest are different problems,
-// and neither message carries raw stderr, a traceback, or configuration content.
-// stderr is captured only to keep the child from blocking on a full pipe.
-func classifyManifestParserError(err error) error {
-	var execErr *exec.Error
-	if errors.As(err, &execErr) {
-		return fmt.Errorf("standard TOML parser is unavailable: %v", execErr.Err)
-	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return fmt.Errorf("the manifest is not valid TOML (parser exit status %d)", exitErr.ExitCode())
-	}
-	return errors.New("standard TOML parser could not be started")
 }
 
 // regularFile refuses anything that is not a plain file before it is opened: a
