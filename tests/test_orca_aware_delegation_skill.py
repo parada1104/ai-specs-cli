@@ -1,21 +1,19 @@
-import importlib.util
+"""The shipped orca-aware-delegation skill's contract, at its own text boundary.
+
+The skill metadata (name, Trigger: description, scope, auto_invoke) is pinned
+natively in ``internal/skills`` (`TestOrcaAwareDelegationSkillContract`, the
+port of the retired ``skill_contract.from_local_skill`` assertions); these tests
+own the skill's prose, references file and structural order.
+"""
+from __future__ import annotations
+
 import unittest
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_DIR = ROOT / "ai-specs" / "skills" / "orca-aware-delegation"
 SKILL_PATH = SKILL_DIR / "SKILL.md"
 COMMANDS_PATH = SKILL_DIR / "references" / "orca-lifecycle-commands.md"
-CONTRACT_PATH = ROOT / "lib" / "_internal" / "skill_contract.py"
-
-
-def load_contract_module():
-    spec = importlib.util.spec_from_file_location("skill_contract", CONTRACT_PATH)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
 
 
 class OrcaAwareDelegationSkillTests(unittest.TestCase):
@@ -23,22 +21,6 @@ class OrcaAwareDelegationSkillTests(unittest.TestCase):
     def setUpClass(cls):
         cls.text = SKILL_PATH.read_text()
         cls.commands = COMMANDS_PATH.read_text()
-        cls.contract = load_contract_module()
-
-    def test_skill_has_complete_metadata_and_explicit_triggers(self):
-        skill = self.contract.from_local_skill(SKILL_PATH, compatibility=False)
-
-        self.assertEqual(skill["name"], "orca-aware-delegation")
-        self.assertLessEqual(len(skill["description"]), 250)
-        self.assertTrue(skill["description"].startswith("Trigger:"))
-        self.assertEqual(skill["metadata"]["scope"], ["root"])
-        self.assertEqual(
-            skill["metadata"]["auto_invoke"],
-            [
-                "Explicitly naming Orca CLI, Orca orchestration, or an Orca worktree",
-                "Explicitly requesting delegation through Orca",
-            ],
-        )
 
     def test_activation_and_normal_route_boundary_are_explicit(self):
         for phrase in (

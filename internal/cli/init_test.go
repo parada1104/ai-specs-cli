@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"ai-specs.dev/ai-specs/internal/toml"
 	"ai-specs.dev/ai-specs/internal/tui"
 )
 
@@ -859,4 +860,61 @@ func TestInitRenderFailureWritesThePlaceholder(t *testing.T) {
 			t.Errorf("AGENTS.md was overwritten: %q", got)
 		}
 	})
+}
+
+// TestInitTemplateDefaultEnablesSessionContextWithoutDogfoodTokens pins the
+// shipped manifest template: a fresh init pre-enables session-context (the
+// behavioral brief source) and carries no token from the ai-specs-cli dogfood
+// project. The retired Python suite read the resolved-config JSON the
+// materializer wrote to a temp file; the template's own bytes are the contract.
+func TestInitTemplateDefaultEnablesSessionContextWithoutDogfoodTokens(t *testing.T) {
+	home := wizardTestHome(t)
+	dir := filepath.Join(t.TempDir(), "tmpl-default")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var out, errW bytes.Buffer
+	if rc := runInit([]string{"init", dir}, home, strings.NewReader(""), &out, &errW, ""); rc != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", rc, errW.String())
+	}
+	manifestPath := filepath.Join(dir, "ai-specs", "ai-specs.toml")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+
+	manifest, err := toml.Parse(data)
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	rawRecipes, _ := manifest.Get("recipes")
+	recipes, ok := rawRecipes.(*toml.Table)
+	if !ok {
+		t.Fatalf("recipes is %T, want a table", rawRecipes)
+	}
+	rawSession, present := recipes.Get("session-context")
+	if !present {
+		t.Fatal("the default template must declare [recipes.session-context]")
+	}
+	session, ok := rawSession.(*toml.Table)
+	if !ok {
+		t.Fatalf("session-context is %T, want a table", rawSession)
+	}
+	if enabled, _ := session.Get("enabled"); enabled != true {
+		t.Errorf("[recipes.session-context].enabled = %v, want true", enabled)
+	}
+
+	// The retired assertion ran against the resolved-config JSON, which carries
+	// no comments; scan only the value lines so the template's own doc comments
+	// (it names the published CLI repository) never count as a leak.
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		for _, token := range []string{"69ec097f13e2d38ecd89a557", "nnodes/proyectos", "ai-specs-cli"} {
+			if strings.Contains(line, token) {
+				t.Errorf("the default manifest leaks the dogfood token %q in %q", token, line)
+			}
+		}
+	}
 }

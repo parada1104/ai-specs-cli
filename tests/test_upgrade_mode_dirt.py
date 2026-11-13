@@ -4,12 +4,14 @@ GO-20 U2d: the three upgrade classes drive the native Go binary (`_blackbox.cli_
 installed into the fake install; `install.sh` (InstallModeOnlyDirtTests) is a separate
 installer surface and is unchanged here.
 
-A previous installer ran chmod +x on lib/*.sh and lib/_internal/*.py, which
-are tracked as mode 100644 in git.  On systems with core.fileMode=true this
-leaves the working tree appearing dirty (mode-bits only, no content changes).
-Both upgrade.sh and install.sh must auto-remediate this class of dirt so that
-users are not stuck in an update loop.
+A previous installer ran chmod +x on tracked 100644 files (the fixture uses
+lib/dummy.sh), which on systems with core.fileMode=true leaves the working tree
+appearing dirty (mode-bits only, no content changes). Both `ai-specs upgrade`
+and install.sh must auto-remediate this class of dirt so that users are not
+stuck in an update loop.
 """
+from __future__ import annotations
+
 import hashlib
 import os
 import platform
@@ -21,10 +23,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _blackbox import cli_path  # noqa: E402
-
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALL_SH = ROOT / "install.sh"
@@ -39,7 +39,6 @@ def _asset_arch() -> str:
         "arm64": "arm64", "aarch64": "arm64",
         "x86_64": "amd64", "amd64": "amd64",
     }[platform.machine().lower()]
-LIB_UPGRADE = ROOT / "lib" / "upgrade.sh"
 
 
 def native_binary() -> Path:
@@ -91,10 +90,9 @@ def _make_fake_install(home: Path, version: str = "1.0.0", native: bool = False)
     bin_script.chmod(0o755)
 
     if not native:
-        # Copy the real install.sh and upgrade.sh so changes are tested
+        # Copy the real install.sh so changes are tested (it is self-contained:
+        # it never sources lib/upgrade.sh, so the fixture must not seed one).
         (ai_specs / "install.sh").write_text(INSTALL_SH.read_text())
-        (lib_dir / "upgrade.sh").write_text(LIB_UPGRADE.read_text())
-        (lib_dir / "upgrade.sh").chmod(0o755)
 
     # A tracked 100644 file that the old installer would chmod
     tracked_file = lib_dir / "dummy.sh"
@@ -115,7 +113,7 @@ def _make_fake_install(home: Path, version: str = "1.0.0", native: bool = False)
     # and a release asset for this platform to verify against. The asset lives
     # OUTSIDE the checkout (only its digest is committed), as in production.
     if not native:
-        asset_name = "ai-specs-%s-%s" % (_asset_os(), _asset_arch())
+        asset_name = f"ai-specs-{_asset_os()}-{_asset_arch()}"
         asset_dir = home / "release-assets"
         asset_dir.mkdir()
         asset_payload = b"#!/bin/sh\necho ai-specs-stand-in\n"

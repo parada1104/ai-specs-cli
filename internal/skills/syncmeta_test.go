@@ -8,6 +8,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -207,5 +208,48 @@ func TestFromLocalSkillFileInvalidUTF8(t *testing.T) {
 	}
 	if _, ok := err.(*SkillContractError); ok {
 		t.Errorf("err = %v, want a plain decode/read error (Python raises UnicodeDecodeError)", err)
+	}
+}
+
+// TestOrcaAwareDelegationSkillContract keeps the shipped skill's contract
+// native: the retired tests/test_orca_aware_delegation_skill.py asserted it
+// through skill_contract.from_local_skill, which dies with lib/. The metadata
+// is what makes the skill discoverable (scope root, two explicit Orca triggers)
+// and the description budget is what keeps it inside the loader's limit.
+func TestOrcaAwareDelegationSkillContract(t *testing.T) {
+	path := filepath.Join("..", "..", "ai-specs", "skills", "orca-aware-delegation", "SKILL.md")
+	skill, err := FromLocalSkillFile(path)
+	if err != nil {
+		t.Fatalf("FromLocalSkillFile: %v", err)
+	}
+	if skill.Name != "orca-aware-delegation" {
+		t.Errorf("name = %q", skill.Name)
+	}
+	if want := []string{"root"}; !reflect.DeepEqual(skill.Scope, want) {
+		t.Errorf("scope = %v, want %v", skill.Scope, want)
+	}
+	wantTriggers := []string{
+		"Explicitly naming Orca CLI, Orca orchestration, or an Orca worktree",
+		"Explicitly requesting delegation through Orca",
+	}
+	if !reflect.DeepEqual(skill.AutoInvoke, wantTriggers) {
+		t.Errorf("auto_invoke = %v, want %v", skill.AutoInvoke, wantTriggers)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frontmatter, _ := SplitFrontmatter(universalNewlines(string(data)))
+	raw, err := ParseFrontmatter(frontmatter)
+	if err != nil {
+		t.Fatalf("ParseFrontmatter: %v", err)
+	}
+	description, _ := raw["description"].(string)
+	if len([]rune(description)) > 250 {
+		t.Errorf("description is %d runes, want <= 250", len([]rune(description)))
+	}
+	if !strings.HasPrefix(description, "Trigger:") {
+		t.Errorf("description = %q, want a Trigger: prefix", description)
 	}
 }

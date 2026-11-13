@@ -1,23 +1,14 @@
-"""Black-box envrc scaffold tests: CLI-driven wherever a verb exposes the surface.
+"""Black-box envrc scaffold tests, CLI-driven wherever a verb exposes the surface.
 
-The ``envrc-scaffold.py`` module is a compatibility shim over ``env_scaffold.py``,
-and every file it writes (``ai-specs.env.example``, the root ``.envrc``) is
-CLI-observable through ``bin/ai-specs sync`` (the verb that runs the
+Every file the scaffold writes (``ai-specs.env.example``, the root ``.envrc``) is
+CLI-observable through ``ai-specs sync`` (the verb that runs the
 "harness env (.envrc + ai-specs.env.example)" step) and
-``bin/ai-specs recipe configure --inspect --json`` (the verb that exposes
-catalog config schemas). No test may import ``lib/_internal`` modules.
-
-The interactive prompt surface has no CLI verb (configure-recipes is
-TTY-gated), so that test is kept as a process-boundary driver invocation
-against the isolated home's own lib copy, marked with a distinct
-``# TRIAGE:`` comment.
+``ai-specs recipe configure --inspect --json`` (the verb that exposes
+catalog config schemas). No test may import or exec ``lib/_internal`` modules.
 """
 from __future__ import annotations
 
 import json
-import os
-import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -46,23 +37,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _make_home(base: Path) -> Path:
-    """Isolated CLI install root with a REAL lib copy and a REAL catalog.
+    """Isolated CLI install root with a REAL (not symlinked) catalog directory.
 
-    sync/materialize derive cache and catalog roots from their own realpath,
-    so a symlinked lib would resolve back into the repository. The catalog is
-    NOT symlinked either: recipe seeding must never resolve through a symlink
-    into repository catalog files. The vendored tree stays a symlink: child
-    drivers only ever read it. (See test_sync_pipeline for the lib-copy
-    precedent.)
+    The catalog is not symlinked: recipe seeding must never resolve through a
+    symlink into repository catalog files.
     """
-    home = isolated_home(base, catalog=False)
-    (home / "lib").unlink()
-    shutil.copytree(
-        ROOT / "lib", home / "lib", symlinks=True,
-        ignore=shutil.ignore_patterns("_vendor", "__pycache__"),
-    )
-    (home / "lib" / "_vendor").symlink_to(ROOT / "lib" / "_vendor")
-    return home
+    return isolated_home(base, catalog=False)
 
 
 _HOMES: dict[str, Path] = {}
@@ -75,40 +55,6 @@ def _home_for(project: Path) -> Path:
     if key not in _HOMES:
         _HOMES[key] = _make_home(base)
     return _HOMES[key]
-
-
-def _run_internal(project: Path, snippet: str, home: Path, tmpdir: Path):
-    """Process-boundary driver for scaffold internals with no CLI verb.
-
-    Runs a small driver program against the isolated home's own lib copy with
-    AI_SPECS_HOME bound to it (never importing repo lib code into this test
-    process). stdin is closed (input="") so no prompt can block.
-    """
-    driver = (
-        "import json, sys\n"
-        "from pathlib import Path\n"
-        "from unittest.mock import MagicMock, patch\n"
-        f"sys.path.insert(0, {str(home / 'lib' / '_internal')!r})\n"
-        f"sys.path.insert(0, {str(home / 'lib' / '_vendor')!r})\n"
-        f"project = Path({str(project)!r})\n"
-        "results = {}\n"
-        + snippet
-        + "\nprint('RESULT:' + json.dumps(results, default=str))\n"
-    )
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": str(tmpdir / "home"),
-        "TMPDIR": str(tmpdir),
-        "AI_SPECS_HOME": str(home),
-        "AI_SPECS_NO_NETWORK": "1",
-        "LC_ALL": "C",
-        "LANG": "C",
-    }
-    (tmpdir / "home").mkdir(parents=True, exist_ok=True)
-    return subprocess.run(
-        [sys.executable, "-c", driver], input="", text=True,
-        capture_output=True, cwd=str(tmpdir), env=env, check=False,
-    )
 
 
 class EnvrcScaffoldTests(unittest.TestCase):
@@ -312,72 +258,6 @@ class EnvrcScaffoldTests(unittest.TestCase):
         self.assertNotIn("TRELLO_API_KEY", text)
         self.assertNotIn("TRELLO_TOKEN", text)
         self.assertIn("no env vars required", text)
-
-    def test_prompt_env_vars_uses_password_api_for_secrets(self):
-        """Regression: password= kwarg crashes questionary 2.x; use password()."""
-        project, home = self._workspace(
-            {
-                "trello-mcp-workflow": (
-                    "[recipe]\n"
-                    'id = "trello-mcp-workflow"\n'
-                    'name = "Trello"\n'
-                    'description = "D"\n'
-                    'version = "1.0"\n\n'
-                    "[[provides.mcp]]\n"
-                    'id = "trello"\n'
-                    'command = "npx"\n'
-                    "env = { TRELLO_API_KEY = \"$TRELLO_API_KEY\", "
-                    "MODE = \"$MODE\" }\n",
-                    True,
-                )
-            }
-        )
-        # TRIAGE: ai-specs configure-recipes — interactive prompting via the
-        # envrc-scaffold shim runs only inside the TTY-gated offer path (the
-        # verb exits 3 otherwise); exercised at the shim's process boundary
-        # against the isolated home's own lib copy with a stubbed questionary.
-        proc = _run_internal(
-            project,
-            "import importlib.machinery\n"
-            "import importlib.util\n"
-            "loader = importlib.machinery.SourceFileLoader(\n"
-            f"    'envrc_scaffold', {str(home / 'lib' / '_internal' / 'envrc-scaffold.py')!r}\n"
-            ")\n"
-            "spec = importlib.util.spec_from_loader(loader.name, loader)\n"
-            "m = importlib.util.module_from_spec(spec)\n"
-            "sys.modules[spec.name] = m\n"
-            "loader.exec_module(m)\n"
-            "password = MagicMock()\n"
-            "password.return_value.ask.return_value = 'secret-key'\n"
-            "text = MagicMock()\n"
-            "text.return_value.ask.return_value = 'plain'\n"
-            "confirm = MagicMock()\n"
-            "confirm.return_value.ask.return_value = True\n"
-            "q = MagicMock(password=password, text=text, confirm=confirm)\n"
-            "sys.modules['questionary'] = q\n"
-            "result = m.prompt_env_vars(project)\n"
-            "results['TRELLO_API_KEY'] = result['TRELLO_API_KEY']\n"
-            "results['MODE'] = result['MODE']\n"
-            "results['password_called'] = bool(password.call_args_list)\n"
-            "results['text_password_kwargs'] = [\n"
-            "    'password' in c.kwargs for c in text.call_args_list\n"
-            "]\n",
-            home,
-            project.parent,
-        )
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        lines = [l for l in proc.stdout.splitlines() if l.startswith("RESULT:")]
-        self.assertTrue(
-            lines,
-            f"driver produced no RESULT line:\n{proc.stdout}\n{proc.stderr}",
-        )
-        results = json.loads(lines[-1][len("RESULT:") :])
-        self.assertEqual(results["TRELLO_API_KEY"], "secret-key")
-        self.assertEqual(results["MODE"], "plain")
-        self.assertTrue(results["password_called"])
-        # Secrets must not go through text(..., password=...)
-        for used in results["text_password_kwargs"]:
-            self.assertFalse(used)
 
     def test_generate_includes_env_var_help_comments(self):
         project, home = self._workspace(

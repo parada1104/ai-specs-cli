@@ -3,12 +3,13 @@
 Tasks 4.1-4.4: prove that the thin launcher (Phase 3) changed nothing in how
 the five harnesses consume the gate:
 
-- 4.1  hooks-render.py output is byte-identical to the pre-change output for
-       claude, cursor, opencode, pi and omp (script_path stability). Phases
-       0-3 did not modify hooks-render.py, so the renderer must emit exactly
-       the same bytes for the same resolved-hooks document — pinned here by
-       rendering twice in fresh projects and asserting identical bytes, plus
-       asserting every artifact references the launcher's materialized path.
+- 4.1  the renderer emits the same bytes for the same resolved-hooks document
+       for claude, cursor, opencode, pi and omp (script_path stability): pinned
+       by running `ai-specs sync` twice in fresh projects and asserting identical
+       bytes, plus asserting every artifact references the launcher's
+       materialized path. The renderer's own byte contract is additionally
+       frozen in internal/sync (`hooksrender_test.go`); these tests own the
+       end-to-end artifact set a synced project really gets.
 - 4.2  the Cursor wrapper still maps exit 2 -> {"permission":"deny"} through
        the launcher, and the binary's empty stdout does not degrade the deny
        decision: the gate message travels on stderr (inherited by the Cursor
@@ -24,61 +25,68 @@ script.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import invoke, isolated_home  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
-HOOKS_RENDER_PATH = ROOT / "lib" / "_internal" / "hooks-render.py"
 GATE = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
 GO_BINARY = ROOT / "dist" / "worktree-gate-current"
+RECIPE_TOML = ROOT / "catalog" / "recipes" / "worktree-flow" / "recipe.toml"
 
-# The resolved hook entries the sync pipeline produces for worktree-flow
-# (Phases 0-2 shape: launcher script_path, ENV-shaped config as env). The
-# launcher keeps this exact contract (task 4.1).
-FILEWRITE_HOOK = {
-    "recipe": "worktree-flow",
-    "id": "worktree-gate",
-    "event": "pre-tool-use",
-    "matcher": "Edit|Write|MultiEdit|NotebookEdit",
-    "blocking": True,
-    "script_path": "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh",
-    "env": {
-        "WORKTREE_GATE_PROTECTED": "main development",
-        "WORKTREE_GATE_MODE": "always",
-        "WORKTREE_GATE_SCOPE": "auto",
-    },
+AGENTS = ("claude", "cursor", "opencode", "pi", "omp")
+
+# The artifact each harness consumes for the file-write hook, except cursor,
+# whose only target is the shell matcher (`worktree-gate-shell`).
+ARTIFACTS = {
+    "claude": (".claude", "settings.json"),
+    "cursor": (".cursor", "hooks", "worktree-flow-worktree-gate-shell.sh"),
+    "opencode": (".opencode", "plugin", "worktree-flow-worktree-gate.ts"),
+    "pi": (".pi", "extensions", "worktree-flow-worktree-gate.ts"),
+    "omp": (".omp", "extensions", "worktree-flow-worktree-gate.ts"),
 }
 
-SHELL_HOOK = {
-    "recipe": "worktree-flow",
-    "id": "worktree-gate-shell",
-    "event": "pre-tool-use",
-    "matcher": "Bash|Shell|Execute|Terminal",
-    "blocking": True,
-    "script_path": "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh",
-    "env": {
-        "WORKTREE_GATE_PROTECTED": "main development",
-        "WORKTREE_GATE_MODE": "always",
-        "WORKTREE_GATE_SCOPE": "auto",
-    },
-}
-
+# The resolved hook entries the sync pipeline produces for worktree-flow are the
+# ones the shipped recipe declares ([[provides.hooks]] worktree-gate and
+# worktree-gate-shell); sync renders them into the five harness artifacts.
 MATERIALIZED_SCRIPT = "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh"
 
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+def _recipe_version() -> str:
+    with open(RECIPE_TOML, "rb") as fh:
+        return tomllib.load(fh)["recipe"]["version"]
+
+
+def _sync(project: Path, home: Path) -> None:
+    result = invoke(project, "sync", cli_home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _synced_project(base: Path) -> tuple[Path, Path]:
+    """A project synced for all five harnesses; returns (project, cli home)."""
+    project = base / "project"
+    (project / "ai-specs" / "skills").mkdir(parents=True)
+    (project / "ai-specs" / "commands").mkdir()
+    (project / "ai-specs" / "ai-specs.toml").write_text(
+        "[project]\nname = 'harness'\n\n"
+        f"[agents]\nenabled = [{', '.join(repr(a) for a in AGENTS)}]\n\n"
+        f"[recipes.worktree-flow]\nenabled = true\nversion = \"{_recipe_version()}\"\n"
+    )
+    home = isolated_home(base)
+    _sync(project, home)
+    return project, home
+
+
+def _artifact(project: Path, agent: str) -> Path:
+    return project.joinpath(*ARTIFACTS[agent])
 
 
 def _git(cwd: Path, *args: str) -> None:
@@ -140,49 +148,21 @@ def _launcher_env(root: Path) -> dict:
 
 
 class HookRenderByteStabilityTests(unittest.TestCase):
-    """Task 4.1: renderer output is byte-identical to the pre-change output."""
+    """Task 4.1: the synced artifacts are byte-stable across re-renders."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(HOOKS_RENDER_PATH, "hooks_render_phase4_internal")
-
-    def _project(self) -> Path:
+    def _project(self) -> tuple[Path, Path]:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        return Path(tmp.name)
-
-    def _render_once(self, agent: str) -> tuple[bytes, list[str]]:
-        project = self._project()
-        hooks = [SHELL_HOOK] if agent == "cursor" else [FILEWRITE_HOOK]
-        resolved = project / "resolved-hooks.json"
-        resolved.write_text(json.dumps({"enabled_agents": [agent], "hooks": hooks}))
-        warnings = self.mod.render(resolved, agent, project)
-        return self._capture(project, agent, hooks), warnings
-
-    def _capture(self, project: Path, agent: str, hooks: list[dict]) -> bytes:
-        base = f"worktree-flow-{hooks[0]['id']}"
-        if agent == "claude":
-            return (project / ".claude" / "settings.json").read_bytes()
-        if agent == "cursor":
-            return (project / ".cursor" / "hooks" / f"{base}.sh").read_bytes()
-        if agent == "opencode":
-            return (project / ".opencode" / "plugin" / f"{base}.ts").read_bytes()
-        if agent == "pi":
-            return (project / ".pi" / "extensions" / f"{base}.ts").read_bytes()
-        if agent == "omp":
-            return (project / ".omp" / "extensions" / f"{base}.ts").read_bytes()
-        raise AssertionError(agent)
+        return _synced_project(Path(tmp.name))
 
     def test_renderer_output_is_byte_identical_to_preexisting_shape(self):
-        # The resolved-hooks document is the same shape Phases 0-2 produced
-        # and hooks-render.py is untouched by Phases 0-3 (spec: "zero renderer
-        # changes and zero re-render churn"). Byte-identity is pinned by
-        # rendering the same document twice in fresh projects. The
-        # stabilize-workspace-context change then replaced the relative
+        # The launcher is transport-only, so every harness artifact must keep
+        # referencing the same materialized script_path and the renderer must
+        # stay deterministic for the same synced project. The
+        # stabilize-workspace-context change replaced the relative
         # ``const SCRIPT = "..."`` with a runtime module-derived declaration
-        # for opencode/pi/omp; the pinned fragments below assert THAT shape,
-        # so a regression to a relative or machine-specific SCRIPT breaks
-        # here.
+        # for opencode/pi/omp; the pinned fragments below assert THAT shape, so
+        # a regression to a relative or machine-specific SCRIPT breaks here.
         expected_fragments = {
             "claude": MATERIALIZED_SCRIPT,
             "cursor": MATERIALIZED_SCRIPT,   # wrapper embeds script=...
@@ -190,40 +170,37 @@ class HookRenderByteStabilityTests(unittest.TestCase):
             "pi": f'const SCRIPT = fileURLToPath(new URL("../../{MATERIALIZED_SCRIPT}", import.meta.url));',
             "omp": f'const SCRIPT = fileURLToPath(new URL("../../{MATERIALIZED_SCRIPT}", import.meta.url));',
         }
-        for agent in ("claude", "cursor", "opencode", "pi", "omp"):
+        project, home = self._project()
+        for agent in AGENTS:
             with self.subTest(agent=agent):
-                blob, warnings = self._render_once(agent)
-                self.assertTrue(blob, f"{agent} render must not be empty")
-                self.assertNotIn("skipped", " ".join(warnings),
-                                 f"renderer {agent} must not skip the hook")
-                text = blob.decode("utf-8", "replace")
+                text = _artifact(project, agent).read_text(encoding="utf-8")
                 self.assertIn(expected_fragments[agent], text)
-                # Deterministic output: a fresh render is byte-identical.
-                blob2, _ = self._render_once(agent)
-                self.assertEqual(blob, blob2, f"{agent} render must be byte-identical")
+
+        first = {agent: _artifact(project, agent).read_bytes() for agent in AGENTS}
+        _sync(project, home)
+        second = {agent: _artifact(project, agent).read_bytes() for agent in AGENTS}
+        self.assertEqual(first, second,
+                         "a re-sync must not change the rendered artifacts")
 
     def test_all_five_harness_artifacts_reference_the_materialized_path(self):
         # Spec scenario "Materialized path is unchanged for every harness":
         # every rendered artifact references the same script_path — the
         # launcher — with no re-render churn.
-        for agent in ("claude", "cursor", "opencode", "pi", "omp"):
+        project, _ = self._project()
+        for agent in AGENTS:
             with self.subTest(agent=agent):
-                blob, _ = self._render_once(agent)
-                text = blob.decode("utf-8", "replace")
+                text = _artifact(project, agent).read_text(encoding="utf-8")
                 self.assertIn("worktree-gate.sh", text)
 
 
 class CursorLauncherWrapperTests(unittest.TestCase):
     """Task 4.2: Cursor wrapper exit-2 -> deny mapping through the launcher."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(HOOKS_RENDER_PATH, "hooks_render_cursor_phase4_internal")
-
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.project = Path(tmp.name)
+        self.base = Path(tmp.name)
+        self.project, self.home = _synced_project(self.base)
         self.repo = self.project / "repo"
         self.repo.mkdir()
         _git(self.repo, "init", "-q")
@@ -233,15 +210,9 @@ class CursorLauncherWrapperTests(unittest.TestCase):
         _git(self.repo, "add", "-A")
         _git(self.repo, "commit", "-qm", "init")
         _git(self.repo, "checkout", "-q", "-B", "main")
-        # Real project layout: launcher + binary pin under ai-specs/.
-        _project_launcher(self.project)
-        # Render the Cursor wrapper + hooks.json for the shell matcher (the
-        # only matcher Cursor has a target for).
-        resolved = self.project / "resolved-hooks.json"
-        resolved.write_text(json.dumps(
-            {"enabled_agents": ["cursor"], "hooks": [SHELL_HOOK]}
-        ))
-        self.mod.render(resolved, "cursor", self.project)
+        # sync materialized the launcher; the launcher resolves the verified
+        # binary from the project-local pin, so install it now.
+        _install_binary_in(self.project)
 
     def _wrapper(self) -> Path:
         return self.project / ".cursor" / "hooks" / "worktree-flow-worktree-gate-shell.sh"
