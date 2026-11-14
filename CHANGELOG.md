@@ -7,14 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-11-14
+
+### Upgrade notes
+The first `ai-specs` command after `ai-specs upgrade` downloads and verifies the
+native binary once (it needs network access); nothing else is required and
+Python is no longer needed. Then run `ai-specs sync` in each project to refresh
+the lock and the worktree-gate hook. If the download fails, re-run `install.sh`.
+
+### Changed
+- **Single Go binary (GO-20).** Every verb is served by the native `ai-specs`
+  binary; `bin/ai-specs` is only a launcher. The Python and shell runtime under
+  `lib/` is removed, `install.sh` and the production sync/doctor/recipe paths no
+  longer require Python, and the worktree-gate bridge flags are retired.
+- **Pi MCP config in the Go platform tables.** Pi's MCP servers render into
+  `.pi/mcp.json` (Claude Code keeps `.mcp.json`), in both `sync-agent` and
+  `doctor`.
+
 ### Fixed
-- **Launcher self-heal.** `bin/ai-specs` now acquires the native binary itself
-  when `$AI_SPECS_HOME/dist/ai-specs` is missing: a SHA-256-verified release
-  asset through the committed trust root, or a local `go build`. An `ai-specs
-  upgrade` run from 0.24.x only fast-forwards the checkout and installs no
-  binary, so every verb used to fail with `native binary not found`; the first
-  verb now heals once and runs. An explicitly pinned `AI_SPECS_GO_BIN` is never
-  replaced. See `docs/troubleshooting-launcher-self-heal.md`.
+- **Launcher self-heal.** `bin/ai-specs` acquires the native binary itself when
+  `$AI_SPECS_HOME/dist/ai-specs` is missing: a SHA-256-verified release asset
+  through the committed trust root, or a local `go build`. An `ai-specs upgrade`
+  run from 0.24.x only fast-forwards the checkout and installs no binary, so
+  every verb used to fail with `native binary not found`; the first verb now
+  heals once and runs. An explicitly pinned `AI_SPECS_GO_BIN` is never replaced.
+  See `docs/troubleshooting-launcher-self-heal.md`.
 
 ## [0.24.5] — 2026-10-18
 
