@@ -1,0 +1,11 @@
+[recipe]
+id = "x"
+name = "N"
+description = "D"
+version = "1.0"
+
+[[provides.hooks]]
+id = "h"
+event = "stop"
+script = "ok.sh"
+blocking = 1

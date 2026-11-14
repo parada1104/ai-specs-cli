@@ -313,12 +313,11 @@ Sequence on the review branch:
 3. Open a PR (artifact gate satisfied).
 4. Promote canonical specs. Compose every delta under
    `openspec/changes/<slug>/specs/<domain>/spec.md` into
-   `openspec/specs/<domain>/spec.md` with the promotion helper and commit the
-   result on the review branch:
+   `openspec/specs/<domain>/spec.md` with the promotion helper (the
+   `ai-specs specs promote` verb) and commit the result on the review branch:
 
 ```bash
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/spec_promotion.py" \
-  <slug> --root <planning-root>
+ai-specs specs promote <slug> --root <planning-root>
 ```
 
    Composition follows the archive contract: `## ADDED Requirements` appends,
@@ -339,8 +338,7 @@ context — required, never the process cwd; a subrepo request passes the proven
 superproject root:
 
 ```bash
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/premerge_guardian.py" \
-  <slug> --root <planning-root> --stage pre-archive
+ai-specs gates premerge <slug> --root <planning-root> --stage pre-archive
 ```
 
 The command must pass for Standard and Full; do not archive or continue when it
@@ -368,8 +366,7 @@ superproject, pass `<super>/openspec`'s parent — the superproject root — so 
 guardian inspects the canonical tree and never a subrepo-local change folder.
 
 ```bash
-python3 "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib/_internal/premerge_guardian.py" \
-  <slug> --root <planning-root>
+ai-specs gates premerge <slug> --root <planning-root>
 # optional: --tier light|standard|full
 ```
 

@@ -1,0 +1,130 @@
+{
+  "oracle": {
+    "driver": "check_tag_conflicts(catalog_dir, recipe_ids) with WORKTREE_GATE_BIN set to the gate binary",
+    "note": "Frozen snapshot of the legacy materialize tag authority (recipe-materialize.py check_tag_conflicts) over the catalog and case ids below, captured once. The payload is host-independent, so no tokenization was needed: it carries no path, no mode, no clock and no cache key. Regenerating it needs a human decision.",
+    "python": "3.14.7",
+    "script": "lib/_internal/recipe-materialize.py"
+  },
+  "catalog": [
+    {
+      "path": "a",
+      "dir": true
+    },
+    {
+      "path": "a/recipe.toml",
+      "content": "[recipe]\nid = \"zeta\"\nname = \"Zeta\"\ndescription = \"d\"\nversion = \"1.0.0\"\ntags = [\"tracker\", \"vcs\"]\n"
+    },
+    {
+      "path": "b",
+      "dir": true
+    },
+    {
+      "path": "b/recipe.toml",
+      "content": "[recipe]\nid = \"alpha\"\nname = \"Alpha\"\ndescription = \"d\"\nversion = \"1.0.0\"\ntags = [\"vcs\", \"vault\"]\nconflicts_with = [\"gamma\"]\n"
+    },
+    {
+      "path": "c",
+      "dir": true
+    },
+    {
+      "path": "c/recipe.toml",
+      "content": "[recipe]\nid = \"gamma\"\nname = \"Gamma\"\ndescription = \"d\"\nversion = \"1.0.0\"\ntags = [\"vault\"]\n"
+    },
+    {
+      "path": "dir-broken",
+      "dir": true
+    },
+    {
+      "path": "dir-broken/recipe.toml",
+      "content": "not = [valid\n"
+    },
+    {
+      "path": "dir-norecipe",
+      "dir": true
+    },
+    {
+      "path": "dir-norecipe/recipe.toml",
+      "content": "tags = [\"x\"]\n"
+    },
+    {
+      "path": "empty",
+      "dir": true
+    }
+  ],
+  "cases": [
+    {
+      "name": "shared tags with an absent directory skipped",
+      "ids": [
+        "ghost",
+        "a",
+        "b",
+        "c"
+      ],
+      "conflicts": [
+        {
+          "type": "tag_conflict",
+          "tag": "vcs",
+          "recipes": [
+            "alpha",
+            "zeta"
+          ],
+          "severity": "warning"
+        },
+        {
+          "type": "tag_conflict",
+          "tag": "vault",
+          "recipes": [
+            "alpha",
+            "gamma"
+          ],
+          "severity": "fatal"
+        }
+      ]
+    },
+    {
+      "name": "absent recipe.toml is skipped",
+      "ids": [
+        "empty",
+        "a",
+        "b",
+        "c"
+      ],
+      "conflicts": [
+        {
+          "type": "tag_conflict",
+          "tag": "vcs",
+          "recipes": [
+            "alpha",
+            "zeta"
+          ],
+          "severity": "warning"
+        },
+        {
+          "type": "tag_conflict",
+          "tag": "vault",
+          "recipes": [
+            "alpha",
+            "gamma"
+          ],
+          "severity": "fatal"
+        }
+      ]
+    },
+    {
+      "name": "unparsable recipe.toml is omitted",
+      "ids": [
+        "a",
+        "dir-broken"
+      ],
+      "conflicts": []
+    },
+    {
+      "name": "recipe.toml without [recipe] is omitted",
+      "ids": [
+        "a",
+        "dir-norecipe"
+      ],
+      "conflicts": []
+    }
+  ]
+}

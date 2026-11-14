@@ -1,0 +1,40 @@
+{
+ "recipeconfig_golden": {
+  "datetime-gate-corruption": {
+   "changed": true,
+   "error": "",
+   "manifest": "[project]\nname = \"unit\"\n\n[recipes.demo]\nenabled = true\n\n[recipes.demo.config]\nreconcile = { scope_field = \"board_id\", stamped = \"1979-05-27 07:32:00+00:00\", max_age_seconds = 60 }\n",
+   "refusal": ""
+  },
+  "dotted-header-table": {
+   "changed": true,
+   "error": "",
+   "manifest": "[project]\nname = \"unit\"\n\n[recipes.demo]\nenabled = true\n\n[recipes.demo.config]\nnote = \"old\"\n\n[recipes.demo.config.reconcile]\nscope_field = \"board_id\"\nmax_age_seconds = 60  # pinned\n",
+   "refusal": ""
+  },
+  "dotted-inline-table": {
+   "changed": true,
+   "error": "",
+   "manifest": "[project]\nname = \"unit\"\n\n[recipes.demo]\nenabled = true\n\n[recipes.demo.config]\nretries = 3  # keep this comment\nnote = \"old\"\nreconcile = { scope_field = \"board_id\", max_age_seconds = 60 }\n",
+   "refusal": ""
+  },
+  "new-recipe-block": {
+   "changed": true,
+   "error": "",
+   "manifest": "[project]\nname = \"unit\"\n\n[recipes.fresh]\nenabled = true\n\n[recipes.fresh.config]\nretries = 1\n",
+   "refusal": ""
+  },
+  "plain-scalar-write": {
+   "changed": true,
+   "error": "",
+   "manifest": "[project]\nname = \"unit\"\n\n[recipes.demo]\nenabled = true\n\n[recipes.demo.config]\nretries = 9  # keep this comment\nnote = \"old\"\nreconcile = { scope_field = \"board_id\" }\n",
+   "refusal": ""
+  },
+  "whole-table-dotted-conflict": {
+   "changed": false,
+   "error": "",
+   "manifest": "[project]\nname = \"unit\"\n\n[recipes.demo]\nenabled = true\n\n[recipes.demo.config]\nretries = 3  # keep this comment\nnote = \"old\"\nreconcile = { scope_field = \"board_id\" }\n",
+   "refusal": "cannot combine a whole-table and a dotted update for key(s): reconcile"
+  }
+ }
+}

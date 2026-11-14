@@ -1,0 +1,192 @@
+{
+  "plan_golden": {
+    "00-gh-Darwin": {
+      "binary": "gh",
+      "command": [
+        "brew",
+        "install",
+        "gh"
+      ],
+      "described": "brew install gh",
+      "display": "brew install gh",
+      "guidance_url": "https://cli.github.com/",
+      "installer": "",
+      "kind": "brew",
+      "min_version": "",
+      "ok": true,
+      "provider": null,
+      "release_policy": "",
+      "repository": ""
+    },
+    "01-jq-Linux": {
+      "binary": "jq",
+      "command": [
+        "sudo",
+        "apt-get",
+        "install",
+        "-y",
+        "jq"
+      ],
+      "described": "sudo apt-get install -y jq",
+      "display": "sudo apt-get install -y jq",
+      "guidance_url": "https://jqlang.github.io/jq/",
+      "installer": "",
+      "kind": "apt",
+      "min_version": "",
+      "ok": true,
+      "provider": null,
+      "release_policy": "",
+      "repository": ""
+    },
+    "02-gh-Linux": {
+      "binary": "gh",
+      "command": [
+        "brew",
+        "install",
+        "gh"
+      ],
+      "described": "brew install gh",
+      "display": "brew install gh",
+      "guidance_url": "https://cli.github.com/",
+      "installer": "",
+      "kind": "brew",
+      "min_version": "",
+      "ok": true,
+      "provider": null,
+      "release_policy": "",
+      "repository": ""
+    },
+    "03-jq-Darwin": {
+      "binary": "jq",
+      "command": [],
+      "described": "https://jqlang.github.io/jq/",
+      "display": "https://jqlang.github.io/jq/",
+      "guidance_url": "https://jqlang.github.io/jq/",
+      "installer": "",
+      "kind": "guidance",
+      "min_version": "",
+      "ok": true,
+      "provider": null,
+      "release_policy": "",
+      "repository": ""
+    },
+    "04-gh-Darwin": {
+      "binary": "gh",
+      "command": [],
+      "described": "https://cli.github.com/",
+      "display": "https://cli.github.com/",
+      "guidance_url": "https://cli.github.com/",
+      "installer": "",
+      "kind": "guidance",
+      "min_version": "",
+      "ok": true,
+      "provider": null,
+      "release_policy": "",
+      "repository": ""
+    },
+    "05-bb-Linux": {
+      "binary": "bb",
+      "command": [],
+      "described": "https://bitbucket.org/product/features/bb-cli",
+      "display": "https://bitbucket.org/product/features/bb-cli",
+      "guidance_url": "https://bitbucket.org/product/features/bb-cli",
+      "installer": "",
+      "kind": "guidance",
+      "min_version": "",
+      "ok": true,
+      "provider": null,
+      "release_policy": "",
+      "repository": ""
+    },
+    "06-npx-Darwin": {
+      "binary": "npx",
+      "command": [],
+      "described": "https://nodejs.org/",
+      "display": "https://nodejs.org/",
+      "guidance_url": "https://nodejs.org/",
+      "installer": "",
+      "kind": "guidance",
+      "min_version": "",
+      "ok": true,
+      "provider": null,
+      "release_policy": "",
+      "repository": ""
+    },
+    "07-custom-tool-Darwin": {
+      "binary": "custom-tool",
+      "command": [],
+      "described": "install 'custom-tool' manually",
+      "display": "install 'custom-tool' manually",
+      "guidance_url": "",
+      "installer": "",
+      "kind": "guidance",
+      "min_version": "",
+      "ok": true,
+      "provider": null,
+      "release_policy": "",
+      "repository": ""
+    },
+    "08-gh-Darwin": {
+      "binary": "gh",
+      "command": [
+        "brew",
+        "install",
+        "gh"
+      ],
+      "described": "brew install gh",
+      "display": "brew install gh",
+      "guidance_url": "https://cli.github.com/",
+      "installer": "",
+      "kind": "brew",
+      "min_version": "",
+      "ok": true,
+      "provider": null,
+      "release_policy": "",
+      "repository": ""
+    },
+    "09-jinna-": {
+      "binary": "jinna",
+      "command": [],
+      "described": "  GitHub Release installation plan for 'jinna':\n    repository:      parada1104/jinna-provider\n    release policy:  latest-stable (latest non-draft, non-prerelease tag)\n    target:          <GOOS>/<GOARCH>\n    expected asset:  jinna_<version>_<GOOS>_<GOARCH>.tar.gz\n    destination:     <HOME>/cache/bin/jinna\n    checksum source: SHA256SUMS from the same release\n    minimum version: 0.4.0\n    replacement:     an existing PATH provider is never modified; a verified managed version is reused\n    manual fallback: https://example.com/jinna",
+      "display": "GitHub Release parada1104/jinna-provider (latest-stable) for <GOOS>/<GOARCH>",
+      "guidance_url": "https://example.com/jinna",
+      "installer": "github-release",
+      "kind": "github-release",
+      "min_version": "0.4.0",
+      "ok": true,
+      "provider": {
+        "cache_root": "<HOME>/cache/bin/jinna",
+        "goarch": "<GOARCH>",
+        "goos": "<GOOS>"
+      },
+      "release_policy": "latest-stable",
+      "repository": "parada1104/jinna-provider"
+    },
+    "10-gh-": {
+      "binary": "gh",
+      "command": [],
+      "described": "  GitHub Release installation plan for 'gh':\n    repository:      parada1104/jinna-provider\n    release policy:  latest-stable (latest non-draft, non-prerelease tag)\n    target:          <GOOS>/<GOARCH>\n    expected asset:  jinna_<version>_<GOOS>_<GOARCH>.tar.gz\n    destination:     <HOME>/cache/bin/jinna\n    checksum source: SHA256SUMS from the same release\n    minimum version: not declared\n    replacement:     an existing PATH provider is never modified; a verified managed version is reused\n    manual fallback: https://cli.github.com/",
+      "display": "GitHub Release parada1104/jinna-provider (latest-stable) for <GOOS>/<GOARCH>",
+      "guidance_url": "https://cli.github.com/",
+      "installer": "github-release",
+      "kind": "github-release",
+      "min_version": "",
+      "ok": true,
+      "provider": {
+        "cache_root": "<HOME>/cache/bin/jinna",
+        "goarch": "<GOARCH>",
+        "goos": "<GOOS>"
+      },
+      "release_policy": "latest-stable",
+      "repository": "parada1104/jinna-provider"
+    },
+    "11-jinna-": {
+      "error": "provider dependency is not the allowlisted GitHub Release installer",
+      "ok": false
+    },
+    "12-jinna-": {
+      "error": "provider release policy must be latest-stable",
+      "ok": false
+    }
+  }
+}

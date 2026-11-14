@@ -1,0 +1,93 @@
+{
+ "fixture": "upgrade-surface",
+ "gate_mode": "gate-present",
+ "legacy_launcher": "6340c27b71d1c573592b2e426c3c45e76b6e3522",
+ "steps": [
+  {
+   "argv": [
+    "upgrade",
+    "--help"
+   ],
+   "rc": 0,
+   "stderr": "",
+   "stdout": "Usage: ai-specs upgrade [--dry-run] [--force] [-v|--verbose]\n\nSafely upgrade the global ai-specs installation to the latest origin/main.\n\nFlags:\n  --dry-run       Show what would change without modifying the repository.\n  --force         Proceed even if the working tree has uncommitted changes.\n  -v, --verbose   Show the full git output instead of one line per step.\n  -h, --help      Show this help.\n\nExit codes:\n  0   Success or dry-run completed.\n  1   Broken or missing installation.\n  2   Dev / non-standard checkout, or invalid usage (unknown argument).\n  3   Pre-flight check failed (dirty tree, non-fast-forward, etc.).\n  4   Git fetch or merge failed.\n  5   Post-upgrade verification failed (symlink broken).\n",
+   "tree": [
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "203f297e52bcfac89da70b0f3e4549e958265448b4308e7d5acec55ba58d8434"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  },
+  {
+   "argv": [
+    "upgrade",
+    "--bogus"
+   ],
+   "rc": 2,
+   "stderr": "Unknown argument: --bogus\nUsage: ai-specs upgrade [--dry-run] [--force] [-v|--verbose]\n\nSafely upgrade the global ai-specs installation to the latest origin/main.\n\nFlags:\n  --dry-run       Show what would change without modifying the repository.\n  --force         Proceed even if the working tree has uncommitted changes.\n  -v, --verbose   Show the full git output instead of one line per step.\n  -h, --help      Show this help.\n\nExit codes:\n  0   Success or dry-run completed.\n  1   Broken or missing installation.\n  2   Dev / non-standard checkout, or invalid usage (unknown argument).\n  3   Pre-flight check failed (dirty tree, non-fast-forward, etc.).\n  4   Git fetch or merge failed.\n  5   Post-upgrade verification failed (symlink broken).\n",
+   "stdout": "",
+   "tree": [
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "203f297e52bcfac89da70b0f3e4549e958265448b4308e7d5acec55ba58d8434"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  }
+ ]
+}

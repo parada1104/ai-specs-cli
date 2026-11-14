@@ -8,8 +8,11 @@ or execute a notice — only display it.
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from test_upgrade_output import UpgradeOutputTests, run
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class UpgradeNoticeTests(UpgradeOutputTests):
@@ -205,21 +208,6 @@ class UpgradeNoticeTests(UpgradeOutputTests):
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertIn("Upgraded", result.stdout)
         self.assertNotIn("What changed", result.stdout)
-        self.assertNotIn("Traceback", result.stdout + result.stderr)
-
-    def test_missing_parser_does_not_break_the_upgrade(self):
-        home = self.fake_home()
-        ai_specs, bare = self.setup_install(home, version="0.21.0")
-        self.publish_mutated(
-            ai_specs,
-            bare,
-            "0.22.0",
-            lambda c: (c / "lib" / "_internal" / "changelog.py").unlink(),
-        )
-
-        result = self.upgrade(home)
-        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
-        self.assertIn("Upgraded", result.stdout)
         self.assertNotIn("Traceback", result.stdout + result.stderr)
 
 

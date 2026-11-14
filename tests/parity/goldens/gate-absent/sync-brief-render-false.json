@@ -1,0 +1,89 @@
+{
+ "fixture": "sync-brief-render-false",
+ "gate_mode": "gate-absent",
+ "legacy_launcher": "6340c27b71d1c573592b2e426c3c45e76b6e3522",
+ "steps": [
+  {
+   "argv": [
+    "sync"
+   ],
+   "rc": 1,
+   "stderr": "ERROR: <TEMP>/AGENTS.md not found. Run 'ai-specs init <TEMP>' first.\nERROR: sync failed for target <TEMP> (root:.). Stopped on first failure; previous writes are not rolled back.\n",
+   "stdout": "\nai-specs sync\n  root:    <TEMP>\n  planning: <TEMP>\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  (no [[deps]] declared \u2014 nothing to vendor)\n  syncing harness env (.envrc + ai-specs.env.example)\nWrote <TEMP>/ai-specs.env.example\n  syncing recipes\n  (no [recipes.*] enabled \u2014 skipping)\n  syncing AGENTS.md\n  \u2139 skipped AGENTS.md (brief.render = false)\n  syncing root:. \u2192 <TEMP>\n  syncing flatten resolved skills\n  syncing merge commands\n",
+   "tree": [
+    [
+     ".envrc",
+     [
+      "file",
+      "0o644",
+      "13aad1869f30375f8ccb2c64e247249456f16bdc6a8ddb20b60d327f9c5a0e58"
+     ]
+    ],
+    [
+     ".gitignore",
+     [
+      "file",
+      "0o644",
+      "346c2e6aaa8c4e5bf7bbbeb9565e2ea9ce037c716867e692701a7edd764499af"
+     ]
+    ],
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs.env.example",
+     [
+      "file",
+      "0o644",
+      "59135009ac755279493bce7d51122c132630323056511e290f51dc104540ec87"
+     ]
+    ],
+    [
+     "ai-specs/.ai-specs.lock",
+     [
+      "file",
+      "0o600",
+      "e569e75263b459b1fe32a51367572d6b12fc087e5ba698d1d26d1436b6545ee4"
+     ]
+    ],
+    [
+     "ai-specs/.gitignore",
+     [
+      "file",
+      "0o644",
+      "435a5764426295aa8bfa9540dc0c92d9a65e994e8e86bebdb2d21136f0772cbd"
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "f2e9de8f9db2772ddffd17dab8b6341e81083a382f6731d5c22f567bcd314273"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  }
+ ]
+}

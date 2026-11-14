@@ -4,36 +4,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"ai-specs.dev/worktree-gate/shared"
 )
 
-// RealPath mirrors Python os.path.realpath (design decision D11): it never
-// fails on a nonexistent tail, unlike filepath.EvalSymlinks. The existing
-// prefix is resolved through symlinks component-wise, then the unresolved
-// remainder is appended lexically. On any failure it returns the
-// lexically-cleaned absolute path. This is what makes the macOS fixtures work,
-// where /tmp -> /private/tmp and /var -> /private/var.
+// RealPath delegates to the shared resolution rule
+// (ai-specs.dev/worktree-gate/shared.RealPath) so the gate and the root native
+// sync authority share one realpath. It mirrors Python os.path.realpath
+// (design decision D11): it never fails on a nonexistent tail, unlike
+// filepath.EvalSymlinks. See shared/realpath.go for the rule.
 func RealPath(p string) string {
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		abs = filepath.Clean(p)
-	}
-	rest := abs
-	var tail []string
-	for {
-		resolved, err := filepath.EvalSymlinks(rest)
-		if err == nil {
-			if len(tail) == 0 {
-				return resolved
-			}
-			return filepath.Join(append([]string{resolved}, tail...)...)
-		}
-		parent := filepath.Dir(rest)
-		if parent == rest {
-			return filepath.Clean(abs)
-		}
-		tail = append([]string{filepath.Base(rest)}, tail...)
-		rest = parent
-	}
+	return shared.RealPath(p)
 }
 
 // Inside mirrors the reference inside() (worktree-gate-legacy.sh:384-388),

@@ -5,12 +5,14 @@ import subprocess
 import tempfile
 import tomllib
 import unittest
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cli_path  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILLS_REMOVE_SCRIPT = ROOT / "lib" / "skills-remove.sh"
-SKILLS_ADD_SCRIPT = ROOT / "lib" / "skills-add.sh"
 
 
 def _manifest_with_dep(dep_id: str = "my-skill") -> str:
@@ -61,7 +63,7 @@ class SkillsRemoveCliTests(unittest.TestCase):
     def _add(self, project: Path, dep_id: str, url: str):
         proc = subprocess.run(
             [
-                "bash", str(SKILLS_ADD_SCRIPT), url, str(project),
+                str(cli_path()), "skills", "add", url, str(project),
                 "--id", dep_id, "--no-sync",
             ],
             capture_output=True, text=True, cwd=str(project),
@@ -71,7 +73,7 @@ class SkillsRemoveCliTests(unittest.TestCase):
 
     def _run(self, *args, cwd=None) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["bash", str(SKILLS_REMOVE_SCRIPT), *args],
+            [str(cli_path()), "skills", "remove", *args],
             capture_output=True, text=True, cwd=str(cwd or Path.cwd()),
             env=self._env(), check=False,
         )
@@ -202,16 +204,85 @@ class SkillsRemoveCliTests(unittest.TestCase):
     def test_remove_fails_without_id(self):
         project = self._project_with_manifest()
         proc = subprocess.run(
-            ["bash", str(SKILLS_REMOVE_SCRIPT)],
+            [str(cli_path()), "skills", "remove"],
             capture_output=True, text=True, cwd=str(project), check=False,
         )
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("missing", proc.stderr)
 
+    def test_remove_tolerates_already_invalid_manifest(self):
+        """FROZEN parity: removal still works on a manifest that is not valid TOML."""
+        project = self._project_with_manifest()
+        toml = self._toml_path(project)
+        toml.write_text(
+            '[project]\nname = "test"\nbroken line\n[[deps]]\nid = "my-skill"\n',
+            encoding="utf-8",
+        )
+        proc = self._run("my-skill", str(project))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("[[deps]]", toml.read_text(encoding="utf-8"))
+
+    def test_remove_preserves_multiline_string_blank_lines(self):
+        """D2: untouched regions (even inside multi-line strings) survive byte-identical."""
+        project = self._project_with_manifest(
+            '[project]\n'
+            'name = "test"\n'
+            '\n'
+            '[other]\n'
+            'notes = """\n'
+            'first\n'
+            '\n'
+            '\n'
+            'third\n'
+            '"""\n'
+            '\n'
+            '[[deps]]\n'
+            'id = "my-skill"\n'
+            'source = "https://github.com/test/repo.git"\n'
+        )
+        proc = self._run("my-skill", str(project))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+        with open(self._toml_path(project), "rb") as f:
+            data = tomllib.load(f)
+        self.assertEqual(
+            data["other"]["notes"], "first\n\n\nthird\n",
+            "blank lines inside an untouched multi-line string were collapsed",
+        )
+        self.assertEqual(data.get("deps") or [], [])
+
+    def test_remove_invalid_result_restores_manifest(self):
+        """A deletion that breaks a valid manifest is refused; original bytes intact."""
+        project = self._project_with_manifest()
+        toml = self._toml_path(project)
+        # The [[deps]] id sits inside a multi-line string of [other]; the
+        # segmenter treats the embedded line as a header and deleting it cuts
+        # the string open.
+        toml.write_text(
+            '[other]\n'
+            'doc = """\n'
+            '[[deps]]\n'
+            'id = "my-skill"\n'
+            'inner\n'
+            '"""\n'
+            '\n'
+            '[[deps]]\n'
+            'id = "my-skill"\n',
+            encoding="utf-8",
+        )
+        before = toml.read_bytes()
+
+        proc = self._run("my-skill", str(project))
+        self.assertNotEqual(
+            proc.returncode, 0,
+            "removal that would produce invalid TOML must fail, not write the broken result",
+        )
+        self.assertEqual(before, toml.read_bytes(), "manifest bytes were modified by a refused removal")
+
     def test_remove_help_exits_zero(self):
         project = self._project_with_manifest()
         proc = subprocess.run(
-            ["bash", str(SKILLS_REMOVE_SCRIPT), "--help"],
+            [str(cli_path()), "skills", "remove", "--help"],
             capture_output=True, text=True, cwd=str(project), check=False,
         )
         self.assertEqual(proc.returncode, 0)
@@ -220,10 +291,120 @@ class SkillsRemoveCliTests(unittest.TestCase):
     def test_remove_preserves_unknown_flags_rejected(self):
         project = self._project_with_manifest()
         proc = subprocess.run(
-            ["bash", str(SKILLS_REMOVE_SCRIPT), "--unknown-flag"],
+            [str(cli_path()), "skills", "remove", "--unknown-flag"],
             capture_output=True, text=True, cwd=str(project), check=False,
         )
         self.assertNotEqual(proc.returncode, 0)
+
+    # ── D18: removal must prune the real .deps layout + lock section ──
+
+    def test_remove_prunes_inproject_deps_dir(self):
+        """Removing a dep prunes ai-specs/.deps/<id>/ and leaves siblings."""
+        project = self._project_with_manifest()
+        removed = project / "ai-specs" / ".deps" / "my-skill" / "skills" / "my-skill"
+        kept = project / "ai-specs" / ".deps" / "other-skill" / "skills" / "other-skill"
+        removed.mkdir(parents=True)
+        (removed / "SKILL.md").write_text("---\nname: my-skill\n---\n", encoding="utf-8")
+        kept.mkdir(parents=True)
+        (kept / "SKILL.md").write_text("---\nname: other-skill\n---\n", encoding="utf-8")
+
+        proc = self._run("my-skill", str(project))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertFalse((project / "ai-specs" / ".deps" / "my-skill").exists())
+        self.assertTrue(kept.exists())
+
+    def test_remove_prunes_dep_lock_section(self):
+        """Removing a dep drops its [deps."<id>".skills."<id>"] lock hashes and
+        keeps the sibling dep's hashes."""
+        project = self._project_with_manifest()
+        lock_path = project / "ai-specs" / ".ai-specs.lock"
+        lock_path.write_text(
+            "[deps.\"my-skill\".skills.\"my-skill\"]\n"
+            "\"SKILL.md\" = \"hash-my\"\n"
+            "\n"
+            "[deps.\"other-skill\".skills.\"other-skill\"]\n"
+            "\"SKILL.md\" = \"hash-other\"\n"
+            "\n",
+            encoding="utf-8",
+        )
+
+        proc = self._run("my-skill", str(project))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+        import tomllib
+        with open(lock_path, "rb") as f:
+            data = tomllib.load(f)
+        deps = data.get("deps", {})
+        self.assertNotIn("my-skill", deps)
+        self.assertIn("other-skill", deps)
+
+    def test_remove_help_names_deps_path(self):
+        """--help must describe the real .deps pruning behavior (D18)."""
+        project = self._project_with_manifest()
+        proc = subprocess.run(
+            [str(cli_path()), "skills", "remove", "--help"],
+            capture_output=True, text=True, cwd=str(project), check=False,
+        )
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("ai-specs/.deps", proc.stdout)
+
+    # ── Review fix: dep-id traversal guard (review-5305f4e593fa69dd) ──
+
+    def _project_with_raw_manifest(self, content: str) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        project = Path(tmp.name)
+        ai_specs = project / "ai-specs"
+        ai_specs.mkdir()
+        (ai_specs / "ai-specs.toml").write_text(content, encoding="utf-8")
+        return project
+
+    def test_remove_refuses_traversal_id_and_preserves_outside_tree(self):
+        """A dep id with '..' segments must be refused before any deletion;
+        nothing outside ai-specs/.deps/ may be removed (data-loss guard)."""
+        manifest = (
+            '[project]\nname = "test"\n'
+            "\n[[deps]]\n"
+            'id = "../../pwned"\n'
+            'source = "https://github.com/test/repo.git"\n'
+            'scope = ["root"]\n'
+            "\n"
+            "[[deps]]\n"
+            'id = "real-skill"\n'
+            'source = "https://github.com/test/real.git"\n'
+            'scope = ["root"]\n'
+        )
+        project = self._project_with_raw_manifest(manifest)
+        marker = project / "pwned"
+        marker.mkdir()
+        (marker / "keep-me.txt").write_text("data", encoding="utf-8")
+
+        proc = self._run("../../pwned", str(project))
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("invalid dep id", proc.stderr)
+        self.assertTrue(marker.is_dir(), "rm -rf escaped ai-specs/.deps via '..' segments")
+        self.assertTrue((marker / "keep-me.txt").exists())
+        # Manifest untouched by the refused run.
+        self.assertIn("../../pwned", (project / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8"))
+
+    def test_remove_refuses_separator_and_dot_ids(self):
+        manifest = (
+            '[project]\nname = "test"\n'
+            "\n[[deps]]\n"
+            'id = "real-skill"\n'
+            'source = "https://github.com/test/real.git"\n'
+            'scope = ["root"]\n'
+        )
+        for bad_id in ("..", ".", "sub/dir", "/etc", "back\\slash"):
+            project = self._project_with_raw_manifest(manifest)
+            proc = self._run(bad_id, str(project))
+            self.assertNotEqual(proc.returncode, 0, f"id {bad_id!r} must be refused")
+            self.assertIn("invalid dep id", proc.stderr)
+            # Manifest untouched by the refused run.
+            self.assertIn(
+                "real-skill",
+                (project / "ai-specs" / "ai-specs.toml").read_text(encoding="utf-8"),
+            )
 
 
 if __name__ == "__main__":

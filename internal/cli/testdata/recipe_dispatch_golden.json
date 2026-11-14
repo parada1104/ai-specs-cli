@@ -1,0 +1,77 @@
+{
+  "oracle": {
+    "python": "3.14.7",
+    "base": "212016f",
+    "note": "legacy `bash lib/recipe.sh` own dispatcher arms over the in-test corpus; \u003cDIR\u003e is the working directory, \u003cHOME\u003e the isolated cli home, \u003cROOT\u003e the checkout",
+    "scripts": {
+      "lib/recipe-init.sh": "963de7aa44f1e0a9f757cc2ac7b67220c86cd450",
+      "lib/recipe.sh": "35d0f3eae7fe34323fec9bc1f03cadcc0c8d0019"
+    }
+  },
+  "cases": [
+    {
+      "name": "help flag",
+      "input": null,
+      "rc": 0,
+      "stdout": "Usage: ai-specs recipe \u003csubcommand\u003e [args]\nSubcommands:\n  list [path]      List available and installed recipes\n  add \u003cid\u003e [path]  Add a recipe to the manifest\n  init \u003cid\u003e [path]   Print a read-only initialization brief\n  configure \u003cid\u003e [path] [options]  Inspect or apply recipe config non-interactively\n  remove \u003cid\u003e [path]  Remove a recipe from the manifest\nPath defaults to current directory.\n",
+      "stderr": "",
+      "tree": []
+    },
+    {
+      "name": "short help flag",
+      "input": null,
+      "rc": 0,
+      "stdout": "Usage: ai-specs recipe \u003csubcommand\u003e [args]\nSubcommands:\n  list [path]      List available and installed recipes\n  add \u003cid\u003e [path]  Add a recipe to the manifest\n  init \u003cid\u003e [path]   Print a read-only initialization brief\n  configure \u003cid\u003e [path] [options]  Inspect or apply recipe config non-interactively\n  remove \u003cid\u003e [path]  Remove a recipe from the manifest\nPath defaults to current directory.\n",
+      "stderr": "",
+      "tree": []
+    },
+    {
+      "name": "help word",
+      "input": null,
+      "rc": 0,
+      "stdout": "Usage: ai-specs recipe \u003csubcommand\u003e [args]\nSubcommands:\n  list [path]      List available and installed recipes\n  add \u003cid\u003e [path]  Add a recipe to the manifest\n  init \u003cid\u003e [path]   Print a read-only initialization brief\n  configure \u003cid\u003e [path] [options]  Inspect or apply recipe config non-interactively\n  remove \u003cid\u003e [path]  Remove a recipe from the manifest\nPath defaults to current directory.\n",
+      "stderr": "",
+      "tree": []
+    },
+    {
+      "name": "bare recipe",
+      "input": null,
+      "rc": 2,
+      "stdout": "",
+      "stderr": "Usage: ai-specs recipe \u003csubcommand\u003e [args]\nSubcommands:\n  list [path]      List available and installed recipes\n  add \u003cid\u003e [path]  Add a recipe to the manifest\n  init \u003cid\u003e [path]   Print a read-only initialization brief\n  configure \u003cid\u003e [path] [options]  Inspect or apply recipe config non-interactively\n  remove \u003cid\u003e [path]  Remove a recipe from the manifest\nPath defaults to current directory.\n",
+      "tree": []
+    },
+    {
+      "name": "unknown subcommand",
+      "input": null,
+      "rc": 1,
+      "stdout": "",
+      "stderr": "ai-specs recipe: unknown subcommand 'bogus'\nRun 'ai-specs recipe --help' for usage.\n",
+      "tree": []
+    },
+    {
+      "name": "unknown flag as subcommand",
+      "input": null,
+      "rc": 1,
+      "stdout": "",
+      "stderr": "ai-specs recipe: unknown subcommand '-list'\nRun 'ai-specs recipe --help' for usage.\n",
+      "tree": []
+    },
+    {
+      "name": "near miss of a real subcommand",
+      "input": null,
+      "rc": 1,
+      "stdout": "",
+      "stderr": "ai-specs recipe: unknown subcommand 'listx'\nRun 'ai-specs recipe --help' for usage.\n",
+      "tree": []
+    },
+    {
+      "name": "init without its id",
+      "input": null,
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ERROR: missing recipe id\nUsage: ai-specs recipe init \u003cid\u003e [path] [--help]\nPrint a read-only, agent-readable initialization brief for a recipe.\nArguments:\n  id      Recipe identifier (directory name under catalog/recipes/)\n  path    Target project root (default: current directory)\nFlags:\n  --help  Show this help\n",
+      "tree": []
+    }
+  ]
+}

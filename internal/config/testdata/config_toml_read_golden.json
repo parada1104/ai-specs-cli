@@ -1,0 +1,932 @@
+{
+ "ai-specs_ai-specs.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": [\"claude\", \"cursor\", \"opencode\", \"pi\", \"omp\"]}\n"
+ },
+ "ai-specs_ai-specs.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "ai-specs_ai-specs.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "ai-specs_ai-specs.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "ai-specs_ai-specs.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"ai-specs-cli\", \"subrepos\": []}\n"
+ },
+ "ai-specs_ai-specs.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"worktree-flow\": {\"enabled\": true, \"version\": \"\", \"config\": {\"worktrees_dir\": \".worktrees\", \"integration_branch\": \"epic/go-single-binary\", \"gate_mode\": \"ask\"}}, \"git-pr-flow\": {\"enabled\": true, \"version\": \"\", \"config\": {\"base_branch\": \"epic/go-single-binary\", \"expected_owner\": \"parada1104\", \"auto_switch_account\": true}}, \"session-context\": {\"enabled\": true, \"version\": \"\", \"config\": {}}, \"tdd-flow\": {\"enabled\": true, \"version\": \"\", \"config\": {\"test_command\": \"./tests/validate.sh\"}}, \"trello-mcp-workflow\": {\"enabled\": true, \"version\": \"\", \"config\": {\"board_id\": \"69ec097f13e2d38ecd89a557\", \"gate_mode\": \"warn\", \"default_list\": \"In Progress\", \"done_list\": \"Done\", \"reconcile\": {\"scope_field\": \"board_id\", \"max_age_seconds\": 900, \"expectations\": [{\"event\": \"delivery\", \"property\": \"list\", \"config_field\": \"default_list\"}, {\"event\": \"review\", \"property\": \"list\", \"config_field\": \"review_list\"}, {\"event\": \"merge\", \"property\": \"list\", \"config_field\": \"done_list\", \"config_field_when_set\": \"published_list\"}]}, \"review_list\": \"Review\"}}, \"vault-canonical-store\": {\"enabled\": true, \"version\": \"\", \"config\": {\"vault_scope\": \"nnodes/proyectos/ai-specs\"}}}\n"
+ },
+ "internal_config_testdata_diff_bindings_deps.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_diff_bindings_deps.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[{\"capability\": \"tracker\", \"recipe\": \"trello\"}]\n"
+ },
+ "internal_config_testdata_diff_bindings_deps.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[{\"id\": \"first\", \"source\": \"git::https://example.com/a\", \"scope\": [\"root\"]}, {\"id\": \"second\", \"source\": \"git::https://example.com/b\", \"scope\": [\"a\", \"b\"], \"vendor\": {\"pin\": \"v1\", \"nested\": {\"x\": 2}}, \"ratio\": 1.5, \"ref\": \"main\"}]\n"
+ },
+ "internal_config_testdata_diff_bindings_deps.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_diff_bindings_deps.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_diff_bindings_deps.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_diff_empty.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_diff_empty.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_diff_empty.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_diff_empty.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_diff_empty.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_diff_empty.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_diff_mcp.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_diff_mcp.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_diff_mcp.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_diff_mcp.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"alpha\": {\"command\": \"npx\", \"args\": [\"-y\", \"server\"], \"env\": {\"FOO\": \"$FOO\", \"BAR\": \"$BAR\"}, \"timeout\": 30, \"enabled\": true}, \"beta\": {\"command\": [\"python\", \"-m\"], \"args\": [], \"env\": {}, \"timeout\": null, \"custom\": \"kept\"}, \"gamma\": {\"command\": null, \"args\": [], \"env\": {\"A\": \"1\", \"B\": \"2\"}, \"timeout\": null}, \"delta\": {\"command\": null, \"args\": [], \"env\": {}, \"timeout\": null}}\n"
+ },
+ "internal_config_testdata_diff_mcp.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_diff_mcp.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_diff_missing.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_diff_missing.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_diff_missing.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_diff_missing.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_diff_missing.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": [\"a\", \"b\"]}\n"
+ },
+ "internal_config_testdata_diff_missing.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_diff_mixed.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_diff_mixed.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_diff_mixed.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[{\"id\": \"flo\", \"source\": \"u\", \"weight\": 1.0, \"scale\": 1e+21}]\n"
+ },
+ "internal_config_testdata_diff_mixed.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"x\": {\"command\": null, \"args\": [1, \"a\", true], \"env\": {\"A\": \"1\"}, \"timeout\": 9007199254740993}, \"y\": {\"command\": [\"python\", \"-m\"], \"args\": [], \"env\": {}, \"timeout\": null}, \"z\": {\"command\": [\"npx\", 1, true], \"args\": [], \"env\": {}, \"timeout\": null}}\n"
+ },
+ "internal_config_testdata_diff_mixed.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_diff_mixed.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_diff_nonascii.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_diff_nonascii.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_diff_nonascii.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_diff_nonascii.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"unicode\": {\"command\": \"e\\u00f1e\", \"args\": [\"t\\u00e1b\"], \"env\": {}, \"timeout\": null}}\n"
+ },
+ "internal_config_testdata_diff_nonascii.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"caf\\u00e9 \\u2615 \\ud83d\\ude80\", \"subrepos\": [\"x\", \"y\"]}\n"
+ },
+ "internal_config_testdata_diff_nonascii.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_diff_recipes.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_diff_recipes.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_diff_recipes.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_diff_recipes.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_diff_recipes.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_diff_recipes.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"a\": {\"enabled\": true, \"version\": \"1.0.0\", \"config\": {\"x\": 1}}, \"b\": {\"enabled\": false, \"version\": \"42\", \"config\": {}}, \"c\": {\"enabled\": false, \"version\": \"True\", \"config\": {}}, \"d\": {\"enabled\": false, \"version\": \"\", \"config\": {\"nested\": {\"deep\": [1, 2]}}}, \"quoted.id\": {\"enabled\": false, \"version\": \"1.5\", \"config\": {}}}\n"
+ },
+ "internal_config_testdata_write_dep_crlf.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": [\"claude\"]}\n"
+ },
+ "internal_config_testdata_write_dep_crlf.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_dep_crlf.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[{\"id\": \"first\", \"source\": \"u\"}, {\"id\": \"second\", \"source\": \"v\"}]\n"
+ },
+ "internal_config_testdata_write_dep_crlf.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_dep_crlf.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_write_dep_crlf.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_dep_guard.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_write_dep_guard.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_dep_guard.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[{\"id\": \"doom\", \"items\": [[\"x\"]]}]\n"
+ },
+ "internal_config_testdata_write_dep_guard.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_dep_guard.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_write_dep_guard.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_dep_invalid_base.toml.agents": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 4, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_dep_invalid_base.toml.bindings": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 4, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_dep_invalid_base.toml.deps": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 4, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_dep_invalid_base.toml.mcp": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 4, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_dep_invalid_base.toml.project": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 4, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_dep_invalid_base.toml.recipes": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 4, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_deps_two.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_write_deps_two.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_deps_two.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[{\"id\": \"first\", \"source\": \"git::https://example.com/first\", \"scope\": [\"root\"]}, {\"id\": \"second\", \"source\": \"git::https://example.com/second\", \"scope\": [\"x\", \"y\"]}]\n"
+ },
+ "internal_config_testdata_write_deps_two.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_deps_two.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"deps-test\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_write_deps_two.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_recipe_basic.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_write_recipe_basic.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_recipe_basic.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_recipe_basic.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_recipe_basic.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"write-test\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_write_recipe_basic.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"a\": {\"enabled\": true, \"version\": \"\", \"config\": {\"k\": \"v\"}}, \"b\": {\"enabled\": false, \"version\": \"\", \"config\": {}}}\n"
+ },
+ "internal_config_testdata_write_recipe_crlf.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_write_recipe_crlf.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_recipe_crlf.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_recipe_crlf.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_recipe_crlf.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"crlf-test\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_write_recipe_crlf.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"a\": {\"enabled\": true, \"version\": \"\", \"config\": {\"k\": \"v\"}}, \"b\": {\"enabled\": false, \"version\": \"\", \"config\": {}}}\n"
+ },
+ "internal_config_testdata_write_recipe_crlf_guard.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_write_recipe_crlf_guard.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_recipe_crlf_guard.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_recipe_crlf_guard.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_recipe_crlf_guard.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_write_recipe_crlf_guard.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"doom\": {\"enabled\": false, \"version\": \"\", \"config\": {}}}\n"
+ },
+ "internal_config_testdata_write_recipe_guard.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "internal_config_testdata_write_recipe_guard.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_recipe_guard.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "internal_config_testdata_write_recipe_guard.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "internal_config_testdata_write_recipe_guard.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "internal_config_testdata_write_recipe_guard.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"doom\": {\"enabled\": false, \"version\": \"\", \"config\": {}}}\n"
+ },
+ "internal_config_testdata_write_recipe_invalid_base.toml.agents": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 5, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_recipe_invalid_base.toml.bindings": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 5, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_recipe_invalid_base.toml.deps": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 5, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_recipe_invalid_base.toml.mcp": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 5, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_recipe_invalid_base.toml.project": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 5, column 10)\n",
+  "stdout": ""
+ },
+ "internal_config_testdata_write_recipe_invalid_base.toml.recipes": {
+  "exit_code": 1,
+  "stderr": "error: Invalid value (at line 5, column 10)\n",
+  "stdout": ""
+ },
+ "tests_fixtures_target-resolve_multi-target_ai-specs_ai-specs.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": [\"claude\"]}\n"
+ },
+ "tests_fixtures_target-resolve_multi-target_ai-specs_ai-specs.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "tests_fixtures_target-resolve_multi-target_ai-specs_ai-specs.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "tests_fixtures_target-resolve_multi-target_ai-specs_ai-specs.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "tests_fixtures_target-resolve_multi-target_ai-specs_ai-specs.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"fixture-multi\", \"subrepos\": [\"packages/a\", \"packages/a\", \"./packages/b\"]}\n"
+ },
+ "tests_fixtures_target-resolve_multi-target_ai-specs_ai-specs.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "tests_fixtures_target-resolve_root-only_ai-specs_ai-specs.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": [\"claude\"]}\n"
+ },
+ "tests_fixtures_target-resolve_root-only_ai-specs_ai-specs.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "tests_fixtures_target-resolve_root-only_ai-specs_ai-specs.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "tests_fixtures_target-resolve_root-only_ai-specs_ai-specs.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "tests_fixtures_target-resolve_root-only_ai-specs_ai-specs.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"fixture-root\", \"subrepos\": []}\n"
+ },
+ "tests_fixtures_target-resolve_root-only_ai-specs_ai-specs.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_trello-mcp-workflow_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_trello-mcp-workflow_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_trello-mcp-workflow_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_trello-mcp-workflow_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_trello-mcp-workflow_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_trello-mcp-workflow_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_worktree-flow_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_worktree-flow_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_worktree-flow_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_worktree-flow_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_worktree-flow_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_worktree-flow_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_plan-build-flow_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_plan-build-flow_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_plan-build-flow_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_plan-build-flow_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_plan-build-flow_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_plan-build-flow_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_vault-canonical-store_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_vault-canonical-store_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_vault-canonical-store_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_vault-canonical-store_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_vault-canonical-store_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_vault-canonical-store_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_bitbucket-pr-flow_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_bitbucket-pr-flow_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_bitbucket-pr-flow_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_bitbucket-pr-flow_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_bitbucket-pr-flow_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_bitbucket-pr-flow_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_git-pr-flow_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_git-pr-flow_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_git-pr-flow_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_git-pr-flow_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_git-pr-flow_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_git-pr-flow_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_gitlab-mr-flow_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_gitlab-mr-flow_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_gitlab-mr-flow_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_gitlab-mr-flow_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_gitlab-mr-flow_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_gitlab-mr-flow_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_jinna-mcp-recipe_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_jinna-mcp-recipe_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_jinna-mcp-recipe_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_jinna-mcp-recipe_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_jinna-mcp-recipe_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_jinna-mcp-recipe_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_playwright-mcp_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_playwright-mcp_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_playwright-mcp_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_playwright-mcp_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_playwright-mcp_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_playwright-mcp_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_playwright-ui-flow_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_playwright-ui-flow_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_playwright-ui-flow_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_playwright-ui-flow_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_playwright-ui-flow_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_playwright-ui-flow_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_session-context_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_session-context_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_session-context_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_session-context_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_session-context_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_session-context_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_tdd-flow_recipe.toml.agents": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"enabled\": []}\n"
+ },
+ "catalog_recipes_tdd-flow_recipe.toml.bindings": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_tdd-flow_recipe.toml.deps": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "[]\n"
+ },
+ "catalog_recipes_tdd-flow_recipe.toml.mcp": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ },
+ "catalog_recipes_tdd-flow_recipe.toml.project": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"name\": \"\", \"subrepos\": []}\n"
+ },
+ "catalog_recipes_tdd-flow_recipe.toml.recipes": {
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{}\n"
+ }
+}

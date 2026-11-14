@@ -204,13 +204,14 @@ ever guessing a provider.
   `worktree-gate: ledger --write failed: …` on stderr, and exits `2` with no stdout
   JSON. Grade paths keep failing open (missing or unverified binary, unreadable
   evidence, flag-parse errors on verdict calls, grade-path lock timeout).
-- **Three of four evidence sides.** `lib/_internal/ledger_bridge.py` builds the
-  `--evidence` file from local facts only: `local` is the ledger's own store snapshot,
+- **Three of four evidence sides.** The native `ai-specs tracker evidence` verb
+  builds the `--evidence` file from local facts only: `local` is the ledger's own store snapshot,
   `code` is the change's `## Tracker` `card_id`, `git` is that same native id when a
   `pr:` is recorded, and `remote` has **no producer in this `--evidence` file**. The
-  bridge never grades, never calls `gh`, MCP, or the network, works from a cold CLI
+  verb never grades, never calls `gh`, MCP, or the network, works from a cold CLI
   install with no project cache, and turns any read failure into an empty side (fail
-  open). Branch names and PR URLs are deliberately not evidence sides: the conflict
+  open). `ai-specs tracker slug` resolves the single active change for the host.
+  Branch names and PR URLs are deliberately not evidence sides: the conflict
   predicate equality-compares every non-empty side against the local item id.
 
   Remote reconciliation is a separate, **explicit and opt-in** comparison, never an
@@ -244,8 +245,8 @@ ever guessing a provider.
   section from a hardcoded recipe id. Reading the witness is acquisition, not
   grading.
 - **`work-start` host.** `work-start` is hosted by `plan-build-flow`'s
-  `plan-build-gate.sh`, which resolves the bound recipe id through the same stamped
-  `ledger_bridge` seam as the other hosts, so `recipes.<witness recipe id>.config`
+  `plan-build-gate.sh`, which resolves the bound recipe id through its stamped
+  `__TRACKER_LIB_INTERNAL__` seam, so `recipes.<witness recipe id>.config`
   drives its effective mode. A tracker-bound project without `plan-build-flow`
   enabled has an unhosted `work-start`; `doctor` reports it as an INFO line
   (`work-start is unhosted`) while the other four checkpoints keep grading.

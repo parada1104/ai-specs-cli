@@ -1,0 +1,877 @@
+{
+  "cases": [
+    {
+      "name": "plain https URL with full sync",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "\nai-specs skills add\n  url:         https://github.com/kepano/obsidian-skills\n  id:          obsidian-skills\n  subdir:      skills/defuddle\n  scope:       root\n  license:     (none)\n  attribution: kepano\n  ref:         (none)\n\n  ✓ appended [[deps]] for 'obsidian-skills' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n▸ ai-specs sync \u003cDIR\u003e\n\nai-specs sync\n  root:    \u003cDIR\u003e\n  planning: \u003cDIR\u003e\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  syncing harness env (.envrc + ai-specs.env.example)\nWrote \u003cDIR\u003e/ai-specs.env.example\n  syncing recipes\n  (no [recipes.*] enabled — skipping)\n  syncing AGENTS.md\n  syncing root:. → \u003cDIR\u003e\n  syncing flatten resolved skills\n  syncing merge commands\n\n✓ ai-specs sync complete\n",
+      "stderr": "WARNING: no agents to sync. Set [agents].enabled in ai-specs.toml.\n",
+      "tree": [
+        {
+          "path": ".envrc",
+          "content": "# .envrc — direnv entry for this project\n# Harness block managed by ai-specs; safe to add custom lines outside it.\n\n# managed-by: ai-specs (do not remove block)\ndotenv_if_exists .env\ndotenv_if_exists ai-specs.env\n# end managed-by: ai-specs\n"
+        },
+        {
+          "path": ".gitignore",
+          "content": "# --- ai-specs: agent-generated files (managed by ai-specs sync-agent) ---\n.claude/\n.cursor/\n.opencode/\nopencode.json\n.pi/\n.omp/\n.codex/\n.gemini/\n.github/copilot-instructions.md\nCLAUDE.md\n**/CLAUDE.md\nGEMINI.md\n.mcp.json\n.env\n.envrc\nai-specs.env\nai-specs/.env\nai-specs/.env.bak\nai-specs/.envrc.bak\n# --- end ai-specs ---\n"
+        },
+        {
+          "path": "AGENTS.md",
+          "content": "# u5c Runtime Brief\n\n## Project\n\n- **Project**: `u5c`\n\n## Useful Commands\n\n- For ai-specs harness operations (init, sync, recipes, skills/deps, doctor), load the `harness-lifecycle`, `harness-recipes`, or `harness-skills-deps` skills.\n"
+        },
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.25.0\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"obsidian-skills\".skills.\"obsidian-skills\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/obsidian-skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/obsidian-skills/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/obsidian-skills/skills/obsidian-skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/obsidian-skills/skills/obsidian-skills/SKILL.md",
+          "content": "---\nname: obsidian-skills\ndescription: \u003e\n  Fixture skill for defuddle. Vendored from kepano (see metadata.source)\nlicense: Unknown\nmetadata:\n  author: \"kepano\"\n  version: \"1.0\"\n  source: \"https://github.com/kepano/obsidian-skills\"\n  vendor_attribution: \"kepano\"\n  scope: [root]\n  auto_invoke:\n    - \"When working on obsidian-skills\"\n---\n\n# defuddle\n\nFixture body for offline vendor tests.\n"
+        },
+        {
+          "path": "ai-specs/.gitignore",
+          "content": "# --- ai-specs: managed by `ai-specs init`/`sync` — do not edit ---\n\n.internal/\n.deps/\n\n# Recipe materialization is CLI-owned; only declared overrides are committed.\nrecipes/**\n!recipes/*/\n!recipes/*/overrides/\n!recipes/*/overrides/**\n\n# --- end ai-specs ---\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"obsidian-skills\"\nsource = \"https://github.com/kepano/obsidian-skills\"\npath = \"skills/defuddle\"\nscope = [\"root\"]\nauto_invoke = [\"When working on obsidian-skills\"]\nvendor_attribution = \"kepano\"\n"
+        },
+        {
+          "path": "ai-specs.env.example",
+          "content": "# ai-specs.env.example — committed template (safe to regenerate).\n# Copy values into ai-specs.env (gitignored). Root .envrc loads it via direnv.\n# Generated from enabled recipes' [[provides.mcp]] env references.\n\n# (no env vars required by enabled recipes)\n"
+        }
+      ]
+    },
+    {
+      "name": "local source with full sync",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "\nai-specs skills add\n  url:         \u003cSRC\u003e\n  id:          src-ok\n  subdir:      (none)\n  scope:       root\n  license:     (none)\n  attribution: \u003cOWNER\u003e\n  ref:         (none)\n\n  ✓ appended [[deps]] for 'src-ok' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n▸ ai-specs sync \u003cDIR\u003e\n\nai-specs sync\n  root:    \u003cDIR\u003e\n  planning: \u003cDIR\u003e\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  syncing harness env (.envrc + ai-specs.env.example)\nWrote \u003cDIR\u003e/ai-specs.env.example\n  syncing recipes\n  (no [recipes.*] enabled — skipping)\n  syncing AGENTS.md\n  syncing root:. → \u003cDIR\u003e\n  syncing flatten resolved skills\n  syncing merge commands\n\n✓ ai-specs sync complete\n",
+      "stderr": "WARNING: no agents to sync. Set [agents].enabled in ai-specs.toml.\n",
+      "tree": [
+        {
+          "path": ".envrc",
+          "content": "# .envrc — direnv entry for this project\n# Harness block managed by ai-specs; safe to add custom lines outside it.\n\n# managed-by: ai-specs (do not remove block)\ndotenv_if_exists .env\ndotenv_if_exists ai-specs.env\n# end managed-by: ai-specs\n"
+        },
+        {
+          "path": ".gitignore",
+          "content": "# --- ai-specs: agent-generated files (managed by ai-specs sync-agent) ---\n.claude/\n.cursor/\n.opencode/\nopencode.json\n.pi/\n.omp/\n.codex/\n.gemini/\n.github/copilot-instructions.md\nCLAUDE.md\n**/CLAUDE.md\nGEMINI.md\n.mcp.json\n.env\n.envrc\nai-specs.env\nai-specs/.env\nai-specs/.env.bak\nai-specs/.envrc.bak\n# --- end ai-specs ---\n"
+        },
+        {
+          "path": "AGENTS.md",
+          "content": "# u5c Runtime Brief\n\n## Project\n\n- **Project**: `u5c`\n\n## Useful Commands\n\n- For ai-specs harness operations (init, sync, recipes, skills/deps, doctor), load the `harness-lifecycle`, `harness-recipes`, or `harness-skills-deps` skills.\n"
+        },
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.25.0\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"src-ok\".skills.\"src-ok\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/src-ok",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/src-ok/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/src-ok/skills/src-ok",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/src-ok/skills/src-ok/SKILL.md",
+          "content": "---\nname: src-ok\ndescription: \u003e\n  Local source skill. Vendored from \u003cOWNER\u003e (see metadata.source)\nlicense: Unknown\nmetadata:\n  author: \"\u003cOWNER\u003e\"\n  version: \"1.0\"\n  source: \"\u003cSRC\u003e\"\n  vendor_attribution: \"\u003cOWNER\u003e\"\n  scope: [root]\n  auto_invoke:\n    - \"When working on src-ok\"\n---\n\n# src-ok\n\nBody.\n"
+        },
+        {
+          "path": "ai-specs/.gitignore",
+          "content": "# --- ai-specs: managed by `ai-specs init`/`sync` — do not edit ---\n\n.internal/\n.deps/\n\n# Recipe materialization is CLI-owned; only declared overrides are committed.\nrecipes/**\n!recipes/*/\n!recipes/*/overrides/\n!recipes/*/overrides/**\n\n# --- end ai-specs ---\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"src-ok\"\nsource = \"\u003cSRC\u003e\"\nscope = [\"root\"]\nauto_invoke = [\"When working on src-ok\"]\nvendor_attribution = \"\u003cOWNER\u003e\"\n"
+        },
+        {
+          "path": "ai-specs.env.example",
+          "content": "# ai-specs.env.example — committed template (safe to regenerate).\n# Copy values into ai-specs.env (gitignored). Root .envrc loads it via direnv.\n# Generated from enabled recipes' [[provides.mcp]] env references.\n\n# (no env vars required by enabled recipes)\n"
+        }
+      ]
+    },
+    {
+      "name": "sync failure propagates its exit code",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 1,
+      "stdout": "\nai-specs skills add\n  url:         \u003cSRC\u003e\n  id:          src-noskill\n  subdir:      (none)\n  scope:       root\n  license:     (none)\n  attribution: \u003cOWNER\u003e\n  ref:         (none)\n\n  ✓ appended [[deps]] for 'src-noskill' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n▸ ai-specs sync \u003cDIR\u003e\n\nai-specs sync\n  root:    \u003cDIR\u003e\n  planning: \u003cDIR\u003e\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  ▸ src-noskill  ←  \u003cSRC\u003e\n",
+      "stderr": "  ✗ src-noskill: SKILL.md not found at SKILL.md\n",
+      "tree": [
+        {
+          "path": ".gitignore",
+          "content": "# --- ai-specs: agent-generated files (managed by ai-specs sync-agent) ---\n.claude/\n.cursor/\n.opencode/\nopencode.json\n.pi/\n.omp/\n.codex/\n.gemini/\n.github/copilot-instructions.md\nCLAUDE.md\n**/CLAUDE.md\nGEMINI.md\n.mcp.json\n.env\n.envrc\nai-specs.env\nai-specs/.env\nai-specs/.env.bak\nai-specs/.envrc.bak\n# --- end ai-specs ---\n"
+        },
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n"
+        },
+        {
+          "path": "ai-specs/.gitignore",
+          "content": "# --- ai-specs: managed by `ai-specs init`/`sync` — do not edit ---\n\n.internal/\n.deps/\n\n# Recipe materialization is CLI-owned; only declared overrides are committed.\nrecipes/**\n!recipes/*/\n!recipes/*/overrides/\n!recipes/*/overrides/**\n\n# --- end ai-specs ---\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"src-noskill\"\nsource = \"\u003cSRC\u003e\"\nscope = [\"root\"]\nauto_invoke = [\"When working on src-noskill\"]\nvendor_attribution = \"\u003cOWNER\u003e\"\n"
+        }
+      ]
+    },
+    {
+      "name": "--id override with full sync",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "\nai-specs skills add\n  url:         \u003cSRC\u003e\n  id:          my-override\n  subdir:      (none)\n  scope:       root\n  license:     (none)\n  attribution: \u003cOWNER\u003e\n  ref:         (none)\n\n  ✓ appended [[deps]] for 'my-override' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n▸ ai-specs sync \u003cDIR\u003e\n\nai-specs sync\n  root:    \u003cDIR\u003e\n  planning: \u003cDIR\u003e\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  syncing harness env (.envrc + ai-specs.env.example)\nWrote \u003cDIR\u003e/ai-specs.env.example\n  syncing recipes\n  (no [recipes.*] enabled — skipping)\n  syncing AGENTS.md\n  syncing root:. → \u003cDIR\u003e\n  syncing flatten resolved skills\n  syncing merge commands\n\n✓ ai-specs sync complete\n",
+      "stderr": "WARNING: no agents to sync. Set [agents].enabled in ai-specs.toml.\n",
+      "tree": [
+        {
+          "path": ".envrc",
+          "content": "# .envrc — direnv entry for this project\n# Harness block managed by ai-specs; safe to add custom lines outside it.\n\n# managed-by: ai-specs (do not remove block)\ndotenv_if_exists .env\ndotenv_if_exists ai-specs.env\n# end managed-by: ai-specs\n"
+        },
+        {
+          "path": ".gitignore",
+          "content": "# --- ai-specs: agent-generated files (managed by ai-specs sync-agent) ---\n.claude/\n.cursor/\n.opencode/\nopencode.json\n.pi/\n.omp/\n.codex/\n.gemini/\n.github/copilot-instructions.md\nCLAUDE.md\n**/CLAUDE.md\nGEMINI.md\n.mcp.json\n.env\n.envrc\nai-specs.env\nai-specs/.env\nai-specs/.env.bak\nai-specs/.envrc.bak\n# --- end ai-specs ---\n"
+        },
+        {
+          "path": "AGENTS.md",
+          "content": "# u5c Runtime Brief\n\n## Project\n\n- **Project**: `u5c`\n\n## Useful Commands\n\n- For ai-specs harness operations (init, sync, recipes, skills/deps, doctor), load the `harness-lifecycle`, `harness-recipes`, or `harness-skills-deps` skills.\n"
+        },
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.25.0\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"my-override\".skills.\"my-override\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/my-override",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/my-override/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/my-override/skills/my-override",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/my-override/skills/my-override/SKILL.md",
+          "content": "---\nname: my-override\ndescription: \u003e\n  Local source skill. Vendored from \u003cOWNER\u003e (see metadata.source)\nlicense: Unknown\nmetadata:\n  author: \"\u003cOWNER\u003e\"\n  version: \"1.0\"\n  source: \"\u003cSRC\u003e\"\n  vendor_attribution: \"\u003cOWNER\u003e\"\n  scope: [root]\n  auto_invoke:\n    - \"When working on my-override\"\n---\n\n# src-ok\n\nBody.\n"
+        },
+        {
+          "path": "ai-specs/.gitignore",
+          "content": "# --- ai-specs: managed by `ai-specs init`/`sync` — do not edit ---\n\n.internal/\n.deps/\n\n# Recipe materialization is CLI-owned; only declared overrides are committed.\nrecipes/**\n!recipes/*/\n!recipes/*/overrides/\n!recipes/*/overrides/**\n\n# --- end ai-specs ---\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"my-override\"\nsource = \"\u003cSRC\u003e\"\nscope = [\"root\"]\nauto_invoke = [\"When working on my-override\"]\nvendor_attribution = \"\u003cOWNER\u003e\"\n"
+        },
+        {
+          "path": "ai-specs.env.example",
+          "content": "# ai-specs.env.example — committed template (safe to regenerate).\n# Copy values into ai-specs.env (gitignored). Root .envrc loads it via direnv.\n# Generated from enabled recipes' [[provides.mcp]] env references.\n\n# (no env vars required by enabled recipes)\n"
+        }
+      ]
+    },
+    {
+      "name": "--trigger with full sync",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "\nai-specs skills add\n  url:         \u003cSRC\u003e\n  id:          src-ok\n  subdir:      (none)\n  scope:       root\n  license:     (none)\n  attribution: \u003cOWNER\u003e\n  ref:         (none)\n\n  ✓ appended [[deps]] for 'src-ok' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n▸ ai-specs sync \u003cDIR\u003e\n\nai-specs sync\n  root:    \u003cDIR\u003e\n  planning: \u003cDIR\u003e\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  syncing harness env (.envrc + ai-specs.env.example)\nWrote \u003cDIR\u003e/ai-specs.env.example\n  syncing recipes\n  (no [recipes.*] enabled — skipping)\n  syncing AGENTS.md\n  syncing root:. → \u003cDIR\u003e\n  syncing flatten resolved skills\n  syncing merge commands\n\n✓ ai-specs sync complete\n",
+      "stderr": "WARNING: no agents to sync. Set [agents].enabled in ai-specs.toml.\n",
+      "tree": [
+        {
+          "path": ".envrc",
+          "content": "# .envrc — direnv entry for this project\n# Harness block managed by ai-specs; safe to add custom lines outside it.\n\n# managed-by: ai-specs (do not remove block)\ndotenv_if_exists .env\ndotenv_if_exists ai-specs.env\n# end managed-by: ai-specs\n"
+        },
+        {
+          "path": ".gitignore",
+          "content": "# --- ai-specs: agent-generated files (managed by ai-specs sync-agent) ---\n.claude/\n.cursor/\n.opencode/\nopencode.json\n.pi/\n.omp/\n.codex/\n.gemini/\n.github/copilot-instructions.md\nCLAUDE.md\n**/CLAUDE.md\nGEMINI.md\n.mcp.json\n.env\n.envrc\nai-specs.env\nai-specs/.env\nai-specs/.env.bak\nai-specs/.envrc.bak\n# --- end ai-specs ---\n"
+        },
+        {
+          "path": "AGENTS.md",
+          "content": "# u5c Runtime Brief\n\n## Project\n\n- **Project**: `u5c`\n\n## Useful Commands\n\n- For ai-specs harness operations (init, sync, recipes, skills/deps, doctor), load the `harness-lifecycle`, `harness-recipes`, or `harness-skills-deps` skills.\n"
+        },
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.ai-specs.lock",
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.25.0\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"src-ok\".skills.\"src-ok\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
+        },
+        {
+          "path": "ai-specs/.deps",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/src-ok",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/src-ok/skills",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/src-ok/skills/src-ok",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/.deps/src-ok/skills/src-ok/SKILL.md",
+          "content": "---\nname: src-ok\ndescription: \u003e\n  Local source skill. Vendored from \u003cOWNER\u003e (see metadata.source)\nlicense: Unknown\nmetadata:\n  author: \"\u003cOWNER\u003e\"\n  version: \"1.0\"\n  source: \"\u003cSRC\u003e\"\n  vendor_attribution: \"\u003cOWNER\u003e\"\n  scope: [root]\n  auto_invoke:\n    - \"Custom trigger phrase\"\n---\n\n# src-ok\n\nBody.\n"
+        },
+        {
+          "path": "ai-specs/.gitignore",
+          "content": "# --- ai-specs: managed by `ai-specs init`/`sync` — do not edit ---\n\n.internal/\n.deps/\n\n# Recipe materialization is CLI-owned; only declared overrides are committed.\nrecipes/**\n!recipes/*/\n!recipes/*/overrides/\n!recipes/*/overrides/**\n\n# --- end ai-specs ---\n"
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"src-ok\"\nsource = \"\u003cSRC\u003e\"\nscope = [\"root\"]\nauto_invoke = [\"Custom trigger phrase\"]\nvendor_attribution = \"\u003cOWNER\u003e\"\n"
+        },
+        {
+          "path": "ai-specs.env.example",
+          "content": "# ai-specs.env.example — committed template (safe to regenerate).\n# Copy values into ai-specs.env (gitignored). Root .envrc loads it via direnv.\n# Generated from enabled recipes' [[provides.mcp]] env references.\n\n# (no env vars required by enabled recipes)\n"
+        }
+      ]
+    },
+    {
+      "name": "--no-sync",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "\nai-specs skills add\n  url:         \u003cSRC\u003e\n  id:          src-ok\n  subdir:      (none)\n  scope:       root\n  license:     (none)\n  attribution: \u003cOWNER\u003e\n  ref:         (none)\n\n  ✓ appended [[deps]] for 'src-ok' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n✓ dep registered. Run 'ai-specs sync \u003cDIR\u003e' to vendor it.\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"src-ok\"\nsource = \"\u003cSRC\u003e\"\nscope = [\"root\"]\nauto_invoke = [\"When working on src-ok\"]\nvendor_attribution = \"\u003cOWNER\u003e\"\n"
+        }
+      ]
+    },
+    {
+      "name": ".git suffix",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "\nai-specs skills add\n  url:         https://github.com/some-org/my-skill-repo.git\n  id:          my-skill-repo\n  subdir:      (none)\n  scope:       root\n  license:     (none)\n  attribution: some-org\n  ref:         (none)\n\n  ✓ appended [[deps]] for 'my-skill-repo' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n✓ dep registered. Run 'ai-specs sync \u003cDIR\u003e' to vendor it.\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"my-skill-repo\"\nsource = \"https://github.com/some-org/my-skill-repo.git\"\nscope = [\"root\"]\nauto_invoke = [\"When working on my-skill-repo\"]\nvendor_attribution = \"some-org\"\n"
+        }
+      ]
+    },
+    {
+      "name": "--subdir",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "\nai-specs skills add\n  url:         \u003cSRC\u003e\n  id:          src-ok\n  subdir:      nested/dir\n  scope:       root\n  license:     (none)\n  attribution: \u003cOWNER\u003e\n  ref:         (none)\n\n  ✓ appended [[deps]] for 'src-ok' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n✓ dep registered. Run 'ai-specs sync \u003cDIR\u003e' to vendor it.\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"src-ok\"\nsource = \"\u003cSRC\u003e\"\npath = \"nested/dir\"\nscope = [\"root\"]\nauto_invoke = [\"When working on src-ok\"]\nvendor_attribution = \"\u003cOWNER\u003e\"\n"
+        }
+      ]
+    },
+    {
+      "name": "--scope several values",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "\nai-specs skills add\n  url:         \u003cSRC\u003e\n  id:          src-ok\n  subdir:      (none)\n  scope:       root,subrepo,docs\n  license:     (none)\n  attribution: \u003cOWNER\u003e\n  ref:         (none)\n\n  ✓ appended [[deps]] for 'src-ok' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n✓ dep registered. Run 'ai-specs sync \u003cDIR\u003e' to vendor it.\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"src-ok\"\nsource = \"\u003cSRC\u003e\"\nscope = [\"root\", \"subrepo\", \"docs\"]\nauto_invoke = [\"When working on src-ok\"]\nvendor_attribution = \"\u003cOWNER\u003e\"\n"
+        }
+      ]
+    },
+    {
+      "name": "--scope equals empty",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "\nai-specs skills add\n  url:         \u003cSRC\u003e\n  id:          src-ok\n  subdir:      (none)\n  scope:       \n  license:     (none)\n  attribution: \u003cOWNER\u003e\n  ref:         (none)\n\n  ✓ appended [[deps]] for 'src-ok' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n✓ dep registered. Run 'ai-specs sync \u003cDIR\u003e' to vendor it.\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"src-ok\"\nsource = \"\u003cSRC\u003e\"\nscope = [\"root\"]\nauto_invoke = [\"When working on src-ok\"]\nvendor_attribution = \"\u003cOWNER\u003e\"\n"
+        }
+      ]
+    },
+    {
+      "name": "--license",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "\nai-specs skills add\n  url:         \u003cSRC\u003e\n  id:          src-ok\n  subdir:      (none)\n  scope:       root\n  license:     MIT\n  attribution: \u003cOWNER\u003e\n  ref:         (none)\n\n  ✓ appended [[deps]] for 'src-ok' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n✓ dep registered. Run 'ai-specs sync \u003cDIR\u003e' to vendor it.\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"src-ok\"\nsource = \"\u003cSRC\u003e\"\nscope = [\"root\"]\nauto_invoke = [\"When working on src-ok\"]\nlicense = \"MIT\"\nvendor_attribution = \"\u003cOWNER\u003e\"\n"
+        }
+      ]
+    },
+    {
+      "name": "--attribution",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "\nai-specs skills add\n  url:         \u003cSRC\u003e\n  id:          src-ok\n  subdir:      (none)\n  scope:       root\n  license:     (none)\n  attribution: The Others\n  ref:         (none)\n\n  ✓ appended [[deps]] for 'src-ok' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n✓ dep registered. Run 'ai-specs sync \u003cDIR\u003e' to vendor it.\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"src-ok\"\nsource = \"\u003cSRC\u003e\"\nscope = [\"root\"]\nauto_invoke = [\"When working on src-ok\"]\nvendor_attribution = \"The Others\"\n"
+        }
+      ]
+    },
+    {
+      "name": "--ref",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "\nai-specs skills add\n  url:         \u003cSRC\u003e\n  id:          src-ok\n  subdir:      (none)\n  scope:       root\n  license:     (none)\n  attribution: \u003cOWNER\u003e\n  ref:         v2.0.0\n\n  ✓ appended [[deps]] for 'src-ok' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n✓ dep registered. Run 'ai-specs sync \u003cDIR\u003e' to vendor it.\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"src-ok\"\nsource = \"\u003cSRC\u003e\"\nscope = [\"root\"]\nauto_invoke = [\"When working on src-ok\"]\nvendor_attribution = \"\u003cOWNER\u003e\"\nref = \"v2.0.0\"\n"
+        }
+      ]
+    },
+    {
+      "name": "third positional",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ERROR: unexpected positional argument: extra\n",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ]
+    },
+    {
+      "name": "third positional after dashdash is dropped",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "\nai-specs skills add\n  url:         \u003cSRC\u003e\n  id:          src-ok\n  subdir:      (none)\n  scope:       root\n  license:     (none)\n  attribution: \u003cOWNER\u003e\n  ref:         (none)\n\n  ✓ appended [[deps]] for 'src-ok' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n✓ dep registered. Run 'ai-specs sync \u003cDIR\u003e' to vendor it.\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"src-ok\"\nsource = \"\u003cSRC\u003e\"\nscope = [\"root\"]\nauto_invoke = [\"When working on src-ok\"]\nvendor_attribution = \"\u003cOWNER\u003e\"\n"
+        }
+      ]
+    },
+    {
+      "name": "unknown flag",
+      "input": [],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ERROR: unknown flag: --bogus\nRun 'ai-specs skills add --help' for usage.\n",
+      "tree": []
+    },
+    {
+      "name": "missing URL",
+      "input": [],
+      "rc": 2,
+      "stdout": "Usage: ai-specs skills add \u003cgit-url\u003e [path] [flags]\n\nRegister a vendored skill in ai-specs.toml (under [[deps]]) and run sync.\n\nArguments:\n  git-url               Source URL (e.g. https://github.com/obra/superpowers)\n  path                  Project root (default: current directory)\n\nFlags:\n  --id \u003cid\u003e             Skill ID (default: last URL path component, .git stripped)\n  --subdir \u003csubpath\u003e    Subdir within the repo where SKILL.md lives (multi-skill repos)\n  --scope \u003cs1,s2,...\u003e   Comma-list for metadata.scope (default: root)\n  --license \u003clicense\u003e   License string (default: empty)\n  --attribution \u003cauth\u003e  vendor_attribution (default: URL author)\n  --ref \u003cref\u003e           Git ref to pin (tag/branch/sha; default: none)\n  --trigger \u003ctext\u003e      auto_invoke entry (default: \"When working on \u003cid\u003e\")\n  --no-sync             Don't run 'ai-specs sync' after registering\n",
+      "stderr": "ERROR: \u003cgit-url\u003e is required.\nRun 'ai-specs skills add --help' for usage.\n",
+      "tree": []
+    },
+    {
+      "name": "empty last URL component",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ERROR: refusing invalid dep id: ''\n",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ]
+    },
+    {
+      "name": "existing dep id",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"skills\"\nsource = \"https://github.com/anthropics/skills\"\nscope = [\"root\"]\n"
+        }
+      ],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "ERROR: dep with id 'skills' already exists in \u003cDIR\u003e/ai-specs/ai-specs.toml\n",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"skills\"\nsource = \"https://github.com/anthropics/skills\"\nscope = [\"root\"]\n"
+        }
+      ]
+    },
+    {
+      "name": "corrupt manifest dies silent at exit 2",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n[[deps]]\nid = \n"
+        }
+      ],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n[[deps]]\nid = \n"
+        }
+      ]
+    },
+    {
+      "name": "manifest not found",
+      "input": [],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "ERROR: \u003cDIR\u003e/ai-specs/ai-specs.toml not found. Run 'ai-specs init \u003cDIR\u003e' first.\n",
+      "tree": []
+    },
+    {
+      "name": "target defaults to cwd",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "\nai-specs skills add\n  url:         \u003cSRC\u003e\n  id:          src-ok\n  subdir:      (none)\n  scope:       root\n  license:     (none)\n  attribution: \u003cOWNER\u003e\n  ref:         (none)\n\n  ✓ appended [[deps]] for 'src-ok' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n✓ dep registered. Run 'ai-specs sync \u003cDIR\u003e' to vendor it.\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"src-ok\"\nsource = \"\u003cSRC\u003e\"\nscope = [\"root\"]\nauto_invoke = [\"When working on src-ok\"]\nvendor_attribution = \"\u003cOWNER\u003e\"\n"
+        }
+      ]
+    },
+    {
+      "name": "add-dep alias form",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "\nai-specs add-dep\n  url:         \u003cSRC\u003e\n  id:          src-ok\n  subdir:      (none)\n  scope:       root\n  license:     (none)\n  attribution: \u003cOWNER\u003e\n  ref:         (none)\n\n  ✓ appended [[deps]] for 'src-ok' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n✓ dep registered. Run 'ai-specs sync \u003cDIR\u003e' to vendor it.\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"src-ok\"\nsource = \"\u003cSRC\u003e\"\nscope = [\"root\"]\nauto_invoke = [\"When working on src-ok\"]\nvendor_attribution = \"\u003cOWNER\u003e\"\n"
+        }
+      ]
+    },
+    {
+      "name": "add-dep --help carries its label",
+      "input": [],
+      "rc": 0,
+      "stdout": "Usage: ai-specs add-dep \u003cgit-url\u003e [path] [flags]\n\nRegister a vendored skill in ai-specs.toml (under [[deps]]) and run sync.\n\nArguments:\n  git-url               Source URL (e.g. https://github.com/obra/superpowers)\n  path                  Project root (default: current directory)\n\nFlags:\n  --id \u003cid\u003e             Skill ID (default: last URL path component, .git stripped)\n  --subdir \u003csubpath\u003e    Subdir within the repo where SKILL.md lives (multi-skill repos)\n  --scope \u003cs1,s2,...\u003e   Comma-list for metadata.scope (default: root)\n  --license \u003clicense\u003e   License string (default: empty)\n  --attribution \u003cauth\u003e  vendor_attribution (default: URL author)\n  --ref \u003cref\u003e           Git ref to pin (tag/branch/sha; default: none)\n  --trigger \u003ctext\u003e      auto_invoke entry (default: \"When working on \u003cid\u003e\")\n  --no-sync             Don't run 'ai-specs sync' after registering\n",
+      "stderr": "",
+      "tree": []
+    },
+    {
+      "name": "skills add --help",
+      "input": [],
+      "rc": 0,
+      "stdout": "Usage: ai-specs skills add \u003cgit-url\u003e [path] [flags]\n\nRegister a vendored skill in ai-specs.toml (under [[deps]]) and run sync.\n\nArguments:\n  git-url               Source URL (e.g. https://github.com/obra/superpowers)\n  path                  Project root (default: current directory)\n\nFlags:\n  --id \u003cid\u003e             Skill ID (default: last URL path component, .git stripped)\n  --subdir \u003csubpath\u003e    Subdir within the repo where SKILL.md lives (multi-skill repos)\n  --scope \u003cs1,s2,...\u003e   Comma-list for metadata.scope (default: root)\n  --license \u003clicense\u003e   License string (default: empty)\n  --attribution \u003cauth\u003e  vendor_attribution (default: URL author)\n  --ref \u003cref\u003e           Git ref to pin (tag/branch/sha; default: none)\n  --trigger \u003ctext\u003e      auto_invoke entry (default: \"When working on \u003cid\u003e\")\n  --no-sync             Don't run 'ai-specs sync' after registering\n",
+      "stderr": "",
+      "tree": []
+    },
+    {
+      "name": "skills bare usage on stderr",
+      "input": [],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "Usage: ai-specs skills \u003csubcommand\u003e [args]\nSubcommands:\n  add \u003curl\u003e [path] [flags]   Register a vendored skill ([[deps]]) and sync\n                             Flags: --id, --subdir, --scope, --license,\n                                    --attribution, --trigger, --no-sync\n  list [path]                List registered and installed skills\n  remove \u003cid\u003e [path]         Remove a vendored skill and prune ai-specs/.deps/\u003cid\u003e/\n  validate \u003cskill_md_path\u003e   Validate one SKILL.md's sync metadata (JSON)\n  field \u003cpath\u003e               Print one JSON value of stdin at a dotted path\nPath defaults to current directory. Run 'ai-specs skills add --help' for\nfull add flags.\n",
+      "tree": []
+    },
+    {
+      "name": "skills --help",
+      "input": [],
+      "rc": 0,
+      "stdout": "Usage: ai-specs skills \u003csubcommand\u003e [args]\nSubcommands:\n  add \u003curl\u003e [path] [flags]   Register a vendored skill ([[deps]]) and sync\n                             Flags: --id, --subdir, --scope, --license,\n                                    --attribution, --trigger, --no-sync\n  list [path]                List registered and installed skills\n  remove \u003cid\u003e [path]         Remove a vendored skill and prune ai-specs/.deps/\u003cid\u003e/\n  validate \u003cskill_md_path\u003e   Validate one SKILL.md's sync metadata (JSON)\n  field \u003cpath\u003e               Print one JSON value of stdin at a dotted path\nPath defaults to current directory. Run 'ai-specs skills add --help' for\nfull add flags.\n",
+      "stderr": "",
+      "tree": []
+    },
+    {
+      "name": "skills help keyword",
+      "input": [],
+      "rc": 0,
+      "stdout": "Usage: ai-specs skills \u003csubcommand\u003e [args]\nSubcommands:\n  add \u003curl\u003e [path] [flags]   Register a vendored skill ([[deps]]) and sync\n                             Flags: --id, --subdir, --scope, --license,\n                                    --attribution, --trigger, --no-sync\n  list [path]                List registered and installed skills\n  remove \u003cid\u003e [path]         Remove a vendored skill and prune ai-specs/.deps/\u003cid\u003e/\n  validate \u003cskill_md_path\u003e   Validate one SKILL.md's sync metadata (JSON)\n  field \u003cpath\u003e               Print one JSON value of stdin at a dotted path\nPath defaults to current directory. Run 'ai-specs skills add --help' for\nfull add flags.\n",
+      "stderr": "",
+      "tree": []
+    },
+    {
+      "name": "skills unknown subcommand",
+      "input": [],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ai-specs skills: unknown subcommand 'bogus'\nRun 'ai-specs skills --help' for usage.\n",
+      "tree": []
+    },
+    {
+      "name": "skills unknown subcommand listx",
+      "input": [],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ai-specs skills: unknown subcommand 'listx'\nRun 'ai-specs skills --help' for usage.\n",
+      "tree": []
+    },
+    {
+      "name": "skills dash subcommand",
+      "input": [],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ai-specs skills: unknown subcommand '-list'\nRun 'ai-specs skills --help' for usage.\n",
+      "tree": []
+    },
+    {
+      "name": "trailing flag",
+      "input": [],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "\u003cROOT\u003e/lib/skills-add.sh: line 47: $2: unbound variable\n",
+      "tree": []
+    },
+    {
+      "name": "missing path",
+      "input": [],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "\u003cROOT\u003e/lib/skills-add.sh: line 94: cd: \u003cDIR\u003e/does-not-exist: No such file or directory\n",
+      "tree": []
+    },
+    {
+      "name": "read-only manifest",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ],
+      "rc": 1,
+      "stdout": "\nai-specs skills add\n  url:         \u003cSRC\u003e\n  id:          src-ok\n  subdir:      (none)\n  scope:       root\n  license:     (none)\n  attribution: \u003cOWNER\u003e\n  ref:         (none)\n\n",
+      "stderr": "Traceback (most recent call last):\n  File \"\u003cstdin\u003e\", line 30, in \u003cmodule\u003e\n  File \"\u003cPATH\u003e\", line 809, in write_text\n    with self.open(mode='w', encoding=encoding, errors=errors, newline=newline) as f:\n         ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"\u003cPATH\u003e\", line 771, in open\n    return io.open(self, mode, buffering, encoding, errors, newline)\n           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nPermissionError: [Errno 13] Permission denied: '\u003cDIR\u003e/ai-specs/ai-specs.toml'\n",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n"
+        }
+      ]
+    },
+    {
+      "name": "table-shaped deps",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n[deps]\nid = \"x\"\n"
+        }
+      ],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"\u003cstdin\u003e\", line 8, in \u003cmodule\u003e\nAttributeError: 'str' object has no attribute 'get'\n",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u5c\"\n[deps]\nid = \"x\"\n"
+        }
+      ]
+    }
+  ],
+  "oracle": {
+    "base": "233dcd2",
+    "note": "legacy `bash lib/skills.sh add|lib/skills-add.sh` over the in-test fixture corpus; \u003cDIR\u003e is the project root (or the missing target's parent), \u003cSRC\u003e the local vendor sources",
+    "python": "3.14.7",
+    "scripts": {
+      "lib/skills-add.sh": "9e114ece6db212f6f3cd47d093a2a89914fc03b4",
+      "lib/skills.sh": "baa2c5584bb5c8d169c3b0b9b7d49ff3d710cd80"
+    }
+  }
+}

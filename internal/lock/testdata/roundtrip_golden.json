@@ -1,0 +1,11 @@
+{
+  "comment": "Frozen output of lib/_internal/lock.py: load_lock(src) then _write_lock_python(dst, lock).",
+  "src": {
+    "encoding": "text",
+    "data": "# Representative .ai-specs.lock fixture for LoadLock normalization tests.\n# Sections: meta, managed, deps, agents, recipes, plus the legacy [skills]\n# section the writer drops on BOTH sides (Python + Go parity).\n\n[meta]\ncli_version = \"  0.24.0  \"\nsynced_at = \"2026-07-14T00:00:00Z\"\n\n[skills.\"legacy-skill\"]\n\"SKILL.md\" = \"legacyhash\"\n\n[recipes.\"worktree-flow\".skills.\"hook-sync\"]\n\"hooks/gate.sh\" = \"hookhash\"\n\"scripts/run.sh\" = \"runhash\"\n\n[recipes.\"other-recipe\".skills.\"top\"]\n\"TOP.md\" = \"tophash\"\n\n[deps.\"vendored-demo\".skills.\"vendored-demo\"]\n\"SKILL.md\" = \"skillhash\"\n\"scripts/run.sh\" = \"scripthash\"\n\n[agents.claude]\n\"AGENTS.md\" = \"agenthash\"\n\n[agents.\"pi \\\"agent\\\"\"]\n\"file\\\\name.md\" = \"pihash\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"  abchash  \"\nrecipe = \"worktree-flow\"\nsource = \"AGENTS.tpl.md\"\nkind = \"template\"\npolicy = \"auto\"\n\n[managed.\"partial.md\"]\nsha256 = \"partialhash\"\n"
+  },
+  "dst": {
+    "encoding": "text",
+    "data": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.24.0\"\nsynced_at = \"2026-07-14T00:00:00Z\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"abchash\"\nrecipe = \"worktree-flow\"\nsource = \"AGENTS.tpl.md\"\nkind = \"template\"\npolicy = \"auto\"\n\n[managed.\"partial.md\"]\nsha256 = \"partialhash\"\n\n[deps.\"vendored-demo\".skills.\"vendored-demo\"]\n\"SKILL.md\" = \"skillhash\"\n\"scripts/run.sh\" = \"scripthash\"\n\n[agents.\"claude\"]\n\"AGENTS.md\" = \"agenthash\"\n\n[agents.\"pi \\\"agent\\\"\"]\n\"file\\\\name.md\" = \"pihash\"\n"
+  }
+}

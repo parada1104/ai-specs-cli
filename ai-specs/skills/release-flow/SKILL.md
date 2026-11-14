@@ -192,7 +192,7 @@ test "$(git rev-list -n1 "vX.Y.Z")" = "$(git rev-parse origin/main)"
 ```
 
 **The tag push creates the release — you do not.** Pushing `v*` triggers
-`.github/workflows/release-worktree-gate.yml`, which builds the four gate
+`.github/workflows/release-binaries.yml`, which builds the four gate
 binaries, verifies them against the committed
 `catalog/recipes/worktree-flow/bin/SHA256SUMS`, and attaches them via
 `softprops/action-gh-release`. That action creates the GitHub Release for the

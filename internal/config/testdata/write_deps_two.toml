@@ -1,0 +1,15 @@
+# Write-corpus fixture: two [[deps]] blocks; removal must take exactly one.
+# comment
+
+[project]
+name = "deps-test"
+
+[[deps]]
+id = "first"
+source = "git::https://example.com/first"
+scope = ["root"]
+
+[[deps]]
+id = "second"
+source = "git::https://example.com/second"
+scope = ["x", "y"]

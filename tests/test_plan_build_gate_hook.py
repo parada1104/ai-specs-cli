@@ -90,6 +90,23 @@ def _real(path: Path) -> str:
     return os.path.realpath(str(path))
 
 
+_CLI_HOME: Path | None = None
+
+
+def _cli_home() -> Path:
+    """A CLI home holding the native ai-specs binary (normalize, field and display verbs read through it)."""
+    global _CLI_HOME
+    if _CLI_HOME is None:
+        home = Path(tempfile.mkdtemp(prefix="ai-specs-cli-home-"))
+        (home / "dist").mkdir(parents=True)
+        subprocess.run(
+            ["go", "build", "-o", str(home / "dist" / "ai-specs"), "./cmd/ai-specs"],
+            cwd=ROOT, check=True, capture_output=True, text=True,
+        )
+        _CLI_HOME = home
+    return _CLI_HOME
+
+
 class PlanBuildGateHookTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -229,6 +246,7 @@ class PlanBuildGateHookTests(unittest.TestCase):
         env = dict(os.environ)
         env.pop("PLAN_BUILD_GATE_MODE", None)
         env.pop("PLAN_BUILD_GATE_PATHS", None)
+        env["AI_SPECS_HOME"] = str(_cli_home())
         if extra_env:
             env.update(extra_env)
         return subprocess.run(
@@ -661,6 +679,15 @@ class PlanBuildGateHookTests(unittest.TestCase):
         r = self._run(event, extra_env=self._ledger_env(decision="block"))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._logged_checkpoints(), [])
+
+    # Accepted (GO-20 U2e U-F2a, Robert): without the installed native CLI the
+    # hook cannot normalize the target, so it exits 0 instead of blocking, even
+    # when the worktree-gate binary verifies. Pinned as the documented degradation.
+    def test_production_write_is_allowed_without_the_native_cli(self):
+        env = {"AI_SPECS_HOME": str(Path(self.tmp.name) / "no-cli-home")}
+        r = self._run(self._event("Write", str(self.repo / "src" / "app.py")), extra_env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stderr, "")
 
     def test_work_start_fails_open_without_a_binary(self):
         self._seed_change()

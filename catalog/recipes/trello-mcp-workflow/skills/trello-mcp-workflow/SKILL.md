@@ -234,7 +234,7 @@ compatibility alias for `--checkpoint pre-merge|archive-close`.
 one Go predicate whether the bound tracker item can be closed. It never moves
 `openspec/changes/<slug>/`, never reads an OpenSpec archive to infer or select
 closure, and never writes. The host is acquisition only: it resolves the mode,
-builds local evidence through `ledger_bridge.py`, calls
+builds local evidence through `ai-specs tracker evidence`, calls
 `worktree-gate --ledger --checkpoint <name>`, and reports the verdict. The host
 is advisory: `block` / `ask` / `needs-item` are reported on stderr and it exits
 `0`, so a Tracker checkpoint never blocks a merge, a close, or source work. No

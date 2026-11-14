@@ -1,0 +1,322 @@
+{
+  "comment": "Frozen oracle bundle for the native materializer spine, the stamp-step manifest writer and the per-recipe loop (GO-20 U2e T5 PR2-B S10). Captured once from the live Python 3.14.7 oracle (testdata/materialize_ref.py driving lib/_internal/recipe-materialize.py materialize_recipes) through the same in-package helpers the live differential used, twice with fresh roots and byte-identical records. Frozen properties per kind: spine = rc/stdout/stderr plus the requested documents (and the marker temp document); stamp = the seed manifest and the post-run manifest bytes; loop = rc/stdout/stderr, the documents and the ENTIRE project+cache file tree including the lock bytes. Host fixture roots are tokenized (\u003cHOME\u003e, \u003cPROJECT\u003e) with the inventory recorded per record; no traceback text is frozen. Restore from a pristine copy, never re-encode.",
+  "names": [
+    "no-enabled branch writes both temp documents",
+    "single enabled recipe and the empty resolved-hooks dump",
+    "several enabled recipes in manifest order with an explicit recipe-MCP path",
+    "recipe-MCP temp write without an output path prints the marker",
+    "fatal primitive conflict",
+    "schema-invalid primitive-coherent recipes report the same fatal conflict",
+    "schema-invalid tagged recipes report the same tag warning and fatal conflict",
+    "resolved-config carries catalog defaults and brief fragments",
+    "resolved-config renders catalog default value types",
+    "no-enabled resolved-config is not enriched",
+    "advisory tag conflict",
+    "added recipe writes new config values",
+    "updated value rewrites the stale config",
+    "no-op run leaves the already-stamped manifest untouched",
+    "sorted-key reconcile order matches the bridge",
+    "bundled skill and command with an overwrite warning and the lock bytes",
+    "templates fresh managed-current and user-modified",
+    "docs fresh managed-current and user-modified",
+    "runtime hook fresh collects the resolved entry",
+    "runtime hook managed-current is skipped and baselined",
+    "runtime hook user-modified is preserved",
+    "runtime hook --refresh-gates backs up and rewrites",
+    "resolved-hooks env exports only the UPPER env-shaped keys",
+    "dep skill through the documented delegation",
+    "execute_hooks failure fails the sync with the fatal line",
+    "worktree-flow gate acquisition degrades offline"
+  ],
+  "cases": [
+    {
+      "kind": "spine",
+      "rc": 0,
+      "stdout": "  (no [recipes.*] enabled — skipping)\n  ✓ wrote resolved-config (0 enabled recipe(s))\n  ✓ wrote resolved-hooks (0 hook(s))\n",
+      "stderr": "",
+      "resolved_config": "{\n  \"bindings\": {},\n  \"enabled\": [],\n  \"project_root\": \"\u003cPROJECT\u003e\",\n  \"recipes\": {\n    \"alpha\": {}\n  },\n  \"topology\": {\n    \"configured\": \"auto\",\n    \"gitmodules_present\": false,\n    \"resolved\": \"standalone\",\n    \"source\": \"default\",\n    \"submodules\": [],\n    \"via\": \"auto\"\n  }\n}\n",
+      "resolved_hooks": "{\n  \"enabled_agents\": [],\n  \"hooks\": []\n}\n",
+      "tokens": {
+        "resolved_config": {
+          "\u003cPROJECT\u003e": 1
+        }
+      }
+    },
+    {
+      "kind": "spine",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n  ✓ wrote recipe MCP temp (0 server(s))\nRECIPE_MCP_TEMP:\u003cTEMP\u003e\n  ✓ wrote resolved-hooks (0 hook(s))\n",
+      "stderr": "",
+      "resolved_hooks": "{\n  \"enabled_agents\": [\n    \"claude\"\n  ],\n  \"hooks\": []\n}\n",
+      "temp_document": "{}\n"
+    },
+    {
+      "kind": "spine",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n  ▸ recipe beta\n  ▸ recipe gamma\n  ✓ wrote recipe MCP temp (0 server(s))\n",
+      "stderr": "",
+      "recipe_mcp": "{}\n"
+    },
+    {
+      "kind": "spine",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n  ✓ wrote recipe MCP temp (0 server(s))\nRECIPE_MCP_TEMP:\u003cTEMP\u003e\n",
+      "stderr": "",
+      "temp_document": "{}\n"
+    },
+    {
+      "kind": "spine",
+      "rc": 1,
+      "stdout": "",
+      "stderr": "  ✗ recipe conflict: skill.id='dup' claimed by Alpha, Beta. Resolve manually in ai-specs.toml.\n"
+    },
+    {
+      "kind": "spine",
+      "rc": 1,
+      "stdout": "",
+      "stderr": "  ✗ recipe conflict: skill.id='dup' claimed by Alpha, Beta. Resolve manually in ai-specs.toml.\n"
+    },
+    {
+      "kind": "spine",
+      "rc": 1,
+      "stdout": "",
+      "stderr": "  ! tag conflict: recipes alpha, beta share tag 'vcs' and declare an explicit conflicts_with. Review whether both should be enabled.\n  ✗ recipe conflict: skill.id='dup' claimed by Alpha, Beta. Resolve manually in ai-specs.toml.\n"
+    },
+    {
+      "kind": "spine",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n  ▸ recipe beta\n  ✓ wrote recipe MCP temp (0 server(s))\nRECIPE_MCP_TEMP:\u003cTEMP\u003e\n  ✓ wrote resolved-config (2 recipe(s))\n",
+      "stderr": "",
+      "resolved_config": "{\n  \"bindings\": {},\n  \"enabled\": [\n    \"alpha\",\n    \"beta\"\n  ],\n  \"project_root\": \"\u003cPROJECT\u003e\",\n  \"recipes\": {\n    \"alpha\": {\n      \"base_branch\": \"development\",\n      \"brief_fragments\": {\n        \"useful_commands\": [\n          {\n            \"key\": \"run\",\n            \"text\": \"make run\"\n          }\n        ],\n        \"workflow_rules\": [\n          {\n            \"key\": null,\n            \"text\": \"Rule one\"\n          },\n          {\n            \"key\": null,\n            \"text\": \"Rule two\"\n          }\n        ]\n      },\n      \"mode\": \"loose\",\n      \"ratio\": 2.0\n    },\n    \"beta\": {\n      \"brief_fragments\": {}\n    }\n  },\n  \"topology\": {\n    \"configured\": \"auto\",\n    \"gitmodules_present\": false,\n    \"resolved\": \"standalone\",\n    \"source\": \"default\",\n    \"submodules\": [],\n    \"via\": \"auto\"\n  }\n}\n",
+      "temp_document": "{}\n",
+      "tokens": {
+        "resolved_config": {
+          "\u003cPROJECT\u003e": 1
+        }
+      }
+    },
+    {
+      "kind": "spine",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n  ✓ wrote recipe MCP temp (0 server(s))\nRECIPE_MCP_TEMP:\u003cTEMP\u003e\n  ✓ wrote resolved-config (1 recipe(s))\n",
+      "stderr": "",
+      "resolved_config": "{\n  \"bindings\": {},\n  \"enabled\": [\n    \"alpha\"\n  ],\n  \"project_root\": \"\u003cPROJECT\u003e\",\n  \"recipes\": {\n    \"alpha\": {\n      \"brief_fragments\": {},\n      \"huge\": 123456789012345678901234567890,\n      \"ratio\": 2.0,\n      \"weight\": 1\n    }\n  },\n  \"topology\": {\n    \"configured\": \"auto\",\n    \"gitmodules_present\": false,\n    \"resolved\": \"standalone\",\n    \"source\": \"default\",\n    \"submodules\": [],\n    \"via\": \"auto\"\n  }\n}\n",
+      "temp_document": "{}\n",
+      "tokens": {
+        "resolved_config": {
+          "\u003cPROJECT\u003e": 1
+        }
+      }
+    },
+    {
+      "kind": "spine",
+      "rc": 0,
+      "stdout": "  (no [recipes.*] enabled — skipping)\n  ✓ wrote resolved-config (0 enabled recipe(s))\n",
+      "stderr": "",
+      "resolved_config": "{\n  \"bindings\": {},\n  \"enabled\": [],\n  \"project_root\": \"\u003cPROJECT\u003e\",\n  \"recipes\": {\n    \"alpha\": {\n      \"weight\": 1\n    }\n  },\n  \"topology\": {\n    \"configured\": \"auto\",\n    \"gitmodules_present\": false,\n    \"resolved\": \"standalone\",\n    \"source\": \"default\",\n    \"submodules\": [],\n    \"via\": \"auto\"\n  }\n}\n",
+      "tokens": {
+        "resolved_config": {
+          "\u003cPROJECT\u003e": 1
+        }
+      }
+    },
+    {
+      "kind": "spine",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n  ▸ recipe beta\n  ✓ wrote recipe MCP temp (0 server(s))\nRECIPE_MCP_TEMP:\u003cTEMP\u003e\n",
+      "stderr": "  ! tag overlap: recipes alpha, beta share tag 'vcs' (same capability category).\n",
+      "temp_document": "{}\n"
+    },
+    {
+      "kind": "stamp",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n  ✓ wrote recipe MCP temp (0 server(s))\nRECIPE_MCP_TEMP:\u003cTEMP\u003e\n",
+      "stderr": "",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nbase_branch = \"main\"\nreconcile = { expectations = [{ config_field = \"base_branch\", event = \"pr_opened\" }], scope_field = \"workflow\" }\nworkflow = \"feature\"\n",
+      "seed_manifest": "[recipes.alpha]\nenabled = true\n"
+    },
+    {
+      "kind": "stamp",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n  ✓ wrote recipe MCP temp (0 server(s))\nRECIPE_MCP_TEMP:\u003cTEMP\u003e\n",
+      "stderr": "",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nworkflow = \"feature\"\nbase_branch = \"main\"\nreconcile = { expectations = [{ config_field = \"base_branch\", event = \"pr_opened\" }], scope_field = \"workflow\" }\n",
+      "seed_manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nworkflow = \"stale\"\n"
+    },
+    {
+      "kind": "stamp",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n  ✓ wrote recipe MCP temp (0 server(s))\nRECIPE_MCP_TEMP:\u003cTEMP\u003e\n",
+      "stderr": "",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nbase_branch = \"main\"\nreconcile = { expectations = [{ config_field = \"base_branch\", event = \"pr_opened\" }], scope_field = \"workflow\" }\nworkflow = \"feature\"\n",
+      "seed_manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nbase_branch = \"main\"\nreconcile = { expectations = [{ config_field = \"base_branch\", event = \"pr_opened\" }], scope_field = \"workflow\" }\nworkflow = \"feature\"\n"
+    },
+    {
+      "kind": "stamp",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n  ✓ wrote recipe MCP temp (0 server(s))\nRECIPE_MCP_TEMP:\u003cTEMP\u003e\n",
+      "stderr": "",
+      "manifest": "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nbase_branch = \"main\"\nreconcile = { expectations = [{ config_field = \"base_branch\", config_field_when_set = \"sync_state\", event = \"pr_opened\" }], max_age_seconds = 3600, scope_field = \"workflow\" }\nsync_state = \"open\"\nworkflow = \"feature\"\n",
+      "seed_manifest": "[recipes.alpha]\nenabled = true\n"
+    },
+    {
+      "kind": "loop",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n    ✓ bundled skill demo\n    ✓ command review\n  ✓ wrote recipe MCP temp (0 server(s))\n",
+      "stderr": "  ! recipe command 'review' overwrites existing managed command at \u003cHOME\u003e/cache/projects/\u003cCACHE_PROJECT\u003e/commands/review.md\n",
+      "recipe_mcp": "{}\n",
+      "tree": {
+        "CACHE/projects/\u003cCACHE_PROJECT\u003e/.recipe/alpha/skills/demo/SKILL.md": "# demo\n",
+        "CACHE/projects/\u003cCACHE_PROJECT\u003e/.recipe/alpha/skills/demo/assets/a.txt": "asset\n",
+        "CACHE/projects/\u003cCACHE_PROJECT\u003e/commands/review.md": "review body\n",
+        "PROJECT/ai-specs/.ai-specs.lock": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n",
+        "PROJECT/ai-specs/ai-specs.toml": "[recipes.alpha]\nenabled = true\n"
+      },
+      "tokens": {
+        "stderr": {
+          "\u003cCACHE_PROJECT\u003e": 1,
+          "\u003cHOME\u003e": 1
+        },
+        "tree": {
+          "\u003cCACHE_PROJECT\u003e": 3
+        }
+      }
+    },
+    {
+      "kind": "loop",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n    ✓ template docs/fresh.txt\n    · template skipped (exists) docs/current.txt\n    · template skipped (exists) docs/user.txt\n  ✓ wrote recipe MCP temp (0 server(s))\nRECIPE_MCP_TEMP:\u003cTEMP\u003e\n",
+      "stderr": "  ! override user-modified: docs/user.txt was not refreshed. Refresh with:\n  rm docs/user.txt \u0026\u0026 ai-specs sync\n",
+      "tree": {
+        "PROJECT/ai-specs/.ai-specs.lock": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[managed.\"docs/current.txt\"]\nsha256 = \"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"\nrecipe = \"alpha\"\nsource = \"templates/t.txt\"\nkind = \"template\"\npolicy = \"auto\"\n\n[managed.\"docs/fresh.txt\"]\nsha256 = \"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"\nrecipe = \"alpha\"\nsource = \"templates/t.txt\"\nkind = \"template\"\npolicy = \"auto\"\n\n[managed.\"docs/user.txt\"]\nsha256 = \"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"\n",
+        "PROJECT/ai-specs/ai-specs.toml": "[recipes.alpha]\nenabled = true\n",
+        "PROJECT/docs/current.txt": "hello\n",
+        "PROJECT/docs/fresh.txt": "hello\n",
+        "PROJECT/docs/user.txt": "edited\n"
+      }
+    },
+    {
+      "kind": "loop",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n    ✓ doc guide/fresh.md\n    · doc skipped (exists) guide/cur.md\n    · doc skipped (exists) guide/user.md\n  ✓ wrote recipe MCP temp (0 server(s))\nRECIPE_MCP_TEMP:\u003cTEMP\u003e\n",
+      "stderr": "  ! override user-modified: guide/user.md was not refreshed. Refresh with:\n  rm guide/user.md \u0026\u0026 ai-specs sync\n",
+      "tree": {
+        "PROJECT/ai-specs/.ai-specs.lock": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[managed.\"guide/cur.md\"]\nsha256 = \"1372167dfaad7e7b11de74ef9e8cf6930ccced9121466f0749d97c8ffec5d1b9\"\nrecipe = \"alpha\"\nsource = \"docs/cur.md\"\nkind = \"doc\"\npolicy = \"auto\"\n\n[managed.\"guide/fresh.md\"]\nsha256 = \"96341bf9713de5bc2456da188339c5d40731e84b3280ba8bd37559c01f4c16be\"\nrecipe = \"alpha\"\nsource = \"docs/fresh.md\"\nkind = \"doc\"\npolicy = \"auto\"\n\n[managed.\"guide/user.md\"]\nsha256 = \"f2fed9887254e001e02c6ee96c01fa258f876f0b1715b7c3eb90f509de440068\"\n",
+        "PROJECT/ai-specs/ai-specs.toml": "[recipes.alpha]\nenabled = true\n",
+        "PROJECT/guide/cur.md": "cur doc\n",
+        "PROJECT/guide/fresh.md": "fresh doc\n",
+        "PROJECT/guide/user.md": "mine\n"
+      }
+    },
+    {
+      "kind": "loop",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n    ✓ hook script ai-specs/recipes/alpha/hooks/guard.sh\n  ✓ wrote recipe MCP temp (0 server(s))\nRECIPE_MCP_TEMP:\u003cTEMP\u003e\n  ✓ wrote resolved-hooks (1 hook(s))\n",
+      "stderr": "",
+      "resolved_hooks": "{\n  \"enabled_agents\": [\n    \"claude\"\n  ],\n  \"hooks\": [\n    {\n      \"blocking\": true,\n      \"env\": {},\n      \"event\": \"pre-tool-use\",\n      \"id\": \"guard\",\n      \"matcher\": \"Bash\",\n      \"recipe\": \"alpha\",\n      \"script_path\": \"ai-specs/recipes/alpha/hooks/guard.sh\"\n    }\n  ]\n}\n",
+      "tree": {
+        "PROJECT/ai-specs/.ai-specs.lock": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[managed.\"ai-specs/recipes/alpha/hooks/guard.sh\"]\nsha256 = \"8a462e6c8487cecf02dcd424b9697b9c5853e0d996fdb6b580e2d9d8990e8c39\"\nrecipe = \"alpha\"\nsource = \"hooks/guard.sh\"\nkind = \"gate\"\npolicy = \"auto\"\n",
+        "PROJECT/ai-specs/ai-specs.toml": "[recipes.alpha]\nenabled = true\n\n[agents]\nenabled = [\"claude\"]\n",
+        "PROJECT/ai-specs/recipes/alpha/hooks/guard.sh": "#!/bin/sh\necho guard\n"
+      }
+    },
+    {
+      "kind": "loop",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n    · hook skipped (current) ai-specs/recipes/alpha/hooks/guard.sh\n  ✓ wrote recipe MCP temp (0 server(s))\nRECIPE_MCP_TEMP:\u003cTEMP\u003e\n  ✓ wrote resolved-hooks (1 hook(s))\n",
+      "stderr": "",
+      "resolved_hooks": "{\n  \"enabled_agents\": [\n    \"claude\"\n  ],\n  \"hooks\": [\n    {\n      \"blocking\": true,\n      \"env\": {},\n      \"event\": \"pre-tool-use\",\n      \"id\": \"guard\",\n      \"matcher\": \"Bash\",\n      \"recipe\": \"alpha\",\n      \"script_path\": \"ai-specs/recipes/alpha/hooks/guard.sh\"\n    }\n  ]\n}\n",
+      "tree": {
+        "PROJECT/ai-specs/.ai-specs.lock": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[managed.\"ai-specs/recipes/alpha/hooks/guard.sh\"]\nsha256 = \"8a462e6c8487cecf02dcd424b9697b9c5853e0d996fdb6b580e2d9d8990e8c39\"\nrecipe = \"alpha\"\nsource = \"hooks/guard.sh\"\nkind = \"gate\"\npolicy = \"auto\"\n",
+        "PROJECT/ai-specs/ai-specs.toml": "[recipes.alpha]\nenabled = true\n\n[agents]\nenabled = [\"claude\"]\n",
+        "PROJECT/ai-specs/recipes/alpha/hooks/guard.sh": "#!/bin/sh\necho guard\n"
+      }
+    },
+    {
+      "kind": "loop",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n    · hook skipped (user-modified) ai-specs/recipes/alpha/hooks/guard.sh\n  ✓ wrote recipe MCP temp (0 server(s))\nRECIPE_MCP_TEMP:\u003cTEMP\u003e\n  ✓ wrote resolved-hooks (1 hook(s))\n",
+      "stderr": "  ! hook ai-specs/recipes/alpha/hooks/guard.sh is user-modified; preserving existing bytes. Refresh with:\n  rm ai-specs/recipes/alpha/hooks/guard.sh \u0026\u0026 ai-specs sync  (or: ai-specs sync --refresh-gates)\n",
+      "resolved_hooks": "{\n  \"enabled_agents\": [\n    \"claude\"\n  ],\n  \"hooks\": [\n    {\n      \"blocking\": true,\n      \"env\": {},\n      \"event\": \"pre-tool-use\",\n      \"id\": \"guard\",\n      \"matcher\": \"Bash\",\n      \"recipe\": \"alpha\",\n      \"script_path\": \"ai-specs/recipes/alpha/hooks/guard.sh\"\n    }\n  ]\n}\n",
+      "tree": {
+        "PROJECT/ai-specs/.ai-specs.lock": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[managed.\"ai-specs/recipes/alpha/hooks/guard.sh\"]\nsha256 = \"8a462e6c8487cecf02dcd424b9697b9c5853e0d996fdb6b580e2d9d8990e8c39\"\n",
+        "PROJECT/ai-specs/ai-specs.toml": "[recipes.alpha]\nenabled = true\n\n[agents]\nenabled = [\"claude\"]\n",
+        "PROJECT/ai-specs/recipes/alpha/hooks/guard.sh": "#!/bin/sh\necho edited\n"
+      }
+    },
+    {
+      "kind": "loop",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n    ✓ hook refreshed ai-specs/recipes/alpha/hooks/guard.sh\n  ✓ wrote recipe MCP temp (0 server(s))\nRECIPE_MCP_TEMP:\u003cTEMP\u003e\n  ✓ wrote resolved-hooks (1 hook(s))\n",
+      "stderr": "",
+      "resolved_hooks": "{\n  \"enabled_agents\": [\n    \"claude\"\n  ],\n  \"hooks\": [\n    {\n      \"blocking\": true,\n      \"env\": {},\n      \"event\": \"pre-tool-use\",\n      \"id\": \"guard\",\n      \"matcher\": \"Bash\",\n      \"recipe\": \"alpha\",\n      \"script_path\": \"ai-specs/recipes/alpha/hooks/guard.sh\"\n    }\n  ]\n}\n",
+      "tree": {
+        "CACHE/projects/\u003cCACHE_PROJECT\u003e/backups/2d62efe6cd6860b89f400aadbe7edafee65bbc430d0e1f602e8f49454b4470ba/61efafafd441bdcf6ae3389e691ce84d6bf91eeecf5667f849367152f6251d85.sh": "#!/bin/sh\necho edited\n",
+        "PROJECT/ai-specs/.ai-specs.lock": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[managed.\"ai-specs/recipes/alpha/hooks/guard.sh\"]\nsha256 = \"8a462e6c8487cecf02dcd424b9697b9c5853e0d996fdb6b580e2d9d8990e8c39\"\nrecipe = \"alpha\"\nsource = \"hooks/guard.sh\"\nkind = \"gate\"\npolicy = \"auto\"\n",
+        "PROJECT/ai-specs/ai-specs.toml": "[recipes.alpha]\nenabled = true\n\n[agents]\nenabled = [\"claude\"]\n",
+        "PROJECT/ai-specs/recipes/alpha/hooks/guard.sh": "#!/bin/sh\necho guard\n"
+      },
+      "tokens": {
+        "tree": {
+          "\u003cCACHE_PROJECT\u003e": 1
+        }
+      }
+    },
+    {
+      "kind": "loop",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n    ✓ hook script ai-specs/recipes/alpha/hooks/guard.sh\n  ✓ wrote recipe MCP temp (0 server(s))\nRECIPE_MCP_TEMP:\u003cTEMP\u003e\n  ✓ wrote resolved-hooks (1 hook(s))\n",
+      "stderr": "",
+      "resolved_hooks": "{\n  \"enabled_agents\": [],\n  \"hooks\": [\n    {\n      \"blocking\": false,\n      \"env\": {\n        \"1_A\": \"2\",\n        \"A1_B\": \"one\"\n      },\n      \"event\": \"stop\",\n      \"id\": \"guard\",\n      \"matcher\": \"\",\n      \"recipe\": \"alpha\",\n      \"script_path\": \"ai-specs/recipes/alpha/hooks/guard.sh\"\n    }\n  ]\n}\n",
+      "tree": {
+        "PROJECT/ai-specs/.ai-specs.lock": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[managed.\"ai-specs/recipes/alpha/hooks/guard.sh\"]\nsha256 = \"8a462e6c8487cecf02dcd424b9697b9c5853e0d996fdb6b580e2d9d8990e8c39\"\nrecipe = \"alpha\"\nsource = \"hooks/guard.sh\"\nkind = \"gate\"\npolicy = \"auto\"\n",
+        "PROJECT/ai-specs/ai-specs.toml": "[recipes.alpha]\nenabled = true\n",
+        "PROJECT/ai-specs/recipes/alpha/hooks/guard.sh": "#!/bin/sh\necho guard\n"
+      }
+    },
+    {
+      "kind": "loop",
+      "rc": 0,
+      "stdout": "  ▸ recipe alpha\n  ▸ dep1  ←  \u003cHOME\u003e/dep-src\n    ✓ dep skill dep1\n  ✓ wrote recipe MCP temp (0 server(s))\nRECIPE_MCP_TEMP:\u003cTEMP\u003e\n",
+      "stderr": "",
+      "tree": {
+        "CACHE/projects/\u003cCACHE_PROJECT\u003e/.deps/dep1/skills/dep1/SKILL.md": "---\nname: dep1\ndescription: \u003e\n  Vendored skill: dep1\nlicense: Unknown\nmetadata:\n  author: \"upstream\"\n  version: \"1.0\"\n  source: \"\u003cHOME\u003e/dep-src\"\n  scope: [root]\n---\n\n# dep1\n\nbody\n",
+        "CACHE/projects/\u003cCACHE_PROJECT\u003e/.deps/dep1/skills/dep1/assets/x.txt": "x\n",
+        "PROJECT/ai-specs/ai-specs.toml": "[recipes.alpha]\nenabled = true\n"
+      },
+      "tokens": {
+        "stdout": {
+          "\u003cHOME\u003e": 1
+        },
+        "tree": {
+          "\u003cCACHE_PROJECT\u003e": 2,
+          "\u003cHOME\u003e": 1
+        }
+      }
+    },
+    {
+      "kind": "loop",
+      "rc": 1,
+      "stdout": "  ▸ recipe alpha\n",
+      "stderr": "  ✗ recipe 'Alpha': hook 'validate-config' failed: field 'board_id' value 'abcd1234' looks like a Trello shortLink; the real board ID is 24 hex characters (e.g., '69ec0a2099ea20956e371d62')\n",
+      "tree": {
+        "PROJECT/ai-specs/ai-specs.toml": "[recipes.alpha]\nenabled = true\n"
+      }
+    },
+    {
+      "kind": "loop",
+      "rc": 0,
+      "stdout": "  ▸ recipe worktree-flow\n  ✓ wrote recipe MCP temp (0 server(s))\n",
+      "stderr": "  ! worktree-flow: worktree-gate: local build failed (gate Go source not found at \u003cHOME\u003e/catalog/recipes/worktree-flow/gate); gate_impl=auto: gate is failing open (run 'ai-specs doctor')\n",
+      "recipe_mcp": "{}\n",
+      "tree": {
+        "PROJECT/ai-specs/ai-specs.toml": "[recipes.worktree-flow]\nenabled = true\n"
+      },
+      "tokens": {
+        "stderr": {
+          "\u003cHOME\u003e": 1
+        }
+      }
+    }
+  ]
+}

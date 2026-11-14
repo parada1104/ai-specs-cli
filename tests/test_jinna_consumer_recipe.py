@@ -11,7 +11,7 @@ materialization change cannot silently regress the isolated consumer path:
 The fixture stays network-free and self-contained:
 
 * the consumer project lives in a temporary directory outside the repository;
-* ``AI_SPECS_HOME`` points at a temporary CLI home whose catalog/lib/bundled
+* ``AI_SPECS_HOME`` points at a temporary CLI home whose catalog/bundled
   assets are symlinks back to this worktree, so no durable state is written;
 * a fake ``jinna`` executable is first on ``PATH`` and answers only
   ``jinna version``. Any other invocation (notably ``jinna mcp``) fails and is
@@ -33,16 +33,16 @@ from pathlib import Path
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _cache_paths import resolved_skills_dir
+from _blackbox import cli_path, cache_project_dir  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
+CLI = cli_path()
 RECIPE_ID = "jinna-mcp-recipe"
 JINNA_SKILL_ID = "jinna-mcp-recipe"
 DOGFOOD_MANIFEST = ROOT / "ai-specs" / "ai-specs.toml"
 
 # Directories the CLI resolves from AI_SPECS_HOME (symlinked from this worktree).
-CLI_HOME_LINKS = ("catalog", "lib", "bundled-skills", "bundled-commands", "templates")
+CLI_HOME_LINKS = ("catalog", "bundled-skills", "bundled-commands", "templates")
 
 OPENPROJECT_ENV = {
     "OPENPROJECT_BASE_URL": "https://openproject.example.com",
@@ -122,7 +122,12 @@ class JinnaConsumerRecipeFlowTests(unittest.TestCase):
             self.assertTrue(readme.is_file(), "the recipe README was not materialized")
             self.assertTrue(readme.read_text(encoding="utf-8").strip())
 
-            skill = resolved_skills_dir(consumer, cli_home=cli_home) / JINNA_SKILL_ID / "SKILL.md"
+            skill = (
+                cache_project_dir(consumer, cli_home)
+                / "resolved-skills"
+                / JINNA_SKILL_ID
+                / "SKILL.md"
+            )
             self.assertTrue(skill.is_file(), "the Jinna recipe skill was not materialized")
 
             self._assert_mcp_json(consumer / ".mcp.json")

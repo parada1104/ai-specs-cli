@@ -1,0 +1,157 @@
+{
+  "oracle": {
+    "python": "3.14.7",
+    "base": "212016f",
+    "note": "legacy `bash lib/recipe-config.sh` (lib/_internal/config_wizard.py) over the in-test fixture corpus; \u003cDIR\u003e is the target project root (or the working directory), \u003cHOME\u003e the isolated cli home, \u003cROOT\u003e the checkout",
+    "scripts": {
+      "lib/_internal/config_wizard.py": "9f949007b4571797befbb3ef8e2992e3615a3840",
+      "lib/recipe-config.sh": "8cf00951e655be4e2d69a44d297f288c41b87081"
+    }
+  },
+  "cases": [
+    {
+      "name": "help",
+      "input": [],
+      "rc": 0,
+      "stdout": "Usage: ai-specs configure-recipes [path] [--help]\nConfigure enabled recipes (config fields, CLI deps, ai-specs.env + root .envrc).\nArguments:\n  path    Target project root (default: current directory)\nFlags:\n  --help  Show this help\n",
+      "stderr": "",
+      "tree": []
+    },
+    {
+      "name": "short help",
+      "input": [],
+      "rc": 0,
+      "stdout": "Usage: ai-specs configure-recipes [path] [--help]\nConfigure enabled recipes (config fields, CLI deps, ai-specs.env + root .envrc).\nArguments:\n  path    Target project root (default: current directory)\nFlags:\n  --help  Show this help\n",
+      "stderr": "",
+      "tree": []
+    },
+    {
+      "name": "unknown flag",
+      "input": [],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ERROR: unknown flag: --bogus\nRun 'ai-specs configure-recipes --help' for usage.\n",
+      "tree": []
+    },
+    {
+      "name": "second positional",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u6e\"\n"
+        }
+      ],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ERROR: unexpected positional argument: extra\n",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u6e\"\n"
+        }
+      ]
+    },
+    {
+      "name": "positional after dashdash",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u6e\"\n"
+        }
+      ],
+      "rc": 3,
+      "stdout": "",
+      "stderr": "configure-recipes requires an interactive TTY\n",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u6e\"\n"
+        }
+      ]
+    },
+    {
+      "name": "missing manifest",
+      "input": [],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "Project not initialized: missing \u003cDIR\u003e/ai-specs/ai-specs.toml\n",
+      "tree": []
+    },
+    {
+      "name": "initialized project off the TTY",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u6e\"\n"
+        }
+      ],
+      "rc": 3,
+      "stdout": "",
+      "stderr": "configure-recipes requires an interactive TTY\n",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u6e\"\n"
+        }
+      ]
+    },
+    {
+      "name": "target defaults to cwd off the TTY",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u6e\"\n"
+        }
+      ],
+      "rc": 3,
+      "stdout": "",
+      "stderr": "configure-recipes requires an interactive TTY\n",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"u6e\"\n"
+        }
+      ]
+    },
+    {
+      "name": "missing path",
+      "input": null,
+      "rc": 1,
+      "stdout": "",
+      "stderr": "\u003cROOT\u003e/lib/recipe-config.sh: line 47: cd: \u003cDIR\u003e/does-not-exist: No such file or directory\n",
+      "tree": []
+    }
+  ]
+}

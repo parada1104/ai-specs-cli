@@ -1,0 +1,237 @@
+name: Release binaries
+
+# Builds BOTH binaries for every supported target on tag push — the worktree
+# gate and the ai-specs CLI — runs the Go checks, verifies the built digests
+# against the two committed trust roots, and attaches every asset to the GitHub
+# release.
+#
+# Two trust roots, one discipline:
+#   - catalog/recipes/worktree-flow/bin/SHA256SUMS for worktree-gate-<os>-<arch>,
+#     verified by scripts/verify-gate-sums.sh;
+#   - bin/SHA256SUMS for ai-specs-<os>-<arch>, verified by
+#     scripts/verify-cli-sums.sh. install.sh and `ai-specs upgrade` read exactly
+#     that file and verify a download BEFORE installing it, so shipping an asset
+#     whose digest differs from it means the installer refuses it (fail closed)
+#     — which is why the checksum gate below is the release's own contract.
+#
+# Shared invariants:
+#   - four supported targets: darwin/arm64, darwin/amd64, linux/amd64, linux/arm64
+#   - reproducible builds: CGO_ENABLED=0, -trimpath, -buildvcs=false
+#   - the toolchain is pinned to the CANONICAL version (go 1.24.13) that
+#     regenerated both trust roots; a different Go release compiles different
+#     stdlib bytes, so the checksum gates require CI and the digest generators
+#     (scripts/build-gate.sh, scripts/build-cli.sh) to share one toolchain
+#   - no binaries are ever committed: the trust roots are the source-level
+#     manifests of assets that only CI produces
+#   - both checksum gates compare the CANONICAL digest entries only, so the
+#     header/order of the committed files never fails a release — only a real
+#     digest mismatch does
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build worktree-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Canonical toolchain: the committed SHA256SUMS trust root is
+          # regenerated with exactly go1.24.13 (scripts/build-gate.sh
+          # documents this), and Go builds are deterministic for a given
+          # toolchain, so CI must compile with the same version or the
+          # checksum gate below fails every release. No `cache-dependency-path`
+          # is set: the module has zero third-party dependencies and there is
+          # intentionally no go.sum (D8), so a cache keyed on go.sum would
+          # reference a nonexistent file.
+          go-version: "1.24.13"
+
+      - name: Run go vet
+        working-directory: catalog/recipes/worktree-flow/gate
+        run: go vet ./...
+
+      - name: Run go test
+        working-directory: catalog/recipes/worktree-flow/gate
+        run: go test ./...
+
+      - name: Build target
+        working-directory: catalog/recipes/worktree-flow/gate
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist
+          go build -trimpath -buildvcs=false \
+            -ldflags "-s -w -X main.version=${VERSION#v}" \
+            -o "dist/worktree-gate-${{ matrix.goos }}-${{ matrix.goarch }}" .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: worktree-gate-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: catalog/recipes/worktree-flow/gate/dist/worktree-gate-${{ matrix.goos }}-${{ matrix.goarch }}
+          if-no-files-found: error
+
+  build-cli:
+    name: Build ai-specs CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # The same canonical pin as the gate job: bin/SHA256SUMS was
+          # regenerated with exactly go1.24.13 (scripts/build-cli.sh documents
+          # this) and the checksum gate compares the built bytes against it.
+          go-version: "1.24.13"
+
+      - name: Run go vet
+        run: go vet ./cmd/... ./internal/...
+
+      - name: Run go test
+        run: go test ./cmd/... ./internal/...
+
+      - name: Build target
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -trimpath -buildvcs=false \
+            -o "dist/ai-specs-${{ matrix.goos }}-${{ matrix.goarch }}" ./cmd/ai-specs
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-specs-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/ai-specs-${{ matrix.goos }}-${{ matrix.goarch }}
+          if-no-files-found: error
+
+  checksum:
+    name: Emit and verify SHA256SUMS
+    needs: [build, build-cli]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Emit SHA256SUMS
+        working-directory: dist
+        run: |
+          sha256sum worktree-gate-* > SHA256SUMS
+          sha256sum ai-specs-* > CLI-SHA256SUMS
+
+      - name: Compare with committed digests (canonical)
+        # scripts/verify-gate-sums.sh compares the CANONICAL form of both
+        # files (one "<sha256>  <name>" line per entry, sorted by asset
+        # name), so the documentation header and hand-maintained line order
+        # of the committed trust root never fail the release by themselves.
+        # Only an actual digest mismatch fails.
+        run: |
+          if ! bash scripts/verify-gate-sums.sh dist/SHA256SUMS \
+              catalog/recipes/worktree-flow/bin/SHA256SUMS; then
+            echo "error: built digests differ from the committed SHA256SUMS;" \
+                 "regenerate catalog/recipes/worktree-flow/bin/SHA256SUMS and commit it" >&2
+            exit 1
+          fi
+
+      - name: Compare with committed CLI digests (canonical)
+        # The same contract for the CLI trust root: install.sh and
+        # `ai-specs upgrade` read bin/SHA256SUMS, so an asset whose digest
+        # differs from it would never install — the release would be useless
+        # and misleading at once.
+        run: |
+          if ! bash scripts/verify-cli-sums.sh dist/CLI-SHA256SUMS bin/SHA256SUMS; then
+            echo "error: built digests differ from the committed bin/SHA256SUMS;" \
+                 "regenerate bin/SHA256SUMS with scripts/build-cli.sh and commit it" >&2
+            exit 1
+          fi
+
+      - name: Attach assets to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/worktree-gate-*
+            dist/ai-specs-*
+
+
+  parity:
+    name: Parity corpus against Go gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.13"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Build host-native Go gate
+        # ubuntu-latest is linux/amd64. Independent of the matrix build job
+        # so a checksum failure cannot skip behavioral proof. Copy the
+        # linux/amd64 artifact to worktree-gate-current because uname -m
+        # reports x86_64 while the matrix name is amd64.
+        run: |
+          bash scripts/build-gate.sh
+          cp dist/worktree-gate-linux-amd64 dist/worktree-gate-current
+          chmod +x dist/worktree-gate-current
+
+      - name: Run parity corpus (Go gate vs pinned expectations)
+        # Run the repository's actual unittest-based parity test exactly
+        # like ./tests/run.sh (python3 -m unittest discover). Canonical
+        # suite is unittest with no third-party test dependencies.
+        run: python3 -m unittest tests/test_worktree_gate_parity.py -q

@@ -1,0 +1,11 @@
+[recipe]
+id = "x"
+name = "N"
+description = "D"
+version = "1.0"
+
+[init]
+prompt = "init.md"
+description = "  pad  "
+needs_manifest = true
+needs_mcp = ["trello"]

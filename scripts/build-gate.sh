@@ -15,7 +15,7 @@
 # CANONICAL TOOLCHAIN: the committed catalog/recipes/worktree-flow/bin/SHA256SUMS
 # is the release trust root, and Go compiles different stdlib bytes per Go
 # release. Digests MUST be regenerated with go1.24.13 — the same version the
-# release CI pins (.github/workflows/release-worktree-gate.yml). The script
+# release CI pins (.github/workflows/release-binaries.yml). The script
 # warns (does not fail: contributors may build with go >= 1.22 for local
 # testing) when the active toolchain is not canonical, so a digest
 # regeneration with the wrong Go version is caught before it is committed.

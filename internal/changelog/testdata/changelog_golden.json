@@ -1,0 +1,1859 @@
+{
+  "oracle": {
+    "entry": "main",
+    "python": "3.14.7",
+    "script": "lib/_internal/changelog.py"
+  },
+  "corpus": [
+    "0d587e72c64fed6456a9d679403df1b4f831cd2be6e5562ce8c782bb183d8847  markup.md",
+    "21d7c12b4cb9a6127d71ab124f92a8825cd3a304a45d8d25352fbff6ace7eb67  longbody.md",
+    "24deea89f1cbe44c63a3fd305da704b885d559962b7f34ac67541a5abfa04ebb  unreleasedonly.md",
+    "4616b6592b16b1658594a4075bb054ee85bf7f296cd1d1a62f795e6bd8bdc883  fenced.md",
+    "50f4726e53e75962f57ffd346e407ce94cd56db1991aa97a39f6ccf69df3b74e  nodate.md",
+    "7c5c397cf75d2bd0f49b1d102f861ec9fda7270d97dea2f5d25748cea8202e67  real.md",
+    "a3a18240ea2702afb2485585392a392e0216c48fdc84e79e10705d617a3740e0  sample.md",
+    "a680e428eda1610514ff39dbe379f064f2d9c30a6a7aa85ce24c512bb9ae8263  malformed.md",
+    "a7a5e0ec3043e30375bd1eec295286d9b07dd7fe41f0cf65e2ceebde16ec779e  dupes.md",
+    "becb8518026eda0bd82a808d6ced6e13a88f9b9ac9b484eed33d953996ce2b54  crlf.md",
+    "c871bc90002c7ad460de379b157299e53809548499f4f2e1104553ddd24b9ced  endash.md",
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  empty.md",
+    "e571947ff284fc5ce167d7e87cc136c7731d167830a0f19543d49ee90797fac8  noticefence.md",
+    "eb846f1ebab45ce9388cd9aaf6e004964809deb5a344589655087c1c48501531  noheadings.md"
+  ],
+  "cases": [
+    {
+      "name": "sample",
+      "runs": [
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · Autocontained Go worktree gate.\n    · Subrepo planning context propagation.\n    · Gate binary acquisition no longer 404s.\n  0.21.0 — 2026-08-05\n    · Topology-aware worktree gate scope.\n  0.20.1 — 2026-08-05\n    · Remove untouched legacy recipe command copies.\n"
+        },
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": "  0.20.1\n  Re-run `ai-specs sync` to drop stale command copies.\n  0.22.0\n  Run `ai-specs sync` in each project to acquire the verified Go worktree-gate\n  binary. Until you do, the gate falls back to Bash.\n"
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · Autocontained Go worktree gate.\n    · Subrepo planning context propagation.\n    · Gate binary acquisition no longer 404s.\n"
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": "  0.22.0\n  Run `ai-specs sync` in each project to acquire the verified Go worktree-gate\n  binary. Until you do, the gate falls back to Bash.\n"
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · Autocontained Go worktree gate.\n    · Subrepo planning context propagation.\n    · Gate binary acquisition no longer 404s.\n"
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": "  0.22.0\n  Run `ai-specs sync` in each project to acquire the verified Go worktree-gate\n  binary. Until you do, the gate falls back to Bash.\n"
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.21.0 — 2026-08-05\n    · Topology-aware worktree gate scope.\n"
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · Autocontained Go worktree gate.\n    · Subrepo planning context propagation.\n    · Gate binary acquisition no longer 404s.\n  0.21.0 — 2026-08-05\n    · Topology-aware worktree gate scope.\n  0.20.1 — 2026-08-05\n    · Remove untouched legacy recipe command copies.\n  0.20.0 — 2026-08-05\n    · Cross-repo worktree artifact scope.\n"
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": "  0.20.1\n  Re-run `ai-specs sync` to drop stale command copies.\n  0.22.0\n  Run `ai-specs sync` in each project to acquire the verified Go worktree-gate\n  binary. Until you do, the gate falls back to Bash.\n"
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · Autocontained Go worktree gate.\n    · Subrepo planning context propagation.\n    · Gate binary acquisition no longer 404s.\n  0.21.0 — 2026-08-05\n    · Topology-aware worktree gate scope.\n  0.20.1 — 2026-08-05\n    · Remove untouched legacy recipe command copies.\n  0.20.0 — 2026-08-05\n    · Cross-repo worktree artifact scope.\n"
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": true,
+          "exit": 0,
+          "stdout": "  0.20.1\n  Re-run `ai-specs sync` to drop stale command copies.\n  0.22.0\n  Run `ai-specs sync` in each project to acquire the verified Go worktree-gate\n  binary. Until you do, the gate falls back to Bash.\n"
+        }
+      ]
+    },
+    {
+      "name": "empty",
+      "runs": [
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "noheadings",
+      "runs": [
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "malformed",
+      "runs": [
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n"
+        },
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n"
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n"
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n"
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n"
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "nodate",
+      "runs": [
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0\n    · x\n"
+        },
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0\n    · x\n"
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0\n    · x\n"
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0\n    · x\n"
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0\n    · x\n"
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "endash",
+      "runs": [
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · a thing.\n"
+        },
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · a thing.\n"
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · a thing.\n"
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · a thing.\n"
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · a thing.\n"
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "dupes",
+      "runs": [
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  1.1.0 — 2026-01-03\n    · newer.\n"
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  1.1.0 — 2026-01-03\n    · newer.\n  1.0.0 — 2026-01-02\n    · a.\n"
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "fenced",
+      "runs": [
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  1.0.0 — 2026-01-01\n    · markdown sample.\n    · a real fix.\n"
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "noticefence",
+      "runs": [
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  1.0.0 — 2026-01-01\n    · unrelated.\n"
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": true,
+          "exit": 0,
+          "stdout": "  1.0.0\n  Run:\n\n  ```sh\n  ### not a heading\n  ```\n\n  Then done.\n"
+        }
+      ]
+    },
+    {
+      "name": "markup",
+      "runs": [
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  1.0.0 — 2026-01-01\n    · Bold: does stuff.\n    · wraps onto next line.\n"
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": true,
+          "exit": 0,
+          "stdout": "  1.0.0\n  Do the thing.\n"
+        }
+      ]
+    },
+    {
+      "name": "longbody",
+      "runs": [
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  1.0.0 — 2026-01-01\n    · bullet number a that runs a bit long and has no sentence break\n    · bullet number b that runs a bit long and has no sentence break\n    · bullet number c that runs a bit long and has no sentence break\n    · and 5 more\n"
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "unreleasedonly",
+      "runs": [
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "crlf",
+      "runs": [
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · Autocontained Go worktree gate.\n    · Subrepo planning context propagation.\n    · Gate binary acquisition no longer 404s.\n  0.21.0 — 2026-08-05\n    · Topology-aware worktree gate scope.\n  0.20.1 — 2026-08-05\n    · Remove untouched legacy recipe command copies.\n"
+        },
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": "  0.20.1\n  Re-run `ai-specs sync` to drop stale command copies.\n  0.22.0\n  Run `ai-specs sync` in each project to acquire the verified Go worktree-gate\n  binary. Until you do, the gate falls back to Bash.\n"
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · Autocontained Go worktree gate.\n    · Subrepo planning context propagation.\n    · Gate binary acquisition no longer 404s.\n"
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": "  0.22.0\n  Run `ai-specs sync` in each project to acquire the verified Go worktree-gate\n  binary. Until you do, the gate falls back to Bash.\n"
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · Autocontained Go worktree gate.\n    · Subrepo planning context propagation.\n    · Gate binary acquisition no longer 404s.\n"
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": "  0.22.0\n  Run `ai-specs sync` in each project to acquire the verified Go worktree-gate\n  binary. Until you do, the gate falls back to Bash.\n"
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.21.0 — 2026-08-05\n    · Topology-aware worktree gate scope.\n"
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · Autocontained Go worktree gate.\n    · Subrepo planning context propagation.\n    · Gate binary acquisition no longer 404s.\n  0.21.0 — 2026-08-05\n    · Topology-aware worktree gate scope.\n  0.20.1 — 2026-08-05\n    · Remove untouched legacy recipe command copies.\n  0.20.0 — 2026-08-05\n    · Cross-repo worktree artifact scope.\n"
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": "  0.20.1\n  Re-run `ai-specs sync` to drop stale command copies.\n  0.22.0\n  Run `ai-specs sync` in each project to acquire the verified Go worktree-gate\n  binary. Until you do, the gate falls back to Bash.\n"
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · Autocontained Go worktree gate.\n    · Subrepo planning context propagation.\n    · Gate binary acquisition no longer 404s.\n  0.21.0 — 2026-08-05\n    · Topology-aware worktree gate scope.\n  0.20.1 — 2026-08-05\n    · Remove untouched legacy recipe command copies.\n  0.20.0 — 2026-08-05\n    · Cross-repo worktree artifact scope.\n"
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": true,
+          "exit": 0,
+          "stdout": "  0.20.1\n  Re-run `ai-specs sync` to drop stale command copies.\n  0.22.0\n  Run `ai-specs sync` in each project to acquire the verified Go worktree-gate\n  binary. Until you do, the gate falls back to Bash.\n"
+        }
+      ]
+    },
+    {
+      "name": "real",
+      "runs": [
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · Autocontained Go worktree gate: the worktree-flow gate is now a single zero-dependency Go binary…\n    · Thin launcher with a stable materialized path: hooks/worktree-gate.sh is now a bash-3.2-safe…\n    · gate_impl configuration (auto | go | bash, default auto) on the worktree-flow recipe: auto prefers…\n    · and 25 more\n  0.21.0 — 2026-08-05\n    · Topology-aware worktree gate scope: gate_scope = auto | superrepo | subrepo separates superrepo…\n  0.20.1 — 2026-08-05\n    · Remove untouched legacy recipe command copies from user-managed ai-specs/commands/ during sync…\n"
+        },
+        {
+          "current": "0.20.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": "  0.22.0\n  Run `ai-specs sync` in each project to acquire the verified Go worktree-gate\n  binary. Until you do, the gate keeps falling back to the Bash implementation.\n  Run `ai-specs doctor` to confirm the resolved implementation; if it reports a\n  preserved customized gate, use `ai-specs sync --refresh-gates`.\n"
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · Autocontained Go worktree gate: the worktree-flow gate is now a single zero-dependency Go binary…\n    · Thin launcher with a stable materialized path: hooks/worktree-gate.sh is now a bash-3.2-safe…\n    · gate_impl configuration (auto | go | bash, default auto) on the worktree-flow recipe: auto prefers…\n    · and 25 more\n"
+        },
+        {
+          "current": "0.21.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": "  0.22.0\n  Run `ai-specs sync` in each project to acquire the verified Go worktree-gate\n  binary. Until you do, the gate keeps falling back to the Bash implementation.\n  Run `ai-specs doctor` to confirm the resolved implementation; if it reports a\n  preserved customized gate, use `ai-specs sync --refresh-gates`.\n"
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.22.0",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · Autocontained Go worktree gate: the worktree-flow gate is now a single zero-dependency Go binary…\n    · Thin launcher with a stable materialized path: hooks/worktree-gate.sh is now a bash-3.2-safe…\n    · gate_impl configuration (auto | go | bash, default auto) on the worktree-flow recipe: auto prefers…\n    · and 25 more\n"
+        },
+        {
+          "current": "not-a-version",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": "  0.22.0\n  Run `ai-specs sync` in each project to acquire the verified Go worktree-gate\n  binary. Until you do, the gate keeps falling back to the Bash implementation.\n  Run `ai-specs doctor` to confirm the resolved implementation; if it reports a\n  preserved customized gate, use `ai-specs sync --refresh-gates`.\n"
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.21.0 — 2026-08-05\n    · Topology-aware worktree gate scope: gate_scope = auto | superrepo | subrepo separates superrepo…\n"
+        },
+        {
+          "current": "0.20.1",
+          "new": "0.21.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.22.0 — 2026-08-17\n    · Autocontained Go worktree gate: the worktree-flow gate is now a single zero-dependency Go binary…\n    · Thin launcher with a stable materialized path: hooks/worktree-gate.sh is now a bash-3.2-safe…\n    · gate_impl configuration (auto | go | bash, default auto) on the worktree-flow recipe: auto prefers…\n    · and 25 more\n  0.21.0 — 2026-08-05\n    · Topology-aware worktree gate scope: gate_scope = auto | superrepo | subrepo separates superrepo…\n  0.20.1 — 2026-08-05\n    · Remove untouched legacy recipe command copies from user-managed ai-specs/commands/ during sync…\n  0.20.0 — 2026-08-05\n    · Cross-repo worktree artifact scope: derives central planning artifacts from recognized repository…\n    · Override ownership and lock governance: records managed provenance, classifies stale versus…\n    · plan-build-flow 1.4.0: derives the central planning root from recognized repository topology for…\n"
+        },
+        {
+          "current": "0.19.0",
+          "new": "0.22.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": "  0.22.0\n  Run `ai-specs sync` in each project to acquire the verified Go worktree-gate\n  binary. Until you do, the gate keeps falling back to the Bash implementation.\n  Run `ai-specs doctor` to confirm the resolved implementation; if it reports a\n  preserved customized gate, use `ai-specs sync --refresh-gates`.\n"
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": false,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "1.0.0",
+          "new": "2.0.0",
+          "notices": true,
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": false,
+          "exit": 0,
+          "stdout": "  0.24.0 — 2026-09-18\n    · Worktree Ledger port.\n    · Evidence-bound cleanup.\n    · Release flow.\n  0.23.1 — 2026-09-18\n    · Flow-agnostic Tracker Ledger lifecycle.\n    · Tracker lifecycle host strangler.\n    · Authorized local lifecycle writers documented.\n    · and 1 more\n  0.23.0 — 2026-09-17\n    · worktree-flow Bash gate retired.\n    · Tracker Ledger (Go-owned lifecycle grader): when the tracker capability is bound, its lifecycle is…\n    · Tracker Ledger write surface: worktree-gate --ledger --write '<json>' records open / link / close…\n    · and 13 more\n  0.22.0 — 2026-08-17\n    · Autocontained Go worktree gate: the worktree-flow gate is now a single zero-dependency Go binary…\n    · Thin launcher with a stable materialized path: hooks/worktree-gate.sh is now a bash-3.2-safe…\n    · gate_impl configuration (auto | go | bash, default auto) on the worktree-flow recipe: auto prefers…\n    · and 25 more\n  0.21.0 — 2026-08-05\n    · Topology-aware worktree gate scope: gate_scope = auto | superrepo | subrepo separates superrepo…\n  0.20.1 — 2026-08-05\n    · Remove untouched legacy recipe command copies from user-managed ai-specs/commands/ during sync…\n  0.20.0 — 2026-08-05\n    · Cross-repo worktree artifact scope: derives central planning artifacts from recognized repository…\n    · Override ownership and lock governance: records managed provenance, classifies stale versus…\n    · plan-build-flow 1.4.0: derives the central planning root from recognized repository topology for…\n  0.19.0 — 2026-08-02\n    · Tracker card gate (trello-mcp-workflow gate_mode = off|warn|always, default warn): dual…\n    · Doctor WARN for active changes missing a valid ## Tracker section when the recipe is enabled and…\n    · Hermetic tests: tests/test_trello_link.py, tests/test_tracker_card_gate_hook.py…\n    · and 7 more\n  0.18.0 — 2026-07-28\n    · TTY opt-in CLI install: when required [[deps.cli]] binaries are missing, configure/init may offer…\n    · Harness env layout for direnv: wizard writes project-root ai-specs.env, generates…\n    · direnv allow path mismatch: secrets no longer land only under ai-specs/ while direnv allow…\n    · and 5 more\n  0.17.0 — 2026-07-24\n    · Recipe override boundary completed for trello/worktree templates: trello-mcp-workflow card…\n  0.16.0 — 2026-07-23\n    · Minimal committed project surface: Bundled skills and helpers stay under the CLI cache (not…\n    · Harness literacy pointer: AGENTS Useful Commands no longer claim harness skills live under…\n    · Tracked bundled leftovers: Sync and doctor WARN when git still tracks removed bundled skill paths…\n  0.15.0 — 2026-07-23\n    · Always-on harness CLI literacy: Bundled playbooks for CLI lifecycle, recipes, and skills/deps…\n    · Playwright UI flow + MCP add-on: ui-browser-testing base CLI/smoke recipe plus optional…\n    · vault-canonical-store 1.2.0: Vendors kepano Obsidian skills (obsidian-markdown, obsidian-bases…\n    · and 7 more\n  0.14.2 — 2026-07-17\n    · Minimal project surface on sync: Shared helpers like premerge_guardian.py stay under…\n    · Hide test-* catalog fixtures: Hub, CLI recipe list, and related user-facing surfaces no longer…\n  0.14.1 — 2026-07-17\n    · Local release-flow skill: Dogfooded playbook for bump → development, promote via disposable…\n    · VCS behavior evals: Live/dry scenarios for git/gitlab/bitbucket PR flow, including protected-head…\n    · Protected merge heads: Merge cleanup no longer deletes long-lived heads…\n  0.14.0 — 2026-07-16\n    · CLI-bound recipes + off-project origin cache: Enabled recipes bind to the installed CLI catalog…\n    · Plan-build multi-runtime evals + pre-merge guardian: Eval harness coverage for plan-build flow…\n    · VCS auth preflight (multi-account): expected_owner / auto_switch_account config on git-pr-flow…\n    · and 4 more\n  0.13.1 — 2026-07-13\n    · Hub: Recipes submenu + recipe add con wizard integrado: Recipes ahora es submenu interactivo en el…\n    · Hub: configuracion de Agents: Nueva opcion en el menu para seleccionar que agentes habilitar via…\n    · recipe remove: Nuevo comando para eliminar recipes del manifest.\n    · and 7 more\n  0.12.4 — 2026-07-12\n    · Hub dispatch fix: ai-specs recipe list <path> y ai-specs skills list <path> ahora funcionan…\n    · Lock cleanup en sync: clean_orphans ahora limpia stale lock entries al correr sync.\n    · Env vars scaffolding: Reemplazado .envrc.example por escritura directa de .envrc con direnv allow…\n    · and 7 more\n  0.12.3 — 2026-07-12\n    · Interactive onboarding TUI for ai-specs init (--tui / auto on TTY; --no-tui keeps classic path).\n    · Recipe tags and conflict detection (tags + conflicts_with fields in recipe.toml).\n    · CLI version pinning via optional [tool] section in ai-specs.toml (version + policy = \"exact\", or…\n    · and 9 more\n  0.12.2 — 2026-06-23\n"
+        },
+        {
+          "current": "0.0.0",
+          "new": "9.9.9",
+          "notices": true,
+          "exit": 0,
+          "stdout": "  0.22.0\n  Run `ai-specs sync` in each project to acquire the verified Go worktree-gate\n  binary. Until you do, the gate keeps falling back to the Bash implementation.\n  Run `ai-specs doctor` to confirm the resolved implementation; if it reports a\n  preserved customized gate, use `ai-specs sync --refresh-gates`.\n  0.23.0\n  Run `ai-specs sync` in each project to materialize the updated Tracker Ledger and Plan Build lifecycle assets. Run `ai-specs doctor` to confirm the resolved tracker and guardian configuration.\n  0.24.0\n  Run `ai-specs sync` in each project to materialize the updated Worktree cleanup and release-flow assets.\n"
+        }
+      ]
+    }
+  ]
+}

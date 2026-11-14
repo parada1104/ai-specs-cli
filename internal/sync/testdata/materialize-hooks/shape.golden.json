@@ -1,0 +1,16 @@
+{
+  "enabled_agents": [
+    "claude"
+  ],
+  "hooks": [
+    {
+      "blocking": true,
+      "env": {},
+      "event": "pre-tool-use",
+      "id": "gate",
+      "matcher": "Edit|Write",
+      "recipe": "wt-hook",
+      "script_path": "ai-specs/recipes/wt-hook/hooks/gate.sh"
+    }
+  ]
+}

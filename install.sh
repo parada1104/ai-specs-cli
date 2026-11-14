@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # install.sh — Install ai-specs globally.
 #
-# Clones (or updates) this repo to $AI_SPECS_HOME (default: ~/.ai-specs),
-# then symlinks bin/ai-specs into $INSTALL_BIN (default: ~/.local/bin).
+# Clones (or updates) this repo to $AI_SPECS_HOME (default: ~/.ai-specs) — the
+# data home, the trust anchor (the committed digests) and where the still-shell
+# verbs live — then installs the compiled ai-specs binary as the entrypoint in
+# $INSTALL_BIN (default: ~/.local/bin), verifying a release asset against the
+# committed digests when one exists and building locally otherwise.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/parada1104/ai-specs-cli/main/install.sh | bash
@@ -10,9 +13,11 @@
 #
 # Env overrides:
 #   AI_SPECS_HOME=~/path        Where to clone the repo (default: ~/.ai-specs)
-#   INSTALL_BIN=~/path          Where to symlink the entrypoint (default: ~/.local/bin)
+#   INSTALL_BIN=~/path          Where to install the entrypoint (default: ~/.local/bin)
 #   AI_SPECS_REPO=git://...     Repo URL for first install (default: github.com/parada1104/ai-specs-cli)
 #   AI_SPECS_REF=tag-or-branch  Git ref to checkout (default: main)
+#   AI_SPECS_RELEASE_BASE=url   Release download base (default: this repo's releases for VERSION)
+#   AI_SPECS_TRUST_ROOT_FILE=p  Committed digests to verify against (default: <home>/bin/SHA256SUMS)
 
 set -e
 
@@ -35,11 +40,10 @@ echo -e "Bin:  ${BOLD}$INSTALL_BIN/ai-specs${NC}"
 echo ""
 
 command -v git >/dev/null 2>&1 || { echo -e "${RED}error: git is required${NC}" >&2; exit 1; }
-command -v python3 >/dev/null 2>&1 || { echo -e "${RED}error: python3 is required${NC}" >&2; exit 1; }
 
 # 1. Clone or update the repo
 if [ -d "$AI_SPECS_HOME/.git" ]; then
-    echo -e "${YELLOW}[1/3]${NC} Updating existing install at $AI_SPECS_HOME"
+    echo -e "${YELLOW}[1/2]${NC} Updating existing install at $AI_SPECS_HOME"
 
     # Detect dirty working tree before attempting any update.
     # Mode-only dirt (e.g. chmod applied to 100644 files by a previous installer)
@@ -84,7 +88,7 @@ elif [ -e "$AI_SPECS_HOME" ]; then
     echo -e "${RED}error: $AI_SPECS_HOME exists but is not a git repo${NC}" >&2
     exit 1
 else
-    echo -e "${YELLOW}[1/3]${NC} Cloning $AI_SPECS_REPO → $AI_SPECS_HOME"
+    echo -e "${YELLOW}[1/2]${NC} Cloning $AI_SPECS_REPO → $AI_SPECS_HOME"
     # Partial clone (blobs on demand) keeps the full commit graph, which
     # `ai-specs upgrade` needs for its `merge-base --is-ancestor` divergence
     # guard. A shallow clone would break that check, so it is not used here.
@@ -107,39 +111,187 @@ else
     fi
 fi
 
-# Drop subtrees the CLI never reads at runtime. Best effort by contract: the
-# helper warns and exits 0 on any failure, leaving a usable full checkout.
-if [ -f "$AI_SPECS_HOME/lib/_internal/narrow-checkout.sh" ]; then
-    bash "$AI_SPECS_HOME/lib/_internal/narrow-checkout.sh" "$AI_SPECS_HOME" || true
-fi
+# Drop subtrees the CLI never reads at runtime (GO-20 U2e U-E: inlined here from
+# the former lib helper, deleted at T5). Best effort
+# by contract: every failure warns and leaves a usable full checkout; it never
+# fails the install. Cone-mode allowlist: name what stays, not what goes.
+narrow_checkout() {
+    local target="$1"
+    local keep_dirs=(bin cmd internal catalog bundled-skills bundled-commands templates scripts docs)
+    local excluded_label="non-runtime trees"
+    local desired current probe dirty missing dir
 
-chmod +x "$AI_SPECS_HOME/bin/ai-specs"
+    _narrow_warn() { echo "  ! narrow-checkout: $1" >&2; }
+
+    if [ -z "$target" ]; then _narrow_warn "no target directory given; skipping"; return 0; fi
+    if [ ! -d "$target" ]; then _narrow_warn "target $target does not exist; skipping"; return 0; fi
+    if ! git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
+        _narrow_warn "target $target is not a git repository; skipping"; return 0
+    fi
+
+    # Reconcile against the CURRENT allowlist, not just "is it sparse at all".
+    desired="$(printf '%s\n' "${keep_dirs[@]}" | LC_ALL=C sort)"
+    current="$(git -C "$target" sparse-checkout list 2>/dev/null | LC_ALL=C sort || true)"
+    if [ -n "$current" ] && [ "$current" = "$desired" ]; then
+        echo "  checkout already narrowed ($excluded_label excluded)"
+        return 0
+    fi
+
+    # Probe for sparse-checkout support. `-h`, not `--help`: `git help` may launch
+    # a browser under help.format=web. Match the message for an unknown subcommand.
+    probe="$(git -C "$target" sparse-checkout -h 2>&1 || true)"
+    if [[ "$probe" == *"is not a git command"* || -z "$probe" ]]; then
+        _narrow_warn "this git has no sparse-checkout support; keeping the full checkout"
+        return 0
+    fi
+
+    # Uncommitted work inside an excluded subtree would be discarded: refuse.
+    dirty="$(git -C "$target" status --porcelain 2>/dev/null || true)"
+    if [ -n "$dirty" ]; then
+        _narrow_warn "working tree has uncommitted changes; keeping the full checkout"
+        return 0
+    fi
+
+    # One call: init and apply together, so a failure leaves the tree untouched.
+    if ! git -C "$target" sparse-checkout set --cone "${keep_dirs[@]}" >/dev/null 2>&1; then
+        _narrow_warn "could not apply the sparse checkout; keeping the full checkout"
+        return 0
+    fi
+
+    # Verify every kept directory that exists at HEAD before claiming success.
+    missing=""
+    for dir in "${keep_dirs[@]}"; do
+        if git -C "$target" cat-file -e "HEAD:$dir" 2>/dev/null; then
+            [ -d "$target/$dir" ] || missing="$missing $dir"
+        fi
+    done
+
+    if [ -n "$missing" ]; then
+        _narrow_warn "sparse checkout left these directories missing:$missing"
+        if git -C "$target" sparse-checkout disable >/dev/null 2>&1; then
+            _narrow_warn "restored the full checkout"
+        else
+            _narrow_warn "COULD NOT RESTORE the checkout — the installation is incomplete."
+            _narrow_warn "run: git -C $target sparse-checkout disable"
+        fi
+        return 0
+    fi
+
+    echo "  narrowed checkout ($excluded_label excluded)"
+    return 0
+}
+narrow_checkout "$AI_SPECS_HOME" || true
+
+# Nothing in lib/ is chmod-ed, and neither is bin/ai-specs any more: those files
+# are committed 100644 and touching their modes makes git report mode-only dirt,
+# which breaks later update runs. The entry is the installed binary below, and it
+# gets its executable bit when it is installed.
 # Bundled skill scripts (shipped to projects via init)
 chmod +x "$AI_SPECS_HOME/bundled-skills/skill-sync/assets/"*.sh 2>/dev/null || true
 chmod +x "$AI_SPECS_HOME/bundled-skills/skill-sync/assets/"*.py 2>/dev/null || true
 
-# 2. Install Python dependencies (Rich + Questionary for the interactive init TUI)
-VENDOR_DIR="$AI_SPECS_HOME/lib/_vendor"
-_has_deps() {
-    python3 -c "import rich, questionary" 2>/dev/null && return 0
-    [ -d "$VENDOR_DIR" ] && python3 -c "import sys; sys.path.insert(0, '$VENDOR_DIR'); import rich, questionary" 2>/dev/null && return 0
-    return 1
+# 2. Install the entrypoint as the compiled binary (GO-20 U1b-2b).
+#
+#    The checkout above stays the data home: the trust anchor (the committed
+#    digests), the catalogue and the still-shell verbs. What changes is the
+#    ENTRY — a real compiled file at $INSTALL_BIN/ai-specs instead of a symlink
+#    into the checkout. A verified release asset wins; a local `go build` is the
+#    fallback; either way the bytes land atomically, so a failure never leaves a
+#    broken or unverified entry behind.
+VERSION="$(cat "$AI_SPECS_HOME/VERSION" 2>/dev/null || echo "unknown")"
+echo -e "${YELLOW}[2/2]${NC} Installing the entrypoint"
+
+_platform_asset() {
+    case "$(uname -s)" in
+        Darwin) _asset_os="darwin" ;;
+        Linux)  _asset_os="linux" ;;
+        *)      return 1 ;;
+    esac
+    case "$(uname -m)" in
+        arm64|aarch64) _asset_arch="arm64" ;;
+        x86_64|amd64)  _asset_arch="amd64" ;;
+        *)             return 1 ;;
+    esac
+    printf 'ai-specs-%s-%s' "$_asset_os" "$_asset_arch"
 }
-if _has_deps; then
-    echo "  TUI deps (rich + questionary) already available"
-else
-    echo -e "${YELLOW}[2/3]${NC} Installing TUI dependencies (rich + questionary)"
-    python3 -m pip install --upgrade --quiet --target "$VENDOR_DIR" 'rich>=13.0.0,<15' 'questionary>=2.0.0,<2.1' || {
-        echo -e "${YELLOW}warning:${NC} could not install TUI deps; init will prompt on first use or fall back to classic mode"
-    }
+
+_release_base() {
+    if [ -n "${AI_SPECS_RELEASE_BASE:-}" ]; then
+        printf '%s' "$AI_SPECS_RELEASE_BASE"
+    else
+        printf 'https://github.com/parada1104/ai-specs-cli/releases/download/v%s' "$VERSION"
+    fi
+}
+
+_sha256_of() {
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    elif command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        return 1
+    fi
+}
+
+mkdir -p "$INSTALL_BIN"
+ENTRY_TMP="$(mktemp "$INSTALL_BIN/.ai-specs.install.XXXXXX")"
+ENTRY_READY=0
+
+# Verify BEFORE installing: the network supplies only bytes, the checkout
+# supplies the expected digest. No committed digest means no download is used.
+ASSET="$(_platform_asset || true)"
+TRUST_ROOT="${AI_SPECS_TRUST_ROOT_FILE:-$AI_SPECS_HOME/bin/SHA256SUMS}"
+if [ -n "$ASSET" ] && [ -f "$TRUST_ROOT" ] && command -v curl >/dev/null 2>&1; then
+    EXPECTED="$(awk -v asset="$ASSET" '$2 == asset { print $1 }' "$TRUST_ROOT" | head -n 1)"
+    if [ -n "$EXPECTED" ] && curl -fsSL "$(_release_base)/$ASSET" -o "$ENTRY_TMP"; then
+        GOT="$(_sha256_of "$ENTRY_TMP" || true)"
+        if [ -n "$GOT" ] && [ "$GOT" = "$EXPECTED" ]; then
+            ENTRY_READY=1
+            echo "  verified release asset: $ASSET"
+        else
+            echo -e "${YELLOW}warning:${NC} $ASSET did not match the committed digest; discarding the download" >&2
+        fi
+    fi
 fi
 
-# 3. Symlink entrypoint
-echo -e "${YELLOW}[3/3]${NC} Symlinking entrypoint"
-mkdir -p "$INSTALL_BIN"
-ln -sf "$AI_SPECS_HOME/bin/ai-specs" "$INSTALL_BIN/ai-specs"
+if [ "$ENTRY_READY" -ne 1 ] && command -v go >/dev/null 2>&1; then
+    echo "  no verified asset for this platform; building locally with go"
+    if (cd "$AI_SPECS_HOME" && go build -trimpath -buildvcs=false -o "$ENTRY_TMP" ./cmd/ai-specs); then
+        ENTRY_READY=1
+    fi
+fi
 
-VERSION="$(cat "$AI_SPECS_HOME/VERSION" 2>/dev/null || echo "unknown")"
+if [ "$ENTRY_READY" -ne 1 ]; then
+    rm -f "$ENTRY_TMP"
+    echo -e "${RED}error: could not install the ai-specs binary${NC}" >&2
+    echo "  No verifiable release asset for this platform and no usable Go toolchain." >&2
+    echo "  Install Go (https://go.dev/dl) and re-run, or point AI_SPECS_RELEASE_BASE at a mirror." >&2
+    exit 1
+fi
+
+chmod 0755 "$ENTRY_TMP"
+mv -f "$ENTRY_TMP" "$INSTALL_BIN/ai-specs"
+
+# GO-20 U2e: the repo launcher bin/ai-specs execs $AI_SPECS_HOME/dist/ai-specs;
+# this is an addition to the U1b-2b install plan. The source is the SAME verified
+# file that just became the entry (never a rebuild), and the copy is loud: a
+# failed write names the path and aborts the install.
+# Canonicalize the HOME DIRECTORY (D-U2e-1), never the binary, so a symlinked
+# home still receives dist/ under its real directory.
+DIST_HOME="$(cd -P "$AI_SPECS_HOME" 2>/dev/null && pwd -P)" || DIST_HOME="$AI_SPECS_HOME"
+DIST_BIN="$DIST_HOME/dist/ai-specs"
+if ! mkdir -p "$DIST_HOME/dist"; then
+    echo -e "${RED}error: could not create $DIST_HOME/dist${NC}" >&2
+    exit 1
+fi
+if ! cp "$INSTALL_BIN/ai-specs" "$DIST_BIN"; then
+    echo -e "${RED}error: could not copy the installed binary to $DIST_BIN${NC}" >&2
+    exit 1
+fi
+if ! chmod 0755 "$DIST_BIN"; then
+    echo -e "${RED}error: could not make $DIST_BIN executable${NC}" >&2
+    exit 1
+fi
 
 echo ""
 echo -e "${GREEN}✓ Installed ai-specs $VERSION${NC}"

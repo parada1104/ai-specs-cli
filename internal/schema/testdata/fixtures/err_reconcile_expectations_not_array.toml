@@ -1,0 +1,10 @@
+[recipe]
+id = "x"
+name = "N"
+description = "D"
+version = "1.0"
+
+[config.reconcile]
+scope_field = "a"
+max_age_seconds = 900
+expectations = "x"

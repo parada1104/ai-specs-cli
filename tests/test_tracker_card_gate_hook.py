@@ -25,19 +25,16 @@ boundary only.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
+import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "catalog" / "recipes" / "trello-mcp-workflow" / "hooks" / "tracker-card-gate.sh"
-LIB_INTERNAL = ROOT / "lib" / "_internal"
 
 STUB_BINARY = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${STUB_LOG}"
@@ -61,6 +58,7 @@ prompt='null'
 if [ "$decision" = ask ]; then
   prompt='{"reason":"needs-item","evidence":{"local":"","remote":"","code":"","git":""},"choices":["continue","local"]}'
 fi
+[ -n "${STUB_PROMPT:-}" ] && prompt="$STUB_PROMPT"
 printf '{"capability":"tracker","active":true,"checkpoint":"%s","mode":"warn","decision":"%s","reason":"%s","identity":{"common_dir":"","branch":"","change":null,"key":""},"item":null,"conflict":null,"prompt":%s,"doctor":{"severity":"OK","name":"tracker-ledger","message":""}}\\n' "$checkpoint" "$decision" "$reason" "$prompt"
 [ "$decision" = block ] && exit 2
 exit 0
@@ -71,7 +69,28 @@ def _git(cwd: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True)
 
 
+def _build_cli(home: Path) -> None:
+    """Build the native CLI this worktree ships into <home>/dist/ai-specs."""
+    (home / "dist").mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["go", "build", "-o", str(home / "dist" / "ai-specs"), "./cmd/ai-specs"],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    )
+
+
 class TrackerCardGateHookTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # The bridged gate uses the real native CLI built from this worktree, so
+        # the evidence bridge exercises the shipped `tracker slug|evidence` verbs.
+        cls._cli_tmp = tempfile.TemporaryDirectory()
+        cls.cli_home = Path(cls._cli_tmp.name)
+        _build_cli(cls.cli_home)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._cli_tmp.cleanup()
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -89,22 +108,24 @@ class TrackerCardGateHookTests(unittest.TestCase):
         self.stub.write_text(STUB_BINARY)
         self.stub.chmod(0o755)
 
-    def _stamped_gate(self, mode: str, cli_home: str = "",
-                      lib_internal: str = "__TRACKER_LIB_INTERNAL__") -> Path:
+    def _stamped_gate(self, mode: str, cli_home: str | None = None) -> Path:
         self.assertTrue(GATE.is_file(), f"gate script missing: {GATE}")
+        # Default: the native bridge resolves, so the verdict/ask display is
+        # exercised. Pass cli_home="" for the deliberate unstamped cases.
+        if cli_home is None:
+            cli_home = str(self.cli_home)
         stamped = Path(self.tmp.name) / f"tracker-card-gate-{mode}.sh"
         stamped.write_text(
             GATE.read_text()
             .replace("__TRACKER_CARD_GATE_MODE__", mode)
             .replace("__TRACKER_CLI_HOME__", cli_home)
-            .replace("__TRACKER_LIB_INTERNAL__", lib_internal)
         )
         stamped.chmod(0o755)
         return stamped
 
     def _stamped_gate_bridged(self, mode: str = "warn") -> Path:
-        """A gate whose __TRACKER_LIB_INTERNAL__ stamp resolves the real bridge."""
-        return self._stamped_gate(mode, lib_internal=str(LIB_INTERNAL))
+        """A gate whose __TRACKER_CLI_HOME__ stamp resolves the native bridge."""
+        return self._stamped_gate(mode, cli_home=str(self.cli_home))
 
     def _change(self, slug: str = "demo-change", tracker_none: str | None = None) -> Path:
         folder = self.repo / "openspec" / "changes" / slug
@@ -238,6 +259,97 @@ class TrackerCardGateHookTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("identity_unavailable", r.stderr)
         self.assertNotIn("DECIDE", self.stub_log.read_text())
+
+    def test_ask_display_lists_evidence_and_choices_on_stderr(self):
+        prompt = ('{"reason":"needs-item","evidence":{"local":"card 123 open",'
+                  '"remote":"","code":"c-9","git":""},"choices":["continue","local"]}')
+        r = self._run(
+            self._event("Edit", str(self.repo / "lib" / "foo.py")),
+            gate=self._stamped_gate("warn"),
+            env=self._env(decision="ask", STUB_PROMPT=prompt),
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("  local: card 123 open\n", r.stderr)
+        self.assertIn("  remote: (unavailable)\n", r.stderr)
+        self.assertIn("  code: c-9\n", r.stderr)
+        self.assertIn("  git: (unavailable)\n", r.stderr)
+        self.assertIn("  choices: continue, local\n", r.stderr)
+
+    def test_relative_production_path_grades_apply_start(self):
+        r = self._run(self._event("Edit", "lib/foo.py"), decision="block",
+                      gate=self._stamped_gate("warn"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("apply-start", self.stub_log.read_text())
+
+    def test_without_cli_verdict_degrades_quietly(self):
+        # L38 accepted degradation: no stamped CLI home means no verdict display.
+        # The host still exits 0 and prints no block line, and needs no python3.
+        event = self._event("Edit", str(self.repo / "lib" / "foo.py"))
+        r = self._run(event, decision="block", gate=self._stamped_gate("always", cli_home=""))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("blocked at", r.stderr)
+
+        # Same degradation with a PATH that has no python3 at all: the shim only
+        # carries the shell tools the host uses.
+        shim = Path(self.tmp.name) / "shim-bin"
+        shim.mkdir()
+        for name in ("bash", "git", "uname", "mktemp", "sed", "head", "cat", "rm",
+                     "dirname", "basename", "readlink", "tr"):
+            source = shutil.which(name)
+            if source:
+                (shim / name).symlink_to(source)
+        r = self._run(event, decision="block", gate=self._stamped_gate("always", cli_home=""),
+                      env=self._env(decision="block", PATH=str(shim)))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("blocked at", r.stderr)
+
+    def test_symlink_into_outside_never_grades(self):
+        # Characterization: a production path that is a symlink to a file outside
+        # the repo resolves outside the root, so the relpath check exits 0.
+        outside = Path(self.tmp.name) / "outside-secret.py"
+        outside.write_text("x\n")
+        (self.repo / "lib").mkdir()
+        (self.repo / "lib" / "link.py").symlink_to(outside)
+        r = self._run(self._event("Edit", str(self.repo / "lib" / "link.py")),
+                      decision="block", gate=self._stamped_gate("always"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._logged_checkpoints(), [])
+        self.assertNotIn("apply-start", self.stub_log.read_text()
+                         if self.stub_log.exists() else "")
+
+    def test_the_command_classifier_is_native(self):
+        # U-F2b replaces the embedded python command classifier with
+        # `ai-specs tracker classify`, so the host carries no python3 at all.
+        text = GATE.read_text(encoding="utf-8")
+        self.assertNotIn("python3 -c", text,
+                         "JSON/text helpers must use `ai-specs tracker field` or bash")
+        self.assertIn("tracker classify", text,
+                      "the classifier must be the native `ai-specs tracker classify` verb")
+        self.assertNotIn("python3", text, "the hook must contain no python3 at all")
+
+    def test_bash_relpath_keeps_glob_characters_literal(self):
+        # A `*` in the target must not pathname-expand against the hook's cwd.
+        text = GATE.read_text(encoding="utf-8")
+        start = text.index("_collapse_dots() {")
+        end = text.index("# --- Direct host mode dispatch")
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "a1").touch()
+            script = text[start:end] + "\n_relative_to '/x/a*/y' '/x'\n"
+            r = subprocess.run(["bash", "-c", script], cwd=tmp, capture_output=True, text=True)
+        self.assertEqual(r.stdout, "a*/y\n", r.stderr)
+
+    def test_bash_relpath_collapses_dotdot_through_missing_directory(self):
+        # R1-001: `..` after a missing directory must collapse lexically, as realpath does,
+        # so an outside target is reported as `../...` and the outside guard catches it.
+        text = GATE.read_text(encoding="utf-8")
+        start = text.index("_collapse_dots() {")
+        end = text.index("# --- Direct host mode dispatch")
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp, "repo")
+            repo.mkdir()
+            script = text[start:end] + f"\n_repo_relative '{repo}/missing/../../out/x.py' '{repo}'\n"
+            r = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        self.assertEqual(r.stdout, "../out/x.py\n", r.stderr)
 
     def test_openspec_paths_never_grade(self):
         target = self.repo / "openspec" / "changes" / "demo" / "proposal.md"
@@ -542,48 +654,17 @@ class TrackerCardGateHookTests(unittest.TestCase):
         self.assertEqual(self._write_lines(), [],
                          "writing the exemption the file describes is not the host's call")
 
-    def test_materialize_stamps_the_bridge_directory(self):
-        materialize_path = ROOT / "lib" / "_internal" / "recipe-materialize.py"
-        spec = importlib.util.spec_from_file_location("recipe_materialize_stamp", materialize_path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        assert spec.loader is not None
-        spec.loader.exec_module(module)
-
-        base = Path(self.tmp.name)
-        project = base / "project"
-        recipe_dir = base / "recipe"
-        hooks = recipe_dir / "hooks"
-        hooks.mkdir(parents=True)
-        (hooks / "tracker-card-gate.sh").write_text(GATE.read_text())
-        hook = SimpleNamespace(script="hooks/tracker-card-gate.sh", id="tracker-card-gate")
-        rel = module.materialize_hook_script(
-            recipe_dir, hook, project, "trello-mcp-workflow", {"gate_mode": "warn"},
-            cli_home=ROOT,
-        )
-        text = (project / rel).read_text()
-        self.assertNotIn("__TRACKER_LIB_INTERNAL__", text, "the stamp must be substituted")
-        self.assertIn(str((ROOT / "lib" / "_internal").resolve()), text)
-        # No CLI home means no bridge directory: the host then skips both evidence
-        # and the exemption write (fail open).
-        rel2 = module.materialize_hook_script(
-            recipe_dir, hook, base / "project2", "trello-mcp-workflow",
-            {"gate_mode": "warn"}, cli_home=None,
-        )
-        text2 = (base / "project2" / rel2).read_text()
-        self.assertNotIn("__TRACKER_LIB_INTERNAL__", text2)
-        self.assertIn('stamped_lib_internal=""', text2)
-
     def test_unstamped_bridge_skips_evidence_and_exempt_write(self):
+        # The same bridge now also supplies `tracker classify`, so an unstamped
+        # CLI home fails open before grading (accepted degradation, U-F2b): no
+        # grade, no --evidence flag, and no exemption write.
         self._change("demo-change", tracker_none="no tracker card for this spike\n")
         r = self._run(self._event("Edit", str(self.repo / "lib" / "foo.py")),
-                      gate=self._stamped_gate("warn"))
+                      gate=self._stamped_gate("warn", cli_home=""))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._write_lines(), [])
-        grades = self._grade_lines()
-        self.assertEqual(len(grades), 1, self.stub_log.read_text())
-        self.assertNotIn("--evidence", grades[0])
-        self.assertEqual(self._logged_checkpoints(), ["apply-start"])
+        self.assertEqual(self._grade_lines(), [])
+        self.assertEqual(self._logged_checkpoints(), [])
 
     # --- bash 3.2 compatibility ---
 
@@ -601,6 +682,14 @@ class TrackerCardGateHookTests(unittest.TestCase):
                 ver = ""
             if not ver.startswith("3.2"):
                 raise unittest.SkipTest(f"{cls.BASH32} is not bash 3.2 (got {ver!r})")
+            # The verdict path reads through the native bridge, so stamp it here too.
+            cls._cli_tmp = tempfile.TemporaryDirectory()
+            cls.cli_home = Path(cls._cli_tmp.name)
+            _build_cli(cls.cli_home)
+
+        @classmethod
+        def tearDownClass(cls):
+            cls._cli_tmp.cleanup()
 
         def setUp(self):
             self.tmp = tempfile.TemporaryDirectory()
@@ -624,7 +713,7 @@ class TrackerCardGateHookTests(unittest.TestCase):
             stamped.write_text(
                 GATE.read_text()
                 .replace("__TRACKER_CARD_GATE_MODE__", "always")
-                .replace("__TRACKER_CLI_HOME__", "")
+                .replace("__TRACKER_CLI_HOME__", str(self.cli_home))
             )
             stamped.chmod(0o755)
             env = dict(os.environ)

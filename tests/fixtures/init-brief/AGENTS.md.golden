@@ -1,0 +1,19 @@
+# project Runtime Brief
+
+## Project
+
+- **Project**: `project`
+- **Enabled runtimes**: `claude`, `cursor`, `opencode`
+
+## Conflict Policy
+
+- Current explicit human instruction controls the immediate scope unless it conflicts with safety, secrets, or a higher-authority project rule.
+- Tracker controls work state; vault controls canonical decisions and handoffs; repo docs and manifests control versioned project contracts. Agent plans are lowest authority until accepted and recorded.
+
+## Workflow Rules
+
+- A session works on one explicit user request or tracker card; resolve focus from memory and tracker before starting.
+
+## Useful Commands
+
+- For ai-specs harness operations (init, sync, recipes, skills/deps, doctor), load the `harness-lifecycle`, `harness-recipes`, or `harness-skills-deps` skills.

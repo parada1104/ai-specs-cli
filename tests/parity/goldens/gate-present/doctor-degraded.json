@@ -1,0 +1,65 @@
+{
+ "fixture": "doctor-degraded",
+ "gate_mode": "gate-present",
+ "legacy_launcher": "6340c27b71d1c573592b2e426c3c45e76b6e3522",
+ "steps": [
+  {
+   "argv": [
+    "doctor"
+   ],
+   "rc": 1,
+   "stderr": "",
+   "stdout": "\nai-specs doctor\n  target: <TEMP>\n\n  OK     manifest         ai-specs/ai-specs.toml found\n  INFO   cli-version      installed 0.24.0, no [tool] pin, last sync unknown \u2014 run ai-specs sync\n  WARN   recipe-version   legacy recipe version= keys present (tdd-flow); ignored \u2014 sync uses CLI catalog  (optional: remove version= from [recipes.*]; after ai-specs upgrade run ai-specs sync)\n  OK     agents-md        AGENTS.md found\n  INFO   brief-render     managed AGENTS.md rendering disabled ([brief].render = false)\n  INFO   brief-render-marker  runtime-brief marker present (redundant with render = false)\n  WARN   brief-fragments-unused  enabled recipes declare [provides.brief] but render = false  (remove unused recipes or set [brief].render = true)\n  INFO   brief-provenance  runtime brief ownership: disabled ([brief].render = false)  (set [brief].render = true when ai-specs should render AGENTS.md)\n  ERROR  bundled-skill    cache .bundled/skills/harness-lifecycle missing  (ai-specs sync (flattens CLI-bundled skills into the cache))\n  ERROR  bundled-skill    cache .bundled/skills/harness-recipes missing  (ai-specs sync (flattens CLI-bundled skills into the cache))\n  ERROR  bundled-skill    cache .bundled/skills/harness-skills-deps missing  (ai-specs sync (flattens CLI-bundled skills into the cache))\n  ERROR  bundled-skill    cache .bundled/skills/skill-creator missing  (ai-specs sync (flattens CLI-bundled skills into the cache))\n  ERROR  bundled-skill    cache .bundled/skills/skill-sync missing  (ai-specs sync (flattens CLI-bundled skills into the cache))\n  ERROR  bundled-commands  cache .bundled/commands/rules-audit.md missing  (ai-specs sync (flattens CLI-bundled commands into the cache))\n  ERROR  bundled-commands  cache .bundled/commands/skills-as-rules.md missing  (ai-specs sync (flattens CLI-bundled commands into the cache))\n  WARN   mcp              no [mcp.*] entries declared  (add MCP servers to ai-specs.toml if needed)\n  OK     agents           enabled: claude\n  ERROR  CLAUDE.md        missing; run ai-specs sync  (ai-specs sync)\n  ERROR  .claude/skills   missing; run ai-specs sync  (ai-specs sync)\n  WARN   .claude/commands  directory missing  (ai-specs sync)\n  OK     recipe-dep       npx available for trello-mcp-workflow\n  WARN   tracker-ledger   witness missing; run ai-specs sync  (ai-specs sync)\n  OK     direnv           direnv available on PATH\n  WARN   envrc-managed    project-root .envrc has stale ai-specs managed block  (run ai-specs configure-recipes to ensure root .envrc)\n  WARN   harness-env      missing/empty in ai-specs.env: TRELLO_API_KEY, TRELLO_TOKEN  (run ai-specs configure-recipes to set harness env values)\n\nSummary: 5 OK, 4 INFO, 7 WARN, 9 ERROR\n",
+   "tree": [
+    [
+     ".envrc",
+     [
+      "file",
+      "0o644",
+      "66a2618575fa88a89117662ad7c39df19936ae91b7bb1e8bb262e3c1a74918c0"
+     ]
+    ],
+    [
+     "AGENTS.md",
+     [
+      "file",
+      "0o644",
+      "6ffe4993357cb027518f40472b92be4ad45c2e0a281811d9ab5c081dcf2a7859"
+     ]
+    ],
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "4fa6d16e1d22f7efd2c74061fe316d98d3d2d4afed670f17a7b319c8486682c9"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  }
+ ]
+}

@@ -1,0 +1,184 @@
+{
+ "fixture": "vendor-add-clone-failure",
+ "gate_mode": "gate-absent",
+ "legacy_launcher": "6340c27b71d1c573592b2e426c3c45e76b6e3522",
+ "steps": [
+  {
+   "argv": [
+    "add-dep"
+   ],
+   "rc": 2,
+   "stderr": "ERROR: <git-url> is required.\nRun 'ai-specs add-dep --help' for usage.\n",
+   "stdout": "Usage: ai-specs add-dep <git-url> [path] [flags]\n\nRegister a vendored skill in ai-specs.toml (under [[deps]]) and run sync.\n\nArguments:\n  git-url               Source URL (e.g. https://github.com/obra/superpowers)\n  path                  Project root (default: current directory)\n\nFlags:\n  --id <id>             Skill ID (default: last URL path component, .git stripped)\n  --subdir <subpath>    Subdir within the repo where SKILL.md lives (multi-skill repos)\n  --scope <s1,s2,...>   Comma-list for metadata.scope (default: root)\n  --license <license>   License string (default: empty)\n  --attribution <auth>  vendor_attribution (default: URL author)\n  --ref <ref>           Git ref to pin (tag/branch/sha; default: none)\n  --trigger <text>      auto_invoke entry (default: \"When working on <id>\")\n  --no-sync             Don't run 'ai-specs sync' after registering\n",
+   "tree": [
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "203f297e52bcfac89da70b0f3e4549e958265448b4308e7d5acec55ba58d8434"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  },
+  {
+   "argv": [
+    "add-dep",
+    "/nonexistent/skill-repo"
+   ],
+   "rc": 1,
+   "stderr": "fatal: repository '/nonexistent/skill-repo' does not exist\n",
+   "stdout": "\nai-specs add-dep\n  url:         /nonexistent/skill-repo\n  id:          skill-repo\n  subdir:      (none)\n  scope:       root\n  license:     (none)\n  attribution: nonexistent\n  ref:         (none)\n\n  \u2713 appended [[deps]] for 'skill-repo' to <TEMP>/ai-specs/ai-specs.toml\n\n\u25b8 ai-specs sync <TEMP>\n\nai-specs sync\n  root:    <TEMP>\n  planning: <TEMP>\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  \u25b8 skill-repo  \u2190  /nonexistent/skill-repo\n",
+   "tree": [
+    [
+     ".gitignore",
+     [
+      "file",
+      "0o644",
+      "346c2e6aaa8c4e5bf7bbbeb9565e2ea9ce037c716867e692701a7edd764499af"
+     ]
+    ],
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/.ai-specs.lock",
+     [
+      "file",
+      "0o600",
+      "e569e75263b459b1fe32a51367572d6b12fc087e5ba698d1d26d1436b6545ee4"
+     ]
+    ],
+    [
+     "ai-specs/.gitignore",
+     [
+      "file",
+      "0o644",
+      "435a5764426295aa8bfa9540dc0c92d9a65e994e8e86bebdb2d21136f0772cbd"
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "d814ef236e6787269de33c1821038632e8aaeb19d2c9e07c9f3a81ab8618b092"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  },
+  {
+   "argv": [
+    "skills",
+    "add",
+    "/nonexistent/skill-repo"
+   ],
+   "rc": 1,
+   "stderr": "ERROR: dep with id 'skill-repo' already exists in <TEMP>/ai-specs/ai-specs.toml\n",
+   "stdout": "",
+   "tree": [
+    [
+     ".gitignore",
+     [
+      "file",
+      "0o644",
+      "346c2e6aaa8c4e5bf7bbbeb9565e2ea9ce037c716867e692701a7edd764499af"
+     ]
+    ],
+    [
+     "ai-specs",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/.ai-specs.lock",
+     [
+      "file",
+      "0o600",
+      "e569e75263b459b1fe32a51367572d6b12fc087e5ba698d1d26d1436b6545ee4"
+     ]
+    ],
+    [
+     "ai-specs/.gitignore",
+     [
+      "file",
+      "0o644",
+      "435a5764426295aa8bfa9540dc0c92d9a65e994e8e86bebdb2d21136f0772cbd"
+     ]
+    ],
+    [
+     "ai-specs/ai-specs.toml",
+     [
+      "file",
+      "0o644",
+      "d814ef236e6787269de33c1821038632e8aaeb19d2c9e07c9f3a81ab8618b092"
+     ]
+    ],
+    [
+     "ai-specs/commands",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ],
+    [
+     "ai-specs/skills",
+     [
+      "dir",
+      "0o755",
+      ""
+     ]
+    ]
+   ]
+  }
+ ]
+}

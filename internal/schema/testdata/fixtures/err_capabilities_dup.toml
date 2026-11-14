@@ -1,0 +1,11 @@
+[recipe]
+id = "x"
+name = "N"
+description = "D"
+version = "1.0"
+
+[[capabilities]]
+id = "c"
+
+[[capabilities]]
+id = "c"

@@ -1,35 +1,41 @@
-"""Contract tests for the non-interactive recipe configure helper."""
+"""Black-box tests for `ai-specs recipe configure` (converted from recipe-configure.py internals).
+
+Exit-code contract (parity contract §2, FROZEN):
+  0 ok/no-op/dry-run; 1 write/sync/doctor failure; 2 argparse;
+  3 ConfigureError validation/unknown key/secret literal; 4 blocked by [tool] CLI version policy.
+"""
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
+import os
+import subprocess
 import tempfile
 import tomllib
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import invoke, isolated_home, populate_catalog  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-HELPER_PATH = ROOT / "lib" / "_internal" / "recipe-configure.py"
-
-
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 class RecipeConfigureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.mod = load_module(HELPER_PATH, "recipe_configure_internal")
+        # One shared isolated install root for the whole class: the repo catalog
+        # stays symlinked so worktree-flow / trello-mcp-workflow resolve, and the
+        # per-test "x" recipe is materialized into a real directory by
+        # populate_catalog without touching the repository catalog.
+        cls._home_tmp = tempfile.TemporaryDirectory(prefix="ai-specs-home-class-")
+        cls.addClassCleanup(cls._home_tmp.cleanup)
+        cls.home = isolated_home(Path(cls._home_tmp.name))
 
     def _project(self, config: str = "") -> tuple[tempfile.TemporaryDirectory, Path, Path]:
         tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
         ai_specs = root / "ai-specs"
         ai_specs.mkdir()
@@ -43,36 +49,98 @@ class RecipeConfigureTests(unittest.TestCase):
         )
         return tmp, root, manifest
 
+    def _configure(self, root: Path, *args: str):
+        return invoke(root, "recipe", "configure", *args, cli_home=self.home)
+
+    def _configure_json(self, root: Path, *args: str) -> tuple[dict, object]:
+        result = self._configure(root, *args, "--json")
+        return json.loads(result.stdout), result
+
+    def _sync_fail_home(self) -> Path:
+        """A fresh install root whose cold cache is unwritable.
+
+        The sync's first write step (bundled skills + commands) must then fail,
+        deterministically, regardless of test order.
+        """
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        home = isolated_home(Path(tmp.name))
+        os.chmod(home / "cache", 0o500)
+        self.addCleanup(os.chmod, home / "cache", 0o755)
+        return home
+
+    @staticmethod
+    def _git(*args: str, cwd: Path) -> None:
+        subprocess.run(
+            ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+        )
+
+    def _git_project_with_submodule(self) -> tuple[tempfile.TemporaryDirectory, Path]:
+        """A real git repo with one initialized submodule (libs/core).
+
+        `auto` topology resolution only reports monorepo-submodules when
+        `git submodule status` shows an initialized entry, so the fixture
+        registers the gitlink and runs `git submodule init`.
+        """
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        identity = ("-c", "user.email=test@example.test", "-c", "user.name=test")
+        self._git("init", "-q", cwd=root)
+        (root / "libs" / "core").mkdir(parents=True)
+        self._git("init", "-q", cwd=root / "libs" / "core")
+        (root / "libs" / "core" / "fixture.txt").write_text("x", encoding="utf-8")
+        self._git(*identity, "add", "-A", cwd=root / "libs" / "core")
+        self._git(*identity, "commit", "-qm", "init", cwd=root / "libs" / "core")
+        sha = subprocess.run(
+            ["git", "-C", str(root / "libs" / "core"), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self._git("update-index", "--add", "--cacheinfo", f"160000,{sha},libs/core", cwd=root)
+        (root / ".gitmodules").write_text(
+            '[submodule "libs/core"]\n\tpath = libs/core\n'
+            "\turl = https://example.test/libs/core.git\n",
+            encoding="utf-8",
+        )
+        self._git("submodule", "init", cwd=root)
+        return tmp, root
+
     def test_inspect_json_is_deterministic_and_contains_schema_state(self):
         tmp, root, _manifest = self._project("integration_branch = 'main'\nkeep_me = 'x'\n")
         self.addCleanup(tmp.cleanup)
-        first = self.mod.inspect_project(root, "worktree-flow")
-        second = self.mod.inspect_project(root, "worktree-flow")
-        self.assertEqual(json.dumps(first, sort_keys=False), json.dumps(second, sort_keys=False))
-        self.assertEqual(first["schema_version"], 1)
-        self.assertEqual(first["current_config"]["integration_branch"], "main")
-        self.assertIn("repo_topology", {field["key"] for field in first["schema"]["fields"]})
-        self.assertEqual(first["unknown_keys"], ["keep_me"])
+        first = self._configure(root, "worktree-flow", "--inspect", "--json")
+        second = self._configure(root, "worktree-flow", "--inspect", "--json")
+        self.assertEqual(first.returncode, 0)
+        self.assertEqual(first.stdout, second.stdout)
+        doc = json.loads(first.stdout)
+        self.assertEqual(doc["schema_version"], 1)
+        self.assertEqual(doc["current_config"]["integration_branch"], "main")
+        self.assertIn("repo_topology", {field["key"] for field in doc["schema"]["fields"]})
+        self.assertEqual(doc["unknown_keys"], ["keep_me"])
 
     def test_topology_grounding_uses_resolution_without_init_contract(self):
-        tmp, root, _manifest = self._project()
-        self.addCleanup(tmp.cleanup)
-        resolution = self.mod._util.TopologyResolution(
-            "monorepo-submodules", "auto", "auto", ("libs/core",), True
+        tmp, root = self._git_project_with_submodule()
+        (root / "ai-specs").mkdir()
+        (root / "ai-specs" / "ai-specs.toml").write_text(
+            "[project]\nname = 'fixture'\n\n"
+            "[recipes.worktree-flow]\nenabled = true\nversion = '1.4.0'\n",
+            encoding="utf-8",
         )
-        with patch.object(self.mod._util, "resolve_repo_topology", return_value=resolution):
-            doc = self.mod.inspect_project(root, "worktree-flow")
-        self.assertEqual(doc["grounding"]["topology"]["resolved"], "monorepo-submodules")
-        self.assertEqual(doc["grounding"]["topology"]["submodules"], ["libs/core"])
+        result = self._configure(root, "worktree-flow", "--inspect", "--json")
+        self.assertEqual(result.returncode, 0)
+        topology = json.loads(result.stdout)["grounding"]["topology"]
+        self.assertEqual(topology["resolved"], "monorepo-submodules")
+        self.assertEqual(topology["via"], "auto")
+        self.assertEqual(topology["submodules"], ["libs/core"])
 
     def test_apply_routes_repo_topology_to_project_field(self):
         """T4 — the project owns topology; recipe config must not gain it."""
         tmp, root, manifest = self._project()
         self.addCleanup(tmp.cleanup)
-        report, code = self.mod.apply_project(
-            root, "worktree-flow", {"repo_topology": "monorepo-apps"}
+        report, result = self._configure_json(
+            root, "worktree-flow", "--set", "repo_topology=monorepo-apps"
         )
-        self.assertEqual(code, 0)
+        self.assertEqual(result.returncode, 0)
         self.assertEqual(report["status"], "ok")
         data = tomllib.loads(manifest.read_text())
         self.assertEqual(data["project"]["repo_topology"], "monorepo-apps")
@@ -84,16 +152,20 @@ class RecipeConfigureTests(unittest.TestCase):
         lines = manifest.read_text().splitlines()
         lines.insert(1, 'repo_topology = "monorepo-apps"')
         manifest.write_text("\n".join(lines) + "\n")
-        doc = self.mod.inspect_project(root, "worktree-flow")
-        self.assertEqual(doc["grounding"]["topology"]["resolved"], "monorepo-apps")
-        self.assertEqual(doc["grounding"]["topology"]["source"], "project")
+        result = self._configure(root, "worktree-flow", "--inspect", "--json")
+        self.assertEqual(result.returncode, 0)
+        topology = json.loads(result.stdout)["grounding"]["topology"]
+        self.assertEqual(topology["resolved"], "monorepo-apps")
+        self.assertEqual(topology["source"], "project")
 
     def test_apply_rejects_unknown_key_without_write(self):
         tmp, root, manifest = self._project()
         self.addCleanup(tmp.cleanup)
         before = manifest.read_bytes()
-        report, code = self.mod.apply_project(root, "worktree-flow", {"not_in_schema": "x"})
-        self.assertEqual(code, 3)
+        report, result = self._configure_json(
+            root, "worktree-flow", "--set", "not_in_schema=x"
+        )
+        self.assertEqual(result.returncode, 3)
         self.assertEqual(report["status"], "rejected")
         self.assertEqual(manifest.read_bytes(), before)
 
@@ -102,75 +174,116 @@ class RecipeConfigureTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         manifest.write_text(manifest.read_text() + "\n[tool]\nversion = '999.0.0'\n")
         before = manifest.read_bytes()
-        with patch.object(self.mod._config_write, "update_recipe_config") as writer, patch.object(
-            self.mod, "_run_command"
-        ) as command:
-            report, code = self.mod.apply_project(root, "worktree-flow", {"integration_branch": "dev"}, sync=True)
-        self.assertEqual(code, 4)
+        report, result = self._configure_json(
+            root, "worktree-flow", "--set", "integration_branch=dev", "--sync"
+        )
+        self.assertEqual(result.returncode, 4)
         self.assertEqual(report["status"], "blocked")
         self.assertEqual(manifest.read_bytes(), before)
-        writer.assert_not_called()
-        command.assert_not_called()
+        self.assertFalse(report["sync"]["ran"])
 
     def test_sync_failure_is_partial_after_successful_write(self):
         tmp, root, manifest = self._project()
         self.addCleanup(tmp.cleanup)
-        with patch.object(self.mod, "_run_command", return_value=(1, "syncing materialize\nERROR: failed\n")):
-            report, code = self.mod.apply_project(
-                root, "worktree-flow", {"integration_branch": "dev"}, sync=True
-            )
-        self.assertEqual(code, 1)
+        home = self._sync_fail_home()
+        result = invoke(root, "recipe", "configure", "worktree-flow",
+                        "--set", "integration_branch=dev", "--sync", "--json", cli_home=home)
+        report = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1)
         self.assertEqual(report["status"], "partial")
-        self.assertEqual(report["sync"]["failed_step"], "materialize")
+        self.assertTrue(report["sync"]["ran"])
+        self.assertNotEqual(report["sync"]["exit_code"], 0)
+        self.assertTrue(report["sync"]["failed_step"])
         self.assertFalse(report["sync"]["rolled_back"])
         self.assertFalse(report["sync"]["lock_stamped"])
         self.assertIn('integration_branch = "dev"', manifest.read_text())
 
+    # TRIAGE: recipe configure missing surface — parse_doctor_summary's
+    # arbitrary-unparsable-doctor-output branch is not reachable through the
+    # CLI (the doctor always emits a Summary line when it runs). The closest
+    # observable equivalent is the partial-sync path, where no doctor summary
+    # is parsed and the verify block must carry no fabricated counts.
     def test_unparsed_doctor_summary_is_not_zero(self):
-        parsed = self.mod.parse_doctor_summary("doctor output without summary")
-        self.assertFalse(parsed["parsed"])
-        self.assertIsNone(parsed["warn"])
-        self.assertIsNone(parsed["error"])
+        tmp, root, _manifest = self._project()
+        self.addCleanup(tmp.cleanup)
+        home = self._sync_fail_home()
+        result = invoke(root, "recipe", "configure", "worktree-flow",
+                        "--set", "integration_branch=dev", "--sync", "--json", cli_home=home)
+        report = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(report["status"], "partial")
+        self.assertFalse(report["verify"]["parsed"])
+        self.assertIsNone(report["verify"]["warn"])
+        self.assertIsNone(report["verify"]["error"])
 
     def test_secret_literal_is_rejected_and_env_reference_allowed(self):
-        tmp, root, manifest = self._project()
+        tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        with patch.object(self.mod, "_schema_for") as schema:
-            schema.return_value.config_schema.fields = {
-                "api_token": self.mod._recipe_schema.ConfigField(
-                    required=False, type="string"
-                )
-            }
-            report, code = self.mod.apply_project(root, "worktree-flow", {"api_token": "literal"})
-        self.assertEqual(code, 3)
+        secret_home = isolated_home(Path(tmp.name), catalog=False)
+        populate_catalog(
+            secret_home,
+            "x",
+            '[recipe]\nid = "x"\nname = "X"\ndescription = "d"\nversion = "1.0.0"\n\n'
+            '[config.api_token]\nrequired = false\ntype = "string"\n',
+        )
+        tmp2 = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp2.cleanup)
+        root = Path(tmp2.name)
+        manifest = root / "ai-specs" / "ai-specs.toml"
+        manifest.parent.mkdir()
+        manifest.write_text(
+            "[project]\nname = 'fixture'\n\n"
+            "[recipes.x]\nenabled = true\nversion = '1.0.0'\n\n"
+            "[recipes.x.config]\n",
+            encoding="utf-8",
+        )
+        result = invoke(root, "recipe", "configure", "x", "--set", "api_token=literal",
+                        "--json", cli_home=secret_home)
+        report = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 3)
         self.assertEqual(report["status"], "rejected")
         self.assertNotIn("literal", manifest.read_text())
+        result = invoke(root, "recipe", "configure", "x",
+                        "--set", 'api_token="${env:TRELLO_API_KEY}"',
+                        "--json", cli_home=secret_home)
+        report = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(report["status"], "ok")
 
     def test_parse_assignment_accepts_structured_table(self):
-        recipe = self.mod._schema_for("trello-mcp-workflow")
-        key, value = self.mod._parse_assignment(
-            recipe,
+        tmp, root, _manifest = self._project()
+        self.addCleanup(tmp.cleanup)
+        reconcile = (
             'reconcile={scope_field="board_id",max_age_seconds=900,'
-            'expectations=[{event="delivery",property="list",config_field="default_list"}]}',
+            'expectations=[{event="delivery",property="list",config_field="default_list"}]}'
         )
-        self.assertEqual(key, "reconcile")
-        self.assertEqual(value["scope_field"], "board_id")
-        self.assertEqual(value["expectations"][0]["event"], "delivery")
-        with self.assertRaises(self.mod.ConfigureError):
-            self.mod._parse_assignment(recipe, "reconcile=not_toml")
+        report, result = self._configure_json(
+            root, "trello-mcp-workflow", "--set", reconcile, "--dry-run"
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(report["applied"]["changed"][0]["key"], "reconcile")
+        report, result = self._configure_json(
+            root, "trello-mcp-workflow", "--set", "reconcile=not_toml", "--dry-run"
+        )
+        self.assertEqual(result.returncode, 3)
+        self.assertIn("invalid TOML value", report["reason"])
 
     def test_no_gitmodules_surfaces_monorepo_apps_question(self):
         tmp, root, _manifest = self._project()
         self.addCleanup(tmp.cleanup)
-        doc = self.mod.inspect_project(root, "worktree-flow")
-        self.assertTrue(any("monorepo-apps" in item for item in doc["assumptions"]))
+        result = self._configure(root, "worktree-flow", "--inspect", "--json")
+        self.assertEqual(result.returncode, 0)
+        assumptions = json.loads(result.stdout)["assumptions"]
+        self.assertTrue(any("monorepo-apps" in item for item in assumptions))
 
     def test_enum_value_is_rejected_without_write(self):
         tmp, root, manifest = self._project()
         self.addCleanup(tmp.cleanup)
         before = manifest.read_bytes()
-        report, code = self.mod.apply_project(root, "worktree-flow", {"gate_mode": "invalid"})
-        self.assertEqual(code, 3)
+        report, result = self._configure_json(
+            root, "worktree-flow", "--set", "gate_mode=invalid"
+        )
+        self.assertEqual(result.returncode, 3)
         self.assertEqual(report["status"], "rejected")
         self.assertEqual(manifest.read_bytes(), before)
 
@@ -180,8 +293,10 @@ class RecipeConfigureTests(unittest.TestCase):
         (root / "ai-specs" / ".ai-specs.lock").write_text(
             "[meta]\ncli_version = '0.0.1'\n", encoding="utf-8"
         )
-        report, code = self.mod.apply_project(root, "worktree-flow", {"integration_branch": "dev"})
-        self.assertEqual(code, 0)
+        report, result = self._configure_json(
+            root, "worktree-flow", "--set", "integration_branch=dev"
+        )
+        self.assertEqual(result.returncode, 0)
         self.assertEqual(report["status"], "ok")
         self.assertTrue(any("0.0.1" in gap for gap in report["gaps"]))
 
@@ -189,38 +304,42 @@ class RecipeConfigureTests(unittest.TestCase):
         tmp, root, manifest = self._project()
         self.addCleanup(tmp.cleanup)
         manifest.write_text(manifest.read_text() + "\n[tool]\nversion = '999.0.0'\n")
-        with patch.object(
-            self.mod, "_run_command", side_effect=[(0, "sync ok"), (0, "Summary: 1 OK, 0 INFO, 0 WARN, 0 ERROR")]
-        ) as command:
-            report, code = self.mod.apply_project(
-                root, "worktree-flow", {"integration_branch": "dev"}, sync=True, ignore_cli_version=True
-            )
-        self.assertEqual(code, 0)
+        # Without the flag the pin blocks the whole apply (exit 4).
+        report, result = self._configure_json(root, "worktree-flow", "--set", "integration_branch=dev")
+        self.assertEqual(result.returncode, 4)
+        self.assertFalse(report["preflight"]["ignore_cli_version"])
+        # With the flag the apply proceeds and sync itself runs to completion:
+        # the flag is recorded in preflight and forwarded to the sync command
+        # (the final doctor verification then fails on the pin, exit 1).
+        report, result = self._configure_json(
+            root, "worktree-flow", "--set", "integration_branch=dev",
+            "--sync", "--ignore-cli-version",
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(report["status"], "failed")
         self.assertTrue(report["preflight"]["ignore_cli_version"])
-        self.assertIn("--ignore-cli-version", command.call_args_list[0].args[0])
+        self.assertTrue(report["sync"]["ran"])
+        self.assertEqual(report["sync"]["exit_code"], 0)
 
     def test_noop_report_has_no_changed_keys(self):
         tmp, root, manifest = self._project("integration_branch='main'\n")
         self.addCleanup(tmp.cleanup)
         before = manifest.read_bytes()
-        report, code = self.mod.apply_project(root, "worktree-flow", {"integration_branch": "main"})
-        self.assertEqual(code, 0)
+        report, result = self._configure_json(
+            root, "worktree-flow", "--set", "integration_branch=main"
+        )
+        self.assertEqual(result.returncode, 0)
         self.assertEqual(report["status"], "no-op")
         self.assertEqual(report["applied"]["changed"], [])
         self.assertEqual(manifest.read_bytes(), before)
 
     def test_recipe_subcommand_help_lists_configure(self):
-        import subprocess
-
-        proc = subprocess.run(
-            ["bash", str(ROOT / "lib" / "recipe.sh"), "--help"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(proc.returncode, 0)
-        self.assertIn("configure <id>", proc.stdout)
-
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        result = invoke(root, "recipe", "--help", cli_home=self.home, append_root=False)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("configure <id>", result.stdout)
 
     def test_trello_inspect_surfaces_init_and_secret_env_names(self):
         tmp, root, manifest = self._project()
@@ -230,11 +349,13 @@ class RecipeConfigureTests(unittest.TestCase):
             "[recipes.trello-mcp-workflow]\nenabled=true\nversion='1.3.0'\n\n"
             "[recipes.trello-mcp-workflow.config]\n"
         )
-        doc = self.mod.inspect_project(root, "trello-mcp-workflow")
+        result = self._configure(root, "trello-mcp-workflow", "--inspect", "--json")
+        self.assertEqual(result.returncode, 0)
+        doc = json.loads(result.stdout)
         self.assertTrue(doc["grounding"]["init"]["present"])
         self.assertEqual(doc["grounding"]["init"]["needs_mcp"], ["trello"])
         self.assertIn("TRELLO_API_KEY", doc["grounding"]["mcp"]["env_vars"])
-        self.assertNotIn("$TRELLO_API_KEY", json.dumps(doc))
+        self.assertNotIn("$TRELLO_API_KEY", result.stdout)
 
     _TRELLO_BASE = (
         "[project]\nname='fixture'\n\n"
@@ -254,7 +375,9 @@ class RecipeConfigureTests(unittest.TestCase):
             "[[recipes.trello-mcp-workflow.config.reconcile.expectations]]\n"
             'event = "delivery"\nproperty = "list"\nconfig_field = "default_list"\n'
         )
-        doc = self.mod.inspect_project(root, "trello-mcp-workflow")
+        result = self._configure(root, "trello-mcp-workflow", "--inspect", "--json")
+        self.assertEqual(result.returncode, 0)
+        doc = json.loads(result.stdout)
         types = {field["key"]: field["type"] for field in doc["schema"]["fields"]}
         self.assertEqual(types.get("reconcile"), "table")
         self.assertNotIn("reconcile", doc["unknown_keys"])
@@ -263,24 +386,35 @@ class RecipeConfigureTests(unittest.TestCase):
         )
 
     def test_parse_assignment_accepts_dotted_structured_key(self):
-        recipe = self.mod._schema_for("trello-mcp-workflow")
-        key, value = self.mod._parse_assignment(recipe, "reconcile.max_age_seconds=1200")
-        self.assertEqual(key, "reconcile.max_age_seconds")
-        self.assertEqual(value, 1200)
-        key, value = self.mod._parse_assignment(
-            recipe,
-            'reconcile.expectations=[{event="merge",property="list",config_field="done_list"}]',
+        tmp, root, _manifest = self._project()
+        self.addCleanup(tmp.cleanup)
+        report, result = self._configure_json(
+            root, "trello-mcp-workflow", "--set", "reconcile.max_age_seconds=1200", "--dry-run"
         )
-        self.assertEqual(key, "reconcile.expectations")
-        self.assertEqual(value[0]["event"], "merge")
-        with self.assertRaises(self.mod.ConfigureError):
-            self.mod._parse_assignment(recipe, "reconcile.max_age_seconds=not_a_number")
-        with self.assertRaises(self.mod.ConfigureError):
-            self.mod._parse_assignment(recipe, "not_a_table.thing=1")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(report["applied"]["changed"][0]["key"], "reconcile.max_age_seconds")
+        report, result = self._configure_json(
+            root, "trello-mcp-workflow", "--set",
+            'reconcile.expectations=[{event="merge",property="list",config_field="done_list"}]',
+            "--dry-run",
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(
+            report["applied"]["changed"][0]["to"],
+            [{"event": "merge", "property": "list", "config_field": "done_list"}],
+        )
+        report, result = self._configure_json(
+            root, "trello-mcp-workflow", "--set", "reconcile.max_age_seconds=not_a_number",
+            "--dry-run",
+        )
+        self.assertEqual(result.returncode, 3)
+        report, result = self._configure_json(
+            root, "trello-mcp-workflow", "--set", "not_a_table.thing=1", "--dry-run"
+        )
+        self.assertEqual(result.returncode, 3)
 
     _TRELLO_RECONCILE_INLINE = (
-        _TRELLO_BASE
-        + 'reconcile = { scope_field = "board_id", max_age_seconds = 900, '
+        _TRELLO_BASE + 'reconcile = { scope_field = "board_id", max_age_seconds = 900, '
         'expectations = [{ event = "delivery", property = "list", '
         'config_field = "default_list" }] }\n'
     )
@@ -289,16 +423,14 @@ class RecipeConfigureTests(unittest.TestCase):
         tmp, root, manifest = self._project()
         self.addCleanup(tmp.cleanup)
         manifest.write_text(self._TRELLO_RECONCILE_INLINE)
-        report, code = self.mod.apply_project(
-            root, "trello-mcp-workflow", {"reconcile.max_age_seconds": 1200}
+        report, result = self._configure_json(
+            root, "trello-mcp-workflow", "--set", "reconcile.max_age_seconds=1200"
         )
-        self.assertEqual(code, 0, report)
+        self.assertEqual(result.returncode, 0)
         self.assertEqual(report["status"], "ok")
         self.assertEqual(
             report["applied"]["changed"][0]["key"], "reconcile.max_age_seconds"
         )
-        import tomllib
-
         cfg = tomllib.loads(manifest.read_text())["recipes"]["trello-mcp-workflow"]["config"]
         self.assertEqual(cfg["reconcile"]["max_age_seconds"], 1200)
         self.assertEqual(cfg["reconcile"]["scope_field"], "board_id")
@@ -311,10 +443,10 @@ class RecipeConfigureTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         manifest.write_text(self._TRELLO_RECONCILE_INLINE)
         before = manifest.read_bytes()
-        report, code = self.mod.apply_project(
-            root, "trello-mcp-workflow", {"reconcile.max_age_seconds": "soon"}
+        report, result = self._configure_json(
+            root, "trello-mcp-workflow", "--set", 'reconcile.max_age_seconds="soon"'
         )
-        self.assertEqual(code, 3)
+        self.assertEqual(result.returncode, 3)
         self.assertEqual(report["status"], "rejected")
         self.assertEqual(manifest.read_bytes(), before)
 
@@ -323,10 +455,10 @@ class RecipeConfigureTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         manifest.write_text(self._TRELLO_RECONCILE_INLINE)
         before = manifest.read_bytes()
-        report, code = self.mod.apply_project(
-            root, "trello-mcp-workflow", {"reconcile.max_age_seconds": 900}
+        report, result = self._configure_json(
+            root, "trello-mcp-workflow", "--set", "reconcile.max_age_seconds=900"
         )
-        self.assertEqual(code, 0)
+        self.assertEqual(result.returncode, 0)
         self.assertEqual(report["status"], "no-op")
         self.assertEqual(manifest.read_bytes(), before)
 
@@ -341,13 +473,13 @@ class RecipeConfigureTests(unittest.TestCase):
                 {"event": "delivery", "property": "list", "config_field": "default_list"}
             ],
         }
-        report, code = self.mod.apply_project(
-            root, "trello-mcp-workflow", {"reconcile": reconcile}
+        report, result = self._configure_json(
+            root, "trello-mcp-workflow", "--set",
+            'reconcile={scope_field="board_id",max_age_seconds=900,'
+            'expectations=[{event="delivery",property="list",config_field="default_list"}]}',
         )
-        self.assertEqual(code, 0, report)
+        self.assertEqual(result.returncode, 0)
         self.assertEqual(report["status"], "ok")
-        import tomllib
-
         written = tomllib.loads(manifest.read_text())
         self.assertEqual(
             written["recipes"]["trello-mcp-workflow"]["config"]["reconcile"], reconcile
@@ -358,14 +490,16 @@ class RecipeConfigureTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         manifest.write_text(self._TRELLO_BASE)
         before = manifest.read_bytes()
-        report, code = self.mod.apply_project(
+        report, result = self._configure_json(
             root,
             "trello-mcp-workflow",
-            {"reconcile": {"scope_field": "board_id", "bogus": 1}},
+            "--set",
+            'reconcile={scope_field="board_id",bogus=1}',
         )
-        self.assertEqual(code, 3)
+        self.assertEqual(result.returncode, 3)
         self.assertEqual(report["status"], "rejected")
         self.assertEqual(manifest.read_bytes(), before)
+
 
 if __name__ == "__main__":
     unittest.main()

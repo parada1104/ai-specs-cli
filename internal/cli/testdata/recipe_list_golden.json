@@ -1,0 +1,208 @@
+{
+  "oracle": {
+    "base": "ac49e9f",
+    "note": "legacy `bash lib/recipe-list.sh` over the in-test fixture corpus; \u003cDIR\u003e is the target project root, \u003cHOME\u003e the isolated cli home, \u003cROOT\u003e the checkout",
+    "python": "3.14.7",
+    "scripts": {
+      "lib/recipe-list.sh": "086238592782e480660d0513eee783f347dcf445"
+    }
+  },
+  "cases": [
+    {
+      "name": "two recipes enabled one in catalog one not",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-recipes\"\n\n[recipes.worktree-flow]\nenabled = true\n\n[recipes.ghost-recipe]\nenabled = true\n\n[recipes.tdd-flow]\nenabled = false\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "[available   ]  bitbucket-pr-flow         1.3.0     Bitbucket PR Flow\n[available   ]  git-pr-flow               1.5.0     Git PR Flow\n[available   ]  gitlab-mr-flow            1.4.0     GitLab MR Flow\n[available   ]  jinna-mcp-recipe          1.0.0     OpenProject Provider MCP\n[available   ]  plan-build-flow           1.8.0     Plan / Build Flow\n[available   ]  playwright-mcp            1.0.0     Playwright MCP\n[available   ]  playwright-ui-flow        1.0.0     Playwright UI Flow\n[available   ]  session-context           2.0.0     Session Context\n[disabled    ]  tdd-flow                  1.0.0     TDD Flow\n[available   ]  trello-mcp-workflow       1.4.0     Trello MCP Workflow\n[available   ]  vault-canonical-store     1.2.0     Vault Canonical Store\n[installed   ]  worktree-flow             1.6.0     Worktree Flow\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-recipes\"\n\n[recipes.worktree-flow]\nenabled = true\n\n[recipes.ghost-recipe]\nenabled = true\n\n[recipes.tdd-flow]\nenabled = false\n"
+        }
+      ]
+    },
+    {
+      "name": "empty catalog",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-recipes\"\n\n[recipes.worktree-flow]\nenabled = true\n\n[recipes.ghost-recipe]\nenabled = true\n\n[recipes.tdd-flow]\nenabled = false\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "No recipes available.\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-recipes\"\n\n[recipes.worktree-flow]\nenabled = true\n\n[recipes.ghost-recipe]\nenabled = true\n\n[recipes.tdd-flow]\nenabled = false\n"
+        }
+      ]
+    },
+    {
+      "name": "internal test recipe and dot dir filtered",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"filter-project\"\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "[available   ]  alpha                     1.0.0     alpha recipe\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"filter-project\"\n"
+        }
+      ]
+    },
+    {
+      "name": "no manifest",
+      "input": [],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "Project not initialized. Run: ai-specs init\n",
+      "tree": []
+    },
+    {
+      "name": "help",
+      "input": [],
+      "rc": 0,
+      "stdout": "Usage: ai-specs recipe list [path] [--help]\nList available recipes in catalog/recipes/ and their installation status.\nArguments:\n  path    Target project root (default: current directory)\nFlags:\n  --help  Show this help\n",
+      "stderr": "",
+      "tree": []
+    },
+    {
+      "name": "unknown flag",
+      "input": [],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ERROR: unknown flag: --bogus\nRun 'ai-specs recipe list --help' for usage.\n",
+      "tree": []
+    },
+    {
+      "name": "second positional",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-recipes\"\n\n[recipes.worktree-flow]\nenabled = true\n\n[recipes.ghost-recipe]\nenabled = true\n\n[recipes.tdd-flow]\nenabled = false\n"
+        }
+      ],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ERROR: unexpected positional argument: extra\n",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-recipes\"\n\n[recipes.worktree-flow]\nenabled = true\n\n[recipes.ghost-recipe]\nenabled = true\n\n[recipes.tdd-flow]\nenabled = false\n"
+        }
+      ]
+    },
+    {
+      "name": "positional after dashdash",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-recipes\"\n\n[recipes.worktree-flow]\nenabled = true\n\n[recipes.ghost-recipe]\nenabled = true\n\n[recipes.tdd-flow]\nenabled = false\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "[available   ]  bitbucket-pr-flow         1.3.0     Bitbucket PR Flow\n[available   ]  git-pr-flow               1.5.0     Git PR Flow\n[available   ]  gitlab-mr-flow            1.4.0     GitLab MR Flow\n[available   ]  jinna-mcp-recipe          1.0.0     OpenProject Provider MCP\n[available   ]  plan-build-flow           1.8.0     Plan / Build Flow\n[available   ]  playwright-mcp            1.0.0     Playwright MCP\n[available   ]  playwright-ui-flow        1.0.0     Playwright UI Flow\n[available   ]  session-context           2.0.0     Session Context\n[disabled    ]  tdd-flow                  1.0.0     TDD Flow\n[available   ]  trello-mcp-workflow       1.4.0     Trello MCP Workflow\n[available   ]  vault-canonical-store     1.2.0     Vault Canonical Store\n[installed   ]  worktree-flow             1.6.0     Worktree Flow\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-recipes\"\n\n[recipes.worktree-flow]\nenabled = true\n\n[recipes.ghost-recipe]\nenabled = true\n\n[recipes.tdd-flow]\nenabled = false\n"
+        }
+      ]
+    },
+    {
+      "name": "second positional after dashdash",
+      "input": [],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "ERROR: unexpected positional argument: beta\n",
+      "tree": []
+    },
+    {
+      "name": "target defaults to cwd",
+      "input": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-recipes\"\n\n[recipes.worktree-flow]\nenabled = true\n\n[recipes.ghost-recipe]\nenabled = true\n\n[recipes.tdd-flow]\nenabled = false\n"
+        }
+      ],
+      "rc": 0,
+      "stdout": "[available   ]  bitbucket-pr-flow         1.3.0     Bitbucket PR Flow\n[available   ]  git-pr-flow               1.5.0     Git PR Flow\n[available   ]  gitlab-mr-flow            1.4.0     GitLab MR Flow\n[available   ]  jinna-mcp-recipe          1.0.0     OpenProject Provider MCP\n[available   ]  plan-build-flow           1.8.0     Plan / Build Flow\n[available   ]  playwright-mcp            1.0.0     Playwright MCP\n[available   ]  playwright-ui-flow        1.0.0     Playwright UI Flow\n[available   ]  session-context           2.0.0     Session Context\n[disabled    ]  tdd-flow                  1.0.0     TDD Flow\n[available   ]  trello-mcp-workflow       1.4.0     Trello MCP Workflow\n[available   ]  vault-canonical-store     1.2.0     Vault Canonical Store\n[installed   ]  worktree-flow             1.6.0     Worktree Flow\n",
+      "stderr": "",
+      "tree": [
+        {
+          "path": "ai-specs",
+          "dir": true
+        },
+        {
+          "path": "ai-specs/ai-specs.toml",
+          "content": "[project]\nname = \"two-recipes\"\n\n[recipes.worktree-flow]\nenabled = true\n\n[recipes.ghost-recipe]\nenabled = true\n\n[recipes.tdd-flow]\nenabled = false\n"
+        }
+      ]
+    },
+    {
+      "name": "missing path",
+      "input": [],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "\u003cROOT\u003e/lib/recipe-list.sh: line 47: cd: \u003cDIR\u003e/does-not-exist: No such file or directory\n",
+      "tree": []
+    }
+  ]
+}

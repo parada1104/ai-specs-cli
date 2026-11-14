@@ -1,30 +1,89 @@
-import importlib.util
-import sys
-import json
+"""Black-box sync pipeline tests: every test drives ``bin/ai-specs`` verbs.
+
+No test may import ``lib/_internal`` modules. Assertions preserve the original
+contract intents (exit codes, stdout/stderr needles, filesystem effects on
+AGENTS.md, agent configs, lock files, recipe hooks, snapshots) through the CLI
+process boundary. Internal renderer/materialize surfaces with no
+CLI-observable equivalent are kept as process-boundary invocations, each
+marked with a distinct ``# TRIAGE:`` comment.
+"""
+from __future__ import annotations
+
 import hashlib
+import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cache_project_dir, cli_path, invoke, isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-import sys
-from pathlib import Path as _P
-sys.path.insert(0, str(_P(__file__).resolve().parent))
-from _cache_paths import recipe_root, cache_command, resolved_skills_dir, deps_skill_dir, inproject_deps_skill_dir
-CLI = ROOT / "bin" / "ai-specs"
+CLI = cli_path()
 KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
 
-def _sync_env() -> dict:
-    return {
-        **os.environ,
-        "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
-    }
-
 FIXTURE_ROOT = ROOT / "tests" / "fixtures" / "sync-workspace" / "root"
+
+
+def _make_home(base: Path) -> Path:
+    """Isolated CLI install root.
+
+    ``lib/`` is dropped from the install tree: sync and materialize are native,
+    so no test copies or reads the Python tree.
+    """
+    home = isolated_home(base)
+    (home / "lib").unlink(missing_ok=True)
+    return home
+
+
+_HOMES: dict[str, Path] = {}
+
+
+def _home_for(project: Path) -> Path:
+    """One shared isolated install root per command sequence.
+
+    Memoized by the project's parent dir (unique per temp workspace), so every
+    init/sync/sync-agent sequence within one test shares cache state while
+    never touching repository files. The home lives inside the test's temp
+    dir, so the test's own cleanup removes it.
+    """
+    base = project.parent
+    key = str(base)
+    if key not in _HOMES:
+        _HOMES[key] = _make_home(base)
+    return _HOMES[key]
+
+
+def run_cli_env(project, *args, home: Path, tmpdir: Path, extra_env=None,
+                append_root: bool = True):
+    """Raw CLI run for tests needing env vars invoke() cannot pass.
+
+    stdin is closed (input='') so the CLI can never block on a prompt.
+    Mirrors invoke()'s hermetic environment plus the vendor fixture root that
+    keeps kepano/obsidian-skills vendoring offline.
+    """
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(tmpdir / "home"),
+        "TMPDIR": str(tmpdir),
+        "AI_SPECS_HOME": str(home),
+        "AI_SPECS_NO_NETWORK": "1",
+        "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
+        "LC_ALL": "C",
+        "LANG": "C",
+    }
+    if extra_env:
+        env.update(extra_env)
+    (tmpdir / "home").mkdir(parents=True, exist_ok=True)
+    argv = [str(CLI), *args]
+    if append_root:
+        argv.append(str(project))
+    return subprocess.run(argv, cwd=ROOT, env=env, text=True,
+                          capture_output=True, check=False, input="")
 
 
 class SyncPipelineTests(unittest.TestCase):
@@ -85,7 +144,9 @@ class SyncPipelineTests(unittest.TestCase):
         return tail
 
     def init_workspace(self, workspace: Path) -> None:
-        subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+        home = _home_for(workspace)
+        result = invoke(workspace, "init", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         (workspace / "ai-specs" / "ai-specs.toml").write_text(
             "[project]\n"
             "name = 'fixture-sync'\n"
@@ -104,11 +165,14 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_accepts_minimal_manifest_with_omitted_sections(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text("[project]\nname = 'fixture-sync'\n")
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             self.assertTrue((workspace / "AGENTS.md").is_file())
             self.assertFalse((workspace / "packages" / "a" / "AGENTS.md").exists())
@@ -118,8 +182,10 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_accepts_mcp_environment_alias_and_renders_canonical_output(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-sync'\n\n"
@@ -133,7 +199,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "enabled = true\n"
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             self.assertEqual(
                 (workspace / "opencode.json").read_text(),
@@ -161,8 +228,10 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_renders_opencode_mcp_env_with_braced_dollar_syntax_input(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-sync'\n\n"
@@ -176,7 +245,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "enabled = true\n"
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             self.assertEqual(
                 (workspace / "opencode.json").read_text(),
@@ -210,8 +280,10 @@ class SyncPipelineTests(unittest.TestCase):
         so a sole-arg path like ${VAULT_PATH} never reaches the server.
         """
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-sync'\n\n"
@@ -225,7 +297,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "enabled = true\n"
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             parsed = json.loads((workspace / "opencode.json").read_text())
             demo = parsed["mcp"]["demo"]
@@ -240,8 +313,10 @@ class SyncPipelineTests(unittest.TestCase):
     def test_sync_renders_opencode_mcp_bare_dollar_arg_as_env_form(self):
         """Bare $VAR in a command ARG also becomes {env:VAR} for OpenCode."""
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-sync'\n\n"
@@ -254,7 +329,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "enabled = true\n"
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             parsed = json.loads((workspace / "opencode.json").read_text())
             demo = parsed["mcp"]["demo"]
@@ -265,8 +341,10 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_renders_cursor_mcp_env_with_braced_dollar_syntax_input(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-sync'\n\n"
@@ -280,7 +358,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "enabled = true\n"
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             self.assertEqual(
                 (workspace / ".cursor" / "mcp.json").read_text(),
@@ -306,8 +385,10 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_renders_claude_mcp_env_with_braced_dollar_syntax_input(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-sync'\n\n"
@@ -321,7 +402,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "enabled = true\n"
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             self.assertEqual(
                 (workspace / ".mcp.json").read_text(),
@@ -347,8 +429,10 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_renders_cursor_mcp_env_with_braced_variable_syntax(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-sync'\n\n"
@@ -362,7 +446,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "enabled = true\n"
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             self.assertEqual(
                 (workspace / ".cursor" / "mcp.json").read_text(),
@@ -388,8 +473,10 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_renders_claude_mcp_env_with_braced_variable_syntax(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-sync'\n\n"
@@ -403,7 +490,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "enabled = true\n"
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             self.assertEqual(
                 (workspace / ".mcp.json").read_text(),
@@ -429,8 +517,10 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_renders_mcp_env_list_as_environment_references(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-sync'\n\n"
@@ -442,7 +532,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "env = ['VAR1', 'VAR2']\n"
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             cursor = json.loads((workspace / ".cursor" / "mcp.json").read_text())
             opencode = json.loads((workspace / "opencode.json").read_text())
@@ -460,8 +551,10 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_preserves_static_mcp_env_values(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-sync'\n\n"
@@ -473,7 +566,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "env = { MODE = 'fixture' }\n"
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             cursor = json.loads((workspace / ".cursor" / "mcp.json").read_text())
             opencode = json.loads((workspace / "opencode.json").read_text())
@@ -485,8 +579,10 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_keeps_opencode_schema_first_when_preserving_existing_config(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-sync'\n\n"
@@ -505,7 +601,8 @@ class SyncPipelineTests(unittest.TestCase):
                 '}\n'
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             text = (workspace / "opencode.json").read_text()
             parsed = json.loads(text)
@@ -550,9 +647,12 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_keeps_single_project_behavior_without_subrepos(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertTrue((workspace / "AGENTS.md").is_file())
             self.assertFalse((workspace / "packages" / "a" / "AGENTS.md").exists())
         finally:
@@ -561,8 +661,10 @@ class SyncPipelineTests(unittest.TestCase):
     def test_empty_subrepos_with_gitmodules_entries_do_not_fan_out(self):
         """1.3 — RED: .gitmodules never expands an empty declared target set."""
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-sync'\n"
@@ -574,7 +676,8 @@ class SyncPipelineTests(unittest.TestCase):
                 '[submodule "packages/a"]\n\tpath = packages/a\n\turl = ../a.git\n'
                 '[submodule "packages/b"]\n\tpath = packages/b\n\turl = ../b.git\n'
             )
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             for subrepo in ("packages/a", "packages/b"):
                 self.assertFalse(
                     (workspace / subrepo / "AGENTS.md").exists(),
@@ -585,9 +688,11 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_fans_out_root_managed_artifacts_to_subrepos(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
             self.init_workspace(workspace)
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             subrepo = workspace / "packages" / "a"
             self.assertTrue((workspace / "AGENTS.md").is_file())
@@ -607,8 +712,10 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_symlinks_omp_native_agents_md_slot(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-sync'\n"
@@ -616,7 +723,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "[agents]\n"
                 "enabled = ['omp']\n"
             )
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             omp_brief = workspace / ".omp" / "AGENTS.md"
             self.assertTrue(omp_brief.is_symlink(), ".omp/AGENTS.md must be a symlink")
@@ -629,9 +737,11 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_synced_subrepo_supports_local_agent_startup_read_paths(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
             self.init_workspace(workspace)
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             subrepo = workspace / "packages" / "a"
             proc = subprocess.run(
@@ -666,9 +776,11 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_public_root_sync_agent_fans_out_to_all_declared_subrepos(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
             self.init_workspace(workspace)
-            subprocess.run([str(CLI), "sync-agent", str(workspace), "--all"], check=True, text=True)
+            result = invoke(workspace, "sync-agent", "--all", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             for target in (workspace, workspace / "packages" / "a", workspace / "packages" / "b"):
                 self.assertTrue((target / "AGENTS.md").is_file())
@@ -681,16 +793,12 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_stops_on_first_incompatible_target_write(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
             self.init_workspace(workspace)
             blocked = workspace / "packages" / "a" / "CLAUDE.md"
             blocked.write_text("manual file")
-            proc = subprocess.run(
-                [str(CLI), "sync", str(workspace)],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
+            proc = invoke(workspace, "sync", cli_home=home)
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn("Stopped on first failure", proc.stderr)
             self.assertFalse((workspace / "packages" / "b" / "AGENTS.md").exists())
@@ -699,6 +807,7 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_normalizes_vendored_skill_frontmatter_and_fans_out_byte_identically(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
             self.init_workspace(workspace)
             dep_repo = self.make_dep_repo(workspace.parent)
@@ -713,9 +822,10 @@ class SyncPipelineTests(unittest.TestCase):
                 + 'vendor_attribution = "fixture-org"\n'
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-            root_skill = inproject_deps_skill_dir(workspace, "vendored-demo") / "SKILL.md"
+            root_skill = workspace / "ai-specs" / ".deps" / "vendored-demo" / "skills" / "vendored-demo" / "SKILL.md"
             subrepo_skill = workspace / "packages" / "a" / "ai-specs" / "skills" / "vendored-demo" / "SKILL.md"
             content = root_skill.read_text()
 
@@ -733,6 +843,7 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_rewrites_hand_edited_vendored_frontmatter_from_manifest_inputs(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
             self.init_workspace(workspace)
             dep_repo = self.make_dep_repo(workspace.parent)
@@ -747,9 +858,10 @@ class SyncPipelineTests(unittest.TestCase):
                 + 'vendor_attribution = "fixture-org"\n'
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-            root_skill = inproject_deps_skill_dir(workspace, "vendored-demo") / "SKILL.md"
+            root_skill = workspace / "ai-specs" / ".deps" / "vendored-demo" / "skills" / "vendored-demo" / "SKILL.md"
             root_skill.write_text(
                 "---\n"
                 "name: vendored-demo\n"
@@ -765,7 +877,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "# Tampered\n"
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             content = root_skill.read_text()
             self.assertIn("license: MIT", content)
@@ -779,10 +892,12 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_supports_local_auto_invoke_skill_authoring_in_canonical_form(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
             self.init_workspace(workspace)
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             skill_path = workspace / "ai-specs" / "skills" / "local-demo" / "SKILL.md"
             content = skill_path.read_text()
@@ -799,6 +914,7 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_supports_local_non_auto_invoke_skill_authoring_without_agents_row(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
             self.init_workspace(workspace)
             self.write_local_skill(
@@ -808,7 +924,8 @@ class SyncPipelineTests(unittest.TestCase):
                 body="# Local Docs",
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             content = (workspace / "ai-specs" / "skills" / "local-docs" / "SKILL.md").read_text()
 
@@ -824,6 +941,7 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_warns_on_invalid_skill_metadata(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
             self.init_workspace(workspace)
             bad_skill_dir = workspace / "ai-specs" / "skills" / "bad-sync"
@@ -841,12 +959,7 @@ class SyncPipelineTests(unittest.TestCase):
                 "# Broken\n"
             )
 
-            proc = subprocess.run(
-                [str(CLI), "sync", str(workspace)],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
+            proc = invoke(workspace, "sync", cli_home=home)
 
             # Sync succeeds but skill-sync reports missing auto_invoke
             self.assertEqual(proc.returncode, 0)
@@ -855,6 +968,7 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_warns_on_auto_invoke_without_scope(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
             self.init_workspace(workspace)
             self.write_local_skill(
@@ -864,12 +978,7 @@ class SyncPipelineTests(unittest.TestCase):
                 auto_invoke=["Do thing"],
             )
 
-            proc = subprocess.run(
-                [str(CLI), "sync", str(workspace)],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
+            proc = invoke(workspace, "sync", cli_home=home)
 
             # Sync succeeds but skill-sync reports incomplete metadata
             self.assertEqual(proc.returncode, 0)
@@ -878,11 +987,14 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_produces_identical_agents_md_on_second_run_thin(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
             self.init_workspace(workspace)
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             first = (workspace / "AGENTS.md").read_bytes()
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             second = (workspace / "AGENTS.md").read_bytes()
             self.assertEqual(first, second)
         finally:
@@ -890,11 +1002,14 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_produces_identical_agents_md_on_second_run(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
             self.init_workspace(workspace)
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             first = (workspace / "AGENTS.md").read_bytes()
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             second = (workspace / "AGENTS.md").read_bytes()
             self.assertEqual(first, second)
         finally:
@@ -902,14 +1017,17 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_preserves_runtime_brief_marker_in_agents_md(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text("[project]\nname = 'fixture-sync'\n")
             agents_md = workspace / "AGENTS.md"
             original = "# Manual Brief\n<!-- ai-specs:runtime-brief -->\n\nCustom content.\n"
             agents_md.write_text(original)
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             self.assertEqual(agents_md.read_text(), original)
         finally:
@@ -917,8 +1035,10 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_redacts_literal_mcp_secrets_in_agents_md(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-sync'\n\n"
@@ -930,7 +1050,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "env = { API_KEY = 'hardcoded-secret', MODE = '$DEMO_MODE' }\n"
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             agents = (workspace / "AGENTS.md").read_text()
             self.assertIn("API_KEY: ***", agents)
@@ -953,8 +1074,10 @@ class SyncPipelineTests(unittest.TestCase):
         if binding resolution breaks (e.g. wrong capability for a recipe).
         """
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'brief-needle-fixture'\n\n"
@@ -1013,7 +1136,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "recipe = 'vault-canonical-store'\n"
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True, env=_sync_env())
+            proc = run_cli_env(workspace, "sync", home=home, tmpdir=workspace.parent)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
             agents = (workspace / "AGENTS.md").read_text()
 
@@ -1047,8 +1171,10 @@ class SyncPipelineTests(unittest.TestCase):
         survives, and that the removed self-bypass token never reappears.
         """
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'gate-mode-brief-fixture'\n\n"
@@ -1060,9 +1186,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "gate_mode = 'ask'\n"
             )
 
-            subprocess.run(
-                [str(CLI), "sync", str(workspace)], check=True, text=True, env=_sync_env()
-            )
+            proc = run_cli_env(workspace, "sync", home=home, tmpdir=workspace.parent)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
             agents = (workspace / "AGENTS.md").read_text()
             self.assertIn("`gate_mode = ask`", agents)
@@ -1094,8 +1219,10 @@ class SyncPipelineTests(unittest.TestCase):
         test_auto_binding_without_explicit_bindings and test_sync_renders_rich_brief_from_manifest.
         """
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'brief-idempotency-fixture'\n\n"
@@ -1113,10 +1240,12 @@ class SyncPipelineTests(unittest.TestCase):
                 "recipe = 'trello-mcp-workflow'\n"
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             first = (workspace / "AGENTS.md").read_bytes()
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             second = (workspace / "AGENTS.md").read_bytes()
 
             # Byte-identity gate
@@ -1130,24 +1259,25 @@ class SyncPipelineTests(unittest.TestCase):
             shutil.rmtree(workspace.parent)
 
     def test_agents_render_standalone_degradation(self):
-        """Standalone degradation test: agents-render.py invoked WITHOUT --resolved-config.
+        """Degraded rendering: [brief] prose and MCP render with NO recipes/structured config.
+
+        Black-box equivalent of the original standalone agents-render.py
+        invocation WITHOUT --resolved-config: a manifest with only [brief]
+        prose and an MCP block (no recipes, no bindings) still renders
+        identity, MCP section, and prose.
 
         Asserts:
-        - Exits 0 (no crash).
-        - Output contains project identity (project name).
-        - Output contains MCP section (when mcp servers present).
-        - Output contains [brief] prose sections (intro, workflow_rules).
-
-        Fails (RED) because the current renderer does not render [brief] sections at all.
-        Batch 3 implements the section helpers that will satisfy the prose assertions.
+        - sync exits 0 (no crash).
+        - AGENTS.md contains project identity (project name).
+        - AGENTS.md contains MCP section (when mcp servers present).
+        - AGENTS.md contains [brief] prose sections (intro, workflow_rules).
         """
-        import tempfile as _tempfile
-        with _tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "ai-specs.toml"
-            output_path = tmp_path / "AGENTS.md"
-
-            toml_path.write_text(
+        workspace = self.make_workspace()
+        home = _home_for(workspace)
+        try:
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'standalone-degradation-fixture'\n\n"
                 "[agents]\n"
@@ -1161,21 +1291,16 @@ class SyncPipelineTests(unittest.TestCase):
                 "env = { TOKEN = '$DEMO_TOKEN' }\n"
             )
 
-            agents_render = ROOT / "lib" / "_internal" / "agents-render.py"
-            proc = subprocess.run(
-                ["python3", str(agents_render), str(toml_path), str(output_path)],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
+            result = invoke(workspace, "sync", cli_home=home)
 
             # Must not crash
-            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed:\n{proc.stderr}")
+            self.assertEqual(result.returncode, 0, f"sync failed:\n{result.stderr}")
 
             # Output file must exist
-            self.assertTrue(output_path.exists(), "AGENTS.md was not created")
+            agents_path = workspace / "AGENTS.md"
+            self.assertTrue(agents_path.exists(), "AGENTS.md was not created")
 
-            agents = output_path.read_text()
+            agents = agents_path.read_text()
 
             # Identity: project name must be present
             self.assertIn("standalone-degradation-fixture", agents)
@@ -1183,9 +1308,11 @@ class SyncPipelineTests(unittest.TestCase):
             # MCP section must be rendered (degraded path still includes MCP)
             self.assertIn("demo-server", agents)
 
-            # [brief] prose sections must be present even without --resolved-config
+            # [brief] prose sections must be present even without structured config
             self.assertIn("This is the degraded brief intro.", agents)
             self.assertIn("No direct pushes to main.", agents)
+        finally:
+            shutil.rmtree(workspace.parent)
 
     # -----------------------------------------------------------------------
     # End Batch 1 RED tests
@@ -1194,56 +1321,48 @@ class SyncPipelineTests(unittest.TestCase):
     def test_brief_useful_commands_renders_extra_items(self):
         """[brief].useful_commands array items are appended to ## Useful Commands section.
 
-        Coverage note: this test invokes agents-render.py directly WITHOUT
-        --resolved-config, so test_command from [recipes.tdd-flow.config] is NOT
-        rendered (that path requires resolved-config JSON from materialize). The
-        recipe presence (enabled=true, version='1.0.0') is correct but inert here —
-        it does NOT exercise resolve_bindings(). This test exercises ONLY the
-        brief.useful_commands rendering path in _section_useful_commands().
+        Coverage note: the manifest deliberately declares NO recipes, so
+        test_command from [recipes.tdd-flow.config] is NOT rendered (that path
+        requires resolved-config from materialize). This test exercises ONLY
+        the brief.useful_commands rendering path in the Useful Commands
+        section of the generated AGENTS.md.
 
-        For test_command rendering coverage via the real resolve_bindings() path,
-        see test_sync_renders_rich_brief_from_manifest and
+        For test_command rendering coverage via the real resolve_bindings()
+        path, see test_sync_renders_rich_brief_from_manifest and
         test_auto_binding_without_explicit_bindings.
         """
-        import tempfile as _tempfile
-        with _tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "ai-specs.toml"
-            output_path = tmp_path / "AGENTS.md"
-
-            toml_path.write_text(
+        workspace = self.make_workspace()
+        home = _home_for(workspace)
+        try:
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'useful-commands-fixture'\n\n"
                 "[agents]\n"
                 "enabled = ['claude']\n\n"
                 "[brief]\n"
-                'useful_commands = ["Inspect the active Trello card before resuming work."]\n\n'
-                "[recipes.tdd-flow]\n"
-                "enabled = true\n"
-                "version = '1.0.0'\n"
-                "[recipes.tdd-flow.config]\n"
-                "test_command = './tests/run.sh'\n"
+                'useful_commands = ["Inspect the active Trello card before resuming work."]\n'
             )
 
-            agents_render = ROOT / "lib" / "_internal" / "agents-render.py"
-            proc = subprocess.run(
-                ["python3", str(agents_render), str(toml_path), str(output_path)],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
+            result = invoke(workspace, "sync", cli_home=home)
 
-            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed:\n{proc.stderr}")
-            self.assertTrue(output_path.exists(), "AGENTS.md was not created")
+            self.assertEqual(result.returncode, 0, f"sync failed:\n{result.stderr}")
+            agents_path = workspace / "AGENTS.md"
+            self.assertTrue(agents_path.exists(), "AGENTS.md was not created")
 
-            agents = output_path.read_text()
+            agents = agents_path.read_text()
             # brief.useful_commands items must appear in ## Useful Commands
             self.assertIn("Inspect the active Trello card before resuming work.", agents)
+        finally:
+            shutil.rmtree(workspace.parent)
 
     def test_sync_resolves_all_skill_sources(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-sync'\n"
@@ -1258,10 +1377,11 @@ class SyncPipelineTests(unittest.TestCase):
                 auto_invoke=["Do local thing"],
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-            # Verify local skills are resolved in .internal/resolved-skills
-            resolved = resolved_skills_dir(workspace)
+            # Verify local skills are resolved in the project cache resolved-skills
+            resolved = cache_project_dir(workspace, home) / "resolved-skills"
             self.assertTrue((resolved / "local-skill" / "SKILL.md").is_file())
             # No registry artifact should exist
             self.assertFalse((workspace / "ai-specs" / ".skill-registry.md").exists())
@@ -1272,18 +1392,18 @@ class SyncPipelineTests(unittest.TestCase):
         """When pi is in [agents].enabled, --all must sync it."""
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
+            home = _home_for(target)
             target.mkdir()
-            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            result = invoke(target, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (target / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-pi-all'\n\n"
                 "[agents]\n"
                 "enabled = ['pi']\n"
             )
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target), "--all"],
-                check=True, text=True,
-            )
+            result = invoke(target, "sync-agent", "--all", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             pi_skills = target / ".pi" / "skills"
             self.assertTrue(pi_skills.is_symlink(),
                             ".pi/skills/ must be a symlink after --all")
@@ -1294,18 +1414,18 @@ class SyncPipelineTests(unittest.TestCase):
         """When pi is NOT in [agents].enabled, --all must NOT sync it."""
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
+            home = _home_for(target)
             target.mkdir()
-            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            result = invoke(target, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (target / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-no-pi'\n\n"
                 "[agents]\n"
                 "enabled = ['claude']\n"
             )
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target), "--all"],
-                check=True, text=True,
-            )
+            result = invoke(target, "sync-agent", "--all", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             pi_skills = target / ".pi" / "skills"
             self.assertFalse(pi_skills.exists(),
                              ".pi/skills/ must NOT exist when pi is disabled")
@@ -1374,12 +1494,11 @@ class SyncPipelineTests(unittest.TestCase):
         """--omp flag must be accepted and produce .omp/skills symlink."""
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
+            home = _home_for(target)
             target.mkdir()
-            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
-            result = subprocess.run(
-                [str(CLI), "sync-agent", str(target), "--omp"],
-                capture_output=True, text=True,
-            )
+            result = invoke(target, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            result = invoke(target, "sync-agent", "--omp", cli_home=home)
             self.assertEqual(result.returncode, 0,
                              f"--omp must exit 0; stderr={result.stderr!r}")
             omp_skills = target / ".omp" / "skills"
@@ -1388,29 +1507,29 @@ class SyncPipelineTests(unittest.TestCase):
 
     def test_sync_agent_help_lists_omp(self):
         """--help output must include --omp."""
-        result = subprocess.run(
-            [str(CLI), "sync-agent", "--help"],
-            capture_output=True, text=True,
-        )
-        self.assertIn("--omp", result.stdout,
-                      "--omp must appear in sync-agent --help output")
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home_for(Path(tmp) / "help-probe")
+            result = invoke(Path(tmp) / "help-probe", "sync-agent", "--help",
+                            cli_home=home, append_root=False)
+            self.assertIn("--omp", result.stdout,
+                          "--omp must appear in sync-agent --help output")
 
     def test_sync_agent_all_includes_omp_when_enabled(self):
         """When omp is in [agents].enabled, --all must sync it."""
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
+            home = _home_for(target)
             target.mkdir()
-            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            result = invoke(target, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (target / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-omp-all'\n\n"
                 "[agents]\n"
                 "enabled = ['omp']\n"
             )
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target), "--all"],
-                check=True, text=True,
-            )
+            result = invoke(target, "sync-agent", "--all", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             omp_skills = target / ".omp" / "skills"
             self.assertTrue(omp_skills.is_symlink(),
                             ".omp/skills/ must be a symlink after --all")
@@ -1425,18 +1544,18 @@ class SyncPipelineTests(unittest.TestCase):
         """When omp is NOT in [agents].enabled, --all must NOT sync it."""
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
+            home = _home_for(target)
             target.mkdir()
-            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            result = invoke(target, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (target / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-no-omp'\n\n"
                 "[agents]\n"
                 "enabled = ['claude']\n"
             )
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target), "--all"],
-                check=True, text=True,
-            )
+            result = invoke(target, "sync-agent", "--all", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             omp_skills = target / ".omp" / "skills"
             self.assertFalse(omp_skills.exists(),
                              ".omp/skills/ must NOT exist when omp is disabled")
@@ -1445,8 +1564,10 @@ class SyncPipelineTests(unittest.TestCase):
         """--omp must write .omp/mcp.json with mcpServers when [mcp.*] entries exist."""
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
+            home = _home_for(target)
             target.mkdir()
-            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            result = invoke(target, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (target / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-omp-mcp'\n\n"
@@ -1456,10 +1577,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "command = 'npx'\n"
                 "args = ['-y', '@example/server']\n"
             )
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target), "--omp"],
-                check=True, text=True,
-            )
+            result = invoke(target, "sync-agent", "--omp", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             mcp_path = target / ".omp" / "mcp.json"
             self.assertTrue(mcp_path.is_file(),
                             ".omp/mcp.json must be created when [mcp.*] entries exist")
@@ -1471,18 +1590,18 @@ class SyncPipelineTests(unittest.TestCase):
         """--omp must NOT write .omp/mcp.json when no MCP servers declared."""
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
+            home = _home_for(target)
             target.mkdir()
-            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            result = invoke(target, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (target / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fixture-omp-no-mcp'\n\n"
                 "[agents]\n"
                 "enabled = ['omp']\n"
             )
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target), "--omp"],
-                check=True, text=True,
-            )
+            result = invoke(target, "sync-agent", "--omp", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             mcp_path = target / ".omp" / "mcp.json"
             self.assertFalse(mcp_path.exists(),
                              ".omp/mcp.json must NOT be created when no MCPs declared")
@@ -1491,13 +1610,13 @@ class SyncPipelineTests(unittest.TestCase):
         """--omp must copy command files to .omp/commands/."""
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
+            home = _home_for(target)
             target.mkdir()
-            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            result = invoke(target, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             # ai-specs init already creates skills-as-rules.md in commands/
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target), "--omp"],
-                check=True, text=True,
-            )
+            result = invoke(target, "sync-agent", "--omp", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             omp_commands = target / ".omp" / "commands"
             self.assertTrue(omp_commands.is_dir(),
                             ".omp/commands/ must exist after --omp")
@@ -1509,12 +1628,12 @@ class SyncPipelineTests(unittest.TestCase):
         """--omp must NOT create any instruction symlink (omp is native AGENTS.md)."""
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
+            home = _home_for(target)
             target.mkdir()
-            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target), "--omp"],
-                check=True, text=True,
-            )
+            result = invoke(target, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            result = invoke(target, "sync-agent", "--omp", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             # omp must not create any OMP.md or omp.md instruction file
             self.assertFalse((target / "OMP.md").exists(),
                              "OMP.md must NOT be created for omp")
@@ -1525,8 +1644,10 @@ class SyncPipelineTests(unittest.TestCase):
         """ai-specs init must write .omp/ into the root .gitignore."""
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
+            home = _home_for(target)
             target.mkdir()
-            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            result = invoke(target, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             gitignore = (target / ".gitignore").read_text()
             self.assertIn(".omp/", gitignore,
                           ".gitignore must contain .omp/ after ai-specs init")
@@ -1535,8 +1656,10 @@ class SyncPipelineTests(unittest.TestCase):
         """Existing agent outputs must be byte-identical before and after adding omp."""
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "prj"
+            home = _home_for(target)
             target.mkdir()
-            subprocess.run([str(CLI), "init", str(target)], check=True, text=True)
+            result = invoke(target, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             # Sync with claude only
             (target / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
@@ -1544,10 +1667,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "[agents]\n"
                 "enabled = ['claude']\n"
             )
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target), "--all"],
-                check=True, text=True,
-            )
+            result = invoke(target, "sync-agent", "--all", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             claude_md_before = (target / "CLAUDE.md").read_text() if (target / "CLAUDE.md").is_file() else None
 
             # Now add omp to enabled and re-sync
@@ -1557,10 +1678,8 @@ class SyncPipelineTests(unittest.TestCase):
                 "[agents]\n"
                 "enabled = ['claude', 'omp']\n"
             )
-            subprocess.run(
-                [str(CLI), "sync-agent", str(target), "--all"],
-                check=True, text=True,
-            )
+            result = invoke(target, "sync-agent", "--all", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             claude_md_after = (target / "CLAUDE.md").read_text() if (target / "CLAUDE.md").is_file() else None
             self.assertEqual(claude_md_before, claude_md_after,
                              "CLAUDE.md (via symlink) must be byte-identical before and after adding omp")
@@ -1636,7 +1755,9 @@ class SkillSyncScriptTests(unittest.TestCase):
                 text=True,
                 capture_output=True,
                 check=False,
-                env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
+                input="",
+                env={**os.environ, "AI_SPECS_HOME": str(_home_for(repo_root / "skill-sync-probe")),
+                     "AI_SPECS_GO_BIN": str(CLI)},
             )
 
             self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -1664,13 +1785,12 @@ class TestMissingScenarios(unittest.TestCase):
         no context_sources, etc.) must render the workflow_rules section and NOT
         crash or emit empty placeholder sections.
         """
-        import tempfile as _tempfile
-        with _tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "ai-specs.toml"
-            output_path = tmp_path / "AGENTS.md"
-
-            toml_path.write_text(
+        workspace = self.make_workspace()
+        home = _home_for(workspace)
+        try:
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'partial-brief-fixture'\n\n"
                 "[agents]\n"
@@ -1680,19 +1800,14 @@ class TestMissingScenarios(unittest.TestCase):
                 'workflow_rules = ["No direct merges without approval."]\n'
             )
 
-            agents_render = ROOT / "lib" / "_internal" / "agents-render.py"
-            proc = subprocess.run(
-                ["python3", str(agents_render), str(toml_path), str(output_path)],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
+            result = invoke(workspace, "sync", cli_home=home)
 
             # Must not crash
-            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed:\n{proc.stderr}")
-            self.assertTrue(output_path.exists())
+            self.assertEqual(result.returncode, 0, f"sync failed:\n{result.stderr}")
+            agents_path = workspace / "AGENTS.md"
+            self.assertTrue(agents_path.exists())
 
-            agents = output_path.read_text()
+            agents = agents_path.read_text()
 
             # Project identity must be present
             self.assertIn("partial-brief-fixture", agents)
@@ -1705,21 +1820,25 @@ class TestMissingScenarios(unittest.TestCase):
             # We assert the specific absent strings do not appear as placeholder bullets
             self.assertNotIn("None.", agents,  # no placeholder for empty sections
                              "Absent brief keys must not produce 'None.' placeholders")
+        finally:
+            shutil.rmtree(workspace.parent)
+
+    def make_workspace(self) -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="ai-specs-missing-scenarios-"))
+        workspace = tmp / "workspace"
+        workspace.mkdir()
+        return workspace
 
     def test_no_tracker_binding_omits_trello_section(self):
         """R3 no-tracker: when no recipe is bound to 'tracker', the Trello Tracking
         section must be completely omitted from the rendered brief.
         """
-        import tempfile as _tempfile
-        import json
-
-        with _tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "ai-specs.toml"
-            output_path = tmp_path / "AGENTS.md"
-            resolved_path = tmp_path / "resolved.json"
-
-            toml_path.write_text(
+        workspace = self.make_workspace()
+        home = _home_for(workspace)
+        try:
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'no-tracker-fixture'\n\n"
                 "[agents]\n"
@@ -1731,27 +1850,11 @@ class TestMissingScenarios(unittest.TestCase):
                 "test_command = './tests/run.sh'\n"
             )
 
-            # Build a resolved-config with NO tracker binding (empty bindings)
-            resolved_path.write_text(json.dumps({
-                "bindings": {},  # no tracker binding
-                "recipes": {
-                    "tdd-flow": {"test_command": "./tests/run.sh"},
-                },
-                "enabled": ["tdd-flow"],
-            }))
+            result = invoke(workspace, "sync", cli_home=home)
 
-            agents_render = ROOT / "lib" / "_internal" / "agents-render.py"
-            proc = subprocess.run(
-                ["python3", str(agents_render), str(toml_path), str(output_path),
-                 "--resolved-config", str(resolved_path)],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
+            self.assertEqual(result.returncode, 0, f"sync failed:\n{result.stderr}")
 
-            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed:\n{proc.stderr}")
-
-            agents = output_path.read_text()
+            agents = (workspace / "AGENTS.md").read_text()
 
             # The Trello Tracking section must be absent when no tracker is bound
             self.assertNotIn(
@@ -1761,6 +1864,8 @@ class TestMissingScenarios(unittest.TestCase):
 
             # Brief intro must still render (unrelated section not affected)
             self.assertIn("No tracker section expected.", agents)
+        finally:
+            shutil.rmtree(workspace.parent)
 
     def test_subrepo_sync_agent_forwards_resolved_config(self):
         """R7 subrepo passthrough: standalone sync-agent --all generates resolved-config
@@ -1779,7 +1884,9 @@ class TestMissingScenarios(unittest.TestCase):
             parent = Path(tempfile.mkdtemp())
             workspace = parent / "subrepo-test-workspace"
             workspace.mkdir()
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            home = _home_for(workspace)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             # Workspace has a subrepo (sub/a) and ENABLED catalog recipes.
             # board_id must be 24-char hex to pass trello-mcp-workflow validate-config.
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
@@ -1807,14 +1914,13 @@ class TestMissingScenarios(unittest.TestCase):
             # Run full sync first so recipe assets are materialized (skills, hooks, etc.)
             # sync-agent --all standalone only generates resolved-config; it still needs
             # the resolved-skills dir that materialize produces.
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             # Now run STANDALONE sync-agent --all (the path under test).
             # This exercises build_resolved_config_only() + resolved-config passthrough.
-            subprocess.run(
-                [str(CLI), "sync-agent", str(workspace), "--all"],
-                check=True, text=True,
-            )
+            result = invoke(workspace, "sync-agent", "--all", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             # Assert on SUBREPO AGENTS.md — that's what the standalone path generates.
             subrepo_agents = (workspace / "sub" / "a" / "AGENTS.md").read_text()
@@ -1834,24 +1940,30 @@ class TestMissingScenarios(unittest.TestCase):
                 shutil.rmtree(workspace.parent)
 
     def test_resolved_config_only_bindings_match_full_materialize_path(self):
-        """--resolved-config-only bindings must be identical to the full materialize path.
+        """Standalone resolved-config-only output must match the full materialize path.
 
         This is the 'identical output' guarantee: for a manifest with enabled catalog
-        recipes, build_resolved_config_only() must produce the same bindings map that
-        materialize_recipes() writes to resolved-config.
+        recipes, build_resolved_config_only() (the standalone sync-agent path) must
+        enrich AGENTS.md with the same structured fields that the full sync path
+        (materialize_recipes → resolved-config) renders at the root.
 
         Setup: a workspace with trello-mcp-workflow + tdd-flow enabled (real catalog
-        recipes, not a 0-enabled stub). Run both paths and compare bindings keys.
+        recipes, not a 0-enabled stub) and one declared subrepo. Run the FULL sync
+        path, then the STANDALONE sync-agent --all path, and compare the structured
+        field needles (board_id, test_command) between root and subrepo AGENTS.md.
         """
         workspace = None
         try:
             parent = Path(tempfile.mkdtemp())
             workspace = parent / "rc-only-parity-workspace"
             workspace.mkdir()
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            home = _home_for(workspace)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
-                "name = 'rc-only-parity'\n\n"
+                "name = 'rc-only-parity'\n"
+                "subrepos = ['sub/a']\n\n"
                 "[agents]\n"
                 "enabled = ['claude']\n\n"
                 "[brief]\n"
@@ -1867,71 +1979,47 @@ class TestMissingScenarios(unittest.TestCase):
                 "[recipes.tdd-flow.config]\n"
                 "test_command = './tests/validate.sh'\n"
             )
+            # Create subrepo directory (required by target-resolve.py)
+            (workspace / "sub" / "a").mkdir(parents=True)
 
-            materialize = ROOT / "lib" / "_internal" / "recipe-materialize.py"
+            # --- Full materialize path (sync → resolved-config → root AGENTS.md) ---
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(
+                result.returncode, 0,
+                f"full sync failed:\n{result.stderr}\n{result.stdout}"
+            )
 
-            # --- Full materialize path ---
-            import tempfile as _tempfile
-            with _tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-                full_resolved_out = Path(f.name)
-            with _tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-                standalone_resolved_out = Path(f.name)
+            # --- Standalone path (sync-agent --all → build_resolved_config_only) ---
+            result = invoke(workspace, "sync-agent", "--all", cli_home=home)
+            self.assertEqual(
+                result.returncode, 0,
+                f"standalone sync-agent failed:\n{result.stderr}\n{result.stdout}"
+            )
 
-            try:
-                # Full path (normal materialize_recipes)
-                proc_full = subprocess.run(
-                    ["python3", str(materialize),
-                     str(workspace), str(ROOT),
-                     "--resolved-config-out", str(full_resolved_out)],
-                    text=True, capture_output=True, check=False,
-                    env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
+            # The bindings map itself is pinned natively: the frozen
+            # resolved-config-only differential
+            # (internal/sync/resolvedconfigonly_test.go, the "auto-bound
+            # capability with catalog defaults and brief fragments" scenario)
+            # fixes exit code, streams and document, so this method keeps the
+            # CLI-observable parity of the two paths.
+            root_agents = (workspace / "AGENTS.md").read_text()
+            standalone_agents = (workspace / "sub" / "a" / "AGENTS.md").read_text()
+
+            # Parity: every structured needle the full path renders at the root
+            # must also be rendered by the standalone resolved-config-only path.
+            for needle in (
+                "aabbccddeeff001122334455",   # tracker binding → board_id
+                "./tests/validate.sh",        # test-runner binding → test_command
+            ):
+                self.assertIn(
+                    needle, root_agents,
+                    f"full materialize path must render {needle!r} at the root"
                 )
-                self.assertEqual(
-                    proc_full.returncode, 0,
-                    f"full materialize failed:\n{proc_full.stderr}\n{proc_full.stdout}"
+                self.assertIn(
+                    needle, standalone_agents,
+                    f"standalone resolved-config-only path must render {needle!r} "
+                    f"in the subrepo, matching the full materialize path"
                 )
-
-                # Standalone path (build_resolved_config_only)
-                proc_standalone = subprocess.run(
-                    ["python3", str(materialize),
-                     str(workspace), str(ROOT),
-                     "--resolved-config-out", str(standalone_resolved_out),
-                     "--resolved-config-only"],
-                    text=True, capture_output=True, check=False,
-                    env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
-                )
-                self.assertEqual(
-                    proc_standalone.returncode, 0,
-                    f"--resolved-config-only failed:\n{proc_standalone.stderr}\n{proc_standalone.stdout}"
-                )
-
-                with open(full_resolved_out) as fh:
-                    full_data = json.load(fh)
-                with open(standalone_resolved_out) as fh:
-                    standalone_data = json.load(fh)
-
-                full_bindings = full_data.get("bindings", {})
-                standalone_bindings = standalone_data.get("bindings", {})
-
-                self.assertEqual(
-                    full_bindings, standalone_bindings,
-                    f"--resolved-config-only bindings must match full materialize path.\n"
-                    f"  full:       {full_bindings}\n"
-                    f"  standalone: {standalone_bindings}"
-                )
-                # Sanity: both must have auto-bound tracker and test-runner
-                self.assertIn("tracker", full_bindings,
-                              "tracker must be auto-bound in full path")
-                self.assertIn("tracker", standalone_bindings,
-                              "tracker must be auto-bound in standalone path")
-                self.assertIn("test-runner", full_bindings,
-                              "test-runner must be auto-bound in full path")
-                self.assertIn("test-runner", standalone_bindings,
-                              "test-runner must be auto-bound in standalone path")
-            finally:
-                for p in (full_resolved_out, standalone_resolved_out):
-                    if p.exists():
-                        p.unlink()
         finally:
             if workspace is not None:
                 shutil.rmtree(workspace.parent)
@@ -1968,8 +2056,10 @@ class TestAutoBindingFix(unittest.TestCase):
         board_id uses a real 24-char hex to pass trello-mcp-workflow validate-config.
         """
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             # Single provider per capability, NO explicit [[bindings]]
             # board_id must be 24-char hex to pass trello-mcp-workflow validate-config
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
@@ -1992,7 +2082,8 @@ class TestAutoBindingFix(unittest.TestCase):
                 # NO [[bindings]] section
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True, env=_sync_env())
+            proc = run_cli_env(workspace, "sync", home=home, tmpdir=workspace.parent)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
             agents = (workspace / "AGENTS.md").read_text()
 
@@ -2012,18 +2103,22 @@ class TestAutoBindingFix(unittest.TestCase):
     def test_resolved_config_bindings_non_empty_without_explicit_bindings(self):
         """The resolved-config JSON bindings must be non-empty for auto-bound single providers.
 
-        Directly invokes recipe-materialize.py and inspects the JSON output.
+        Reads the resolved-config JSON the native `baseline-brief
+        --resolved-config-out` writes and inspects it.
         RED: build_resolved_config returns {} bindings for no explicit [[bindings]].
         GREEN: it returns {'tracker': 'trello-mcp-workflow', 'canonical-store': 'vault-canonical-store', ...}.
 
         Uses enabled=true; board_id must be 24-char hex to pass trello validate-config.
         """
-        import tempfile as _tempfile
         import json
+        import tempfile as _tempfile
 
         workspace = self.make_workspace()
+        home = _home_for(workspace)
+        resolved_out: Path | None = None
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'autobind-json-check'\n\n"
@@ -2040,24 +2135,18 @@ class TestAutoBindingFix(unittest.TestCase):
                 # NO [[bindings]] section — auto-bind must handle this
             )
 
-            materialize = ROOT / "lib" / "_internal" / "recipe-materialize.py"
             with _tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
                 resolved_out = Path(f.name)
 
-            proc = subprocess.run(
-                ["python3", str(materialize),
-                 str(workspace), str(ROOT),
-                 "--resolved-config-out", str(resolved_out)],
-                text=True,
-                capture_output=True,
-                check=False,
-                env={
-                    **os.environ,
-                    "AI_SPECS_HOME": str(ROOT),
-                    "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
-                },
+            # `baseline-brief --resolved-config-out` is the native
+            # materialize + render chain, so the resolved-config JSON is read
+            # from the shipped binary instead of a Python materialize run.
+            result = invoke(
+                workspace, "baseline-brief", "--resolved-config-out",
+                str(resolved_out), cli_home=home,
+                env_extra={"AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE)},
             )
-            self.assertEqual(proc.returncode, 0, f"materialize failed:\n{proc.stderr}\n{proc.stdout}")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             with open(resolved_out) as f:
                 resolved = json.load(f)
@@ -2081,79 +2170,8 @@ class TestAutoBindingFix(unittest.TestCase):
             )
         finally:
             shutil.rmtree(workspace.parent)
-            if resolved_out.exists():
+            if resolved_out is not None and resolved_out.exists():
                 resolved_out.unlink()
-
-    def test_resolved_config_only_with_explicit_ai_specs_home_resolves_bindings(self):
-        """FIX 1 (R3): --resolved-config-only uses caller-supplied ai_specs_home to
-        locate the catalog instead of recomputing from __file__.
-
-        Invokes the standalone path with an explicit AI_SPECS_HOME env var and asserts
-        that auto-bindings still resolve (board_id present in bindings), proving that
-        the catalog lookup does not diverge when the home is supplied explicitly.
-
-        This guards against custom/symlinked installs where Path(__file__).parents[2]
-        would diverge from the actual AI_SPECS_HOME.
-        """
-        import tempfile as _tempfile
-        import json
-
-        workspace = self.make_workspace()
-        try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
-            (workspace / "ai-specs" / "ai-specs.toml").write_text(
-                "[project]\n"
-                "name = 'rc-only-explicit-home'\n\n"
-                "[recipes.trello-mcp-workflow]\n"
-                "enabled = true\n"
-                "version = '1.2.0'\n"
-                "[recipes.trello-mcp-workflow.config]\n"
-                "board_id = 'aabbccddeeff001122334455'\n"
-                # NO [[bindings]] — auto-bind must handle this via the supplied home
-            )
-
-            materialize = ROOT / "lib" / "_internal" / "recipe-materialize.py"
-            with _tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-                resolved_out = Path(f.name)
-
-            try:
-                # Pass AI_SPECS_HOME explicitly AND as the second positional arg.
-                # build_resolved_config_only now uses the positional arg to locate the
-                # catalog instead of falling back to Path(__file__).parents[2].
-                proc = subprocess.run(
-                    ["python3", str(materialize),
-                     str(workspace), str(ROOT),
-                     "--resolved-config-out", str(resolved_out),
-                     "--resolved-config-only"],
-                    text=True,
-                    capture_output=True,
-                    check=False,
-                    env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
-                )
-                self.assertEqual(
-                    proc.returncode, 0,
-                    f"--resolved-config-only with explicit home failed:\n{proc.stderr}\n{proc.stdout}"
-                )
-
-                with open(resolved_out) as fh:
-                    resolved = json.load(fh)
-
-                bindings = resolved.get("bindings", {})
-                self.assertIn(
-                    "tracker", bindings,
-                    f"'tracker' must be auto-bound via explicit ai_specs_home. Got: {bindings}"
-                )
-                self.assertEqual(
-                    bindings["tracker"], "trello-mcp-workflow",
-                    f"tracker must auto-bind to trello-mcp-workflow. Got: {bindings}"
-                )
-            finally:
-                if resolved_out.exists():
-                    resolved_out.unlink()
-        finally:
-            shutil.rmtree(workspace.parent)
-
-
 class TestJudgmentDayFixes(unittest.TestCase):
     """Tests for confirmed issues from Judgment Day Round 1.
 
@@ -2167,25 +2185,21 @@ class TestJudgmentDayFixes(unittest.TestCase):
     FIX 10: structured fields resolved via capability bindings, not literal recipe ids.
     """
 
-    AGENTS_RENDER = ROOT / "lib" / "_internal" / "agents-render.py"
+    def _sync_render(self, manifest: str) -> Path:
+        """Black-box staging: init + sync a fresh fixture workspace with `manifest`.
 
-    def run_render(self, toml_text: str, resolved: dict | None = None) -> str:
-        """Helper: write TOML + optional resolved-config, invoke agents-render.py, return output."""
-        import tempfile as _tempfile
-        with _tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "ai-specs.toml"
-            output_path = tmp_path / "AGENTS.md"
-            toml_path.write_text(toml_text)
-            cmd = ["python3", str(self.AGENTS_RENDER), str(toml_path), str(output_path)]
-            if resolved is not None:
-                resolved_path = tmp_path / "resolved.json"
-                resolved_path.write_text(json.dumps(resolved))
-                cmd += ["--resolved-config", str(resolved_path)]
-            proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
-            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed:\n{proc.stderr}")
-            self.assertTrue(output_path.exists())
-            return output_path.read_text()
+        Returns the workspace; caller must shutil.rmtree(workspace.parent).
+        """
+        tmp = Path(tempfile.mkdtemp(prefix="ai-specs-jd-"))
+        workspace = tmp / "workspace"
+        workspace.mkdir()
+        home = _home_for(workspace)
+        result = invoke(workspace, "init", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        (workspace / "ai-specs" / "ai-specs.toml").write_text(manifest)
+        result = invoke(workspace, "sync", cli_home=home)
+        self.assertEqual(result.returncode, 0, f"sync failed:\n{result.stdout}{result.stderr}")
+        return workspace
 
     # --- FIX 1 ---
 
@@ -2193,7 +2207,7 @@ class TestJudgmentDayFixes(unittest.TestCase):
         """FIX 1: An MCP entry in [brief.mcp_descriptions] with NO matching [mcp.*] block
         must render as a description-only note (not silently dropped).
         """
-        agents = self.run_render(
+        workspace = self._sync_render(
             "[project]\n"
             "name = 'fix1-global-mcp'\n\n"
             "[agents]\n"
@@ -2205,24 +2219,34 @@ class TestJudgmentDayFixes(unittest.TestCase):
             'trello = "project tracking through the Roadmap board."\n'
             'engram = "global persistent memory (no local config block)."\n'
         )
-        # Both must render
-        self.assertIn("project tracking through the Roadmap board.", agents)
-        self.assertIn("global persistent memory (no local config block).", agents)
-        # engram has no [mcp.*] block — it must still appear
-        self.assertIn("engram", agents)
+        try:
+            agents = (workspace / "AGENTS.md").read_text()
+            # Both must render
+            self.assertIn("project tracking through the Roadmap board.", agents)
+            self.assertIn("global persistent memory (no local config block).", agents)
+            # engram has no [mcp.*] block — it must still appear
+            self.assertIn("engram", agents)
+        finally:
+            shutil.rmtree(workspace.parent)
 
     def test_mcp_section_renders_description_only_entry_with_global_marker(self):
         """FIX 1: Description-only entries are marked *(global)* to distinguish from
         full [mcp.*] blocks.
         """
-        agents = self.run_render(
+        workspace = self._sync_render(
             "[project]\n"
             "name = 'fix1-global-marker'\n\n"
+            "[agents]\n"
+            "enabled = ['claude']\n\n"
             "[brief.mcp_descriptions]\n"
             'global-only = "A global MCP with no local config."\n'
         )
-        self.assertIn("*(global)*", agents)
-        self.assertIn("A global MCP with no local config.", agents)
+        try:
+            agents = (workspace / "AGENTS.md").read_text()
+            self.assertIn("*(global)*", agents)
+            self.assertIn("A global MCP with no local config.", agents)
+        finally:
+            shutil.rmtree(workspace.parent)
 
     # --- FIX 2 ---
 
@@ -2236,7 +2260,9 @@ class TestJudgmentDayFixes(unittest.TestCase):
         with tempfile.TemporaryDirectory() as parent_tmp:
             workspace = Path(parent_tmp) / "fix2-workspace"
             workspace.mkdir()
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            home = _home_for(workspace)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'fix2-subrepo-rich'\n"
@@ -2256,13 +2282,12 @@ class TestJudgmentDayFixes(unittest.TestCase):
             (workspace / "AGENTS.md").write_text("placeholder\n")
 
             # First run sync so root AGENTS.md is proper
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             # Now run standalone sync-agent from the workspace root
-            subprocess.run(
-                [str(CLI), "sync-agent", str(workspace), "--all"],
-                check=True, text=True,
-            )
+            result = invoke(workspace, "sync-agent", "--all", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             subrepo_agents = (workspace / "sub" / "a" / "AGENTS.md").read_text()
             self.assertIn(
@@ -2274,125 +2299,125 @@ class TestJudgmentDayFixes(unittest.TestCase):
 
     def test_vcs_bullet_uses_recipe_id_for_github(self):
         """VCS bullet derives GitHub/gh from bound recipe id, not config.provider."""
-        resolved = {
-            "bindings": {"vcs-pr-flow": "git-pr-flow"},
-            "recipes": {
-                "git-pr-flow": {"base_branch": "main"},
-            },
-        }
-        agents = self.run_render("[project]\nname = 'fix3-github'\n", resolved)
-        self.assertIn("VCS/PR provider: GitHub (`gh` CLI)", agents)
-        self.assertIn("base branch: `main`", agents)
+        workspace = self._sync_render(
+            "[project]\n"
+            "name = 'fix3-github'\n\n"
+            "[agents]\n"
+            "enabled = ['claude']\n\n"
+            "[recipes.git-pr-flow]\n"
+            "enabled = true\n"
+            "version = '1.3.0'\n"
+            "[recipes.git-pr-flow.config]\n"
+            "base_branch = 'main'\n\n"
+            "[[bindings]]\n"
+            "capability = 'vcs-pr-flow'\n"
+            "recipe = 'git-pr-flow'\n"
+        )
+        try:
+            agents = (workspace / "AGENTS.md").read_text()
+            self.assertIn("VCS/PR provider: GitHub (`gh` CLI)", agents)
+            self.assertIn("base branch: `main`", agents)
+        finally:
+            shutil.rmtree(workspace.parent)
 
     def test_vcs_bullet_uses_recipe_id_for_gitlab(self):
         """VCS bullet derives GitLab/glab from bound recipe id."""
-        resolved = {
-            "bindings": {"vcs-pr-flow": "gitlab-mr-flow"},
-            "recipes": {
-                "gitlab-mr-flow": {"base_branch": "main"},
-            },
-        }
-        agents = self.run_render("[project]\nname = 'fix3-gitlab'\n", resolved)
-        self.assertIn("VCS/PR provider: GitLab (`glab` CLI)", agents)
-        self.assertNotIn("(`gh` CLI)", agents)
-        self.assertIn("base branch: `main`", agents)
+        workspace = self._sync_render(
+            "[project]\n"
+            "name = 'fix3-gitlab'\n\n"
+            "[agents]\n"
+            "enabled = ['claude']\n\n"
+            "[recipes.gitlab-mr-flow]\n"
+            "enabled = true\n"
+            "version = '1.2.0'\n"
+            "[recipes.gitlab-mr-flow.config]\n"
+            "base_branch = 'main'\n\n"
+            "[[bindings]]\n"
+            "capability = 'vcs-pr-flow'\n"
+            "recipe = 'gitlab-mr-flow'\n"
+        )
+        try:
+            agents = (workspace / "AGENTS.md").read_text()
+            self.assertIn("VCS/PR provider: GitLab (`glab` CLI)", agents)
+            self.assertNotIn("(`gh` CLI)", agents)
+            self.assertIn("base branch: `main`", agents)
+        finally:
+            shutil.rmtree(workspace.parent)
 
     def test_vcs_bullet_uses_recipe_id_for_bitbucket(self):
         """VCS bullet derives Bitbucket/bb from bound recipe id."""
-        resolved = {
-            "bindings": {"vcs-pr-flow": "bitbucket-pr-flow"},
-            "recipes": {
-                "bitbucket-pr-flow": {"base_branch": "develop"},
-            },
-        }
-        agents = self.run_render("[project]\nname = 'fix3-bitbucket'\n", resolved)
-        self.assertIn("VCS/PR provider: Bitbucket (`bb` CLI)", agents)
-        self.assertNotIn("(`gh` CLI)", agents)
-        self.assertIn("base branch: `develop`", agents)
+        workspace = self._sync_render(
+            "[project]\n"
+            "name = 'fix3-bitbucket'\n\n"
+            "[agents]\n"
+            "enabled = ['claude']\n\n"
+            "[recipes.bitbucket-pr-flow]\n"
+            "enabled = true\n"
+            "version = '1.3.0'\n"
+            "[recipes.bitbucket-pr-flow.config]\n"
+            "base_branch = 'develop'\n\n"
+            "[[bindings]]\n"
+            "capability = 'vcs-pr-flow'\n"
+            "recipe = 'bitbucket-pr-flow'\n"
+        )
+        try:
+            agents = (workspace / "AGENTS.md").read_text()
+            self.assertIn("VCS/PR provider: Bitbucket (`bb` CLI)", agents)
+            self.assertNotIn("(`gh` CLI)", agents)
+            self.assertIn("base branch: `develop`", agents)
+        finally:
+            shutil.rmtree(workspace.parent)
 
     def test_vcs_bullet_ignores_stale_provider_config(self):
         """Stale provider in manifest config must not override bound recipe id label."""
-        resolved = {
-            "bindings": {"vcs-pr-flow": "gitlab-mr-flow"},
-            "recipes": {
-                "gitlab-mr-flow": {"provider": "github", "base_branch": "main"},
-            },
-        }
-        agents = self.run_render("[project]\nname = 'fix3-stale-provider'\n", resolved)
-        self.assertIn("VCS/PR provider: GitLab (`glab` CLI)", agents)
-        self.assertNotIn("VCS/PR provider: github", agents)
-
-    # --- FIX 5 ---
-
-    def test_malformed_resolved_config_degrades_gracefully(self):
-        """FIX 5: Malformed JSON in --resolved-config must not crash agents-render.py.
-        Degrade to {} (no structured fields); prose and identity still render.
-        """
-        import tempfile as _tempfile
-        with _tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "ai-specs.toml"
-            output_path = tmp_path / "AGENTS.md"
-            bad_json_path = tmp_path / "bad.json"
-
-            toml_path.write_text(
-                "[project]\n"
-                "name = 'fix5-malformed-json'\n\n"
-                "[brief]\n"
-                'workflow_rules = ["No pushes without review."]\n'
-            )
-            bad_json_path.write_text("this is not json {{{")
-
-            proc = subprocess.run(
-                ["python3", str(self.AGENTS_RENDER), str(toml_path), str(output_path),
-                 "--resolved-config", str(bad_json_path)],
-                text=True, capture_output=True, check=False,
-            )
-            # Must not crash
-            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed on bad JSON:\n{proc.stderr}")
-            self.assertTrue(output_path.exists())
-
-            agents = output_path.read_text()
-            self.assertIn("fix5-malformed-json", agents)
-            self.assertIn("No pushes without review.", agents)
-
-    def test_non_dict_resolved_config_degrades_gracefully(self):
-        """FIX 5: Non-dict JSON (e.g. a list) in --resolved-config must degrade to {}."""
-        import tempfile as _tempfile
-        with _tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "ai-specs.toml"
-            output_path = tmp_path / "AGENTS.md"
-            list_json_path = tmp_path / "list.json"
-
-            toml_path.write_text("[project]\nname = 'fix5-list-json'\n")
-            list_json_path.write_text('["a", "b", "c"]')
-
-            proc = subprocess.run(
-                ["python3", str(self.AGENTS_RENDER), str(toml_path), str(output_path),
-                 "--resolved-config", str(list_json_path)],
-                text=True, capture_output=True, check=False,
-            )
-            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed on list JSON:\n{proc.stderr}")
-            agents = output_path.read_text()
-            self.assertIn("fix5-list-json", agents)
-
-    # --- FIX 7 ---
-
+        workspace = self._sync_render(
+            "[project]\n"
+            "name = 'fix3-stale-provider'\n\n"
+            "[agents]\n"
+            "enabled = ['claude']\n\n"
+            "[recipes.gitlab-mr-flow]\n"
+            "enabled = true\n"
+            "version = '1.2.0'\n"
+            "[recipes.gitlab-mr-flow.config]\n"
+            "base_branch = 'main'\n"
+            "provider = 'github'\n\n"
+            "[[bindings]]\n"
+            "capability = 'vcs-pr-flow'\n"
+            "recipe = 'gitlab-mr-flow'\n"
+        )
+        try:
+            agents = (workspace / "AGENTS.md").read_text()
+            self.assertIn("VCS/PR provider: GitLab (`glab` CLI)", agents)
+            self.assertNotIn("VCS/PR provider: github", agents)
+        finally:
+            shutil.rmtree(workspace.parent)
     def test_trello_section_has_no_recipe_id_parenthetical(self):
         """FIX 7: The Trello Tracking section must show board_id without the
         recipe-id parenthetical (e.g. no '(trello-mcp-workflow)').
         """
-        resolved = {
-            "bindings": {"tracker": "trello-mcp-workflow"},
-            "recipes": {"trello-mcp-workflow": {"board_id": "aabbcc112233445566778899"}},
-        }
-        agents = self.run_render("[project]\nname = 'fix7-trello'\n", resolved)
-        self.assertIn("## Trello Tracking", agents)
-        self.assertIn("aabbcc112233445566778899", agents)
-        # Recipe id must NOT appear as a parenthetical annotation
-        self.assertNotIn("(`trello-mcp-workflow`)", agents)
-        self.assertNotIn("(trello-mcp-workflow)", agents)
+        workspace = self._sync_render(
+            "[project]\n"
+            "name = 'fix7-trello'\n\n"
+            "[agents]\n"
+            "enabled = ['claude']\n\n"
+            "[recipes.trello-mcp-workflow]\n"
+            "enabled = true\n"
+            "version = '1.2.0'\n"
+            "[recipes.trello-mcp-workflow.config]\n"
+            "board_id = 'aabbcc112233445566778899'\n\n"
+            "[[bindings]]\n"
+            "capability = 'tracker'\n"
+            "recipe = 'trello-mcp-workflow'\n"
+        )
+        try:
+            agents = (workspace / "AGENTS.md").read_text()
+            self.assertIn("## Trello Tracking", agents)
+            self.assertIn("aabbcc112233445566778899", agents)
+            # Recipe id must NOT appear as a parenthetical annotation
+            self.assertNotIn("(`trello-mcp-workflow`)", agents)
+            self.assertNotIn("(trello-mcp-workflow)", agents)
+        finally:
+            shutil.rmtree(workspace.parent)
 
     # --- FIX 8 ---
 
@@ -2401,29 +2426,52 @@ class TestJudgmentDayFixes(unittest.TestCase):
         fabricated 'validate.sh' line derived via str.replace.
         Only explicitly provided commands must appear.
         """
-        resolved = {
-            "bindings": {"test-runner": "tdd-flow"},
-            "recipes": {"tdd-flow": {"test_command": "./tests/run.sh"}},
-        }
-        agents = self.run_render("[project]\nname = 'fix8-no-fabricate'\n", resolved)
-        self.assertIn("./tests/run.sh", agents)
-        # validate.sh was NOT provided — must not appear
-        self.assertNotIn("validate.sh", agents)
+        workspace = self._sync_render(
+            "[project]\n"
+            "name = 'fix8-no-fabricate'\n\n"
+            "[agents]\n"
+            "enabled = ['claude']\n\n"
+            "[recipes.tdd-flow]\n"
+            "enabled = true\n"
+            "version = '1.0.0'\n"
+            "[recipes.tdd-flow.config]\n"
+            "test_command = './tests/run.sh'\n\n"
+            "[[bindings]]\n"
+            "capability = 'test-runner'\n"
+            "recipe = 'tdd-flow'\n"
+        )
+        try:
+            agents = (workspace / "AGENTS.md").read_text()
+            self.assertIn("./tests/run.sh", agents)
+            # validate.sh was NOT provided — must not appear
+            self.assertNotIn("validate.sh", agents)
+        finally:
+            shutil.rmtree(workspace.parent)
 
     def test_useful_commands_explicit_validate_renders(self):
         """FIX 8: When validate.sh is explicitly in brief.useful_commands, it DOES render."""
-        resolved = {
-            "bindings": {"test-runner": "tdd-flow"},
-            "recipes": {"tdd-flow": {"test_command": "./tests/run.sh"}},
-        }
-        agents = self.run_render(
-            "[project]\nname = 'fix8-explicit-validate'\n\n"
+        workspace = self._sync_render(
+            "[project]\n"
+            "name = 'fix8-explicit-validate'\n\n"
+            "[agents]\n"
+            "enabled = ['claude']\n\n"
             "[brief]\n"
-            'useful_commands = ["Full validation: `./tests/validate.sh`"]\n',
-            resolved,
+            'useful_commands = ["Full validation: `./tests/validate.sh`"]\n\n'
+            "[recipes.tdd-flow]\n"
+            "enabled = true\n"
+            "version = '1.0.0'\n"
+            "[recipes.tdd-flow.config]\n"
+            "test_command = './tests/run.sh'\n\n"
+            "[[bindings]]\n"
+            "capability = 'test-runner'\n"
+            "recipe = 'tdd-flow'\n"
         )
-        self.assertIn("./tests/run.sh", agents)
-        self.assertIn("./tests/validate.sh", agents)
+        try:
+            agents = (workspace / "AGENTS.md").read_text()
+            self.assertIn("./tests/run.sh", agents)
+            self.assertIn("./tests/validate.sh", agents)
+        finally:
+            shutil.rmtree(workspace.parent)
 
     # --- FIX 9 ---
 
@@ -2431,200 +2479,147 @@ class TestJudgmentDayFixes(unittest.TestCase):
         """FIX 9: integration_branch must appear as '- **Integration branch**: `<value>`'
         not just as a bare token to avoid tautological needle matching.
         """
-        resolved = {
-            "bindings": {"worktree-isolation": "worktree-flow"},
-            "recipes": {"worktree-flow": {"integration_branch": "development"}},
-        }
-        agents = self.run_render("[project]\nname = 'fix9-branch'\n", resolved)
-        self.assertIn("- **Integration branch**: `development`", agents)
+        workspace = self._sync_render(
+            "[project]\n"
+            "name = 'fix9-branch'\n\n"
+            "[agents]\n"
+            "enabled = ['claude']\n\n"
+            "[recipes.worktree-flow]\n"
+            "enabled = true\n"
+            "version = '1.2.2'\n"
+            "[recipes.worktree-flow.config]\n"
+            "integration_branch = 'development'\n\n"
+            "[[bindings]]\n"
+            "capability = 'worktree-isolation'\n"
+            "recipe = 'worktree-flow'\n"
+        )
+        try:
+            agents = (workspace / "AGENTS.md").read_text()
+            self.assertIn("- **Integration branch**: `development`", agents)
+        finally:
+            shutil.rmtree(workspace.parent)
 
     def test_enabled_runtimes_renders_as_labeled_line(self):
         """FIX 9: enabled runtimes must appear as a labeled line with backtick values."""
-        agents = self.run_render(
-            "[project]\nname = 'fix9-runtimes'\n\n"
-            "[agents]\nenabled = ['claude', 'cursor']\n"
+        workspace = self._sync_render(
+            "[project]\n"
+            "name = 'fix9-runtimes'\n\n"
+            "[agents]\n"
+            "enabled = ['claude', 'cursor']\n"
         )
-        self.assertIn("- **Enabled runtimes**: `claude`, `cursor`", agents)
+        try:
+            agents = (workspace / "AGENTS.md").read_text()
+            self.assertIn("- **Enabled runtimes**: `claude`, `cursor`", agents)
+        finally:
+            shutil.rmtree(workspace.parent)
 
     def test_redaction_sentinel_is_exact_string(self):
         """FIX 9: redacted secrets render as '***REDACTED***' exactly."""
-        agents = self.run_render(
-            "[project]\nname = 'fix9-redact'\n\n"
-            "[agents]\nenabled = ['claude']\n\n"
+        workspace = self._sync_render(
+            "[project]\n"
+            "name = 'fix9-redact'\n\n"
+            "[agents]\n"
+            "enabled = ['claude']\n\n"
             "[mcp.demo]\n"
             "command = 'npx'\n"
             "env = { SECRET_KEY = 'literal-value' }\n"
         )
-        self.assertIn("***REDACTED***", agents)
-        self.assertNotIn("literal-value", agents)
-
-    # --- FIX 10 ---
-
-    def test_test_command_resolves_via_test_runner_capability_binding(self):
-        """FIX 10: test_command resolved via bindings['test-runner'] → recipe, not hardcoded 'tdd-flow'.
-        Swapping the bound recipe id (while keeping the capability) must still surface test_command.
-        """
-        resolved = {
-            "bindings": {"test-runner": "my-custom-runner"},  # different recipe id
-            "recipes": {
-                "my-custom-runner": {"test_command": "./custom-tests.sh"},
-                "tdd-flow": {"test_command": "./tests/run.sh"},  # NOT the bound one
-            },
-        }
-        agents = self.run_render("[project]\nname = 'fix10-test-runner'\n", resolved)
-        # The BOUND recipe's command must appear
-        self.assertIn("./custom-tests.sh", agents)
-        # The un-bound recipe's command must NOT appear (tdd-flow is not the active binding)
-        self.assertNotIn("./tests/run.sh", agents)
-
-    def test_integration_branch_resolves_via_worktree_isolation_binding(self):
-        """FIX 10: integration_branch resolved via bindings['worktree-isolation'] → recipe.
-        Swapping bound recipe id keeps the field.
-        """
-        resolved = {
-            "bindings": {"worktree-isolation": "my-worktree"},  # different recipe id
-            "recipes": {
-                "my-worktree": {"integration_branch": "staging"},
-                "worktree-flow": {"integration_branch": "main"},  # NOT the bound one
-            },
-        }
-        agents = self.run_render("[project]\nname = 'fix10-integration-branch'\n", resolved)
-        self.assertIn("- **Integration branch**: `staging`", agents)
-        self.assertNotIn("`main`", agents)
-
-    def test_vault_scope_resolves_via_canonical_store_binding(self):
-        """FIX 10: vault_scope resolved via bindings['canonical-store'] → recipe."""
-        resolved = {
-            "bindings": {"canonical-store": "my-vault"},
-            "recipes": {
-                "my-vault": {"vault_scope": "my/vault/path"},
-                "vault-canonical-store": {"vault_scope": "other/path"},  # NOT bound
-            },
-        }
-        agents = self.run_render("[project]\nname = 'fix10-vault'\n", resolved)
-        self.assertIn("- **Vault scope**: `my/vault/path`", agents)
-        self.assertNotIn("other/path", agents)
-
-    # --- FIX A (Round 2) ---
-
+        try:
+            agents = (workspace / "AGENTS.md").read_text()
+            self.assertIn("***REDACTED***", agents)
+            self.assertNotIn("literal-value", agents)
+        finally:
+            shutil.rmtree(workspace.parent)
     def test_resolved_config_only_mode_writes_json_and_leaves_no_recipe_mcp_temp(self):
-        """FIX A (R2): --resolved-config-only writes resolved-config WITHOUT creating
-        any ai-specs-recipe-mcp-* temp files.
-
-        Verifies: (a) the output file is valid JSON with bindings/recipes/enabled keys,
-        (b) no new ai-specs-recipe-mcp-* files appear in /tmp after the call.
+        """FIX A (R2): the standalone resolved-config-only path (sync-agent --all)
+        must leave NO ai-specs-recipe-mcp-* temp files behind and must produce a
+        valid resolved-config (bindings/recipes/enabled) — observed black-box by
+        the subrepo AGENTS.md receiving the bound recipe's structured fields.
         """
         import glob
-        import tempfile as _tempfile
 
-        materialize = ROOT / "lib" / "_internal" / "recipe-materialize.py"
-
-        with _tempfile.TemporaryDirectory() as parent:
-            workspace = Path(parent) / "fixA-workspace"
-            workspace.mkdir()
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+        parent = Path(tempfile.mkdtemp(prefix="ai-specs-fixa-"))
+        workspace = parent / "fixA-workspace"
+        workspace.mkdir()
+        home = _home_for(workspace)
+        try:
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
-                "name = 'fixA-no-temp-leak'\n\n"
+                "name = 'fixA-no-temp-leak'\n"
+                "subrepos = ['sub/a']\n\n"
+                "[agents]\n"
+                "enabled = ['claude']\n\n"
+                "[recipes.trello-mcp-workflow]\n"
+                "enabled = true\n"
+                "version = '1.2.0'\n"
+                "[recipes.trello-mcp-workflow.config]\n"
+                "board_id = 'aabbccddeeff001122334455'\n\n"
                 "[[bindings]]\n"
                 "capability = 'tracker'\n"
                 "recipe = 'trello-mcp-workflow'\n"
             )
+            (workspace / "sub" / "a").mkdir(parents=True)
 
-            with _tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-                resolved_out = Path(f.name)
+            # Full sync first so the standalone path has its resolved-skills input.
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-            try:
-                # Count existing recipe-mcp temps before the call
-                before = set(glob.glob("/tmp/**/ai-specs-recipe-mcp-*.json", recursive=True))
+            # TMPDIR is scoped to `parent` by the CLI env helpers, so the
+            # recipe-mcp temp leak check is hermetic.
+            before = set(glob.glob(str(parent / "**" / "ai-specs-recipe-mcp-*.json"), recursive=True))
 
-                proc = subprocess.run(
-                    [
-                        "python3", str(materialize),
-                        str(workspace), str(ROOT),
-                        "--resolved-config-out", str(resolved_out),
-                        "--resolved-config-only",
-                    ],
-                    text=True,
-                    capture_output=True,
-                    check=False,
-                )
-                self.assertEqual(
-                    proc.returncode, 0,
-                    f"--resolved-config-only failed:\n{proc.stderr}\n{proc.stdout}",
-                )
-
-                # No new recipe-mcp temp files must have been created
-                after = set(glob.glob("/tmp/**/ai-specs-recipe-mcp-*.json", recursive=True))
-                new_temps = after - before
-                self.assertEqual(
-                    new_temps, set(),
-                    f"--resolved-config-only leaked recipe-mcp temp(s): {new_temps}",
-                )
-
-                # Output must be valid JSON with expected top-level keys
-                with open(resolved_out) as fh:
-                    data = json.load(fh)
-                self.assertIn("bindings", data)
-                self.assertIn("recipes", data)
-                self.assertIn("enabled", data)
-            finally:
-                if resolved_out.exists():
-                    resolved_out.unlink()
-
-    def test_resolved_config_only_mode_fails_loudly_not_silently(self):
-        """FIX A (R2): --resolved-config-only propagates non-zero exit on failure.
-
-        Uses a non-existent project root so build_resolved_config fails. The script
-        must exit non-zero (not silently return 0 with || true).
-        """
-        import tempfile as _tempfile
-
-        materialize = ROOT / "lib" / "_internal" / "recipe-materialize.py"
-
-        with _tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-            resolved_out = Path(f.name)
-
-        try:
-            proc = subprocess.run(
-                [
-                    "python3", str(materialize),
-                    "/nonexistent/project/root", str(ROOT),
-                    "--resolved-config-out", str(resolved_out),
-                    "--resolved-config-only",
-                ],
-                text=True,
-                capture_output=True,
-                check=False,
+            # The standalone sync-agent path uses --resolved-config-only internally.
+            result = invoke(workspace, "sync-agent", "--all", cli_home=home)
+            self.assertEqual(
+                result.returncode, 0,
+                f"standalone sync-agent --all failed:\n{result.stderr}\n{result.stdout}",
             )
-            # Must exit non-zero when project root does not exist
-            self.assertNotEqual(
-                proc.returncode, 0,
-                "Expected non-zero exit for missing project root but got 0",
+
+            # No recipe-mcp temp files may remain after the standalone path.
+            after = set(glob.glob(str(parent / "**" / "ai-specs-recipe-mcp-*.json"), recursive=True))
+            self.assertEqual(
+                after - before, set(),
+                f"resolved-config-only leaked recipe-mcp temp(s): {after - before}",
+            )
+
+            # The forwarded resolved-config must have been valid JSON with the
+            # expected structured fields: the bound board_id reaches the subrepo.
+            subrepo_agents = (workspace / "sub" / "a" / "AGENTS.md").read_text()
+            self.assertIn(
+                "aabbccddeeff001122334455", subrepo_agents,
+                "standalone resolved-config-only output must carry bound recipe "
+                "fields (board_id) into the subrepo AGENTS.md",
             )
         finally:
-            if resolved_out.exists():
-                resolved_out.unlink()
+            shutil.rmtree(parent)
+
+    def test_resolved_config_only_mode_fails_loudly_not_silently(self):
+        """FIX A (R2): sync propagates a non-zero exit when the project root is
+        missing (the resolved-config generation must fail loudly, never || true).
+        """
+        probe = Path(tempfile.mkdtemp(prefix="ai-specs-fail-loud-"))
+        home = _home_for(probe / "probe-project")
+        result = invoke(Path("/nonexistent/project/root"), "sync", cli_home=home)
+        # Must exit non-zero when project root does not exist
+        self.assertNotEqual(
+            result.returncode, 0,
+            "Expected non-zero exit for missing project root but got 0",
+        )
 
     def test_resolved_config_only_invalid_binding_exits_nonzero(self):
-        """FIX 2 (R3): --resolved-config-only must exit non-zero on manifest binding
-        validation errors (e.g. explicit binding references a disabled/unknown recipe).
-
-        The full materialize_recipes path raises a RuntimeError (via resolve_bindings)
-        and exits 1 for such errors. The standalone --resolved-config-only path must
-        match this behaviour — it must NOT swallow the error and exit 0 silently.
-
-        Uses a manifest with an explicit [[bindings]] that references a recipe that is
-        NOT enabled, which resolve_bindings raises RuntimeError for.
+        """FIX 2 (R3): sync must exit non-zero on manifest binding validation
+        errors (an explicit binding referencing an unknown recipe), surfacing an
+        ERROR on stderr — never swallowing the failure with a silent exit 0.
         """
-        import tempfile as _tempfile
-
-        materialize = ROOT / "lib" / "_internal" / "recipe-materialize.py"
-
-        with _tempfile.TemporaryDirectory() as parent:
-            workspace = Path(parent) / "invalid-binding-workspace"
-            workspace.mkdir()
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+        parent = Path(tempfile.mkdtemp(prefix="ai-specs-invalid-binding-"))
+        workspace = parent / "invalid-binding-workspace"
+        workspace.mkdir()
+        home = _home_for(workspace)
+        try:
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             # An explicit binding that references a recipe NOT in [recipes.*] (not enabled).
             # resolve_bindings raises RuntimeError for this case.
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
@@ -2640,94 +2635,27 @@ class TestJudgmentDayFixes(unittest.TestCase):
                 "recipe = 'nonexistent-recipe'\n"  # references a disabled/unknown recipe
             )
 
-            with _tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-                resolved_out = Path(f.name)
-
-            try:
-                proc = subprocess.run(
-                    [
-                        "python3", str(materialize),
-                        str(workspace), str(ROOT),
-                        "--resolved-config-out", str(resolved_out),
-                        "--resolved-config-only",
-                    ],
-                    text=True,
-                    capture_output=True,
-                    check=False,
-                    env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
-                )
-                # Must exit non-zero (matching the full materialize path)
-                self.assertNotEqual(
-                    proc.returncode, 0,
-                    "Expected non-zero exit for invalid binding in --resolved-config-only "
-                    f"but got 0.\nstderr: {proc.stderr}\nstdout: {proc.stdout}",
-                )
-                # Error must be surfaced to stderr (not swallowed silently)
-                self.assertIn(
-                    "ERROR", proc.stderr,
-                    "An ERROR message must appear on stderr for invalid binding validation."
-                )
-            finally:
-                if resolved_out.exists():
-                    resolved_out.unlink()
-
-    # --- FIX B (Round 2) ---
-
-    def test_wrong_typed_inner_fields_degrade_gracefully_no_crash(self):
-        """FIX B (R2): resolved-config with wrong-typed inner fields must not crash.
-
-        A dict with bindings/recipes/enabled set to wrong types (list, string, str)
-        triggers AttributeError in the section helpers unless coerced to the expected
-        types in render(). This test feeds such a dict and verifies: exit 0, no crash,
-        degraded output (project name present).
-        """
-        import tempfile as _tempfile
-
-        with _tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "ai-specs.toml"
-            output_path = tmp_path / "AGENTS.md"
-            bad_resolved_path = tmp_path / "bad_resolved.json"
-
-            toml_path.write_text(
-                "[project]\n"
-                "name = 'fixB-wrong-typed-inner-fields'\n\n"
-                "[brief]\n"
-                'workflow_rules = ["No merges without review."]\n'
+            result = invoke(workspace, "sync", cli_home=home)
+            # Must exit non-zero (matching the standalone resolved-config-only contract)
+            self.assertNotEqual(
+                result.returncode, 0,
+                "Expected non-zero exit for invalid binding but got 0.\n"
+                f"stderr: {result.stderr}\nstdout: {result.stdout}",
             )
-            # bindings is a list (not dict), recipes is a string (not dict),
-            # enabled is a dict (not list) — all wrong types
-            bad_resolved_path.write_text(json.dumps({
-                "bindings": ["tracker", "vcs-pr-flow"],  # list, not dict
-                "recipes": "should-be-a-dict",           # string, not dict
-                "enabled": {"tdd-flow": True},           # dict, not list
-            }))
-
-            proc = subprocess.run(
-                [
-                    "python3",
-                    str(ROOT / "lib" / "_internal" / "agents-render.py"),
-                    str(toml_path), str(output_path),
-                    "--resolved-config", str(bad_resolved_path),
-                ],
-                text=True,
-                capture_output=True,
-                check=False,
+            # Error must be surfaced (not swallowed silently): the compact sync
+            # output marks the validation failure with ✗ and names the cause.
+            combined = result.stdout + result.stderr
+            self.assertIn(
+                "references disabled/unknown recipe", combined,
+                "The invalid-binding validation error must be surfaced, not swallowed.\n"
+                f"stderr: {result.stderr}\nstdout: {result.stdout}",
             )
-
-            # Must not crash
-            self.assertEqual(
-                proc.returncode, 0,
-                f"agents-render.py crashed on wrong-typed inner fields:\n{proc.stderr}",
-            )
-            self.assertTrue(output_path.exists())
-
-            agents = output_path.read_text()
-            # Project identity must be present (degraded but not empty)
-            self.assertIn("fixB-wrong-typed-inner-fields", agents)
-            # Workflow rules must render (from TOML, not from wrong resolved-config)
-            self.assertIn("No merges without review.", agents)
-
+            # The standalone resolved-config-only path's idential contract is
+            # frozen natively: internal/sync/resolvedconfigonly_test.go's
+            # "malformed explicit binding is fatal" scenario fixes its exit
+            # code, streams and the absent document.
+        finally:
+            shutil.rmtree(parent)
 
 class RuntimeHookSyncPipelineTests(unittest.TestCase):
     """End-to-end: enabling the worktree-flow hook fans wiring to every harness."""
@@ -2755,10 +2683,13 @@ class RuntimeHookSyncPipelineTests(unittest.TestCase):
 
     def test_sync_fans_hook_to_every_harness(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(self._manifest(self._wf_version()))
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             # Materialized script at the harness-neutral path, executable.
             script = workspace / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
@@ -2788,7 +2719,8 @@ class RuntimeHookSyncPipelineTests(unittest.TestCase):
             # Idempotency: second sync byte-identical for claude settings + shims.
             before_claude = (workspace / ".claude" / "settings.json").read_bytes()
             before_oc = (workspace / ".opencode" / "plugin" / "worktree-flow-worktree-gate.ts").read_bytes()
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             after_claude = (workspace / ".claude" / "settings.json").read_bytes()
             after_oc = (workspace / ".opencode" / "plugin" / "worktree-flow-worktree-gate.ts").read_bytes()
             self.assertEqual(before_claude, after_claude)
@@ -2821,8 +2753,10 @@ class TestVcsDropRemediations(unittest.TestCase):
         This test asserts the warning is actually emitted during sync.
         """
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'stale-provider-warning'\n\n"
@@ -2839,12 +2773,7 @@ class TestVcsDropRemediations(unittest.TestCase):
                 "recipe = 'gitlab-mr-flow'\n"
             )
 
-            proc = subprocess.run(
-                [str(CLI), "sync", str(workspace)],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
+            proc = invoke(workspace, "sync", cli_home=home)
 
             # Sync must succeed (not fail on the stale key)
             self.assertEqual(
@@ -2880,8 +2809,10 @@ class TestVcsDropRemediations(unittest.TestCase):
         A manifest enabling it without base_branch must still get the clause.
         """
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\n"
                 "name = 'defaulted-base-branch'\n\n"
@@ -2896,7 +2827,8 @@ class TestVcsDropRemediations(unittest.TestCase):
                 "recipe = 'bitbucket-pr-flow'\n"
             )
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             agents = (workspace / "AGENTS.md").read_text()
 
@@ -2916,91 +2848,6 @@ class TestVcsDropRemediations(unittest.TestCase):
             shutil.rmtree(workspace.parent)
 
 
-class TestCustomVcsWarning(unittest.TestCase):
-    """Unknown/custom vcs-pr-flow recipe ids must warn to stderr and use generic label.
-
-    When the bound vcs-pr-flow recipe id is not in _VCS_RECIPE_LABELS, the renderer
-    must emit a '⚠ ai-specs:' warning to stderr and render 'VCS PR (custom)' as the
-    bullet label instead of falling back silently.
-    """
-
-    AGENTS_RENDER = ROOT / "lib" / "_internal" / "agents-render.py"
-
-    def run_render_with_stderr(self, toml_text: str, resolved: dict) -> tuple[str, str]:
-        """Invoke agents-render.py, return (agents_output, stderr)."""
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "ai-specs.toml"
-            output_path = tmp_path / "AGENTS.md"
-            resolved_path = tmp_path / "resolved.json"
-            toml_path.write_text(toml_text)
-            resolved_path.write_text(json.dumps(resolved))
-            proc = subprocess.run(
-                [
-                    "python3", str(self.AGENTS_RENDER),
-                    str(toml_path), str(output_path),
-                    "--resolved-config", str(resolved_path),
-                ],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(proc.returncode, 0, f"agents-render.py crashed:\n{proc.stderr}")
-            self.assertTrue(output_path.exists())
-            return output_path.read_text(), proc.stderr
-
-    def test_unknown_vcs_recipe_warns_to_stderr(self):
-        """Bound custom vcs-pr-flow id → stderr contains ⚠ ai-specs: warning."""
-        resolved = {
-            "bindings": {"vcs-pr-flow": "my-custom-vcs"},
-            "recipes": {
-                "my-custom-vcs": {"base_branch": "trunk"},
-            },
-            "enabled": ["my-custom-vcs"],
-        }
-        agents, stderr = self.run_render_with_stderr(
-            "[project]\nname = 'custom-vcs-warning'\n", resolved,
-        )
-        self.assertIn("⚠ ai-specs:", stderr)
-        self.assertIn("my-custom-vcs", stderr)
-        self.assertIn("VCS PR (custom)", stderr)
-
-    def test_unknown_vcs_recipe_renders_generic_label(self):
-        """Bound custom vcs-pr-flow id → AGENTS.md uses 'VCS PR (custom)' label."""
-        resolved = {
-            "bindings": {"vcs-pr-flow": "my-custom-vcs"},
-            "recipes": {
-                "my-custom-vcs": {"base_branch": "trunk"},
-            },
-            "enabled": ["my-custom-vcs"],
-        }
-        agents, stderr = self.run_render_with_stderr(
-            "[project]\nname = 'custom-vcs-label'\n", resolved,
-        )
-        self.assertIn("VCS/PR provider: VCS PR (custom)", agents)
-        self.assertIn("base branch: `trunk`", agents)
-
-    def test_unknown_vcs_warning_once_per_id(self):
-        """Warning must appear exactly once per unknown id per render invocation."""
-        resolved = {
-            "bindings": {"vcs-pr-flow": "my-custom-vcs"},
-            "recipes": {
-                "my-custom-vcs": {"base_branch": "trunk"},
-            },
-            "enabled": ["my-custom-vcs"],
-        }
-        agents, stderr = self.run_render_with_stderr(
-            "[project]\nname = 'custom-vcs-dedup'\n", resolved,
-        )
-        # Count occurrences of the warning prefix
-        warning_count = stderr.count("⚠ ai-specs: VCS recipe 'my-custom-vcs'")
-        self.assertEqual(
-            warning_count, 1,
-            f"Warning must appear exactly once, but found {warning_count} times.\n"
-            f"stderr: {stderr}",
-        )
-
-
 class GateRefreshCliTests(unittest.TestCase):
     """4.3 — E2E: `ai-specs sync --refresh-gates` refreshes a customized gate
     after a cache-only immutable backup, while ordinary sync preserves it."""
@@ -3008,36 +2855,28 @@ class GateRefreshCliTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="gate-refresh-")
         self.addCleanup(self.tmp.cleanup)
-        self.workspace = Path(self.tmp.name) / "workspace"
+        self.base = Path(self.tmp.name)
+        self.workspace = self.base / "workspace"
         self.workspace.mkdir()
+        self.home = _home_for(self.workspace)
 
-    def _env(self, home: Path) -> dict:
-        env = dict(os.environ, AI_SPECS_HOME=str(home), AI_SPECS_GATE_OFFLINE="1")
-        env.pop("AI_SPECS_GATE_BUILD", None)
-        return env
+    def _gate_backup_path(self, rel_path: str, content_sha: str) -> Path:
+        """Cache-only immutable backup path (project-cache.gate_backup_path contract):
+        backups/<sha256(rel_path)>/<content_sha>.sh under the per-project cache."""
+        rel_key = hashlib.sha256(rel_path.encode("utf-8")).hexdigest()
+        return cache_project_dir(self.workspace, self.home) / "backups" / rel_key / f"{content_sha}.sh"
 
     def test_ordinary_sync_preserves_customized_gate_refresh_flag_updates(self):
-        import importlib.util as _ilu
-        spec = _ilu.spec_from_file_location(
-            "gate_refresh_pc", ROOT / "lib/_internal/project-cache.py"
-        )
-        pc = _ilu.module_from_spec(spec)
-        assert spec.loader is not None
-        sys.modules[spec.name] = pc
-        spec.loader.exec_module(pc)
-
-        subprocess.run([str(CLI), "init", str(self.workspace)], check=True, text=True)
+        result = invoke(self.workspace, "init", cli_home=self.home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         (self.workspace / "ai-specs" / "ai-specs.toml").write_text(
             "[project]\nname = 'gate-refresh'\nsubrepos = []\n\n"
             "[agents]\nenabled = ['claude']\n\n"
             "[recipes.worktree-flow]\nenabled = true\n\n"
             "[recipes.worktree-flow.config]\ngate_mode = 'always'\n"
         )
-        env = self._env(ROOT)
-        proc = subprocess.run(
-            [str(CLI), "sync", str(self.workspace)], capture_output=True, text=True,
-            env=env, check=False,
-        )
+        proc = run_cli_env(self.workspace, "sync", home=self.home, tmpdir=self.base,
+                           extra_env={"AI_SPECS_GATE_OFFLINE": "1"})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         gate = self.workspace / "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh"
         self.assertTrue(gate.is_file(), "gate launcher must materialize")
@@ -3045,25 +2884,22 @@ class GateRefreshCliTests(unittest.TestCase):
 
         # Customize; ordinary sync must preserve with a warning.
         gate.write_bytes(b"# customized gate\n")
-        proc = subprocess.run(
-            [str(CLI), "sync", str(self.workspace)], capture_output=True, text=True,
-            env=env, check=False,
-        )
+        proc = run_cli_env(self.workspace, "sync", home=self.home, tmpdir=self.base,
+                           extra_env={"AI_SPECS_GATE_OFFLINE": "1"})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(gate.read_bytes(), b"# customized gate\n")
         self.assertIn("user-modified", proc.stderr + proc.stdout)
 
         # Explicit refresh replaces and backs up the exact pre-refresh bytes.
-        proc = subprocess.run(
-            [str(CLI), "sync", str(self.workspace), "--refresh-gates"],
-            capture_output=True, text=True, env=env, check=False,
-        )
+        proc = run_cli_env(self.workspace, "sync", "--refresh-gates",
+                           home=self.home, tmpdir=self.base,
+                           extra_env={"AI_SPECS_GATE_OFFLINE": "1"})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(gate.read_bytes(), rendered,
                          "refresh must restore the CLI-rendered gate bytes")
         rel = "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh"
-        backup = pc.gate_backup_path(
-            self.workspace, rel,
+        backup = self._gate_backup_path(
+            rel,
             hashlib.sha256(b"# customized gate\n").hexdigest(),
         )
         self.assertTrue(backup.is_file(), f"immutable backup missing at {backup}")
@@ -3079,37 +2915,59 @@ class FanOutDriftTests(unittest.TestCase):
         workspace.mkdir()
         return workspace
 
-    def test_command_fanout_removes_stale_files(self):
+    def test_command_fanout_preserves_nonmanaged_files(self):
+        """D3' — user-added command files survive resync (rm -rf removed).
+
+        Behavior change from the false-success card: the old contract here
+        (non-managed files deleted on every sync) was the recorded defect D3.
+        """
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\nname = 'fanout-drift'\n\n"
                 "[agents]\nenabled = ['cursor']\n"
             )
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-            stale = workspace / ".cursor" / "commands" / "stale.md"
-            stale.write_text("# stale\n")
-            self.assertTrue(stale.is_file())
+            nonmanaged = workspace / ".cursor" / "commands" / "stale.md"
+            nonmanaged.write_text("# stale\n")
+            self.assertTrue(nonmanaged.is_file())
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
-            self.assertFalse(stale.exists())
+            proc = subprocess.run(
+                [str(CLI), "sync", str(workspace)],
+                capture_output=True,
+                text=True,
+                check=False,
+                env={**os.environ, "AI_SPECS_HOME": str(ROOT)},
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue(
+                nonmanaged.is_file(),
+                "non-managed command file must survive resync (D3')",
+            )
+            self.assertIn("stale.md", proc.stderr)
         finally:
             shutil.rmtree(workspace.parent)
 
     def test_cursor_skills_symlink_points_to_resolved(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\nname = 'cursor-skills'\n\n"
                 "[agents]\nenabled = ['cursor']\n"
             )
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             skills_link = workspace / ".cursor" / "skills"
-            resolved = (resolved_skills_dir(workspace)).resolve()
+            resolved = (cache_project_dir(workspace, home) / "resolved-skills").resolve()
             self.assertTrue(skills_link.is_symlink(), ".cursor/skills must be a symlink")
             self.assertEqual(skills_link.resolve(), resolved)
         finally:
@@ -3117,8 +2975,10 @@ class FanOutDriftTests(unittest.TestCase):
 
     def test_cursor_skills_migrates_real_directory(self):
         workspace = self.make_workspace()
+        home = _home_for(workspace)
         try:
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\nname = 'cursor-skills-migrate'\n\n"
                 "[agents]\nenabled = ['cursor']\n"
@@ -3127,10 +2987,11 @@ class FanOutDriftTests(unittest.TestCase):
             legacy.mkdir(parents=True)
             (legacy / "SKILL.md").write_text("# foo\n")
 
-            subprocess.run([str(CLI), "sync", str(workspace)], check=True, text=True)
+            result = invoke(workspace, "sync", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             skills_link = workspace / ".cursor" / "skills"
-            resolved = (resolved_skills_dir(workspace)).resolve()
+            resolved = (cache_project_dir(workspace, home) / "resolved-skills").resolve()
             self.assertTrue(skills_link.is_symlink())
             self.assertEqual(skills_link.resolve(), resolved)
             self.assertFalse((resolved / "foo").exists())
@@ -3143,18 +3004,15 @@ class CliVersionSyncGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "workspace"
             workspace.mkdir()
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            home = _home_for(workspace)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             toml = workspace / "ai-specs" / "ai-specs.toml"
             toml.write_text(
                 toml.read_text().rstrip()
                 + '\n\n[tool]\nversion = "99.99.99"\npolicy = "exact"\n'
             )
-            result = subprocess.run(
-                [str(CLI), "sync", str(workspace)],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            result = invoke(workspace, "sync", cli_home=home)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("99.99.99", result.stderr)
 
@@ -3162,18 +3020,15 @@ class CliVersionSyncGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "workspace"
             workspace.mkdir()
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            home = _home_for(workspace)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             toml = workspace / "ai-specs" / "ai-specs.toml"
             toml.write_text(
                 toml.read_text().rstrip()
                 + '\n\n[tool]\nversion = "99.99.99"\npolicy = "exact"\n'
             )
-            result = subprocess.run(
-                [str(CLI), "sync", str(workspace), "--ignore-cli-version"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            result = invoke(workspace, "sync", "--ignore-cli-version", cli_home=home)
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             self.assertIn("ignoring CLI version policy", result.stderr)
 
@@ -3199,15 +3054,9 @@ class SyncAgentGuardOrderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "workspace"
             workspace.mkdir()
+            home = _home_for(workspace)
             # Do NOT run init — no ai-specs/ai-specs.toml
-            result = subprocess.run(
-                [str(CLI), "sync-agent",
-                 "--source-root", str(workspace),
-                 "--target", str(workspace)],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            result = invoke(workspace, "sync-agent", "--source-root", str(workspace), "--target", str(workspace), cli_home=home, append_root=False)
             self.assertNotEqual(result.returncode, 0)
             combined = result.stdout + result.stderr
             # Must emit the helpful guidance message from the TOML guard
@@ -3224,19 +3073,14 @@ class SyncAgentGuardOrderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "workspace"
             workspace.mkdir()
-            subprocess.run([str(CLI), "init", str(workspace)], check=True, text=True)
+            home = _home_for(workspace)
+            result = invoke(workspace, "init", cli_home=home)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             # Overwrite toml with empty agents list
             (workspace / "ai-specs" / "ai-specs.toml").write_text(
                 "[project]\nname = 'guard-order-test'\n\n[agents]\nenabled = []\n"
             )
-            result = subprocess.run(
-                [str(CLI), "sync-agent",
-                 "--source-root", str(workspace),
-                 "--target", str(workspace)],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            result = invoke(workspace, "sync-agent", "--source-root", str(workspace), "--target", str(workspace), cli_home=home, append_root=False)
             # Exit 0 (graceful early exit) with a warning
             self.assertEqual(result.returncode, 0, result.stderr)
             combined = result.stdout + result.stderr

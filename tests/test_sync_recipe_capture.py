@@ -1,222 +1,205 @@
-"""Errexit and cleanup contract for the recipe-materialize capture block.
+"""Errexit, cleanup and capture contract for the recipe-materialize block.
 
-`lib/sync.sh` captures `recipe-materialize.py` with hand-rolled code that
-predates `run_step`, and carried the same defect `run_step` was fixed for:
-errexit restored before the block printed its own captured output.
+GO-07 S14c moved the materializer in-process: the spine no longer spawns
+``recipe-materialize.py``, so the old PATH ``python3`` stub cannot script that
+step any more. The contract is re-driven here through the real CLI against the
+real native step: the fixtures enable catalog recipes under ``AI_SPECS_HOME``,
+and the ``mktemp`` stub still records the temp sequence (the spine keeps
+execcing ``mktemp`` through PATH), which is what locates each temp.
 
-Two cleanup properties matter here and are easy to break in opposite
-directions:
+Two cleanup properties matter and are easy to break in opposite directions:
 
-- every temporary must be covered by the `trap … EXIT` from the moment it
-  exists — registering the trap after the last `mktemp` leaves the earlier
-  files unprotected across further fallible calls;
-- the trap must survive `set -u`, since a trap naming an unset variable dies
-  mid-cleanup and replaces the script's exit status with its own.
-
-The block is inline top-level script, not a function, so it cannot be extracted
-the way `run_step` is. These tests slice it out of the real source — starting
-at the FIRST temp file, so every name the trap references exists in the harness
-— and drive it with a stubbed materialize command.
+- every temporary must be covered by the cleanup from the moment it exists —
+  registering cleanup after the last ``mktemp`` leaves the earlier files
+  unprotected across further fallible calls;
+- a failure after the block must still propagate, not be swallowed by the
+  capture handling.
 """
 
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
-import textwrap
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
-SYNC_SH = ROOT / "lib" / "sync.sh"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import _go_cli  # noqa: E402
+import _sync_stub  # noqa: E402
 
-def capture_block() -> str:
-    """The real block, from the FIRST temp file through its final cleanup.
+CLI = _go_cli.cli()
 
-    Starting at `RECIPE_OUT_FILE=` would exclude the three temporaries created
-    before it, leaving those trap references to expand to empty strings — the
-    suite could then not detect a trap registered too late, nor a typo in any
-    of those three names.
-    """
-    text = SYNC_SH.read_text(encoding="utf-8")
-    start = text.index('RECIPE_MCP_TEMP="$(mktemp')
-    end = text.index("sync_agents_render()", start)
-    return text[start:end]
+# A light catalog recipe that materializes offline, used to make the native step
+# print recipe names worth extracting.
+RECIPE = "session-context"
+# An enabled recipe whose id trips the internal-test guard. The guard runs
+# before any catalog read, so this fixture is deterministic and its stderr is
+# byte-identical between the native core and the Python authority.
+FATAL_RECIPE = "test-ghost"
 
 
 class RecipeCaptureContractTests(unittest.TestCase):
-    def _run(self, body: str) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            ["bash", "-c", body], text=True, capture_output=True, check=False
+    def stub_sync(self, *, recipes=(), intercepts=(), args=(), fail_from=None):
+        base = Path(tempfile.mkdtemp(prefix="ai-specs-recipe-"))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        stubs = _sync_stub.SyncStubs(base)
+        project = _sync_stub.minimal_project(base)
+        if recipes:
+            manifest = project / "ai-specs" / "ai-specs.toml"
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8")
+                + "".join(f"\n[recipes.{rid}]\nenabled = true\n" for rid in recipes),
+                encoding="utf-8",
+            )
+        for module, kwargs in intercepts:
+            stubs.intercept(module, **kwargs)
+        if fail_from is not None:
+            stubs.mktemp_fail_from(fail_from)
+        proc = subprocess.run(
+            [str(CLI), "sync", str(project), *args],
+            env=stubs.env(),
+            text=True,
+            capture_output=True,
+            check=False,
         )
+        return proc, stubs
 
-    def _harness(
-        self, *, sabotage: str, rc: int = 0, trailer: str = ""
-    ) -> subprocess.CompletedProcess:
-        """Drive the real block with a stubbed materialize command."""
-        probe = tempfile.mkdtemp()
-        block = capture_block()
-        # Replace the real python3 invocation with a controllable stub.
-        block = re.sub(
-            r"python3 \"\$RECIPE_MATERIALIZE_PY\".*?2>\"\$RECIPE_ERR_FILE\"",
-            f"bash -c 'echo out; echo err >&2; exit {rc}' "
-            '>"$RECIPE_OUT_FILE" 2>"$RECIPE_ERR_FILE"',
-            block,
-            flags=re.S,
-        )
-        script = textwrap.dedent(
-            f"""
-            set -euo pipefail
-            VERBOSE=0
-            print_step_output() {{ :; }}
-            PROBE_DIR="{probe}"
-            # A counter would not work here: `VAR="$(mktemp)"` runs the stub in
-            # a command-substitution subshell, so an incremented counter never
-            # escapes and every call would hand back the SAME path — which
-            # silently made the cleanup assertions vacuous.
-            mktemp() {{ command mktemp "$PROBE_DIR/tempXXXXXX"; }}
-            {sabotage}
-            {block}
-            echo "REACHED_END"
-            {trailer}
-            """
-        )
-        result = self._run(script)
-        survivors = sorted(p.name for p in Path(probe).iterdir())
-        result.survivors = survivors  # type: ignore[attr-defined]
-        return result
+    def _recipe_temp_numbers(self, stubs) -> list[int]:
+        """The global ``mktemp`` call numbers of the recipe block's five temps.
 
-    def test_trap_covers_every_temp_file_from_the_moment_it_exists(self):
-        """JD re-judgment: a late trap strands the temporaries created before it.
-
-        Registering the trap only after ALL the `mktemp` calls leaves the
-        earlier files unprotected across the remaining fallible calls. Under
-        errexit, a failure at the fourth aborts before the trap exists.
-
-        Measured on the two shapes: 3 stranded with a late trap, 0 with the
-        trap registered up front.
+        The block creates three ``-t`` temps (recipe MCP, resolved-config,
+        resolved-hooks) and then two bare capture files, in that order, so the
+        first one anchors the five.
         """
-        probe = tempfile.mkdtemp()
-        counter = Path(probe) / ".count"
-        counter.write_text("0")
-        block = capture_block()
-        script = textwrap.dedent(
-            f"""
-            set -euo pipefail
-            VERBOSE=0
-            print_step_output() {{ :; }}
-            PROBE_DIR="{probe}"
-            CNT="{counter}"
-            # A counter must live in a file: `VAR="$(mktemp)"` runs the stub in
-            # a command-substitution subshell, so a shell variable never
-            # escapes and no call would ever reach the failing branch.
-            mktemp() {{
-                n=$(( $(cat "$CNT") + 1 ))
-                echo $n > "$CNT"
-                [ $n -ge 4 ] && return 1
-                command mktemp "$PROBE_DIR/tempXXXXXX"
-            }}
-            {block}
-            echo "REACHED_END"
-            """
+        calls = stubs.mktemp_calls()
+        anchors = [i for i, args in enumerate(calls) if "ai-specs-recipe-mcp-" in args]
+        self.assertEqual(len(anchors), 1, f"recipe temp anchor not unique: {anchors}")
+        return [anchors[0] + n for n in range(1, 6)]
+
+    def _normalize_paths(self, text: str, base: Path) -> str:
+        return text.replace(str(base), "<BASE>")
+
+    # ── recipe name extraction ───────────────────────────────────────────
+
+    def test_recipe_names_are_extracted_from_the_native_stdout(self):
+        proc, _ = self.stub_sync(recipes=[RECIPE])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(f"  syncing recipes → {RECIPE}\n", proc.stdout)
+
+    def test_no_recipes_prints_a_bare_syncing_line(self):
+        proc, _ = self.stub_sync()
+        self.assertIn("  syncing recipes\n", proc.stdout)
+        self.assertNotIn("  syncing recipes →", proc.stdout)
+
+    # ── success / failure replay ─────────────────────────────────────────
+
+    def test_success_replays_filtered_output(self):
+        proc, _ = self.stub_sync()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(
+            "  (no [recipes.*] enabled — skipping)\n",
+            proc.stdout,
+            "the plain notice must survive the compact filter",
         )
-        self._run(script)
-        stranded = sorted(
-            p.name for p in Path(probe).iterdir() if p.name != ".count"
-        )
-        self.assertEqual(
-            stranded,
-            [],
-            f"temp files created before the trap were stranded: {stranded}",
-        )
-
-    def test_exit_trap_cannot_clobber_the_exit_status(self):
-        """A `set -u` trap referencing an unset name replaces the exit code.
-
-        Observed directly: with a bare `$VAR` in the EXIT trap, a clean
-        `exit 3` became exit 1 because the trap itself died. Every name in the
-        trap must therefore be `:-` expanded.
-        """
-        block = capture_block()
-        trap_lines = [l for l in block.splitlines() if l.startswith("trap ")]
-        self.assertTrue(trap_lines, "the block should register an EXIT trap")
-        for line in trap_lines:
-            for name in re.findall(r"\$\{?([A-Z_][A-Z0-9_]*)", line):
-                self.assertIn(
-                    f"${{{name}:-}}",
-                    line,
-                    f"{name} is not :- expanded; the trap can die under set -u",
-                )
-
-    def test_block_is_still_present(self):
-        """Guards the fixture: if the block moves, these tests must be updated."""
-        block = capture_block()
-        self.assertIn("RECIPE_RC", block)
-        self.assertIn("rm -f", block)
-
-    def test_a_failing_print_does_not_abort_before_cleanup(self):
-        """The defect: errexit restored before the block's own cat calls."""
-        result = self._harness(sabotage="cat() { return 1; }", rc=3)
-        self.assertEqual(
-            result.returncode,
-            3,
-            f"expected the step's own status, got {result.returncode}",
-        )
-
-    def test_capture_files_are_not_stranded_on_the_failure_path(self):
-        result = self._harness(sabotage="cat() { return 1; }", rc=3)
-        stranded = result.survivors
-        self.assertEqual(
-            stranded, [], f"capture files stranded: {result.survivors}"
-        )
-
-    def test_capture_files_are_removed_on_the_success_path(self):
-        result = self._harness(sabotage="", rc=0)
-        self.assertIn("REACHED_END", result.stdout)
-        stranded = result.survivors
-        self.assertEqual(
-            stranded, [], f"capture files stranded: {result.survivors}"
-        )
-
-    def test_errexit_survives_the_block(self):
-        """Nothing after the block may run with errexit silently disabled.
-
-        Driven through `_harness` rather than a hand-built script: an earlier
-        version rebuilt the prelude here and reintroduced the very
-        counter-in-a-subshell stub this file warns about, so both capture files
-        resolved to the same path — production always has two distinct ones.
-        """
-        # A marker that is not a substring of REACHED_END — an earlier version
-        # used "REACHED", which the block's own "REACHED_END" always matched,
-        # so the assertion could never pass regardless of behavior.
-        result = self._harness(
-            sabotage="", rc=0, trailer="false\necho ERREXIT_LEAKED"
-        )
-        self.assertIn("REACHED_END", result.stdout)
         self.assertNotIn(
-            "ERREXIT_LEAKED",
-            result.stdout,
-            "errexit was left disabled after the block",
+            "✓ wrote resolved-config",
+            proc.stdout,
+            "compact must drop the glyph line",
+        )
+        self.assertEqual(proc.stderr, "", "a successful native step writes no stderr")
+
+    def test_failing_capture_returns_status_one_and_replays_both_streams(self):
+        proc, _ = self.stub_sync(recipes=[FATAL_RECIPE])
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        # Failure replays the capture raw in BOTH streams: the partial stdout
+        # and the fatal line, which compact does not filter.
+        self.assertIn("  syncing recipes\n", proc.stdout)
+        self.assertEqual(
+            proc.stderr,
+            "  ✗ Recipe 'test-ghost' is an internal test fixture and is not "
+            "part of the public catalog.\n",
         )
 
-    def test_capture_files_are_distinct_paths(self):
-        """Guards the fixture itself against the same-path regression."""
-        result = self._harness(
-            sabotage="",
-            rc=0,
-            trailer='echo "OUT=$RECIPE_OUT_FILE"; echo "ERR=$RECIPE_ERR_FILE"',
+    # ── cleanup ──────────────────────────────────────────────────────────
+
+    def test_capture_files_are_removed_on_success_and_failure(self):
+        proc, stubs = self.stub_sync()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(stubs.survivors(), [], "success path stranded captures")
+
+        proc, stubs = self.stub_sync(recipes=[FATAL_RECIPE])
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertEqual(stubs.survivors(), [], "failure path stranded captures")
+
+    def test_trap_covers_temps_from_the_moment_they_exist(self):
+        """Failing at the 4th mktemp must still leave zero survivors."""
+        proc, stubs = self.stub_sync(fail_from=4)
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertEqual(stubs.survivors(), [], "temporaries were stranded")
+
+    def test_recipe_temps_are_not_stranded_when_the_first_capture_fails(self):
+        """The genuine late-registration defect: cleanup after the third temp.
+
+        The failure lands exactly on the first capture file — the fourth temp of
+        the recipe block — so the three already-created ``-t`` temps are the
+        ones at risk if cleanup is registered too late.
+        """
+        _, control = self.stub_sync()
+        boundary = self._recipe_temp_numbers(control)[3]
+        proc, stubs = self.stub_sync(fail_from=boundary)
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertEqual(
+            stubs.survivors(),
+            [],
+            "the three `-t` temps created before cleanup registration were "
+            "stranded",
         )
-        paths = dict(
-            line.split("=", 1)
-            for line in result.stdout.splitlines()
-            if line.startswith(("OUT=", "ERR="))
+
+    # ── propagation, flags and path distinctness ─────────────────────────
+
+    def test_refresh_gates_is_accepted_and_a_fresh_sync_is_unchanged(self):
+        """The flag no longer reaches an argv (the step is in-process).
+
+        What stays observable at this boundary is acceptance: a fresh project
+        syncs identically with and without it. The forwarding of the flag into
+        the materializer request is pinned by the per-recipe loop differential
+        (internal/sync/materialize_loop_test.go, --refresh-gates scenario).
+        """
+        base = Path(tempfile.mkdtemp(prefix="ai-specs-recipe-"))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        pair = []
+        for args in ((), ("--refresh-gates",)):
+            local = Path(tempfile.mkdtemp(prefix="ai-specs-recipe-"))
+            self.addCleanup(shutil.rmtree, local, ignore_errors=True)
+            stubs = _sync_stub.SyncStubs(local)
+            project = _sync_stub.minimal_project(local)
+            proc = subprocess.run(
+                [str(CLI), "sync", str(project), *args],
+                env=stubs.env(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            pair.append(self._normalize_paths(proc.stdout, local))
+        self.assertEqual(
+            pair[0], pair[1], "a fresh project must sync identically with and without the flag"
         )
-        self.assertEqual(len(paths), 2, result.stdout)
-        self.assertNotEqual(
-            paths["OUT"], paths["ERR"], "both capture files got the same path"
+
+    def test_five_recipe_temps_are_distinct(self):
+        proc, stubs = self.stub_sync()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        numbers = self._recipe_temp_numbers(stubs)
+        self.assertGreaterEqual(stubs.created_count(), numbers[-1])
+        paths = [str(stubs.probe / f"temp{n}") for n in numbers]
+        self.assertTrue(all(paths), f"empty recipe temp path: {paths}")
+        self.assertEqual(
+            len(set(paths)), 5, f"the recipe temps collided: {paths}"
         )
 
 

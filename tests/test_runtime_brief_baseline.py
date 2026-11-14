@@ -1,98 +1,82 @@
-"""Tests for runtime-brief-baseline change.
+"""Black-box tests for the runtime-brief-baseline behavior.
+
+Every test drives the native CLI (``init``/``sync``) at its process boundary.
+No test may import or exec ``lib/_internal`` modules.
 
 Covers:
-  - Unit: template default enables session-context (TemplateDefaultTests)
   - E2E: fresh init produces behavioral brief (InitBriefE2ETests)
   - E2E: render failure → placeholder fallback, init exits 0
   - E2E: init→sync byte-stability
   - E2E: --preserve-if-runtime-brief marker preserved under --force
   - E2E: no this-repo tokens in baseline AGENTS.md
-  - Unit: W1 — dedupe with session-context + second recipe sharing a key (SessionContextDedupTests)
-  - E2E: W2 — sync-side marker preservation after user adds marker post-init
-  - E2E: optional — no unrendered {config.} or {{ placeholders in baseline brief
+  - W2 — sync-side marker preservation after user adds marker post-init
+  - Optional — no unrendered {config.} or {{ placeholders in baseline brief
 
-All offline: catalog read from AI_SPECS_HOME; session-context skills are bundled.
+The template default (session-context pre-enabled, no dogfood tokens) is pinned
+natively in ``internal/cli`` and the recipe-fragment dedupe rules (key
+first-wins, then exact text) in ``internal/sync``.
+
+All offline: catalog read from the isolated AI_SPECS_HOME; session-context
+skills are bundled.
 """
-import importlib.util
-import json
+from __future__ import annotations
+
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _blackbox import cli_path, invoke, isolated_home  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "ai-specs"
-AGENTS_RENDER_PATH = ROOT / "lib" / "_internal" / "agents-render.py"
-RECIPE_MATERIALIZE_PATH = ROOT / "lib" / "_internal" / "recipe-materialize.py"
-TEMPLATE_PATH = ROOT / "templates" / "ai-specs.toml.tmpl"
+CLI = cli_path()
 
 
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+def _make_home(base: Path) -> Path:
+    """Isolated CLI install root (the native binary resolves its own assets)."""
+    return isolated_home(base)
 
 
-class TemplateDefaultTests(unittest.TestCase):
-    """Unit tests: the default TOML template pre-enables session-context."""
+_HOMES: dict[str, Path] = {}
 
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(RECIPE_MATERIALIZE_PATH, "recipe_materialize_baseline_unit")
 
-    def _make_project_from_template(self) -> Path:
-        """Render ai-specs.toml.tmpl into a fresh temp project directory."""
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        ai_specs = root / "ai-specs"
-        ai_specs.mkdir()
-        (ai_specs / "skills").mkdir()
-        (ai_specs / "commands").mkdir()
+def _home_for(project: Path) -> Path:
+    """One shared isolated install root per command sequence."""
+    base = project.parent
+    key = str(base)
+    if key not in _HOMES:
+        _HOMES[key] = _make_home(base)
+    return _HOMES[key]
 
-        # Mimic what init.sh does: sed replace {{PROJECT_NAME}} and write toml
-        template_text = TEMPLATE_PATH.read_text()
-        toml_text = template_text.replace("{{PROJECT_NAME}}", "test-proj")
-        (ai_specs / "ai-specs.toml").write_text(toml_text)
 
-        return root
+def _run_cli_env(project, *args, home: Path, tmpdir: Path, extra_env=None,
+                 append_root: bool = True):
+    """Raw CLI run for tests needing env vars invoke() cannot pass.
 
-    def test_template_default_enables_session_context(self):
-        """build_resolved_config on the default template yields session-context in enabled."""
-        root = self._make_project_from_template()
-        result = self.mod.build_resolved_config(root)
-        self.assertIn(
-            "session-context",
-            result["enabled"],
-            f"Expected 'session-context' in enabled list. Got: {result['enabled']!r}",
-        )
-
-    def test_template_default_no_project_specific_tokens(self):
-        """Resolved config from the default template must not contain this-repo tokens."""
-        root = self._make_project_from_template()
-        result = self.mod.build_resolved_config(root)
-        serialized = json.dumps(result)
-
-        # These are tokens from the ai-specs-cli dogfood project; they must not
-        # appear in a generic project's baseline config.
-        forbidden_tokens = [
-            "69ec097f13e2d38ecd89a557",   # board id
-            "nnodes/proyectos",             # vault scope
-            "ai-specs-cli",                 # project name
-        ]
-        for token in forbidden_tokens:
-            self.assertNotIn(
-                token,
-                serialized,
-                f"Found project-specific token {token!r} in resolved config output.",
-            )
+    stdin is closed (input='') so the CLI can never block on a prompt.
+    Mirrors invoke()'s hermetic environment plus any extra_env overrides.
+    """
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(tmpdir / "home"),
+        "TMPDIR": str(tmpdir),
+        "AI_SPECS_HOME": str(home),
+        "AI_SPECS_NO_NETWORK": "1",
+        "LC_ALL": "C",
+        "LANG": "C",
+    }
+    if extra_env:
+        env.update(extra_env)
+    (tmpdir / "home").mkdir(parents=True, exist_ok=True)
+    argv = [str(CLI), *args]
+    if append_root:
+        argv.append(str(project))
+    return subprocess.run(argv, cwd=ROOT, env=env, text=True,
+                          capture_output=True, check=False, input="")
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +87,7 @@ class InitBriefE2ETests(unittest.TestCase):
     """E2E tests for the init → AGENTS.md rendering pipeline."""
 
     def _make_target(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
+        tmp = tempfile.TemporaryDirectory(prefix="ai-specs-initbrief-")
         self.addCleanup(tmp.cleanup)
         target = Path(tmp.name) / "project"
         target.mkdir()
@@ -112,12 +96,7 @@ class InitBriefE2ETests(unittest.TestCase):
     def test_fresh_init_produces_behavioral_brief(self):
         """After init, AGENTS.md must contain the session-context behavioral sections."""
         target = self._make_target()
-        result = subprocess.run(
-            [str(CLI), "init", str(target)],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        result = invoke(target, "init", cli_home=_home_for(target))
         self.assertEqual(result.returncode, 0, f"init failed:\n{result.stderr}")
 
         agents_md = target / "AGENTS.md"
@@ -143,8 +122,6 @@ class InitBriefE2ETests(unittest.TestCase):
             "AGENTS.md must contain '## Conflict Policy' section",
         )
         # Must have at least two conflict_policy bullets
-        conflict_count = content.count("- ")
-        # Count bullets specifically in the Conflict Policy section
         cp_start = content.find("## Conflict Policy")
         self.assertGreater(cp_start, -1, "## Conflict Policy section must exist")
         # Find the next ## heading after Conflict Policy
@@ -161,45 +138,20 @@ class InitBriefE2ETests(unittest.TestCase):
         )
 
     def test_init_render_failure_falls_back_to_placeholder(self):
-        """When the render scripts fail, init must still create AGENTS.md and exit 0.
+        """When the baseline render cannot start, init must still create AGENTS.md and exit 0.
 
-        Uses a fake python3 that delegates to the real python3 for all scripts
-        EXCEPT recipe-materialize.py and agents-render.py, which it makes exit 1.
-        This simulates a render-pipeline failure without breaking the rest of init
-        (gitignore-render.py, refresh-bundled.py, etc. still run via real python3).
+        The native render chain (internal/cli/init.go renderInitBrief) stages its
+        resolved config with os.CreateTemp, which honours TMPDIR. Pointing TMPDIR
+        at a directory that does not exist makes that staging fail, so the native
+        binary takes its real fallback (briefFallback: placeholder + "render skipped").
         """
         target = self._make_target()
+        home = _home_for(target)
+        base = target.parent
 
-        # Find the real python3
-        import shutil as _shutil
-        real_python3 = _shutil.which("python3")
-        if not real_python3:
-            self.skipTest("python3 not found on PATH")
-
-        # Create a selective fake python3 that fails only for render scripts
-        fake_bin = Path(target.parent) / "fake-bin"
-        fake_bin.mkdir()
-        fake_python = fake_bin / "python3"
-        fake_python.write_text(
-            "#!/bin/sh\n"
-            "# Fail only for the render pipeline scripts; pass through for others.\n"
-            "case \"$*\" in\n"
-            "  *recipe-materialize*|*agents-render*) exit 1 ;;\n"
-            f"  *) exec \"{real_python3}\" \"$@\" ;;\n"
-            "esac\n"
-        )
-        fake_python.chmod(0o755)
-
-        # Build a PATH that puts fake-bin FIRST
-        original_path = os.environ.get("PATH", "")
-        patched_path = f"{fake_bin}:{original_path}"
-
-        result = subprocess.run(
-            [str(CLI), "init", str(target)],
-            env={**os.environ, "PATH": patched_path},
-            text=True,
-            capture_output=True,
-            check=False,
+        result = _run_cli_env(
+            target, "init", home=home, tmpdir=base,
+            extra_env={"TMPDIR": str(base / "missing-tmpdir")},
         )
 
         # init MUST exit 0 even if the render pipeline fails
@@ -224,21 +176,16 @@ class InitBriefE2ETests(unittest.TestCase):
     def test_init_then_sync_is_byte_stable(self):
         """Running sync after init must produce byte-identical AGENTS.md."""
         target = self._make_target()
+        home = _home_for(target)
 
-        subprocess.run(
-            [str(CLI), "init", str(target)],
-            text=True,
-            check=True,
-        )
+        result = invoke(target, "init", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
         agents_md = target / "AGENTS.md"
         after_init = agents_md.read_bytes()
 
-        subprocess.run(
-            [str(CLI), "sync", str(target)],
-            text=True,
-            check=True,
-        )
+        result = invoke(target, "sync", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
         after_sync = agents_md.read_bytes()
         self.assertEqual(
@@ -250,13 +197,11 @@ class InitBriefE2ETests(unittest.TestCase):
     def test_force_init_preserves_runtime_brief_marker(self):
         """If AGENTS.md contains <!-- ai-specs:runtime-brief -->, --force must not overwrite it."""
         target = self._make_target()
+        home = _home_for(target)
 
         # First init to bootstrap the directory
-        subprocess.run(
-            [str(CLI), "init", str(target)],
-            text=True,
-            check=True,
-        )
+        result = invoke(target, "init", cli_home=home)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
         # Write the user-managed marker into AGENTS.md
         agents_md = target / "AGENTS.md"
@@ -264,12 +209,7 @@ class InitBriefE2ETests(unittest.TestCase):
         agents_md.write_text(original_content)
 
         # --force init: must preserve the file because the marker is present
-        result = subprocess.run(
-            [str(CLI), "init", str(target), "--force"],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        result = invoke(target, "init", "--force", cli_home=home)
         self.assertEqual(
             result.returncode, 0,
             f"--force init must exit 0; stderr:\n{result.stderr}",
@@ -292,12 +232,7 @@ class InitBriefE2ETests(unittest.TestCase):
         """A fresh default init must not leak any this-repo tokens into AGENTS.md."""
         target = self._make_target()
 
-        result = subprocess.run(
-            [str(CLI), "init", str(target)],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        result = invoke(target, "init", cli_home=_home_for(target))
         self.assertEqual(result.returncode, 0, f"init failed:\n{result.stderr}")
 
         agents_md = target / "AGENTS.md"
@@ -320,186 +255,6 @@ class InitBriefE2ETests(unittest.TestCase):
 # W1 — Fragment dedupe with session-context + second concrete recipe
 # ---------------------------------------------------------------------------
 
-class SessionContextDedupTests(unittest.TestCase):
-    """W1: Dedupe when session-context and a second recipe share the same key.
-
-    Uses collect_recipe_brief_fragments directly (same harness as
-    CollectRecipeBriefFragmentsTests in test_agents_render_brief_fragments.py)
-    with a session-context-shaped resolved config alongside a second recipe
-    that also contributes key='conflict-policy-source-authority'.
-
-    Asserts:
-    - The keyed bullet appears exactly once (first-wins).
-    - session-context wins over the second recipe (ordering preserved).
-    - The session-context workflow_rules fragment is present and also deduplicated.
-    """
-
-    @classmethod
-    def setUpClass(cls):
-        cls.mod = load_module(AGENTS_RENDER_PATH, "agents_render_session_context_dedup")
-
-    def _session_context_conflict_policy_frags(self):
-        """Fragment list matching catalog/recipes/session-context/recipe.toml [provides.brief]."""
-        return [
-            {
-                "key": "conflict-policy-source-authority",
-                "text": (
-                    "Current explicit human instruction controls the immediate scope "
-                    "unless it conflicts with safety, secrets, or a higher-authority project rule."
-                ),
-            },
-            {
-                "key": "conflict-policy-source-hierarchy",
-                "text": (
-                    "Tracker controls work state; vault controls canonical decisions and handoffs; "
-                    "repo docs and manifests control versioned project contracts. "
-                    "Agent plans are lowest authority until accepted and recorded."
-                ),
-            },
-        ]
-
-    def _resolved(self, enabled, recipes):
-        return {"enabled": enabled, "recipes": recipes}
-
-    def test_session_context_key_wins_over_second_recipe(self):
-        """W1 core: session-context and a second recipe both provide
-        key='conflict-policy-source-authority'. collect_recipe_brief_fragments must
-        return the bullet exactly once with session-context's wording (first-wins)."""
-        resolved = self._resolved(
-            ["session-context", "recipe-extra"],
-            {
-                "session-context": {
-                    "brief_fragments": {
-                        "conflict_policy": self._session_context_conflict_policy_frags()
-                    }
-                },
-                "recipe-extra": {
-                    "brief_fragments": {
-                        "conflict_policy": [
-                            {
-                                "key": "conflict-policy-source-authority",
-                                "text": "Extra recipe override — MUST NOT appear.",
-                            }
-                        ]
-                    }
-                },
-            },
-        )
-        result = self.mod.collect_recipe_brief_fragments(resolved, "conflict_policy")
-
-        # Must have exactly 2 entries: the two session-context keys (not a third from recipe-extra)
-        self.assertEqual(
-            len(result),
-            2,
-            f"Expected 2 unique keyed bullets, got {len(result)}: {[r['text'] for r in result]}",
-        )
-
-        texts = [r["text"] for r in result]
-        # session-context wording wins — check as substring of any text entry
-        self.assertTrue(
-            any("Current explicit human instruction controls the immediate scope" in t for t in texts),
-            f"session-context source-authority bullet must be present in texts: {texts}",
-        )
-        # second recipe duplicate must be suppressed
-        for t in texts:
-            self.assertNotIn(
-                "MUST NOT appear",
-                t,
-                "recipe-extra override must be suppressed by first-wins key dedup",
-            )
-
-    def test_session_context_key_dedup_appears_exactly_once_in_full_render(self):
-        """W1 end-to-end: full render() with session-context + second recipe sharing key.
-        The conflict_policy bullet must appear exactly once in the rendered AGENTS.md."""
-        toml = (
-            "[project]\nname = 'dedup-fixture'\n\n"
-            "[brief]\n"
-            "intro = 'Dedup fixture project.'\n"
-            "purpose = 'Testing fragment dedup with session-context.'\n"
-        )
-        session_context_bullet = (
-            "Current explicit human instruction controls the immediate scope "
-            "unless it conflicts with safety, secrets, or a higher-authority project rule."
-        )
-        resolved = {
-            "enabled": ["session-context", "recipe-extra"],
-            "recipes": {
-                "session-context": {
-                    "brief_fragments": {
-                        "conflict_policy": self._session_context_conflict_policy_frags(),
-                        "workflow_rules": [
-                            {
-                                "key": None,
-                                "text": (
-                                    "A session works on one explicit user request or tracker card; "
-                                    "resolve focus from memory and tracker before starting."
-                                ),
-                            }
-                        ],
-                    }
-                },
-                "recipe-extra": {
-                    "brief_fragments": {
-                        "conflict_policy": [
-                            {
-                                "key": "conflict-policy-source-authority",
-                                "text": "Extra recipe override — MUST NOT appear.",
-                            }
-                        ],
-                        "workflow_rules": [
-                            {
-                                "key": None,
-                                "text": (
-                                    "A session works on one explicit user request or tracker card; "
-                                    "resolve focus from memory and tracker before starting."
-                                ),
-                            }
-                        ],
-                    }
-                },
-            },
-            "bindings": {},
-        }
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "ai-specs.toml"
-            output_path = tmp_path / "AGENTS.md"
-            resolved_path = tmp_path / "resolved-config.json"
-            toml_path.write_text(toml)
-            resolved_path.write_text(json.dumps(resolved))
-            self.mod.render(
-                toml_path,
-                output_path,
-                preserve_if_marker=False,
-                resolved_config_path=resolved_path,
-            )
-            content = output_path.read_text()
-
-        # Key-dedup: session-context wording appears exactly once
-        self.assertEqual(
-            content.count(session_context_bullet),
-            1,
-            f"session-context source-authority bullet must appear exactly once.\nContent:\n{content}",
-        )
-        # Override from second recipe must not appear at all
-        self.assertNotIn(
-            "MUST NOT appear",
-            content,
-            "recipe-extra duplicate bullet must be suppressed by key dedup",
-        )
-        # Exact-string dedup: shared workflow_rules text appears exactly once
-        session_wf = (
-            "A session works on one explicit user request or tracker card; "
-            "resolve focus from memory and tracker before starting."
-        )
-        self.assertEqual(
-            content.count(session_wf),
-            1,
-            f"Shared workflow_rules bullet must appear exactly once (exact-string dedup).\nContent:\n{content}",
-        )
-
-
 # ---------------------------------------------------------------------------
 # W2 — Sync-side marker preservation
 # ---------------------------------------------------------------------------
@@ -519,7 +274,7 @@ class SyncMarkerPreservationTests(unittest.TestCase):
     """
 
     def _make_target(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
+        tmp = tempfile.TemporaryDirectory(prefix="ai-specs-syncmarker-")
         self.addCleanup(tmp.cleanup)
         target = Path(tmp.name) / "project"
         target.mkdir()
@@ -529,14 +284,10 @@ class SyncMarkerPreservationTests(unittest.TestCase):
         """W2: After init (no marker), user adds the marker + custom content.
         Subsequent sync must leave the file byte-identical (marker honored)."""
         target = self._make_target()
+        home = _home_for(target)
 
         # Step 1: fresh init (AGENTS.md rendered from session-context, no marker)
-        result = subprocess.run(
-            [str(CLI), "init", str(target)],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        result = invoke(target, "init", cli_home=home)
         self.assertEqual(result.returncode, 0, f"init failed:\n{result.stderr}")
         agents_md = target / "AGENTS.md"
         self.assertTrue(agents_md.exists(), "AGENTS.md must exist after init")
@@ -550,12 +301,7 @@ class SyncMarkerPreservationTests(unittest.TestCase):
         agents_md.write_text(hand_managed)
 
         # Step 3: run sync
-        result = subprocess.run(
-            [str(CLI), "sync", str(target)],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        result = invoke(target, "sync", cli_home=home)
         self.assertEqual(result.returncode, 0, f"sync failed:\n{result.stderr}")
 
         # Step 4: assert byte-identical
@@ -576,6 +322,28 @@ class SyncMarkerPreservationTests(unittest.TestCase):
             "User custom content must be preserved after sync",
         )
 
+    @staticmethod
+    def _drop_managed_baseline(lock_path: Path, name: str = "AGENTS.md") -> None:
+        """Remove one [managed."name"] entry from a lock file, line-based.
+
+        Mirrors the lock writer's format: the entry header line plus its
+        following key = "value" lines, up to the next table header.
+        """
+        lines = lock_path.read_text().splitlines(keepends=True)
+        out: list[str] = []
+        skipping = False
+        for line in lines:
+            if line.strip() == f'[managed."{name}"]':
+                skipping = True
+                continue
+            if skipping:
+                if line.startswith("["):
+                    skipping = False
+                else:
+                    continue
+            out.append(line)
+        lock_path.write_text("".join(out))
+
     def test_sync_preserves_a_truly_untracked_agents_md(self):
         """The real first-sight migration path: a brief with NO lock baseline.
 
@@ -584,32 +352,20 @@ class SyncMarkerPreservationTests(unittest.TestCase):
         records a baseline and therefore drives `user_modified` instead.
         """
         target = self._make_target()
-        result = subprocess.run(
-            [str(CLI), "init", str(target)],
-            text=True, capture_output=True, check=False,
-        )
+        home = _home_for(target)
+        result = invoke(target, "init", cli_home=home)
         self.assertEqual(result.returncode, 0, f"init failed:\n{result.stderr}")
         agents_md = target / "AGENTS.md"
 
         # Drop the recorded baseline so the brief is genuinely untracked, the
         # state every existing project is in before its first sync on this code.
         lock_path = target / "ai-specs/.ai-specs.lock"
-        lock_text = lock_path.read_text()
-        lock_path.write_text(
-            "\n".join(
-                line for line in lock_text.splitlines()
-                if "AGENTS.md" not in line
-            ).replace("[managed.]\n", "")
-            + "\n"
-        )
+        self._drop_managed_baseline(lock_path)
 
         handwritten = "# Hand-written brief that predates ai-specs\n"
         agents_md.write_text(handwritten)
 
-        result = subprocess.run(
-            [str(CLI), "sync", str(target)],
-            text=True, capture_output=True, check=False,
-        )
+        result = invoke(target, "sync", cli_home=home)
         self.assertEqual(result.returncode, 0, f"sync failed:\n{result.stderr}")
         self.assertEqual(
             agents_md.read_text(), handwritten,
@@ -628,17 +384,13 @@ class SyncMarkerPreservationTests(unittest.TestCase):
         time sync runs. An earlier name claimed `untracked` and the assertions
         still passed, because the remedy text is state-agnostic — the test could
         not have caught a regression specific to the first-sight path. The true
-        no-baseline path is covered by the sibling test below.
+        no-baseline path is covered by the sibling test above.
         """
         target = self._make_target()
+        home = _home_for(target)
 
         # Fresh init
-        result = subprocess.run(
-            [str(CLI), "init", str(target)],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        result = invoke(target, "init", cli_home=home)
         self.assertEqual(result.returncode, 0, f"init failed:\n{result.stderr}")
         agents_md = target / "AGENTS.md"
 
@@ -647,12 +399,7 @@ class SyncMarkerPreservationTests(unittest.TestCase):
         agents_md.write_text(stale)
 
         # Run sync
-        result = subprocess.run(
-            [str(CLI), "sync", str(target)],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        result = invoke(target, "sync", cli_home=home)
         self.assertEqual(result.returncode, 0, f"sync failed:\n{result.stderr}")
 
         final = agents_md.read_text()
@@ -680,7 +427,7 @@ class BaselineBriefNoPlaceholderTests(unittest.TestCase):
     """
 
     def _make_target(self) -> Path:
-        tmp = tempfile.TemporaryDirectory()
+        tmp = tempfile.TemporaryDirectory(prefix="ai-specs-noplaceholder-")
         self.addCleanup(tmp.cleanup)
         target = Path(tmp.name) / "project"
         target.mkdir()
@@ -694,12 +441,7 @@ class BaselineBriefNoPlaceholderTests(unittest.TestCase):
         {{ → indicates an escaped brace that was not collapsed back to {.
         """
         target = self._make_target()
-        result = subprocess.run(
-            [str(CLI), "init", str(target)],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        result = invoke(target, "init", cli_home=_home_for(target))
         self.assertEqual(result.returncode, 0, f"init failed:\n{result.stderr}")
 
         agents_md = target / "AGENTS.md"
