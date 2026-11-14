@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Launcher self-heal.** `bin/ai-specs` now acquires the native binary itself
+  when `$AI_SPECS_HOME/dist/ai-specs` is missing: a SHA-256-verified release
+  asset through the committed trust root, or a local `go build`. An `ai-specs
+  upgrade` run from 0.24.x only fast-forwards the checkout and installs no
+  binary, so every verb used to fail with `native binary not found`; the first
+  verb now heals once and runs. An explicitly pinned `AI_SPECS_GO_BIN` is never
+  replaced. See `docs/troubleshooting-launcher-self-heal.md`.
+
 ## [0.24.5] — 2026-10-18
 
 ### Upgrade notes
