@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+A 0.24.x install that was upgraded to 0.25.0 keeps a leftover `lib/` directory
+that makes `ai-specs upgrade` stop with "Working tree is dirty" (`?? lib/`). If
+you hit that, run `rm -rf "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib"` and then
+`ai-specs upgrade`, or re-run `install.sh`. Installs that go from 0.24.x
+straight to this release are not affected.
+
 ### Fixed
+- **A migrated install can upgrade again.** The removed Python runtime leaves
+  `lib/_vendor` behind; the 0.24.x tree ignored it and the 0.25.x tree did not, so
+  after the fast-forward it showed as an untracked leftover and `ai-specs upgrade`
+  (even `--dry-run`) and `install.sh` refused the "dirty" tree. `/lib/` is ignored
+  now, `install.sh` skips untracked files under `lib/` when checking for dirt, and
+  the upgrade scenario test covers a second `upgrade` after the migration.
 - **`doctor` no longer fails projects that have no tracker.** `ai-specs sync`
   always writes the ledger witness; an `unbound` one records that no tracker is
   configured, so it no longer puts the tracker ledger in play. Projects without
