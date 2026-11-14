@@ -7,10 +7,18 @@
 #
 # Binary resolution, in order:
 #   1. $AI_SPECS_GO_BIN  (exported by the Go CLI to the processes it starts,
-#      and by tests that pin a specific build)
+#      and by tests that pin a specific build). A pinned binary is never
+#      replaced: when it is missing this launcher fails loudly.
 #   2. $AI_SPECS_HOME/dist/ai-specs  (produced by scripts/build-cli.sh)
-# A missing binary fails loudly with exit 1. There is no legacy fallback: the
-# Bash/Python route was retired by GO-20 U2e (T2).
+#
+# When nothing resolves and $AI_SPECS_GO_BIN is unset, the launcher self-heals
+# once: it installs a SHA-256-verified release asset (the same trust root and
+# release base install.sh uses) or builds from the checkout with a Go
+# toolchain. That is what turns an `ai-specs upgrade` run from an old checkout
+# into a working CLI instead of a missing binary: the upgrade only fast-forwards
+# the git tree, so the first verb afterwards acquires dist/ai-specs itself.
+# Progress goes to stderr; the verb's stdout is never written here. There is no
+# legacy Bash/Python fallback: that route was retired by GO-20 U2e (T2).
 set -e
 SOURCE="${BASH_SOURCE[0]}"
 while [[ -L "$SOURCE" ]]; do
@@ -23,9 +31,99 @@ AI_SPECS_HOME="${AI_SPECS_HOME:-$(cd "$BIN_DIR/.." && pwd)}"
 export AI_SPECS_HOME
 
 NATIVE_BIN="${AI_SPECS_GO_BIN:-$AI_SPECS_HOME/dist/ai-specs}"
-if [[ ! -x "$NATIVE_BIN" ]]; then
+
+# Same asset names as install.sh: one release asset per platform.
+_platform_asset() {
+    local os_name arch
+    case "$(uname -s)" in
+        Darwin) os_name=darwin ;;
+        Linux)  os_name=linux ;;
+        *)      return 1 ;;
+    esac
+    case "$(uname -m)" in
+        arm64|aarch64) arch=arm64 ;;
+        x86_64|amd64)  arch=amd64 ;;
+        *)             return 1 ;;
+    esac
+    printf 'ai-specs-%s-%s' "$os_name" "$arch"
+}
+
+_sha256_of() {
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    elif command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        return 1
+    fi
+}
+
+# Acquire dist/ai-specs once. Verify before installing and install atomically,
+# so a failure leaves neither a binary nor a temp file behind.
+_self_heal() {
+    local version asset expected base dist_home dist_bin tmp got
+    version="$(cat "$AI_SPECS_HOME/VERSION" 2>/dev/null || true)"
+    # Canonicalize the HOME DIRECTORY (D-U2e-1), never the binary, so a
+    # symlinked home receives dist/ under its real directory.
+    dist_home="$(cd -P "$AI_SPECS_HOME" 2>/dev/null && pwd -P)" || dist_home="$AI_SPECS_HOME"
+    dist_bin="$dist_home/dist/ai-specs"
+    if ! mkdir -p "$dist_home/dist"; then
+        echo "ai-specs: could not create $dist_home/dist" >&2
+        return 1
+    fi
+    tmp="$dist_home/dist/.ai-specs.heal.$$"
+
+    asset="$(_platform_asset 2>/dev/null || true)"
+    if [ -n "$asset" ]; then
+        # The network supplies only bytes; the checkout supplies the expected
+        # digest. No committed digest means no download is attempted.
+        base="${AI_SPECS_RELEASE_BASE:-https://github.com/parada1104/ai-specs-cli/releases/download/v$version}"
+        expected="$(awk -v asset="$asset" '$2 == asset { print $1 }' \
+            "${AI_SPECS_TRUST_ROOT_FILE:-$AI_SPECS_HOME/bin/SHA256SUMS}" 2>/dev/null | head -n 1)"
+        if [ -n "$expected" ] && command -v curl >/dev/null 2>&1; then
+            echo "ai-specs: no native binary at $dist_bin; fetching $asset from $base" >&2
+            if curl -fsSL "$base/$asset" -o "$tmp"; then
+                got="$(_sha256_of "$tmp" || true)"
+                if [ -n "$got" ] && [ "$got" = "$expected" ]; then
+                    if chmod 0755 "$tmp" && mv -f "$tmp" "$dist_bin"; then
+                        echo "ai-specs: installed $asset at $dist_bin" >&2
+                        return 0
+                    fi
+                else
+                    echo "ai-specs: warning: $asset did not match the committed digest; discarding the download" >&2
+                fi
+                rm -f "$tmp"
+            fi
+        fi
+    fi
+
+    if command -v go >/dev/null 2>&1; then
+        echo "ai-specs: no verified asset for this platform; building locally with go" >&2
+        if (cd "$AI_SPECS_HOME" && go build -trimpath -buildvcs=false -o "$tmp" ./cmd/ai-specs); then
+            if chmod 0755 "$tmp" && mv -f "$tmp" "$dist_bin"; then
+                echo "ai-specs: built and installed $dist_bin" >&2
+                return 0
+            fi
+        fi
+    fi
+
+    rm -f "$tmp"
+    return 1
+}
+
+if [ -z "${AI_SPECS_GO_BIN:-}" ] && [ ! -x "$NATIVE_BIN" ]; then
+    _self_heal || true
+fi
+
+if [ ! -x "$NATIVE_BIN" ]; then
     echo "ai-specs: native binary not found at $NATIVE_BIN" >&2
-    echo "Build it with scripts/build-cli.sh, or set AI_SPECS_GO_BIN." >&2
+    if [ -n "${AI_SPECS_GO_BIN:-}" ]; then
+        echo "Build it with scripts/build-cli.sh, or set AI_SPECS_GO_BIN." >&2
+    else
+        echo "  No verified release asset for this platform and no usable Go toolchain." >&2
+        echo "  Re-run the installer: curl -fsSL https://raw.githubusercontent.com/parada1104/ai-specs-cli/main/install.sh | bash" >&2
+        echo "  Or build it with scripts/build-cli.sh, point AI_SPECS_RELEASE_BASE at a mirror, or set AI_SPECS_GO_BIN." >&2
+    fi
     exit 1
 fi
 exec "$NATIVE_BIN" "$@"
