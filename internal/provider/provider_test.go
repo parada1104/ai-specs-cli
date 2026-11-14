@@ -387,8 +387,15 @@ func TestManagedCandidatesNoOrdering(t *testing.T) {
 	for i := range ref.Candidates {
 		ref.Candidates[i] = replaceHostTokens(ref.Candidates[i], goos, goarch)
 	}
-	if !reflect.DeepEqual(got, ref.Candidates) {
-		t.Fatalf("candidate order diverges from the frozen oracle\n go = %q\n frozen = %q", got, ref.Candidates)
+	// The frozen listing order is whatever the capture host's filesystem handed
+	// out (APFS); the order contract is pinned above against this host's raw
+	// listing, so against the oracle only the SET of candidates is comparable.
+	gotSet := append([]string(nil), got...)
+	refSet := append([]string(nil), ref.Candidates...)
+	sort.Strings(gotSet)
+	sort.Strings(refSet)
+	if !reflect.DeepEqual(gotSet, refSet) {
+		t.Fatalf("candidate set diverges from the frozen oracle\n go = %q\n frozen = %q", got, ref.Candidates)
 	}
 
 	sorted := append([]string(nil), expected...)
@@ -581,6 +588,17 @@ func TestResolveTieKeepsFirstCandidate(t *testing.T) {
 		t.Fatalf("decode frozen ref %s: %v", raw, err)
 	}
 	normalizeProviderRefHost(&ref, goos, goarch)
+	// A tie keeps the FIRST candidate of the raw OS listing, which differs per
+	// filesystem: the frozen winner is the capture host's. Pin every other
+	// field against the oracle and derive the winner's identity (command and
+	// release tag) from this host's first candidate, asserted below.
+	winnerDir := filepath.Base(filepath.Dir(filepath.Dir(candidates[0])))
+	ref.Command = candidates[0]
+	ref.ReleaseTag = "v" + winnerDir
+	if ref.Path != nil {
+		winnerPath := candidates[0]
+		ref.Path = &winnerPath
+	}
 	got, err := Resolve(&schema.CliDep{Binary: "jinna"}, &home)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
