@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`doctor` no longer fails projects that have no tracker.** `ai-specs sync`
+  always writes the ledger witness; an `unbound` one records that no tracker is
+  configured, so it no longer puts the tracker ledger in play. Projects without
+  `worktree-flow` (which never acquires a gate) used to get `ERROR tracker-ledger`
+  and exit code 1 with advice that could not help. A bound or ambiguous witness,
+  an enabled tracker recipe or an `openspec` tracking declaration still do.
+
 ## [0.25.0] — 2026-11-14
 
 ### Upgrade notes
