@@ -127,6 +127,13 @@ func readManifestText(path string) (string, error) {
 	return strings.ReplaceAll(s, "\r", "\n"), nil
 }
 
+// RestoreManifest atomically replaces the manifest at path with content,
+// preserving its mode and a final-component symlink. It is the rollback writer
+// for callers that registered something and must undo it.
+func RestoreManifest(path string, content []byte) error {
+	return atomicWrite(path, string(content))
+}
+
 // atomicWrite replaces path with content via a temp file in the target's
 // parent directory + rename, preserving the original file mode (0o7777
 // mask, mirroring mkstemp + chmod + os.replace in the heredocs).
