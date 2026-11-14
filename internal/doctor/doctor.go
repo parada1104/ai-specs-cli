@@ -103,6 +103,7 @@ func (d *Doctor) Run() int {
 	d.checkTrackedBundledLeftovers()
 	d.checkEnabledAgents()
 	d.checkRecipeCLIDeps()
+	d.checkRegisteredDeps()
 	d.checkTrackerLedger()
 	d.checkHarnessEnvLayout()
 	d.checkWorktreeGate()

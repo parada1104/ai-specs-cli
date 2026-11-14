@@ -15,6 +15,16 @@ you hit that, run `rm -rf "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib"` and then
 straight to this release are not affected.
 
 ### Fixed
+- **A failed `skills add` no longer breaks every later `sync`.** `skills add` (and
+  `add-dep`) registered the `[[deps]]` block and then ran `sync`; when the source
+  could not be vendored (bad `--ref`, bad `--subdir`, unreachable URL) the block
+  stayed in `ai-specs.toml` and every later `sync` failed on it until `skills
+  remove`. The manifest is now restored when that sync fails (only while it is
+  still exactly what the add wrote), a `.deps/<id>` the add did not create is never
+  removed, and the exit code stays the sync's.
+- **`doctor` flags a registered dep that was never installed.** A `[[deps]]` entry
+  with no copy under `ai-specs/.deps/<id>` now gets a `WARN deps` line pointing at
+  `ai-specs sync`; installed deps add no line.
 - **A migrated install can upgrade again.** The removed Python runtime leaves
   `lib/_vendor` behind; the 0.24.x tree ignored it and the 0.25.x tree did not, so
   after the fast-forward it showed as an untracked leftover and `ai-specs upgrade`
