@@ -233,11 +233,19 @@ func frozenBuildRecipeMCP(t *testing.T, golden map[string]buildRecipeMCPGoldenCa
 		check(value, buildRecipeMCPCatalogToken, catalog)
 		check(value, buildRecipeMCPHomeToken, home)
 	}
+	// The goldens were captured on darwin-arm64; managed fixtures live under the
+	// HOST platform directory, so the frozen platform segment follows the host.
+	hostPlatform := func(v string) string {
+		if goos, goarch := provider.DetectPlatform(nil, nil); goos != "" && goarch != "" {
+			return strings.ReplaceAll(v, "darwin-arm64", goos+"-"+goarch)
+		}
+		return v
+	}
 	return buildRecipeMCPRefOut{
-		Error:    rec.Error,
-		Stdout:   rec.Stdout,
-		Stderr:   rec.Stderr,
-		Document: rec.Document,
+		Error:    hostPlatform(rec.Error),
+		Stdout:   hostPlatform(rec.Stdout),
+		Stderr:   hostPlatform(rec.Stderr),
+		Document: hostPlatform(rec.Document),
 	}
 }
 
