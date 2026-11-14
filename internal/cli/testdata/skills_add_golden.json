@@ -154,7 +154,7 @@
       ],
       "rc": 1,
       "stdout": "\nai-specs skills add\n  url:         \u003cSRC\u003e\n  id:          src-noskill\n  subdir:      (none)\n  scope:       root\n  license:     (none)\n  attribution: \u003cOWNER\u003e\n  ref:         (none)\n\n  ✓ appended [[deps]] for 'src-noskill' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n▸ ai-specs sync \u003cDIR\u003e\n\nai-specs sync\n  root:    \u003cDIR\u003e\n  planning: \u003cDIR\u003e\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  ▸ src-noskill  ←  \u003cSRC\u003e\n",
-      "stderr": "  ✗ src-noskill: SKILL.md not found at SKILL.md\n",
+      "stderr": "  ✗ src-noskill: SKILL.md not found at SKILL.md\nai-specs: sync failed; the dep 'src-noskill' was not kept and \u003cDIR\u003e/ai-specs/ai-specs.toml was restored.\n",
       "tree": [
         {
           "path": ".gitignore",
@@ -174,7 +174,7 @@
         },
         {
           "path": "ai-specs/ai-specs.toml",
-          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"src-noskill\"\nsource = \"\u003cSRC\u003e\"\nscope = [\"root\"]\nauto_invoke = [\"When working on src-noskill\"]\nvendor_attribution = \"\u003cOWNER\u003e\"\n"
+          "content": "[project]\nname = \"u5c\"\n"
         }
       ]
     },
