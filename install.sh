@@ -49,8 +49,12 @@ if [ -d "$AI_SPECS_HOME/.git" ]; then
     # Mode-only dirt (e.g. chmod applied to 100644 files by a previous installer)
     # is auto-remediated: restore tracked modes and continue.  Real content
     # changes still abort.
-    if [ -n "$(git -C "$AI_SPECS_HOME" status --porcelain 2>/dev/null)" ]; then
-        if [ -z "$(git -C "$AI_SPECS_HOME" -c core.fileMode=false status --porcelain 2>/dev/null)" ]; then
+    # Untracked files under lib/ are the legacy Python runtime a 0.24.x -> 0.25.x
+    # migration leaves behind; they are not user changes and must not block this
+    # recovery path.
+    _dirty() { git -C "$AI_SPECS_HOME" "$@" status --porcelain 2>/dev/null | grep -v '^?? lib/' || true; }
+    if [ -n "$(_dirty)" ]; then
+        if [ -z "$(_dirty -c core.fileMode=false)" ]; then
             echo "Restoring file modes altered by a previous installer..." >&2
             git -C "$AI_SPECS_HOME" checkout -- . || {
                 echo -e "${RED}error: could not restore file modes at $AI_SPECS_HOME${NC}" >&2
