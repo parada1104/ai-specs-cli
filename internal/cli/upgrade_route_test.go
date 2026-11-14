@@ -146,7 +146,10 @@ func TestUpgradeUsageMatchesTheShellSurface(t *testing.T) {
 	env := smokeEnv(root)
 
 	nativeOut, nativeErr, nativeCode := runOne(bin, []string{"upgrade", "--help"}, env, root)
-	legacyOut, legacyErr, legacyCode := runOne("bash", []string{filepath.Join(root, "bin", "ai-specs"), "upgrade", "--help"}, env, root)
+	// Pin the launcher's binary: without it a checkout lacking dist/ would make
+	// the launcher self-heal (download or build) instead of exec the build above.
+	launcherEnv := append(append([]string{}, env...), "AI_SPECS_GO_BIN="+bin)
+	legacyOut, legacyErr, legacyCode := runOne("bash", []string{filepath.Join(root, "bin", "ai-specs"), "upgrade", "--help"}, launcherEnv, root)
 
 	if nativeCode != legacyCode {
 		t.Errorf("exit code: native %d, legacy %d", nativeCode, legacyCode)

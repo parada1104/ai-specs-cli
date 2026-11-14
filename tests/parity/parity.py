@@ -1600,6 +1600,10 @@ def run_leg(label: str, cli_path: Path, fixture: Fixture, scratch: Path,
            "AI_SPECS_HOME": home_str}
     if gate_bin is not None:
         env["WORKTREE_GATE_BIN"] = str(gate_bin)
+    if cli_path.name == "ai-specs" and cli_path.parent.name == "bin":
+        # The launcher self-heals a missing binary (download/go build); the
+        # self-test shim must keep failing instantly and identically instead.
+        env["AI_SPECS_GO_BIN"] = str(scratch / "no-native-binary")
     (scratch / "user-home").mkdir()
     leg = LegResult(label=label, cli_path=str(cli_path))
     for step in fixture.steps:
