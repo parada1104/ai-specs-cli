@@ -329,6 +329,7 @@ type agentRun struct {
 	selected       []string
 
 	enabledAgents     []string
+	unknownAgents     int // reported, never aborts the loop; ends the run nonzero
 	mcpCount          int
 	skillsSource      string
 	commandsSource    string
@@ -470,6 +471,10 @@ func readEnabledAgents(tomlPath string, errW io.Writer) ([]string, int) {
 	if agents != nil {
 		raw, _ = agents.Get("enabled")
 	}
+	if _, isList := raw.([]any); raw != nil && !isList {
+		fmt.Fprintln(errW, "error: [agents].enabled must be a list of agent names")
+		return nil, 1
+	}
 	return normalizedStringList(raw), 0
 }
 
@@ -598,6 +603,11 @@ func (a *agentRun) runBody() int {
 		}); rc != 0 {
 			return rc
 		}
+	}
+
+	if a.unknownAgents > 0 {
+		fmt.Fprintf(a.errW, "ERROR: %d unknown agent(s) in the agent list; the others were synced.\n", a.unknownAgents)
+		return 1
 	}
 
 	if !a.nested {
@@ -741,6 +751,7 @@ func (a *agentRun) ensureTargetWorkspace(out, errW io.Writer) int {
 func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 	if _, ok := platformGet(agent, "native"); !ok {
 		fmt.Fprintf(errW, "  ✗ unknown agent: %s\n", agent)
+		a.unknownAgents++
 		return 0
 	}
 

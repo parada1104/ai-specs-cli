@@ -123,6 +123,7 @@ func runSkillsList(args []string, home string, stdout, stderr io.Writer) int {
 	manifestPresent := regularInitFile(tomlPath)
 	var deps []*toml.Table
 	depsParsed := false
+	manifestInvalid := false
 	if manifestPresent {
 		data, err := config.LoadManifest(tomlPath)
 		if err != nil {
@@ -131,6 +132,7 @@ func runSkillsList(args []string, home string, stdout, stderr io.Writer) int {
 			// from the heredoc). Parse-error detail is diagnostic only (ADR
 			// 0002): our parser words its own message.
 			fmt.Fprintf(stderr, "  ✗ manifest invalid: %v\n", err)
+			manifestInvalid = true
 			fmt.Fprintln(stdout, "  (skipped — fix ai-specs.toml to list deps)")
 		} else {
 			depsParsed = true
@@ -274,6 +276,9 @@ func runSkillsList(args []string, home string, stdout, stderr io.Writer) int {
 		}
 	} else {
 		fmt.Fprintln(stdout, "  (not found)")
+	}
+	if manifestInvalid {
+		return 1
 	}
 	return 0
 }

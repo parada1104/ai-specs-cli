@@ -3357,3 +3357,20 @@ func TestReentryEnvPinsRunningBinary(t *testing.T) {
 		t.Fatalf("AI_SPECS_HOME entries = %q", homes)
 	}
 }
+
+func TestRecipeListInvalidManifestFails(t *testing.T) {
+	project := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(project, "ai-specs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "ai-specs", "ai-specs.toml"), []byte("[project\nname = \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"recipe", "list", project}, t.TempDir(), nil, &stdout, &stderr); code != 1 {
+		t.Errorf("exit = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "manifest invalid") {
+		t.Errorf("stderr = %q, want a manifest invalid line", stderr.String())
+	}
+}
