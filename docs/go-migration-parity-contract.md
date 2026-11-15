@@ -420,6 +420,14 @@ A rewrite most easily breaks these.
 9. **`errexit` stays off inside `run_step`** until captured output is replayed —
    restoring it earlier lets a failing `cat` replace the wrapped status.
 
+### Concurrent `sync` runs — settled divergence
+
+Concurrent `ai-specs sync` runs for one project are serialized by an exclusive
+per-project advisory lock at `<cache-root>/sync.lock`. A waiter blocks for up to
+120 seconds, then exits 1 with a retry diagnostic. This covers the Go CLI's
+`sync` command only: standalone `sync-agent` and runs using different CLI homes
+are not serialized by this lock.
+
 ### Locale-collation exception — TOLERANT (narrow, human-accepted 2026-10-04)
 
 The ORDER of the `! preserved non-managed file <dir>/<base> (move it to
@@ -691,6 +699,40 @@ canonical scratch the two spellings coincide and the corpus reports
 `gate-absent failing=0`, `gate-present failing=0`. The tolerance covers the path
 FORM only: the file/dir it names, the surrounding text, the exit codes and the
 resulting tree stay FROZEN.
+
+### CLI argument validation and leading TOML BOM — TOLERANT (settled divergence)
+
+The Go dispatcher rejects `help <unknown-topic>` and extra positional arguments
+following `version`, `-v` or `--version` with exit 2 and usage guidance; bare
+help and valid help topics print the same embedded root help, and plain version
+invocations retain their output. This intentionally improves on the legacy
+launcher, which silently accepted the unknown topic and discarded version
+arguments. The shared TOML reader accepts and strips exactly one leading UTF-8
+BOM; BOM-only input is an empty document, while a second or interior BOM remains
+invalid. All other parser and CLI behavior is unchanged.
+
+### Invalid input now fails loudly — TOLERANT (settled, human-decided 2026-11-15, BUG-9)
+
+The legacy exit codes below were defects, not contract. The Go route now fails
+with exit 1 for: an unknown agent in `[agents].enabled` (the remaining agents
+still sync, the run ends 1 without the success footer); `[agents].enabled` that
+is not a list; a manifest without a `[project]` table (checked before any
+write); `skills list` and `recipe list` on an unparseable manifest (`skills
+list` still prints every section). The `sync-agent-arg-contract` legacy goldens
+still record the old rc 0 for the unknown-agent step.
+
+### Non-symlink instructions refusal continues agent fan-out — TOLERANT (settled)
+
+A real file at an agent's instructions path is still refused with the unchanged
+`    ✗ refuse to overwrite non-symlink: <path>` line and remains untouched. The
+Go sync-agent adds `    → move or delete the file above, then re-run sync`,
+skips that agent's later artifacts, and continues syncing remaining agents.
+After the loop it exits 1 with an `ERROR: <n> agent instruction file(s) were
+left untouched (<agents>); the other agents were synced.` summary instead of a
+success footer. This deliberately changes the sync exit/stderr contract (risk
+item 3); the legacy fanout-matrix captures are minimally updated by hand with
+the new hint and summary. Skills-link refusal and other failure kinds remain
+unchanged.
 
 ## 11. Environment variables
 

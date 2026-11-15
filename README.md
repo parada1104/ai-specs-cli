@@ -83,6 +83,8 @@ Missing interactive deps (`rich` + `questionary`) yield exit **3** with install 
 | `ai-specs upgrade [--dry-run] [--force] [-v]` | Upgrade global installation |
 | `ai-specs version` | Print version |
 
+Unknown `help` topics and extra `version` arguments are rejected with exit 2.
+
 Every subcommand accepts an optional `[path]` (defaults to `cwd`) and `--help`.
 
 `sync` and `sync-agent` print one compact `syncing <label>` line per step by

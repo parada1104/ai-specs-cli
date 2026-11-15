@@ -557,6 +557,9 @@ func TestSyncAgentFanoutStopsOnFirstTargetFailure(t *testing.T) {
 	if combined := out.String() + errW.String(); !strings.Contains(combined, "refuse to overwrite non-symlink") {
 		t.Errorf("failure cause missing:\n%s", combined)
 	}
+	if !strings.Contains(errW.String(), "    → move or delete the file above, then re-run sync\n") || !strings.Contains(errW.String(), "ERROR: 1 agent instruction file(s) were left untouched (claude); the other agents were synced.\n") {
+		t.Errorf("blocked instruction guidance/summary missing:\n%s", errW.String())
+	}
 	for _, later := range p.Targets[1:] {
 		if _, err := os.Stat(filepath.Join(later.Path, "ai-specs", ".gitignore")); err == nil {
 			t.Errorf("later target %s was processed after the first failure", later.Path)
@@ -775,8 +778,7 @@ func TestSyncAgentCacheFailurePropagates(t *testing.T) {
 }
 
 // TestSyncAgentSymlinkFailurePropagates: a refused instructions link exits the
-// agent run non-zero and does not claim success (Python:
-// test_t4_2_sync_one_agent_return_sites_propagate_symlink_failure).
+// agent run non-zero with remediation guidance and no success footer.
 func TestSyncAgentSymlinkFailurePropagates(t *testing.T) {
 	home, _ := spineEnv(t)
 	project := spineProject(t, spineManifest)
@@ -789,6 +791,9 @@ func TestSyncAgentSymlinkFailurePropagates(t *testing.T) {
 	combined := out.String() + errW.String()
 	if !strings.Contains(combined, "refuse to overwrite non-symlink") {
 		t.Errorf("failure cause missing:\n%s", combined)
+	}
+	if !strings.Contains(errW.String(), "    → move or delete the file above, then re-run sync\n") || !strings.Contains(errW.String(), "ERROR: 1 agent instruction file(s) were left untouched (claude); the other agents were synced.\n") {
+		t.Errorf("blocked instruction guidance/summary missing:\n%s", errW.String())
 	}
 	if strings.Contains(combined, "✓ sync-agent complete") {
 		t.Errorf("success claimed after a swallowed failure:\n%s", combined)

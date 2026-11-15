@@ -145,7 +145,8 @@ func trackerWitnessState(root string) string {
 	return state
 }
 
-// trackerLedgerInPlay mirrors doctor._tracker_ledger_in_play: the relevance
+// trackerLedgerInPlay mirrors doctor._tracker_ledger_in_play (an unbound witness no
+// longer counts, see below): the relevance
 // gate. It reads configuration and any already-written witness and never grades
 // a link section.
 func (d *Doctor) trackerLedgerInPlay() bool {
@@ -157,7 +158,12 @@ func (d *Doctor) trackerLedgerInPlay() bool {
 		return true
 	}
 	witness := trackerWitnessPath(trackerCommonDir(d.Root))
-	return witness != "" && isFile(witness)
+	if witness == "" || !isFile(witness) {
+		return false
+	}
+	// `sync` writes a witness even when no tracker exists; an "unbound" one
+	// records exactly that, so there is nothing for the ledger to grade.
+	return trackerWitnessState(d.Root) != "unbound"
 }
 
 // trackerLedgerGuidance mirrors doctor._tracker_ledger_guidance: a

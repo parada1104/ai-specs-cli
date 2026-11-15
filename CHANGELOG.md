@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.1] — 2026-11-15
+
+### Upgrade notes
+A 0.24.x install that was upgraded to 0.25.0 keeps a leftover `lib/` directory
+that makes `ai-specs upgrade` stop with "Working tree is dirty" (`?? lib/`). If
+you hit that, run `rm -rf "${AI_SPECS_HOME:-$HOME/.ai-specs}/lib"` and then
+`ai-specs upgrade`, or re-run `install.sh`. Installs that go from 0.24.x
+straight to this release are not affected.
+
+### Fixed
+- **A failed `skills add` no longer breaks every later `sync`.** `skills add` (and
+  `add-dep`) registered the `[[deps]]` block and then ran `sync`; when the source
+  could not be vendored (bad `--ref`, bad `--subdir`, unreachable URL) the block
+  stayed in `ai-specs.toml` and every later `sync` failed on it until `skills
+  remove`. The manifest is now restored when that sync fails (only while it is
+  still exactly what the add wrote), a `.deps/<id>` the add did not create is never
+  removed, and the exit code stays the sync's.
+- **`doctor` flags a registered dep that was never installed.** A `[[deps]]` entry
+  with no copy under `ai-specs/.deps/<id>` now gets a `WARN deps` line pointing at
+  `ai-specs sync`; installed deps add no line.
+- **A migrated install can upgrade again.** The removed Python runtime leaves
+  `lib/_vendor` behind; the 0.24.x tree ignored it and the 0.25.x tree did not, so
+  after the fast-forward it showed as an untracked leftover and `ai-specs upgrade`
+  (even `--dry-run`) and `install.sh` refused the "dirty" tree. `/lib/` is ignored
+  now, `install.sh` skips untracked files under `lib/` when checking for dirt, and
+  the upgrade scenario test covers a second `upgrade` after the migration.
+- **`doctor` no longer fails projects that have no tracker.** `ai-specs sync`
+  always writes the ledger witness; an `unbound` one records that no tracker is
+  configured, so it no longer puts the tracker ledger in play. Projects without
+  `worktree-flow` (which never acquires a gate) used to get `ERROR tracker-ledger`
+  and exit code 1 with advice that could not help. A bound or ambiguous witness,
+  an enabled tracker recipe or an `openspec` tracking declaration still do.
+- **Invalid input fails loudly.** An unknown agent in `[agents].enabled` no longer
+  exits 0: the other agents still sync, then the run ends 1 with a summary. A
+  non-list `[agents].enabled`, and a manifest without `[project]`, make `sync`
+  exit 1 (before any write for the latter); `skills list` and `recipe list` exit 1
+  on an unparseable manifest (`recipe list` now names the error).
+- **Concurrent `sync` runs on one project no longer corrupt each other.** Four
+  parallel syncs used to fail with raw `mkdir`/`unlinkat` errors in the shared
+  cache; they are serialized by a lock under the project cache (a second sync
+  waits up to 120 s, then exits 1). Not covered: standalone `sync-agent`, and
+  different `AI_SPECS_HOME` values on one project.
+- **A regular `CLAUDE.md` (or other instructions file) no longer stops the other
+  agents.** The file is left untouched and the refusal now says what to do (move or
+  delete it, then re-run sync); the remaining agents are synced and the run ends 1.
+- **`help <unknown>` and `version <extra>` are rejected** with exit 2 instead of
+  silently succeeding, and a leading UTF-8 BOM in `ai-specs.toml` is accepted
+  instead of failing with a cryptic TOML error.
+
 ## [0.25.0] — 2026-11-14
 
 ### Upgrade notes

@@ -177,6 +177,12 @@ PROMO="$(git --git-dir="$O" commit-tree "$TO_SHA^{tree}" -p refs/heads/main \
     fail "(c) could not create the promotion commit in the bare clone" "$T/promote.log"
 git --git-dir="$O" update-ref refs/heads/main "$PROMO" ||
     fail "(c) could not move origin/main to the promotion commit"
+# The old runtime pip-vendors its TUI packages into lib/_vendor, which the old
+# tree's .gitignore hides; the new tree no longer ignores it, so after the
+# fast-forward it is an untracked leftover (what a migrated user really has).
+# A package the tree never tracked (a tracked one would dirty the OLD tree).
+mkdir -p "$AI_SPECS_HOME/lib/_vendor/pip_leftover"
+printf '# vendored by the removed runtime\n' >"$AI_SPECS_HOME/lib/_vendor/pip_leftover/__init__.py"
 "$AIBIN" upgrade </dev/null >"$T/upgrade.log" 2>&1 ||
     fail "(c) installed $FROM_TAG ai-specs upgrade failed" "$T/upgrade.log"
 grep -q "Upgraded: $OLD_VERSION -> $NEW_VERSION" "$T/upgrade.log" ||
@@ -236,6 +242,18 @@ if grep -q 'fetching' "$T/version-again.err"; then
     fail "(g) the second verb fetched the binary again" "$T/version-again.err"
 fi
 pass "(g) the second verb reused dist/ai-specs without fetching"
+
+# (h) the migrated install must be upgradable again: the legacy lib/ leftover
+# is not user dirt, so `upgrade --dry-run` neither aborts nor calls it dirty.
+say "== (h) the migrated install can run upgrade again"
+"$AIBIN" upgrade --dry-run </dev/null >"$T/upgrade-again.out" 2>"$T/upgrade-again.err" ||
+    fail "(h) ai-specs upgrade --dry-run refused on the migrated install" \
+        "$T/upgrade-again.err" "$T/upgrade-again.out"
+if cat "$T/upgrade-again.out" "$T/upgrade-again.err" | grep -qi 'dirty'; then
+    fail "(h) the migrated install is reported as a dirty working tree" \
+        "$T/upgrade-again.err" "$T/upgrade-again.out"
+fi
+pass "(h) upgrade --dry-run works on the migrated install"
 
 say "PASS  upgrade $OLD_VERSION -> $NEW_VERSION survived"
 exit 0

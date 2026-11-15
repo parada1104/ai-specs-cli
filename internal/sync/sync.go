@@ -17,10 +17,12 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"ai-specs.dev/ai-specs/internal/target"
+	"ai-specs.dev/ai-specs/internal/toml"
 )
 
 // syncUsage is the byte-exact body of usage() in lib/sync.sh (a quoted
@@ -52,6 +54,11 @@ Flags:
 // shell source: drift in lib/sync.sh fails the Go test instead of silently
 // breaking the byte-for-byte differential smoke test.
 const syncCDLine = 76
+
+var (
+	errSyncLockTimeout = errors.New("sync lock timeout")
+	syncLockWait       = 120 * time.Second
+)
 
 // options is the parsed command line.
 type options struct {
@@ -205,6 +212,21 @@ func (r *runner) run(opts options) int {
 		fmt.Fprintf(r.stderr, "       Run 'ai-specs init %s' first.\n", root)
 		return 1
 	}
+
+	if rc := requireProjectTable(tomlPath, r.stderr); rc != 0 {
+		return rc
+	}
+
+	unlock, lockErr := acquireSyncLock(root, r.home)
+	if lockErr != nil {
+		if errors.Is(lockErr, errSyncLockTimeout) {
+			fmt.Fprintf(r.stderr, "ERROR: another ai-specs sync is still running for %s (waited %s); try again.\n", root, syncLockWait)
+		} else {
+			fmt.Fprintf(r.stderr, "ERROR: cannot acquire sync lock for %s: %v\n", root, lockErr)
+		}
+		return 1
+	}
+	defer unlock()
 
 	// CheckSync is native (T1 of U2a). Its stderr goes out as the Python shim's
 	// did; any failure collapses to exit 1.
@@ -487,4 +509,24 @@ func capitalizeFirst(s string) string {
 	}
 	r, size := utf8.DecodeRuneInString(s)
 	return string(unicode.ToUpper(r)) + s[size:]
+}
+
+// requireProjectTable refuses, before any write, a manifest without a [project]
+// table: an empty file is valid TOML but not a project.
+func requireProjectTable(tomlPath string, errW io.Writer) int {
+	data, err := os.ReadFile(tomlPath)
+	if err != nil {
+		fmt.Fprintf(errW, "error: %s\n", err)
+		return 1
+	}
+	manifest, err := toml.Parse(data)
+	if err != nil {
+		fmt.Fprintf(errW, "error: %s\n", err)
+		return 1
+	}
+	if _, ok := manifest.Table("project"); !ok {
+		fmt.Fprintf(errW, "ERROR: %s has no [project] table.\n", tomlPath)
+		return 1
+	}
+	return 0
 }

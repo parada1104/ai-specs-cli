@@ -34,7 +34,7 @@
         },
         {
           "path": "ai-specs/.ai-specs.lock",
-          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.25.0\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"obsidian-skills\".skills.\"obsidian-skills\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.25.1\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"obsidian-skills\".skills.\"obsidian-skills\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
         },
         {
           "path": "ai-specs/.deps",
@@ -104,7 +104,7 @@
         },
         {
           "path": "ai-specs/.ai-specs.lock",
-          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.25.0\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"src-ok\".skills.\"src-ok\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.25.1\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"src-ok\".skills.\"src-ok\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
         },
         {
           "path": "ai-specs/.deps",
@@ -154,7 +154,7 @@
       ],
       "rc": 1,
       "stdout": "\nai-specs skills add\n  url:         \u003cSRC\u003e\n  id:          src-noskill\n  subdir:      (none)\n  scope:       root\n  license:     (none)\n  attribution: \u003cOWNER\u003e\n  ref:         (none)\n\n  ✓ appended [[deps]] for 'src-noskill' to \u003cDIR\u003e/ai-specs/ai-specs.toml\n\n▸ ai-specs sync \u003cDIR\u003e\n\nai-specs sync\n  root:    \u003cDIR\u003e\n  planning: \u003cDIR\u003e\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  ▸ src-noskill  ←  \u003cSRC\u003e\n",
-      "stderr": "  ✗ src-noskill: SKILL.md not found at SKILL.md\n",
+      "stderr": "  ✗ src-noskill: SKILL.md not found at SKILL.md\nai-specs: sync failed; the dep 'src-noskill' was not kept and \u003cDIR\u003e/ai-specs/ai-specs.toml was restored.\n",
       "tree": [
         {
           "path": ".gitignore",
@@ -174,7 +174,7 @@
         },
         {
           "path": "ai-specs/ai-specs.toml",
-          "content": "[project]\nname = \"u5c\"\n\n[[deps]]\nid = \"src-noskill\"\nsource = \"\u003cSRC\u003e\"\nscope = [\"root\"]\nauto_invoke = [\"When working on src-noskill\"]\nvendor_attribution = \"\u003cOWNER\u003e\"\n"
+          "content": "[project]\nname = \"u5c\"\n"
         }
       ]
     },
@@ -212,7 +212,7 @@
         },
         {
           "path": "ai-specs/.ai-specs.lock",
-          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.25.0\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"my-override\".skills.\"my-override\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.25.1\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"my-override\".skills.\"my-override\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
         },
         {
           "path": "ai-specs/.deps",
@@ -282,7 +282,7 @@
         },
         {
           "path": "ai-specs/.ai-specs.lock",
-          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.25.0\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"src-ok\".skills.\"src-ok\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
+          "content": "# Managed by ai-specs. Do not edit by hand.\n# Provenance stamp: [meta] records the CLI version and timestamp of the last\n# sync. [managed.*] records integrity only for CLI-owned override targets;\n# it is not a general content-integrity manifest. git covers the committed\n# project surface; dep content hashes ([deps.*]) are tracked for drift\n# detection; recipe/skill content hashes are not tracked.\n\n[meta]\ncli_version = \"0.25.1\"\nsynced_at = \"\u003cwall-clock\u003e\"\n\n[managed.\"AGENTS.md\"]\nsha256 = \"f66978f4a7cc4e097293a5ad8406e63d70007e8095f02526e39e2de727d6658a\"\nkind = \"runtime-brief\"\npolicy = \"never-force\"\n\n[deps.\"src-ok\".skills.\"src-ok\"]\n\"SKILL.md\" = \"\u003cdep-hash\u003e\"\n"
         },
         {
           "path": "ai-specs/.deps",

@@ -25,6 +25,7 @@ package cli
 // same class of deviation as the doctor port (TestDoctorMissingPathDeviation).
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -122,6 +123,7 @@ func runSkillsList(args []string, home string, stdout, stderr io.Writer) int {
 	manifestPresent := regularInitFile(tomlPath)
 	var deps []*toml.Table
 	depsParsed := false
+	manifestInvalid := false
 	if manifestPresent {
 		data, err := config.LoadManifest(tomlPath)
 		if err != nil {
@@ -130,6 +132,7 @@ func runSkillsList(args []string, home string, stdout, stderr io.Writer) int {
 			// from the heredoc). Parse-error detail is diagnostic only (ADR
 			// 0002): our parser words its own message.
 			fmt.Fprintf(stderr, "  ✗ manifest invalid: %v\n", err)
+			manifestInvalid = true
 			fmt.Fprintln(stdout, "  (skipped — fix ai-specs.toml to list deps)")
 		} else {
 			depsParsed = true
@@ -273,6 +276,9 @@ func runSkillsList(args []string, home string, stdout, stderr io.Writer) int {
 		}
 	} else {
 		fmt.Fprintln(stdout, "  (not found)")
+	}
+	if manifestInvalid {
+		return 1
 	}
 	return 0
 }
@@ -912,12 +918,25 @@ func runSkillsAdd(args []string, label, home string, stdin io.Reader, stdout, st
 	fmt.Fprintf(stdout, "  ref:         %s\n", addOrNone(opts.ref))
 	fmt.Fprintln(stdout, "")
 
+	// Snapshot what a rollback needs BEFORE the first write: the manifest bytes
+	// and whether ai-specs/.deps/<id> already existed (it may hold data the user
+	// vendored by hand, so only a directory this add creates may be removed).
+	before, err := os.ReadFile(tomlPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "ERROR: cannot read %s: %v\n", tomlPath, err)
+		return 1
+	}
+	depsDir := filepath.Join(target, "ai-specs", ".deps", id)
+	_, statErr := os.Stat(depsDir)
+	depsDirPreexisted := statErr == nil
+
 	msg, err := config.AppendDepsBlock(tomlPath, id, opts.url, opts.subdir, opts.scope, trigger, opts.license, auth, opts.ref)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	fmt.Fprintln(stdout, msg)
+	written, _ := os.ReadFile(tomlPath)
 
 	fmt.Fprintln(stdout, "")
 	if !opts.runSync {
@@ -928,7 +947,34 @@ func runSkillsAdd(args []string, label, home string, stdin io.Reader, stdout, st
 	// S8: the one step of this unit that stays a call into another verb. The
 	// script runs sync as its LAST command under set -e, so sync's exit code
 	// IS the verb's exit code — here it is the return value itself.
-	return sync.Run([]string{"sync", target}, home, stdin, stdout, stderr)
+	syncRC := sync.Run([]string{"sync", target}, home, stdin, stdout, stderr)
+	if syncRC != 0 {
+		skillsAddRollback(stderr, tomlPath, id, depsDir, before, written, depsDirPreexisted)
+	}
+	return syncRC
+}
+
+// skillsAddRollback undoes a registration whose delegated sync failed, so a bad
+// ref, subdir or URL cannot leave a [[deps]] block that breaks every later sync.
+// The manifest is restored only while it is still exactly what this add wrote
+// (never over a concurrent edit), and only a .deps/<id> created by this add is
+// removed. The verb's exit code stays the sync's.
+func skillsAddRollback(stderr io.Writer, tomlPath, id, depsDir string, before, written []byte, depsDirPreexisted bool) {
+	current, err := os.ReadFile(tomlPath)
+	if err != nil || !bytes.Equal(current, written) {
+		fmt.Fprintf(stderr, "ai-specs: sync failed and %s changed meanwhile; not restoring it automatically. "+
+			"Remove the dep with: ai-specs skills remove %s\n", tomlPath, id)
+		return
+	}
+	if err := config.RestoreManifest(tomlPath, before); err != nil {
+		fmt.Fprintf(stderr, "ai-specs: sync failed and %s could not be restored (%v). "+
+			"Remove the dep with: ai-specs skills remove %s\n", tomlPath, err, id)
+		return
+	}
+	if !depsDirPreexisted {
+		_ = os.RemoveAll(depsDir)
+	}
+	fmt.Fprintf(stderr, "ai-specs: sync failed; the dep '%s' was not kept and %s was restored.\n", id, tomlPath)
 }
 
 // skillsAddDupIDs is the id list the script's dup-check heredoc computes:

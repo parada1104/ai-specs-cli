@@ -129,6 +129,11 @@ func runRecipeList(args []string, home, exePath string, stdout, stderr io.Writer
 		return 1
 	}
 
+	if _, err := config.LoadManifest(filepath.Join(target, "ai-specs", "ai-specs.toml")); err != nil {
+		fmt.Fprintf(stderr, "  ✗ manifest invalid: %v\n", err)
+		return 1
+	}
+
 	installRoot := home
 	if exePath != "" {
 		installRoot = homepkg.ResolveHome(exePath, "")

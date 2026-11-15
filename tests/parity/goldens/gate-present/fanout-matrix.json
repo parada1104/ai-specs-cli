@@ -8,7 +8,7 @@
     "sync"
    ],
    "rc": 1,
-   "stderr": "    ! preserved non-managed file .cursor/commands/user-own.md (move it to ai-specs/commands/ to manage it)\n    \u2717 refuse to overwrite non-symlink: <TEMP>/CLAUDE.md\nERROR: sync failed for target <TEMP> (root:.). Stopped on first failure; previous writes are not rolled back.\n",
+   "stderr": "    ! preserved non-managed file .cursor/commands/user-own.md (move it to ai-specs/commands/ to manage it)\n    \u2717 refuse to overwrite non-symlink: <TEMP>/CLAUDE.md\n    → move or delete the file above, then re-run sync\nERROR: 1 agent instruction file(s) were left untouched (claude); the other agents were synced.\nERROR: sync failed for target <TEMP> (root:.). Stopped on first failure; previous writes are not rolled back.\n",
    "stdout": "\nai-specs sync\n  root:    <TEMP>\n  planning: <TEMP>\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  (no [[deps]] declared \u2014 nothing to vendor)\n  syncing harness env (.envrc + ai-specs.env.example)\nWrote <TEMP>/ai-specs.env.example\n  syncing recipes\n  (no [recipes.*] enabled \u2014 skipping)\n  syncing AGENTS.md\n  syncing root:. \u2192 <TEMP>\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing cursor\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing opencode\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing codex\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing copilot\n  syncing gemini\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing omp\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing claude\n",
    "tree": [
     [
@@ -299,7 +299,7 @@
     "--all"
    ],
    "rc": 1,
-   "stderr": "    ! preserved non-managed file .cursor/commands/user-own.md (move it to ai-specs/commands/ to manage it)\n    \u2717 refuse to overwrite non-symlink: <TEMP>/CLAUDE.md\n",
+   "stderr": "    ! preserved non-managed file .cursor/commands/user-own.md (move it to ai-specs/commands/ to manage it)\n    \u2717 refuse to overwrite non-symlink: <TEMP>/CLAUDE.md\n    → move or delete the file above, then re-run sync\nERROR: 1 agent instruction file(s) were left untouched (claude); the other agents were synced.\n",
    "stdout": "  syncing flatten resolved skills\n  syncing merge commands\n\nai-specs sync-agent\n  source root: <TEMP>\n  target:      <TEMP>\n  agents:      cursor opencode codex copilot gemini pi omp claude\n  enabled:     cursor opencode codex copilot gemini pi omp claude\n  mcp:         0 server(s)\n\n  derived artifacts: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n  syncing cursor\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing opencode\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing codex\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing copilot\n  syncing gemini\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing omp\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing claude\n",
    "tree": [
     [
