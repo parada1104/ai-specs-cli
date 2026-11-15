@@ -587,7 +587,7 @@ func TestSkillsListNativeNeedsNoBashOrPython(t *testing.T) {
 
 // TestSkillsListInvalidManifestContinues pins the malformed-manifest branch
 // in-process: the two invalid lines (stderr diagnostic + stdout skip line)
-// and the listing CONTINUING through all four sections to exit 0. The exact
+// and the listing CONTINUING through all four sections to exit 1. The exact
 // parse-error wording is diagnostic only (ADR 0002) — our parser words its
 // own — so this branch is shape-pinned here instead of byte-differentials.
 func TestSkillsListInvalidManifestContinues(t *testing.T) {
@@ -598,8 +598,8 @@ func TestSkillsListInvalidManifestContinues(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"skills", "list", project}, home, nil, &stdout, &stderr)
-	if code != 0 {
-		t.Errorf("exit = %d, want 0", code)
+	if code != 1 {
+		t.Errorf("exit = %d, want 1 (the listing continues but the run fails)", code)
 	}
 	if !strings.HasPrefix(stderr.String(), "  ✗ manifest invalid: ") {
 		t.Errorf("stderr = %q, want the frozen invalid-manifest diagnostic prefix", stderr.String())

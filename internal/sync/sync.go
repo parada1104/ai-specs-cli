@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"ai-specs.dev/ai-specs/internal/target"
+	"ai-specs.dev/ai-specs/internal/toml"
 )
 
 // syncUsage is the byte-exact body of usage() in lib/sync.sh (a quoted
@@ -204,6 +205,10 @@ func (r *runner) run(opts options) int {
 		fmt.Fprintf(r.stderr, "ERROR: %s not found.\n", tomlPath)
 		fmt.Fprintf(r.stderr, "       Run 'ai-specs init %s' first.\n", root)
 		return 1
+	}
+
+	if rc := requireProjectTable(tomlPath, r.stderr); rc != 0 {
+		return rc
 	}
 
 	// CheckSync is native (T1 of U2a). Its stderr goes out as the Python shim's
@@ -487,4 +492,24 @@ func capitalizeFirst(s string) string {
 	}
 	r, size := utf8.DecodeRuneInString(s)
 	return string(unicode.ToUpper(r)) + s[size:]
+}
+
+// requireProjectTable refuses, before any write, a manifest without a [project]
+// table: an empty file is valid TOML but not a project.
+func requireProjectTable(tomlPath string, errW io.Writer) int {
+	data, err := os.ReadFile(tomlPath)
+	if err != nil {
+		fmt.Fprintf(errW, "error: %s\n", err)
+		return 1
+	}
+	manifest, err := toml.Parse(data)
+	if err != nil {
+		fmt.Fprintf(errW, "error: %s\n", err)
+		return 1
+	}
+	if _, ok := manifest.Table("project"); !ok {
+		fmt.Fprintf(errW, "ERROR: %s has no [project] table.\n", tomlPath)
+		return 1
+	}
+	return 0
 }

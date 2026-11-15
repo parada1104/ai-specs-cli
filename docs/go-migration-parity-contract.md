@@ -692,6 +692,16 @@ canonical scratch the two spellings coincide and the corpus reports
 FORM only: the file/dir it names, the surrounding text, the exit codes and the
 resulting tree stay FROZEN.
 
+### Invalid input now fails loudly — TOLERANT (settled, human-decided 2026-11-15, BUG-9)
+
+The legacy exit codes below were defects, not contract. The Go route now fails
+with exit 1 for: an unknown agent in `[agents].enabled` (the remaining agents
+still sync, the run ends 1 without the success footer); `[agents].enabled` that
+is not a list; a manifest without a `[project]` table (checked before any
+write); `skills list` and `recipe list` on an unparseable manifest (`skills
+list` still prints every section). The `sync-agent-arg-contract` legacy goldens
+still record the old rc 0 for the unknown-agent step.
+
 ## 11. Environment variables
 
 | Var | Effect |

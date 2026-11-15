@@ -675,14 +675,45 @@ func newAgentRun(t *testing.T, project string) *agentRun {
 	}
 }
 
-func TestSyncOneAgentUnknownAgentIsSuccessNotice(t *testing.T) {
+func TestSyncOneAgentUnknownAgentIsCountedForFinalFailure(t *testing.T) {
 	run := newAgentRun(t, t.TempDir())
 	var out, errOut bytes.Buffer
 	if rc := run.syncOneAgent("warp", &out, &errOut); rc != 0 {
-		t.Fatalf("rc = %d, want 0 (unknown agents never fail the step)", rc)
+		t.Fatalf("rc = %d, want 0 (the loop goes on with the remaining agents)", rc)
 	}
 	if errOut.String() != "  ✗ unknown agent: warp\n" {
 		t.Errorf("stderr = %q", errOut.String())
+	}
+	if run.unknownAgents != 1 {
+		t.Errorf("unknownAgents = %d, want 1 (the run must end nonzero)", run.unknownAgents)
+	}
+}
+
+func TestReadEnabledAgentsRejectsNonList(t *testing.T) {
+	manifest := filepath.Join(t.TempDir(), "ai-specs.toml")
+	if err := os.WriteFile(manifest, []byte("[project]\nname = 't'\n\n[agents]\nenabled = \"claude\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var errOut bytes.Buffer
+	if _, rc := readEnabledAgents(manifest, &errOut); rc != 1 {
+		t.Fatalf("rc = %d, want 1", rc)
+	}
+	if !strings.Contains(errOut.String(), "[agents].enabled must be a list") {
+		t.Errorf("stderr = %q", errOut.String())
+	}
+}
+
+func TestRequireProjectTable(t *testing.T) {
+	dir := t.TempDir()
+	for body, want := range map[string]int{"": 1, "[agents]\nenabled = []\n": 1, "[project]\nname = 't'\n": 0} {
+		path := filepath.Join(dir, "m.toml")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var errOut bytes.Buffer
+		if rc := requireProjectTable(path, &errOut); rc != want {
+			t.Errorf("manifest %q: rc = %d, want %d (stderr %q)", body, rc, want, errOut.String())
+		}
 	}
 }
 
