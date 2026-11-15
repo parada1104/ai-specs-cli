@@ -290,11 +290,14 @@ func plainValue(v any) any {
 }
 
 // Parse parses TOML data restricted to the manifest subset and returns the
-// root table. Input must be valid UTF-8; a trailing newline is optional and
-// CRLF line endings are tolerated.
+// root table. Input must be valid UTF-8; one leading UTF-8 BOM is tolerated,
+// a trailing newline is optional, and CRLF line endings are tolerated.
 func Parse(data []byte) (*Table, error) {
 	if !utf8.Valid(data) {
 		return nil, fmt.Errorf("toml: input is not valid UTF-8")
+	}
+	if len(data) >= 3 && data[0] == 0xef && data[1] == 0xbb && data[2] == 0xbf {
+		data = data[3:]
 	}
 	// Tolerate CRLF: every bare \r must be part of a \r\n pair.
 	for i, b := range data {

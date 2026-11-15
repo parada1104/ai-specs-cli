@@ -80,8 +80,8 @@ type route struct {
 // lib/ and with it the last route that could produce a shim.
 
 // native maps the native verbs and their aliases to their route kind.
-// Like the legacy dispatcher, version and help ignore any extra arguments
-// (the verb runs and the rest is dropped).
+// `--help`/`-h` keep ignoring extra arguments; `help` validates its optional
+// topic, and version routes reject extra positional arguments.
 //
 // brief-render-policy and baseline-brief are INTERNAL seams: legacy scripts
 // reach them through AI_SPECS_GO_BIN (S19a), so they are routed here and
@@ -231,8 +231,18 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 	r := Route(args)
 	switch r.kind {
 	case routeVersion:
+		if len(args) > 1 {
+			fmt.Fprintf(stderr, "ERROR: unexpected positional argument: %s\n", args[1])
+			fmt.Fprintln(stderr, "Run 'ai-specs --help' for usage.")
+			return 2
+		}
 		return runVersion(home, stdout)
 	case routeHelp:
+		if args[0] == "help" && len(args) > 1 && Route(args[1:2]).kind == routeUnknown {
+			fmt.Fprintf(stderr, "ERROR: unknown help topic: %s\n", args[1])
+			fmt.Fprintln(stderr, "Run 'ai-specs help' for usage.")
+			return 2
+		}
 		return runHelp(stdout)
 	case routeRefreshBundled:
 		return runRefreshBundled(args, stdout, stderr)

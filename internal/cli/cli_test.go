@@ -264,18 +264,43 @@ func TestRunVersionMissingFilePrintsUnknown(t *testing.T) {
 	}
 }
 
-func TestRunVersionIgnoresExtraArgs(t *testing.T) {
-	home := t.TempDir()
-	if err := os.WriteFile(filepath.Join(home, "VERSION"), []byte("9.9.9\n"), 0o644); err != nil {
+func TestRunVersionRejectsExtraArgs(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"version", "--whatever", "junk"}, t.TempDir(), nil, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want empty", stdout.String())
+	}
+	if got, want := stderr.String(), "ERROR: unexpected positional argument: --whatever\nRun 'ai-specs --help' for usage.\n"; got != want {
+		t.Errorf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestRunHelpUnknownTopic(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"help", "foo"}, t.TempDir(), nil, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want empty", stdout.String())
+	}
+	if got, want := stderr.String(), "ERROR: unknown help topic: foo\nRun 'ai-specs help' for usage.\n"; got != want {
+		t.Errorf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestRunHelpKnownTopicPrintsEmbeddedBytes(t *testing.T) {
+	embedded, err := os.ReadFile(filepath.Join("help.txt"))
+	if err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"version", "--whatever", "junk"}, home, nil, &stdout, &stderr)
-	if code != 0 {
-		t.Errorf("exit = %d, want 0", code)
-	}
-	if stdout.String() != "9.9.9\n" {
-		t.Errorf("stdout = %q, want %q", stdout.String(), "9.9.9\n")
+	code := Run([]string{"help", "sync"}, t.TempDir(), nil, &stdout, &stderr)
+	if code != 0 || !bytes.Equal(stdout.Bytes(), embedded) || stderr.Len() != 0 {
+		t.Fatalf("Run(help sync) = (%d, stdout %d bytes, stderr %q), want (0, embedded help, empty)", code, stdout.Len(), stderr.String())
 	}
 }
 

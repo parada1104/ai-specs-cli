@@ -124,6 +124,32 @@ func TestParseDifferentialCorpus(t *testing.T) {
 
 // --- Parser API and semantics ---------------------------------------------
 
+func TestParseLeadingBOM(t *testing.T) {
+	plain := []byte("[project]\nname = \"demo\"\n")
+	want, err := Parse(plain)
+	if err != nil {
+		t.Fatalf("Parse without BOM: %v", err)
+	}
+	got, err := Parse(append([]byte{0xef, 0xbb, 0xbf}, plain...))
+	if err != nil {
+		t.Fatalf("Parse with BOM: %v", err)
+	}
+	if !reflect.DeepEqual(got.Any(), want.Any()) {
+		t.Errorf("BOM parse = %#v, want %#v", got.Any(), want.Any())
+	}
+	if empty, err := Parse([]byte{0xef, 0xbb, 0xbf}); err != nil || len(empty.Keys()) != 0 {
+		t.Errorf("BOM-only Parse = (%v, %v), want empty document", empty, err)
+	}
+	for _, src := range [][]byte{
+		{0xef, 0xbb, 0xbf, 0xef, 0xbb, 0xbf, 'a', ' ', '=', ' ', '1'},
+		{'a', ' ', '=', ' ', '1', 0xef, 0xbb, 0xbf},
+	} {
+		if _, err := Parse(src); err == nil {
+			t.Errorf("Parse accepted extra/interior BOM in %q", src)
+		}
+	}
+}
+
 func TestParseSectionsAndOrder(t *testing.T) {
 	root, err := Parse([]byte("z = 1\n[aaa]\nx = 1\n[mmm]\ny = 2\n"))
 	if err != nil {
