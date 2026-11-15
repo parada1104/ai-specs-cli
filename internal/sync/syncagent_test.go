@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -728,6 +729,75 @@ func TestSyncOneAgentNotEnabledWarnsAndSyncs(t *testing.T) {
 	}
 	if _, err := os.Readlink(filepath.Join(run.targetPath, ".cursor", "skills")); err != nil {
 		t.Errorf("cursor skills link not created: %v", err)
+	}
+}
+
+func TestRunBodyBlockedInstructionsContinueOtherAgents(t *testing.T) {
+	for _, tc := range []struct {
+		agents []string
+		files  map[string]string
+	}{
+		{agents: []string{"claude", "pi"}, files: map[string]string{"CLAUDE.md": "manual claude\n"}},
+		{agents: []string{"claude", "gemini"}, files: map[string]string{
+			"CLAUDE.md": "manual claude\n",
+			"GEMINI.md": "manual gemini\n",
+		}},
+	} {
+		run := newAgentRun(t, t.TempDir())
+		run.enabledAgents = tc.agents
+		manifest := "[project]\nname = 't'\n\n[agents]\nenabled = ['" + strings.Join(tc.agents, "', '") + "']\n"
+		if err := os.WriteFile(run.tomlPath, []byte(manifest), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for path, content := range tc.files {
+			if err := os.WriteFile(filepath.Join(run.targetPath, path), []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		var out, errOut bytes.Buffer
+		run.out, run.errW = &out, &errOut
+		if rc := run.runBody(); rc != 1 {
+			t.Errorf("agents %v: rc = %d, want 1; stdout=%q stderr=%q", tc.agents, rc, out.String(), errOut.String())
+		}
+		for path, want := range tc.files {
+			if got, err := os.ReadFile(filepath.Join(run.targetPath, path)); err != nil || string(got) != want {
+				t.Errorf("agents %v: %s changed: %q (%v)", tc.agents, path, got, err)
+			}
+		}
+		blockedAgents := "claude"
+		blockedCount := 1
+		if len(tc.agents) == 2 && tc.agents[1] == "gemini" {
+			blockedAgents = "claude,gemini"
+			blockedCount = 2
+		}
+		for path := range tc.files {
+			refusal := "    ✗ refuse to overwrite non-symlink: " + filepath.Join(run.targetPath, path) + "\n"
+			if !strings.Contains(errOut.String(), refusal) {
+				t.Errorf("agents %v: refusal missing for %s: %q", tc.agents, path, errOut.String())
+			}
+		}
+		if len(tc.agents) == 2 && tc.agents[1] == "pi" {
+			if _, err := os.Readlink(filepath.Join(run.targetPath, ".pi", "skills")); err != nil {
+				t.Errorf("pi skills link not created after claude refusal: %v", err)
+			}
+		} else {
+			if _, err := os.Readlink(filepath.Join(run.targetPath, ".claude", "skills")); err == nil {
+				t.Errorf("claude later steps ran after its instructions refusal")
+			}
+			if _, err := os.Readlink(filepath.Join(run.targetPath, ".gemini", "skills")); err == nil {
+				t.Errorf("gemini later steps ran after its instructions refusal")
+			}
+		}
+		if !strings.Contains(errOut.String(), "    → move or delete the file above, then re-run sync\n") {
+			t.Errorf("agents %v: remediation hint missing: %q", tc.agents, errOut.String())
+		}
+		if !strings.Contains(errOut.String(), "ERROR: "+strconv.Itoa(blockedCount)+" agent instruction file(s) were left untouched ("+blockedAgents+"); the other agents were synced.\n") {
+			t.Errorf("agents %v: blocked summary missing: %q", tc.agents, errOut.String())
+		}
+		if strings.Contains(out.String(), "✓ sync-agent complete") {
+			t.Errorf("agents %v: success footer printed after blocked instruction file", tc.agents)
+		}
 	}
 }
 
