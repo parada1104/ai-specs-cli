@@ -420,6 +420,14 @@ A rewrite most easily breaks these.
 9. **`errexit` stays off inside `run_step`** until captured output is replayed —
    restoring it earlier lets a failing `cat` replace the wrapped status.
 
+### Concurrent `sync` runs — settled divergence
+
+Concurrent `ai-specs sync` runs for one project are serialized by an exclusive
+per-project advisory lock at `<cache-root>/sync.lock`. A waiter blocks for up to
+120 seconds, then exits 1 with a retry diagnostic. This covers the Go CLI's
+`sync` command only: standalone `sync-agent` and runs using different CLI homes
+are not serialized by this lock.
+
 ### Locale-collation exception — TOLERANT (narrow, human-accepted 2026-10-04)
 
 The ORDER of the `! preserved non-managed file <dir>/<base> (move it to
