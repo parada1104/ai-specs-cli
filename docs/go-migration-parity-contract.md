@@ -692,6 +692,17 @@ canonical scratch the two spellings coincide and the corpus reports
 FORM only: the file/dir it names, the surrounding text, the exit codes and the
 resulting tree stay FROZEN.
 
+### CLI argument validation and leading TOML BOM — TOLERANT (settled divergence)
+
+The Go dispatcher rejects `help <unknown-topic>` and extra positional arguments
+following `version`, `-v` or `--version` with exit 2 and usage guidance; bare
+help and valid help topics print the same embedded root help, and plain version
+invocations retain their output. This intentionally improves on the legacy
+launcher, which silently accepted the unknown topic and discarded version
+arguments. The shared TOML reader accepts and strips exactly one leading UTF-8
+BOM; BOM-only input is an empty document, while a second or interior BOM remains
+invalid. All other parser and CLI behavior is unchanged.
+
 ## 11. Environment variables
 
 | Var | Effect |
