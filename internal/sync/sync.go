@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -52,6 +53,11 @@ Flags:
 // shell source: drift in lib/sync.sh fails the Go test instead of silently
 // breaking the byte-for-byte differential smoke test.
 const syncCDLine = 76
+
+var (
+	errSyncLockTimeout = errors.New("sync lock timeout")
+	syncLockWait       = 120 * time.Second
+)
 
 // options is the parsed command line.
 type options struct {
@@ -205,6 +211,17 @@ func (r *runner) run(opts options) int {
 		fmt.Fprintf(r.stderr, "       Run 'ai-specs init %s' first.\n", root)
 		return 1
 	}
+
+	unlock, lockErr := acquireSyncLock(root, r.home)
+	if lockErr != nil {
+		if errors.Is(lockErr, errSyncLockTimeout) {
+			fmt.Fprintf(r.stderr, "ERROR: another ai-specs sync is still running for %s (waited %s); try again.\n", root, syncLockWait)
+		} else {
+			fmt.Fprintf(r.stderr, "ERROR: cannot acquire sync lock for %s: %v\n", root, lockErr)
+		}
+		return 1
+	}
+	defer unlock()
 
 	// CheckSync is native (T1 of U2a). Its stderr goes out as the Python shim's
 	// did; any failure collapses to exit 1.
