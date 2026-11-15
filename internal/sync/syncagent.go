@@ -328,13 +328,14 @@ type agentRun struct {
 	selectAll      bool
 	selected       []string
 
-	enabledAgents     []string
-	unknownAgents     int // reported, never aborts the loop; ends the run nonzero
-	mcpCount          int
-	skillsSource      string
-	commandsSource    string
-	resolvedSkillsDir string
-	mergedCommandsDir string
+	enabledAgents       []string
+	unknownAgents       int // reported, never aborts the loop; ends the run nonzero
+	mcpCount            int
+	skillsSource        string
+	commandsSource      string
+	resolvedSkillsDir   string
+	mergedCommandsDir   string
+	blockedInstructions []string
 }
 
 // runAgentSingle executes one single-target run: the shell's body from the
@@ -604,6 +605,10 @@ func (a *agentRun) runBody() int {
 			return rc
 		}
 	}
+	if len(a.blockedInstructions) > 0 {
+		fmt.Fprintf(a.errW, "ERROR: %d agent instruction file(s) were left untouched (%s); the other agents were synced.\n", len(a.blockedInstructions), strings.Join(a.blockedInstructions, ","))
+		return 1
+	}
 
 	if a.unknownAgents > 0 {
 		fmt.Fprintf(a.errW, "ERROR: %d unknown agent(s) in the agent list; the others were synced.\n", a.unknownAgents)
@@ -768,7 +773,12 @@ func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 
 	// Instructions: a RELATIVE symlink to the target AGENTS.md.
 	if instr, _ := platformGet(agent, "instructions_path"); instr != "" {
-		if rc := makeRelativeSymlink(filepath.Join(a.targetPath, "AGENTS.md"), filepath.Join(a.targetPath, instr), out, errW); rc != 0 {
+		if rc, refused := makeRelativeSymlinkWithRefusal(filepath.Join(a.targetPath, "AGENTS.md"), filepath.Join(a.targetPath, instr), out, errW); rc != 0 {
+			if refused {
+				fmt.Fprintln(errW, "    → move or delete the file above, then re-run sync")
+				a.blockedInstructions = append(a.blockedInstructions, agent)
+				return 0
+			}
 			return rc
 		}
 	}
@@ -1104,6 +1114,11 @@ func makeSkillsSymlink(targetAbs, linkPath string, out, errW io.Writer) int {
 // makeRelativeSymlink links with a target relative to the link's directory:
 // instructions files point at the target's own AGENTS.md.
 func makeRelativeSymlink(targetAbs, linkPath string, out, errW io.Writer) int {
+	rc, _ := makeRelativeSymlinkWithRefusal(targetAbs, linkPath, out, errW)
+	return rc
+}
+
+func makeRelativeSymlinkWithRefusal(targetAbs, linkPath string, out, errW io.Writer) (int, bool) {
 	linkDir := filepath.Dir(linkPath)
 	if err := mkdirPMirror(linkDir); err != nil {
 		printChildErr(errW, "mkdir", err)
@@ -1111,9 +1126,9 @@ func makeRelativeSymlink(targetAbs, linkPath string, out, errW io.Writer) int {
 	rel, err := filepath.Rel(linkDir, targetAbs)
 	if err != nil {
 		fmt.Fprintf(errW, "error: %s\n", err)
-		return 1
+		return 1, false
 	}
-	return writeSymlink(linkPath, rel, out, errW)
+	return writeSymlinkWithRefusal(linkPath, rel, out, errW)
 }
 
 // writeSymlink is the shared body of the two shell helpers: idempotent when
@@ -1123,27 +1138,32 @@ func makeRelativeSymlink(targetAbs, linkPath string, out, errW io.Writer) int {
 // inside run_step's set +e, so the ✓ echo and rc 0 still happen; only the
 // explicit refusal returns 1.
 func writeSymlink(linkPath, target string, out, errW io.Writer) int {
+	rc, _ := writeSymlinkWithRefusal(linkPath, target, out, errW)
+	return rc
+}
+
+func writeSymlinkWithRefusal(linkPath, target string, out, errW io.Writer) (int, bool) {
 	if info, err := os.Lstat(linkPath); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
 			if existing, rerr := os.Readlink(linkPath); rerr == nil && existing == target {
 				// Noise (keep ·): idempotent success detail; filtered in
 				// compact mode.
 				fmt.Fprintf(out, "    · symlink ok      %s → %s\n", linkPath, target)
-				return 0
+				return 0, false
 			}
 			if err := os.Remove(linkPath); err != nil {
 				printChildErr(errW, "rm", err)
 			}
 		} else if _, serr := os.Stat(linkPath); serr == nil {
 			fmt.Fprintf(errW, "    ✗ refuse to overwrite non-symlink: %s\n", linkPath)
-			return 1
+			return 1, true
 		}
 	}
 	if err := os.Symlink(target, linkPath); err != nil {
 		printChildErr(errW, "ln", err)
 	}
 	fmt.Fprintf(out, "    ✓ symlink created %s → %s\n", linkPath, target)
-	return 0
+	return 0, false
 }
 
 // printChildErr renders a failed child-tool error the way the named coreutils

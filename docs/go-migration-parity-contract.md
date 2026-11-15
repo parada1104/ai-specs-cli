@@ -721,6 +721,19 @@ write); `skills list` and `recipe list` on an unparseable manifest (`skills
 list` still prints every section). The `sync-agent-arg-contract` legacy goldens
 still record the old rc 0 for the unknown-agent step.
 
+### Non-symlink instructions refusal continues agent fan-out — TOLERANT (settled)
+
+A real file at an agent's instructions path is still refused with the unchanged
+`    ✗ refuse to overwrite non-symlink: <path>` line and remains untouched. The
+Go sync-agent adds `    → move or delete the file above, then re-run sync`,
+skips that agent's later artifacts, and continues syncing remaining agents.
+After the loop it exits 1 with an `ERROR: <n> agent instruction file(s) were
+left untouched (<agents>); the other agents were synced.` summary instead of a
+success footer. This deliberately changes the sync exit/stderr contract (risk
+item 3); the legacy fanout-matrix captures are minimally updated by hand with
+the new hint and summary. Skills-link refusal and other failure kinds remain
+unchanged.
+
 ## 11. Environment variables
 
 | Var | Effect |
