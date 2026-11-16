@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`tracker evidence` rejects an invalid slug.** An invalid change slug exits 1 with
+  `invalid change slug`; an empty slug or a missing change still exits 0. The outfile
+  is written with mode 0600. (#551)
+- **A launcher home without `VERSION` creates nothing and downloads nothing.** (#553)
+- **`upgrade --dry-run` now fetches**, and both the dry run and the real upgrade use
+  the explicit refspec `+refs/heads/main:refs/remotes/origin/main`. (#554)
+- **`hook normalize-path --nul` keeps paths with tabs or newlines unambiguous.** The
+  plan-build gate reads that output, with a tab-separated fallback, and still fails
+  closed when `tool_name` is missing or empty. (#556, #557)
 - **`skills add` only rolls back unusable vendors.** A failed sync removes the new
   registration only when the vendor contains no `SKILL.md`; a usable vendor stays
   registered when sync fails for another reason. Rollback rechecks the manifest
