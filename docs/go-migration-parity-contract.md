@@ -744,6 +744,13 @@ slug and a slug naming a nonexistent change exit 0 with the empty payload (hooks
 rely on it). The outfile is now created mode 0600 instead of 0644. Pinned by
 `TestTrackerEvidenceInvalidSlugFailsAndWritesNothing`,
 `TestTrackerEvidenceOutfileIsPrivate` and `TestEvidencePayloadRejectsAnInvalidSlugFormat`.
+### `doctor` ledger relevance ignores an unbound witness — TOLERANT (settled divergence)
+
+`trackerLedgerInPlay` (`internal/doctor/checks_tracker.go`) diverges from the python
+original `doctor._tracker_ledger_in_play`: a tracker witness whose state is
+`unbound` (written by `sync` when no tracker exists) no longer makes the ledger
+relevant, so `doctor` does not grade a ledger there. A configured or declared
+tracker, or a witness in any other state, still counts.
 
 ## 11. Environment variables
 
