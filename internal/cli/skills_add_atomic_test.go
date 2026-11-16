@@ -71,6 +71,55 @@ func TestSkillsAddRollbackKeepsAPreexistingDepsDirectory(t *testing.T) {
 	}
 }
 
+func TestSkillsAddKeepsUsableVendorWhenSyncFailsForAnotherReason(t *testing.T) {
+	proj, home, srcOK, _ := skillsAddAtomicProject(t)
+	manifest := filepath.Join(proj, "ai-specs", "ai-specs.toml")
+	if err := os.WriteFile(manifest, []byte(readManifest(t, proj)+"\n[agents]\nenabled = [\"claude\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "CLAUDE.md"), []byte("manual file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"skills", "add", srcOK, proj}, home, nil, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("exit = 0, want sync failure\nstderr: %s", stderr.String())
+	}
+	if !strings.Contains(readManifest(t, proj), `id = "src-ok"`) {
+		t.Errorf("usable dep was unregistered after unrelated sync failure")
+	}
+	if !skillsAddHasSkill(filepath.Join(proj, "ai-specs", ".deps", "src-ok")) {
+		t.Errorf("usable vendor has no SKILL.md")
+	}
+	if !strings.Contains(stderr.String(), "stays registered") {
+		t.Errorf("stderr must explain registration is kept, got:\n%s", stderr.String())
+	}
+}
+
+func TestSkillsAddMissingDepsParentDoesNotAuthorizeDeletingVendorDir(t *testing.T) {
+	proj, _, _, _ := skillsAddAtomicProject(t)
+	manifest := filepath.Join(proj, "ai-specs", "ai-specs.toml")
+	before := []byte(readManifest(t, proj))
+	written := append(append([]byte(nil), before...), []byte("\n[[deps]]\nid = \"src-noskill\"\n")...)
+	if err := os.WriteFile(manifest, written, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	depsParent := filepath.Join(proj, "ai-specs", ".deps")
+	depsDir := filepath.Join(depsParent, "src-noskill")
+	if err := os.MkdirAll(depsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(depsDir, "foreign-data")
+	if err := os.WriteFile(keep, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	skillsAddRollback(&stderr, manifest, "src-noskill", depsParent, depsDir, before, written, false, false)
+	if data, err := os.ReadFile(keep); err != nil || string(data) != "keep" {
+		t.Errorf("missing initial .deps parent authorized deleting an existing dep directory: %v %q", err, data)
+	}
+}
+
 // A successful add keeps the registration (previous behavior).
 func TestSkillsAddKeepsTheDepWhenSyncSucceeds(t *testing.T) {
 	proj, home, srcOK, _ := skillsAddAtomicProject(t)
