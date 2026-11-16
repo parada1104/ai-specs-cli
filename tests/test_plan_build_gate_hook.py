@@ -275,6 +275,20 @@ class PlanBuildGateHookTests(unittest.TestCase):
                 r = self._run(self._event("Write", str(d / "app.py")))
                 self.assertEqual(r.returncode, 2, r.stderr)
 
+    # 1c. A missing or empty tool name must not turn the gate into a fail-open.
+    def test_missing_or_empty_tool_preserves_production_gate(self):
+        for tool in (None, ""):
+            with self.subTest(tool=tool):
+                event = self._event("Write", str(self.repo / "src" / "app.py"))
+                if tool is None:
+                    event.pop("tool_name")
+                else:
+                    event["tool_name"] = tool
+                r = self._run(event)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertEqual(r.stdout, "")
+                self.assertIn("refusing to edit", r.stderr)
+
     # 2. Production write, active change folder present → allow.
     def test_allow_production_write_with_change_folder(self):
         self._seed_change()
