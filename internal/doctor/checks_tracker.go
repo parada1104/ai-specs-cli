@@ -145,10 +145,10 @@ func trackerWitnessState(root string) string {
 	return state
 }
 
-// trackerLedgerInPlay mirrors doctor._tracker_ledger_in_play (an unbound witness no
-// longer counts, see below): the relevance
-// gate. It reads configuration and any already-written witness and never grades
-// a link section.
+// trackerLedgerInPlay determines ledger relevance; unlike the Python original
+// doctor._tracker_ledger_in_play, the unbound-witness rule intentionally excludes
+// witnesses recording that no tracker is configured. It reads configuration and
+// any existing witness and never grades a link section.
 func (d *Doctor) trackerLedgerInPlay() bool {
 	recipeID := trackerRecipeID(d.Root)
 	if recipeID != "" && d.trackerRecipeEnabled(recipeID) {

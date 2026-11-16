@@ -44,8 +44,9 @@ const trackerEvidenceUsage = `Usage: ai-specs tracker evidence <root> <slug> <ou
 
 Write the local ledger evidence JSON to <outfile>: local and remote stay empty,
 code is the change's ## Tracker card_id (blank under tracker.none), and git is
-that same id only when a pr: is recorded. An empty <slug> means no scope. On an
-acquisition error the command exits 1 and writes nothing.
+that same id only when a pr: is recorded. An empty <slug> means no scope; a slug
+that is not a plain single path segment exits 1 with "invalid change slug". On
+any error the command exits 1 and writes nothing. <outfile> is created mode 0600.
 
 Arguments:
   <root>              Resolved planning root
@@ -161,7 +162,7 @@ func runTrackerEvidence(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "ERROR: %v\n", err)
 		return 1
 	}
-	if err := os.WriteFile(positional[2], evidence.JSON(), 0o644); err != nil {
+	if err := os.WriteFile(positional[2], evidence.JSON(), 0o600); err != nil {
 		fmt.Fprintf(stderr, "ERROR: %v\n", err)
 		return 1
 	}

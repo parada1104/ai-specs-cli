@@ -284,6 +284,22 @@ class LauncherSelfHealTests(unittest.TestCase):
         self.assertEqual((real / "dist" / "ai-specs").read_bytes(), PAYLOAD,
                          "the canonical home directory receives dist/")
 
+    def test_a_home_that_is_not_a_checkout_creates_nothing_and_downloads_nothing(self):
+        bogus = self.base / "not-a-checkout"
+        bogus.mkdir()
+        self._serve()
+        self._trust(hashlib.sha256(PAYLOAD).hexdigest())
+
+        proc = self._run("version", env_extra={"AI_SPECS_HOME": str(bogus)})
+
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(proc.stdout, "")
+        self.assertIn(f"ai-specs: {bogus} is not an ai-specs checkout "
+                      "(no VERSION file); check AI_SPECS_HOME",
+                      proc.stderr.splitlines())
+        self.assertFalse((bogus / "dist").exists(), "no dist/ may be created")
+        self.assertEqual(self.server.requests, [])
+
 
 if __name__ == "__main__":
     unittest.main()

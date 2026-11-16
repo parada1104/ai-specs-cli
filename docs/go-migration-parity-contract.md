@@ -361,8 +361,8 @@ licence to reproduce the defect.
 | D7 | **`skills list` status is always wrong.** It checks `ai-specs/skills/<id>`, but deps vendor to `ai-specs/.deps/<id>/skills/<id>/`. A correctly synced dep reports `✗ not synced` |
 | D8 | **`skills list` bundled section is always `(none)`.** It scans the project, but bundled skills live in the cache |
 | D9 | **`upgrade --dry-run` could write — CORRECTED in the Go route** (`a68440af`, card [Go 12], 2026-09-29). The mode-only-dirt remediation returns before `git checkout -- .` when `--dry-run`, so a preview writes nothing (`internal/upgrade/upgrade.go:276-281`, pinned by `TestModeOnlyDirtDryRunThenReal`, `internal/upgrade/upgrade_test.go:347-381`). The legacy script that wrote is deleted. D9 is a defect and not FROZEN, so the correction is allowed; recorded as a settled divergence in §10 |
-| D10 | **`upgrade --dry-run` never fetches**, so "Target version" can be arbitrarily stale and it reports "Already up to date" when it is not |
-| D11 | **`git fetch origin main` is refspec-less.** A clone without a configured `remote.origin.fetch` never advances `origin/main` and reports "Already up to date" forever |
+| D10 | **`upgrade --dry-run` never fetched** — **CORRECTED in the Go route** (after v0.25.1). `--dry-run` now runs the same fetch as a real upgrade (a failure exits 4) and then reports the real target. The fetch moves only `refs/remotes/origin/main`; the working tree is untouched, pinned by `TestDryRunFetchesSoTheTargetIsCurrent`. D10 is a defect and not FROZEN |
+| D11 | **`git fetch origin main` was refspec-less** — **CORRECTED in the Go route** (after v0.25.1). Both paths now fetch `+refs/heads/main:refs/remotes/origin/main`, so a clone without a configured `remote.origin.fetch` advances `origin/main`; pinned by `TestFetchAdvancesOriginMainWithoutConfiguredRefspec` |
 | D12 | **The agents submenu can append a second `[agents]` block** at EOF when `[agents]` exists without `enabled` and is the last table |
 
 ### Robustness
@@ -608,8 +608,8 @@ behaviour now:
   §2, the refusal precedence (not an install → 2, dirty tree → 3, fetch/merge →
   4, symlink verification → 5), and the preview's report text.
 
-D10 (`--dry-run` never fetches, so "Target version" can be stale) is a separate
-row and is untouched by this record.
+D10 (`--dry-run` never fetched, so "Target version" could be stale) was a separate
+row and was corrected afterwards; see its row above.
 
 ### Non-atomic manifest writes and the read-only refusal — TOLERANT (settled, 2026-09-27)
 
@@ -733,6 +733,24 @@ success footer. This deliberately changes the sync exit/stderr contract (risk
 item 3); the legacy fanout-matrix captures are minimally updated by hand with
 the new hint and summary. Skills-link refusal and other failure kinds remain
 unchanged.
+
+### `tracker evidence` rejects an invalid slug — TOLERANT (settled, human-decided 2026-11-15)
+
+The python original (`ledger_bridge.evidence_payload`) wrote the empty payload
+for any slug it could not resolve, including a malformed one. The Go verb now
+exits 1 with `ERROR: invalid change slug "<slug>"` and writes no outfile when the
+slug is not a plain single path segment. Unchanged and still FROZEN: an empty
+slug and a slug naming a nonexistent change exit 0 with the empty payload (hooks
+rely on it). The outfile is now created mode 0600 instead of 0644. Pinned by
+`TestTrackerEvidenceInvalidSlugFailsAndWritesNothing`,
+`TestTrackerEvidenceOutfileIsPrivate` and `TestEvidencePayloadRejectsAnInvalidSlugFormat`.
+### `doctor` ledger relevance ignores an unbound witness — TOLERANT (settled divergence)
+
+`trackerLedgerInPlay` (`internal/doctor/checks_tracker.go`) diverges from the python
+original `doctor._tracker_ledger_in_play`: a tracker witness whose state is
+`unbound` (written by `sync` when no tracker exists) no longer makes the ledger
+relevant, so `doctor` does not grade a ledger there. A configured or declared
+tracker, or a witness in any other state, still counts.
 
 ## 11. Environment variables
 

@@ -6,6 +6,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,5 +175,19 @@ func TestHookUsageErrors(t *testing.T) {
 	code, stdout, _ := runHook(t, "", "--help")
 	if code != 0 || !strings.Contains(stdout, "field [--string]") || !strings.Contains(stdout, "normalize-path") {
 		t.Errorf("hook --help = rc %d stdout %q", code, stdout)
+	}
+}
+
+func TestHookNormalizePathNulSeparatesFieldsUnambiguously(t *testing.T) {
+	root := canonicalDir(t, t.TempDir())
+	dir := filepath.Join(root, "a\tb\nc")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	event := fmt.Sprintf(`{"tool_name":"Write","cwd":%q,"tool_input":{"file_path":"new.go"}}`, dir)
+	code, stdout, stderr := runHook(t, event, "normalize-path", "--nul")
+	want := "Write\x00" + filepath.Join(dir, "new.go") + "\x00" + dir + "\x00"
+	if code != 0 || stderr != "" || stdout != want {
+		t.Fatalf("rc %d stderr %q out %q; want %q", code, stderr, stdout, want)
 	}
 }

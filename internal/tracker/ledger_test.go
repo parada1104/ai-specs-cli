@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -225,4 +226,13 @@ func contains(haystack, needle string) bool {
 		}
 	}
 	return false
+}
+
+func TestEvidencePayloadRejectsAnInvalidSlugFormat(t *testing.T) {
+	root := t.TempDir()
+	for _, slug := range []string{"..", "a/b", " demo", "demo ", "."} {
+		if _, err := EvidencePayload(root, slug); err == nil || !strings.Contains(err.Error(), "invalid change slug") {
+			t.Errorf("slug %q: err = %v, want invalid change slug", slug, err)
+		}
+	}
 }

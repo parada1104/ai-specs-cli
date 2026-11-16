@@ -235,6 +235,9 @@ func EvidencePayload(root, slug string) (Evidence, error) {
 	if slug == "" {
 		return empty, nil
 	}
+	if !validSlug(slug) {
+		return empty, fmt.Errorf("invalid change slug %q", slug)
+	}
 	if _, present, err := trackerNoneReason(root, slug); err != nil {
 		return empty, err
 	} else if present {

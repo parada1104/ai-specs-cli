@@ -26,16 +26,22 @@ input="$(cat)"
 # the target. A missing or non-executable binary, or an event with no string
 # target, prints nothing: the hook exits 0 (fail open), as a python failure did.
 cli_bin="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"
-parsed=""
+# --nul keeps a tab or newline inside a path from shifting the fields; a binary
+# that predates the flag prints nothing, so fall back to the tab form.
+tool_name="" file_path="" probe_dir=""
 if [ -x "$cli_bin" ]; then
-  parsed="$(printf '%s' "$input" | "$cli_bin" hook normalize-path 2>/dev/null)" || parsed=""
+  { IFS= read -r -d '' tool_name; IFS= read -r -d '' file_path; IFS= read -r -d '' probe_dir; } \
+    < <(printf '%s' "$input" | "$cli_bin" hook normalize-path --nul 2>/dev/null) || true
+  if [ -z "$file_path" ] || [ -z "$probe_dir" ]; then
+    parsed="$(printf '%s' "$input" | "$cli_bin" hook normalize-path 2>/dev/null)" || parsed=""
+    if [ -n "$parsed" ]; then
+      tool_name="${parsed%%$'\t'*}"
+      rest="${parsed#*$'\t'}"
+      file_path="${rest%%$'\t'*}"
+      probe_dir="${rest#*$'\t'}"
+    fi
+  fi
 fi
-[ -n "$parsed" ] || exit 0
-
-tool_name="${parsed%%$'\t'*}"
-rest="${parsed#*$'\t'}"
-file_path="${rest%%$'\t'*}"
-probe_dir="${rest#*$'\t'}"
 [ -n "$file_path" ] && [ -n "$probe_dir" ] || exit 0
 abs="$file_path"
 
