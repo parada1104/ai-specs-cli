@@ -45,6 +45,8 @@ canonical nearest existing directory. Prints nothing and exits 0 when the event
 has no string file path or no existing ancestor, or is not valid JSON.
 
 Options:
+  --nul               Print the three fields NUL-terminated instead of
+                      tab-separated; unambiguous for paths holding a tab or newline
   --help, -h          Show this help
 `
 
@@ -72,11 +74,15 @@ func runHookField(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 }
 
 func runHookNormalizePath(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	nul := false
 	for _, arg := range args {
 		switch arg {
 		case "--help", "-h":
 			fmt.Fprint(stdout, hookNormalizePathUsage)
 			return 0
+		case "--nul":
+			nul = true
+			continue
 		}
 		if strings.HasPrefix(arg, "-") {
 			fmt.Fprintln(stderr, "ERROR: unknown flag: "+arg)
@@ -96,7 +102,9 @@ func runHookNormalizePath(args []string, stdin io.Reader, stdout, stderr io.Writ
 		return 0
 	}
 	target, ok := hook.NormalizeEvent(event, cwd)
-	if ok {
+	if ok && nul {
+		fmt.Fprintf(stdout, "%s\x00%s\x00%s\x00", target.Tool, target.Path, target.Probe)
+	} else if ok {
 		fmt.Fprintf(stdout, "%s\t%s\t%s\n", target.Tool, target.Path, target.Probe)
 	}
 	return 0

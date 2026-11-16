@@ -266,6 +266,15 @@ class PlanBuildGateHookTests(unittest.TestCase):
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("plan-build-gate", r.stderr)
 
+    # 1b. A tab or newline inside the path must not shift the parsed fields.
+    def test_block_production_write_with_tab_or_newline_in_path(self):
+        for name in ("a\tb", "a\nb"):
+            with self.subTest(name=repr(name)):
+                d = self.repo / "src" / name
+                d.mkdir(parents=True)
+                r = self._run(self._event("Write", str(d / "app.py")))
+                self.assertEqual(r.returncode, 2, r.stderr)
+
     # 2. Production write, active change folder present → allow.
     def test_allow_production_write_with_change_folder(self):
         self._seed_change()
