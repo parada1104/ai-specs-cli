@@ -1,5 +1,5 @@
 # Expected SHA-256 digests of the published worktree-gate release assets
-# (v0.25.1). This file is the trust root (D5): the network supplies only
+# (v0.25.2). This file is the trust root (D5): the network supplies only
 # bytes, the repository supplies the expected digest. A downloaded asset
 # whose SHA-256 does not match is deleted and never executed.
 #
@@ -238,10 +238,10 @@
 # command contract are unchanged; the parse-error detail is TOLERANT per
 # docs/go-migration-parity-contract.md. No new asset, no second trust root), with
 # the canonical go1.24.13 toolchain via the same command above.
-914ec1dacaa07eb8a0019e3b956f00d04329702def6cef27558889f3b27dd71d  worktree-gate-darwin-amd64
-45adb12719ef6fe17a5d591b29e6021868999d1def5c88ac5f7ec450d2e2c6d5  worktree-gate-darwin-arm64
-57b201d80d7dcc0f674a87e2467a77be3cb77e262d1964583e4e2324c7668a4a  worktree-gate-linux-amd64
-2ca4d481af6e9ae34f9cb76e4ee5ea8ee7cd63e215d4ba281e757f3e65ff268d  worktree-gate-linux-arm64
+ef098f835c024ecc77ad395ec74a7245b2f6c25a5b4b0c595ff834c7ea510bc5  worktree-gate-darwin-amd64
+90cfcc7ec0b74b0d4b3b2afb2cdeace5ffe5da7628ccda2157c40f7c85812fad  worktree-gate-darwin-arm64
+5c09d7293297d021d366ece338f6780129cdc33b849d32503396298359ce8200  worktree-gate-linux-amd64
+90de8b8f7461935b1c20e382b6357ae9a821b2564ea29207145b04f114fff5f7  worktree-gate-linux-arm64
 
 # Regenerated for the v0.25.0 version bump (GO-20 U2e T5): build-gate.sh
 # injects $VERSION at link time (-X main.version), so the 0.24.0 -> 0.25.0
@@ -252,5 +252,10 @@
 #
 # Regenerated for the v0.25.1 version bump: build-gate.sh injects $VERSION at link
 # time (-X main.version), so the 0.25.0 -> 0.25.1 bump alone changes all four
+# digests (no gate source change). Same canonical go1.24.13 toolchain via the
+# same command above.
+#
+# Regenerated for the v0.25.2 version bump: build-gate.sh injects $VERSION at link
+# time (-X main.version), so the 0.25.1 -> 0.25.2 bump alone changes all four
 # digests (no gate source change). Same canonical go1.24.13 toolchain via the
 # same command above.

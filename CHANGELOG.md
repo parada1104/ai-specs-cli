@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.2] — 2026-11-16
+
 ### Fixed
 - **`tracker evidence` rejects an invalid slug.** An invalid change slug exits 1 with
   `invalid change slug`; an empty slug or a missing change still exits 0. The outfile
