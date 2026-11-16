@@ -185,3 +185,30 @@ func TestTrackerVerbHelp(t *testing.T) {
 		}
 	}
 }
+
+func TestTrackerEvidenceInvalidSlugFailsAndWritesNothing(t *testing.T) {
+	root := trackerRoot(t, "")
+	out := filepath.Join(t.TempDir(), "evidence.json")
+	code, stdout, stderr := runTrackerCLI(t, "tracker", "evidence", root, "../x", out)
+	if code != 1 || stdout != "" || !strings.HasPrefix(stderr, "ERROR: invalid change slug") {
+		t.Fatalf("exit = %d, stdout = %q, stderr = %q", code, stdout, stderr)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Fatalf("evidence file must not be written: %v", err)
+	}
+}
+
+func TestTrackerEvidenceOutfileIsPrivate(t *testing.T) {
+	root := trackerRoot(t, "")
+	out := filepath.Join(t.TempDir(), "evidence.json")
+	if code, _, stderr := runTrackerCLI(t, "tracker", "evidence", root, "", out); code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, stderr)
+	}
+	info, err := os.Stat(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %v, want 0600", info.Mode().Perm())
+	}
+}
