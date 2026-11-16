@@ -734,6 +734,14 @@ item 3); the legacy fanout-matrix captures are minimally updated by hand with
 the new hint and summary. Skills-link refusal and other failure kinds remain
 unchanged.
 
+### `doctor` ledger relevance ignores an unbound witness — TOLERANT (settled divergence)
+
+`trackerLedgerInPlay` (`internal/doctor/checks_tracker.go`) diverges from the python
+original `doctor._tracker_ledger_in_play`: a tracker witness whose state is
+`unbound` (written by `sync` when no tracker exists) no longer makes the ledger
+relevant, so `doctor` does not grade a ledger there. A configured or declared
+tracker, or a witness in any other state, still counts.
+
 ## 11. Environment variables
 
 | Var | Effect |

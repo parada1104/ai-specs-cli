@@ -2,7 +2,7 @@
 
 package sync
 
-// shortcut: non-unix platforms have no advisory sync lock.
+// acquireSyncLock does not provide cross-process exclusion on non-unix platforms.
 func acquireSyncLock(root, home string) (func(), error) {
 	return func() {}, nil
 }
