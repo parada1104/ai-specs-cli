@@ -62,6 +62,12 @@ _sha256_of() {
 # so a failure leaves neither a binary nor a temp file behind.
 _self_heal() {
     local version asset expected base dist_home dist_bin tmp got
+    # A home without VERSION is not a checkout (typically a mistyped
+    # AI_SPECS_HOME): create nothing and download nothing.
+    if [ ! -f "$AI_SPECS_HOME/VERSION" ]; then
+        echo "ai-specs: $AI_SPECS_HOME is not an ai-specs checkout (no VERSION file); check AI_SPECS_HOME" >&2
+        return 1
+    fi
     version="$(cat "$AI_SPECS_HOME/VERSION" 2>/dev/null || true)"
     # Canonicalize the HOME DIRECTORY (D-U2e-1), never the binary, so a
     # symlinked home receives dist/ under its real directory.
