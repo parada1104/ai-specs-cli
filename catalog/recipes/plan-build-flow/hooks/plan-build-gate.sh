@@ -32,7 +32,7 @@ tool_name="" file_path="" probe_dir=""
 if [ -x "$cli_bin" ]; then
   { IFS= read -r -d '' tool_name; IFS= read -r -d '' file_path; IFS= read -r -d '' probe_dir; } \
     < <(printf '%s' "$input" | "$cli_bin" hook normalize-path --nul 2>/dev/null) || true
-  if [ -z "$tool_name" ]; then
+  if [ -z "$file_path" ] || [ -z "$probe_dir" ]; then
     parsed="$(printf '%s' "$input" | "$cli_bin" hook normalize-path 2>/dev/null)" || parsed=""
     if [ -n "$parsed" ]; then
       tool_name="${parsed%%$'\t'*}"
@@ -42,7 +42,7 @@ if [ -x "$cli_bin" ]; then
     fi
   fi
 fi
-[ -n "$tool_name" ] && [ -n "$file_path" ] && [ -n "$probe_dir" ] || exit 0
+[ -n "$file_path" ] && [ -n "$probe_dir" ] || exit 0
 abs="$file_path"
 
 # The target repository is authoritative for ordinary standalone behavior.
