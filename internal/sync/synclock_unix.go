@@ -12,12 +12,20 @@ import (
 	"ai-specs.dev/ai-specs/internal/projectcache"
 )
 
+// These modes preserve existing cache permissions; polling bounds lock retry granularity.
+const (
+	syncLockDirMode  = 0o777
+	syncLockFileMode = 0o666
+	syncLockPoll     = 100 * time.Millisecond
+)
+
+// acquireSyncLock serializes sync processes sharing the same cache root.
 func acquireSyncLock(root, home string) (func(), error) {
 	cacheRoot := projectcache.CacheRoot(root, home)
-	if err := os.MkdirAll(cacheRoot, 0o777); err != nil {
+	if err := os.MkdirAll(cacheRoot, syncLockDirMode); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(filepath.Join(cacheRoot, "sync.lock"), os.O_CREATE|os.O_RDWR, 0o666)
+	file, err := os.OpenFile(filepath.Join(cacheRoot, "sync.lock"), os.O_CREATE|os.O_RDWR, syncLockFileMode)
 	if err != nil {
 		return nil, err
 	}
@@ -39,6 +47,6 @@ func acquireSyncLock(root, home string) (func(), error) {
 			_ = file.Close()
 			return nil, fmt.Errorf("%w: %s", errSyncLockTimeout, syncLockWait)
 		}
-		time.Sleep(min(100*time.Millisecond, time.Until(deadline)))
+		time.Sleep(min(syncLockPoll, time.Until(deadline)))
 	}
 }

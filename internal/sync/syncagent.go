@@ -1108,16 +1108,11 @@ func makeSkillsSymlink(targetAbs, linkPath string, out, errW io.Writer) int {
 		printChildErr(errW, "mkdir", err)
 	}
 	abs := projectcache.ResolvePath(targetAbs) // os.path.realpath
-	return writeSymlink(linkPath, abs, out, errW)
-}
-
-// makeRelativeSymlink links with a target relative to the link's directory:
-// instructions files point at the target's own AGENTS.md.
-func makeRelativeSymlink(targetAbs, linkPath string, out, errW io.Writer) int {
-	rc, _ := makeRelativeSymlinkWithRefusal(targetAbs, linkPath, out, errW)
+	rc, _ := writeSymlinkWithRefusal(linkPath, abs, out, errW)
 	return rc
 }
 
+// makeRelativeSymlinkWithRefusal links relative to the link's directory and reports hard refusal on non-symlink occupancy.
 func makeRelativeSymlinkWithRefusal(targetAbs, linkPath string, out, errW io.Writer) (int, bool) {
 	linkDir := filepath.Dir(linkPath)
 	if err := mkdirPMirror(linkDir); err != nil {
@@ -1131,17 +1126,7 @@ func makeRelativeSymlinkWithRefusal(targetAbs, linkPath string, out, errW io.Wri
 	return writeSymlinkWithRefusal(linkPath, rel, out, errW)
 }
 
-// writeSymlink is the shared body of the two shell helpers: idempotent when
-// the existing link already points at the target, relink when it points
-// elsewhere, hard refusal on non-symlink occupancy. mkdir/rm/ln failures
-// print the child's stderr shape and CONTINUE — the oracle runs these bare
-// inside run_step's set +e, so the ✓ echo and rc 0 still happen; only the
-// explicit refusal returns 1.
-func writeSymlink(linkPath, target string, out, errW io.Writer) int {
-	rc, _ := writeSymlinkWithRefusal(linkPath, target, out, errW)
-	return rc
-}
-
+// writeSymlinkWithRefusal is idempotent for an existing matching link, relinks elsewhere, and refuses non-symlink occupancy.
 func writeSymlinkWithRefusal(linkPath, target string, out, errW io.Writer) (int, bool) {
 	if info, err := os.Lstat(linkPath); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
