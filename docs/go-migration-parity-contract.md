@@ -734,6 +734,17 @@ item 3); the legacy fanout-matrix captures are minimally updated by hand with
 the new hint and summary. Skills-link refusal and other failure kinds remain
 unchanged.
 
+### `tracker evidence` rejects an invalid slug — TOLERANT (settled, human-decided 2026-11-15)
+
+The python original (`ledger_bridge.evidence_payload`) wrote the empty payload
+for any slug it could not resolve, including a malformed one. The Go verb now
+exits 1 with `ERROR: invalid change slug "<slug>"` and writes no outfile when the
+slug is not a plain single path segment. Unchanged and still FROZEN: an empty
+slug and a slug naming a nonexistent change exit 0 with the empty payload (hooks
+rely on it). The outfile is now created mode 0600 instead of 0644. Pinned by
+`TestTrackerEvidenceInvalidSlugFailsAndWritesNothing`,
+`TestTrackerEvidenceOutfileIsPrivate` and `TestEvidencePayloadRejectsAnInvalidSlugFormat`.
+
 ## 11. Environment variables
 
 | Var | Effect |
