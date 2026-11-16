@@ -313,6 +313,10 @@ func gitShowVersion(git Git, home, ref string) string {
 	return strings.TrimSpace(out)
 }
 
+// fetchRefspec names the destination explicitly so a clone without a configured
+// remote.origin.fetch still advances origin/main (parity D11).
+const fetchRefspec = "+refs/heads/main:refs/remotes/origin/main"
+
 // dryRunReport ports the --dry-run branch.
 func dryRunReport(inst Install, o Options, git Git, stdout, stderr io.Writer) int {
 	current := readVersion(inst.Home)
@@ -408,7 +412,7 @@ func printReleaseReport(home, current, new string, stdout io.Writer) {
 // Pinned both directions by TestUpgradeRunsNativelyAndSkipsTheShellPostSteps,
 // so an accidental reintroduction fails a test instead of passing silently.
 func realUpgrade(inst Install, o Options, git Git, stdout, stderr io.Writer) int {
-	if code := runStep(o, git, inst.Home, stdout, stderr, "fetching origin/main", "fetch", "origin", "main"); code != 0 {
+	if code := runStep(o, git, inst.Home, stdout, stderr, "fetching origin/main", "fetch", "origin", fetchRefspec); code != 0 {
 		return abort(stderr, "Failed to fetch from origin. Check your network connection.", ExitFetch)
 	}
 	if _, err := git(inst.Home, "merge-base", "--is-ancestor", "HEAD", "origin/main"); err != nil {
@@ -498,6 +502,13 @@ func Run(args []string, env Env, stdout, stderr io.Writer) int {
 		return code
 	}
 	git := env.git()
+	if o.DryRun {
+		// Fetch so the preview reports the real target (parity D10). It only
+		// moves refs/remotes/origin/main; the working tree is untouched.
+		if _, err := git(inst.Home, "fetch", "origin", fetchRefspec); err != nil {
+			return abort(stderr, "Failed to fetch from origin. Check your network connection.", ExitFetch)
+		}
+	}
 	if _, err := git(inst.Home, "rev-parse", "--verify", "origin/main"); err == nil {
 		if _, err := git(inst.Home, "merge-base", "--is-ancestor", "HEAD", "origin/main"); err != nil {
 			return abort(stderr, "Local branch has diverged from origin/main. Resolve manually or re-run install.sh.", ExitPreflight)

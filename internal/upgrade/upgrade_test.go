@@ -566,3 +566,41 @@ func TestDetectHomeSymlinkedOutsideStillRefused(t *testing.T) {
 		t.Fatalf("stderr = %q", errb.String())
 	}
 }
+
+func TestDryRunFetchesSoTheTargetIsCurrent(t *testing.T) {
+	f := newFakeInstall(t, "1.0.0")
+	f.pushVersion(t, "1.1.0")
+
+	var out, errb bytes.Buffer
+	if code := Run([]string{"--dry-run"}, f.env(), &out, &errb); code != ExitOK {
+		t.Fatalf("code=%d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "Target version:  1.1.0") || strings.Contains(out.String(), "Already up to date.") {
+		t.Fatalf("stdout = %s", out.String())
+	}
+	if got, _ := os.ReadFile(filepath.Join(f.aiSpecs, "VERSION")); strings.TrimSpace(string(got)) != "1.0.0" {
+		t.Fatalf("working tree VERSION changed: %q", got)
+	}
+}
+
+// A clone without remote.origin.fetch never advances origin/main on a
+// refspec-less `git fetch origin main` (parity D11).
+func TestFetchAdvancesOriginMainWithoutConfiguredRefspec(t *testing.T) {
+	for _, args := range [][]string{{"--dry-run"}, nil} {
+		f := newFakeInstall(t, "1.0.0")
+		gitRun(t, f.aiSpecs, "config", "--unset-all", "remote.origin.fetch")
+		gitRun(t, f.aiSpecs, "update-ref", "-d", "refs/remotes/origin/main")
+		f.pushVersion(t, "1.1.0")
+
+		var out, errb bytes.Buffer
+		if code := Run(args, f.env(), &out, &errb); code != ExitOK {
+			t.Fatalf("args=%v code=%d stderr=%s", args, code, errb.String())
+		}
+		if args != nil && !strings.Contains(out.String(), "Target version:  1.1.0") {
+			t.Fatalf("stdout = %s", out.String())
+		}
+		if got := gitRun(t, f.aiSpecs, "show", "origin/main:VERSION"); strings.TrimSpace(got) != "1.1.0" {
+			t.Fatalf("args=%v origin/main VERSION = %q", args, got)
+		}
+	}
+}
