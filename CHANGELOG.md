@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`skills add` only rolls back unusable vendors.** A failed sync removes the new
+  registration only when the vendor contains no `SKILL.md`; a usable vendor stays
+  registered when sync fails for another reason. Rollback rechecks the manifest
+  immediately before restoring it, skips rollback if the post-append reread fails,
+  and removes a newly created dep directory only when its `.deps` parent
+  predated the add; a newly created parent is removed only if empty.
+
 ## [0.25.1] — 2026-11-15
 
 ### Upgrade notes

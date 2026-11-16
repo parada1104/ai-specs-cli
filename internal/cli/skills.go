@@ -926,9 +926,12 @@ func runSkillsAdd(args []string, label, home string, stdin io.Reader, stdout, st
 		fmt.Fprintf(stderr, "ERROR: cannot read %s: %v\n", tomlPath, err)
 		return 1
 	}
-	depsDir := filepath.Join(target, "ai-specs", ".deps", id)
-	_, statErr := os.Stat(depsDir)
-	depsDirPreexisted := statErr == nil
+	depsParent := filepath.Join(target, "ai-specs", ".deps")
+	depsDir := filepath.Join(depsParent, id)
+	_, parentStatErr := os.Stat(depsParent)
+	depsParentPreexisted := parentStatErr == nil || !errors.Is(parentStatErr, os.ErrNotExist)
+	_, dirStatErr := os.Stat(depsDir)
+	depsDirPreexisted := dirStatErr == nil || !errors.Is(dirStatErr, os.ErrNotExist)
 
 	msg, err := config.AppendDepsBlock(tomlPath, id, opts.url, opts.subdir, opts.scope, trigger, opts.license, auth, opts.ref)
 	if err != nil {
@@ -936,7 +939,11 @@ func runSkillsAdd(args []string, label, home string, stdin io.Reader, stdout, st
 		return 1
 	}
 	fmt.Fprintln(stdout, msg)
-	written, _ := os.ReadFile(tomlPath)
+	written, err := os.ReadFile(tomlPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "ai-specs: dep '%s' was registered but the manifest could not be re-read (%v); skipping rollback.\n", id, err)
+		return 1
+	}
 
 	fmt.Fprintln(stdout, "")
 	if !opts.runSync {
@@ -949,17 +956,32 @@ func runSkillsAdd(args []string, label, home string, stdin io.Reader, stdout, st
 	// IS the verb's exit code — here it is the return value itself.
 	syncRC := sync.Run([]string{"sync", target}, home, stdin, stdout, stderr)
 	if syncRC != 0 {
-		skillsAddRollback(stderr, tomlPath, id, depsDir, before, written, depsDirPreexisted)
+		if skillsAddHasSkill(depsDir) {
+			fmt.Fprintf(stderr, "ai-specs: sync failed for another reason; dep '%s' stays registered because it was vendored.\n", id)
+		} else {
+			skillsAddRollback(stderr, tomlPath, id, depsParent, depsDir, before, written, depsParentPreexisted, depsDirPreexisted)
+		}
 	}
 	return syncRC
 }
 
-// skillsAddRollback undoes a registration whose delegated sync failed, so a bad
-// ref, subdir or URL cannot leave a [[deps]] block that breaks every later sync.
-// The manifest is restored only while it is still exactly what this add wrote
-// (never over a concurrent edit), and only a .deps/<id> created by this add is
-// removed. The verb's exit code stays the sync's.
-func skillsAddRollback(stderr io.Writer, tomlPath, id, depsDir string, before, written []byte, depsDirPreexisted bool) {
+// skillsAddHasSkill reports whether sync produced at least one usable skill.
+func skillsAddHasSkill(depsDir string) bool {
+	found := false
+	_ = filepath.WalkDir(depsDir, func(path string, entry os.DirEntry, err error) error {
+		if err == nil && !entry.IsDir() && entry.Name() == "SKILL.md" {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
+}
+
+// skillsAddRollback undoes a registration whose delegated sync left no usable
+// skill. It only restores the unchanged manifest and removes dirs it can
+// attribute to this add. The verb's exit code stays the sync's.
+func skillsAddRollback(stderr io.Writer, tomlPath, id, depsParent, depsDir string, before, written []byte, depsParentPreexisted, depsDirPreexisted bool) {
 	current, err := os.ReadFile(tomlPath)
 	if err != nil || !bytes.Equal(current, written) {
 		fmt.Fprintf(stderr, "ai-specs: sync failed and %s changed meanwhile; not restoring it automatically. "+
@@ -971,8 +993,11 @@ func skillsAddRollback(stderr io.Writer, tomlPath, id, depsDir string, before, w
 			"Remove the dep with: ai-specs skills remove %s\n", tomlPath, err, id)
 		return
 	}
-	if !depsDirPreexisted {
+	if depsParentPreexisted && !depsDirPreexisted {
 		_ = os.RemoveAll(depsDir)
+	}
+	if !depsParentPreexisted {
+		_ = os.Remove(depsParent) // only succeeds if it is still empty
 	}
 	fmt.Fprintf(stderr, "ai-specs: sync failed; the dep '%s' was not kept and %s was restored.\n", id, tomlPath)
 }
