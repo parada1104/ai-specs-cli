@@ -28,15 +28,17 @@ def gate_binary() -> Path:
     atexit.register(_TMP.cleanup)
     dist = Path(_TMP.name) / "dist"
     dist.mkdir()
-    _BINARY = dist / "ai-specs"
-    subprocess.run([go, "build", "-o", str(_BINARY), "./cmd/ai-specs"],
+    binary = dist / "ai-specs"
+    subprocess.run([go, "build", "-o", str(binary), "./cmd/ai-specs"],
                    cwd=ROOT, check=True)
-    _WRAPPER = dist / "worktree-gate-current"
-    _WRAPPER.write_text(
-        "#!/bin/sh\nexec " + shlex.quote(str(_BINARY)) + " worktree-gate \"$@\"\n",
+    wrapper = dist / "worktree-gate-current"
+    wrapper.write_text(
+        "#!/bin/sh\nexec " + shlex.quote(str(binary)) + " worktree-gate \"$@\"\n",
         encoding="utf-8",
     )
-    _WRAPPER.chmod(0o755)
+    wrapper.chmod(0o755)
+    # Publish only after a successful build so a failure is reported, not cached.
+    _BINARY, _WRAPPER = binary, wrapper
     return _BINARY
 
 
