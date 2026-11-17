@@ -328,11 +328,12 @@ class WorktreeGateReleaseTests(unittest.TestCase):
             "local Go toolchain must match the release workflow pin; "
             "regenerate SHA256SUMS with the pinned toolchain")
 
-    def test_release_workflow_defers_parity_corpus_to_t8(self):
+    def test_release_workflow_runs_gate_parity_before_publishing(self):
         workflow = (ROOT / ".github" / "workflows" / "release-binaries.yml").read_text(
             encoding="utf-8")
-        self.assertNotIn("Parity corpus against Go gate", workflow)
-        self.assertTrue((ROOT / "tests" / "test_worktree_gate_parity.py").is_file())
+        self.assertIn("worktree-gate-parity:", workflow)
+        self.assertIn("python3 -m unittest tests.test_worktree_gate_parity tests.test_worktree_gate_hook -q", workflow)
+        self.assertRegex(workflow, r"needs: \[build-cli, worktree-gate-parity\]")
 
 
 if __name__ == "__main__":

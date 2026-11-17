@@ -7,9 +7,7 @@ fixtures described by the pinned corpus under
 exit, doctor)`` for every design test-table row, plus two host-bridge rows that
 prove the acquisition bridges fail open (missing binary; ``openspec/**`` path).
 
-Skip loudly only when the Go binary is absent (``dist/worktree-gate-current``).
-Never skip because a host bridge is missing; the bridge rows exercise the
-committed hooks directly.
+Uses the shared CLI build helper; bridge rows exercise committed hooks directly.
 """
 from __future__ import annotations
 
@@ -23,7 +21,9 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARY = ROOT / "dist" / "worktree-gate-current"
+from tests.gate_cli import gate_command
+
+BINARY = gate_command()
 CORPUS = ROOT / "tests" / "fixtures" / "tracker-ledger-corpus"
 PLAN_BUILD_GATE = (
     ROOT / "catalog" / "recipes" / "plan-build-flow" / "hooks" / "plan-build-gate.sh"
@@ -68,15 +68,6 @@ DESIGN_ROWS = {
     "write_failure": ("33-", "write-failure"),
     "write_stable_regrade": ("34-", "byte-stable"),
 }
-
-
-def require_go_binary() -> Path:
-    if not BINARY.is_file():
-        raise unittest.SkipTest(
-            "no Go gate binary in dist/ (run scripts/build-gate.sh); "
-            "tracker-ledger parity is Go-only"
-        )
-    return BINARY
 
 
 def git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
@@ -280,7 +271,6 @@ class TrackerLedgerParityTests(unittest.TestCase):
         cls.bridge_cases = [c for c in cls.cases if c[1].get("kind") == "bridge"]
 
     def setUp(self):
-        require_go_binary()
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)

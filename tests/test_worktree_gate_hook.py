@@ -17,7 +17,7 @@ import unittest
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
-GO_BINARY = ROOT / "dist" / "worktree-gate-current"
+from tests.gate_cli import gate_command
 
 
 def _git(cwd: Path, *args: str) -> None:
@@ -52,11 +52,7 @@ class WorktreeGateHookTests(unittest.TestCase):
     impl = "go"
 
     def setUp(self):
-        if self.impl == "go" and not GO_BINARY.exists():
-            self.skipTest(
-                "no Go gate binary in dist/ (run scripts/build-gate.sh); "
-                "does not skip because a Bash reference is missing"
-            )
+        self.go_binary = gate_command()
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.repo = Path(self.tmp.name) / "repo"
@@ -91,7 +87,7 @@ class WorktreeGateHookTests(unittest.TestCase):
         if gate is None:
             gate = _GoGate()
         return [
-            str(GO_BINARY),
+            str(self.go_binary),
             "--gate-mode", gate.mode,
             "--gate-scope", gate.scope,
             "--repo-topology", gate.topology,

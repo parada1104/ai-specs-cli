@@ -70,9 +70,27 @@ jobs:
           path: dist/ai-specs-${{ matrix.goos }}-${{ matrix.goarch }}
           if-no-files-found: error
 
+  worktree-gate-parity:
+    name: Worktree gate parity corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.13"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Run worktree gate parity corpus
+        run: python3 -m unittest tests.test_worktree_gate_parity tests.test_worktree_gate_hook -q
+
   checksum:
     name: Emit and verify SHA256SUMS
-    needs: [build-cli]
+    needs: [build-cli, worktree-gate-parity]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
