@@ -1,0 +1,441 @@
+package runner
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"math"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"ai-specs.dev/worktree-gate/ledger"
+	"ai-specs.dev/worktree-gate/shared"
+)
+
+// Remote reconciliation wiring (T2). The comparison grader itself is the pure
+// ledger.Reconcile contract; this file only resolves its inputs and reports the
+// outcome. Three rules shape the wiring:
+//
+//   - Go owns the binding: the provider comes from the witness, the item from the
+//     item the grade selected, the scope and the declared expectations from the
+//     project manifest. Nothing here reads Item.Status as an expected remote state,
+//     and nothing compares provider vocabulary: scope_field, property and
+//     config_field are opaque config names declared by the recipe.
+//   - A missing mapping or a missing config value is an explicit non-agreeing
+//     outcome, never a default and never a guess.
+//   - The result is a sidecar next to the verdict: it never changes the graded
+//     exit code, never writes the store, and never records a decision. Agreeing is
+//     a conditional check of the declared expectations for the requested event,
+//     not evidence that the event was delivered.
+
+// Wiring-level non-agreeing outcomes. They classify input resolution, not the
+// comparison itself; every comparison outcome comes from ledger.Reconcile.
+const (
+	// reconcileUnconfigured: the manifest, the recipe's reconcile mapping, or a
+	// config value the mapping selects is missing or unusable.
+	reconcileUnconfigured = "unconfigured"
+	// reconcileUnmappedEvent: no declared expectation covers the requested event,
+	// so the comparison is pending/unreconciled.
+	reconcileUnmappedEvent = "unmapped-event"
+	// reconcileEventMismatch: the observation does not report the requested event.
+	// The caller selecting an event never proves that event happened.
+	reconcileEventMismatch = "event-mismatch"
+	// reconcileInvalidObservation: the observation payload is missing, malformed,
+	// or carries unknown policy-bearing fields.
+	reconcileInvalidObservation = "observation-invalid"
+)
+
+// reconcileEventFacet is the neutral finding name used when the observation does
+// not report the requested event.
+const reconcileEventFacet = "event"
+
+// manifestMaxAgeSeconds is the largest declared freshness window a time.Duration
+// can hold: floor(MaxInt64 / int64(time.Second)) seconds. Converting a larger
+// value would overflow, and a slightly smaller negative value is converted into a
+// positive window by the same overflow, so both bounds are checked before any
+// conversion happens.
+const manifestMaxAgeSeconds = math.MaxInt64 / int64(time.Second)
+
+// reconcileObservation is the closed observation payload the transport reports:
+// the provider/scope/item identity, the observed-at stamp it saw, the event it
+// observed, and the declared property values. Any other key is rejected, so a
+// caller cannot smuggle expectations in through the payload.
+type reconcileObservation struct {
+	ProviderID string            `json:"provider_id"`
+	Scope      string            `json:"scope"`
+	ItemID     string            `json:"item_id"`
+	ObservedAt string            `json:"observed_at"`
+	Event      string            `json:"event"`
+	Properties map[string]string `json:"properties"`
+}
+
+// reconcileConfig is the recipe-declared adaptation, read from the project
+// manifest at [recipes.<id>.config.reconcile]. It selects config fields, never
+// provider states: each expectation names an opaque property and the config field
+// whose value it must show.
+type reconcileConfig struct {
+	ScopeField    string                 `json:"scope_field"`
+	MaxAgeSeconds *int64                 `json:"max_age_seconds"`
+	Expectations  []reconcileExpectation `json:"expectations"`
+}
+
+// reconcileExpectation is one declared requirement for one event.
+type reconcileExpectation struct {
+	Event       string `json:"event"`
+	Property    string `json:"property"`
+	ConfigField string `json:"config_field"`
+	// ConfigFieldWhenSet is an optional second config field. When it resolves to
+	// a non-empty value the expectation compares against it instead of
+	// ConfigField; otherwise ConfigField stays the target. It keeps a conditional
+	// adapter mapping declarative (a lifecycle event that targets one list only
+	// when the project configured that list, another otherwise) without teaching
+	// the comparator provider vocabulary: both names stay opaque config fields and
+	// the selection happens before the comparison, never inside it.
+	ConfigFieldWhenSet string `json:"config_field_when_set"`
+}
+
+// ledgerReconcileJSON is the reconciliation sidecar. It is emitted on stdout only
+// when --reconcile was supplied, so an invocation without it keeps the exact
+// legacy verdict bytes. requested_event is what the caller asked to compare and
+// observed_event is what the transport reported: the two are never conflated, and
+// the outcome never claims more than the declared properties showed.
+type ledgerReconcileJSON struct {
+	Outcome        string           `json:"outcome"`
+	RequestedEvent string           `json:"requested_event"`
+	ObservedEvent  string           `json:"observed_event"`
+	ProviderID     string           `json:"provider_id"`
+	Scope          string           `json:"scope"`
+	ItemID         string           `json:"item_id"`
+	ObservedAt     string           `json:"observed_at"`
+	Findings       []ledger.Finding `json:"findings"`
+	Detail         string           `json:"detail,omitempty"`
+}
+
+// reconcileSidecar resolves and grades one explicit comparison. The check order
+// is fixed so one input always yields one outcome: observation, configuration,
+// event mapping, observed event, then the declared properties.
+func reconcileSidecar(root string, binding ledger.Binding, verdict ledger.Verdict, obsPath, event string, now time.Time) *ledgerReconcileJSON {
+	out := &ledgerReconcileJSON{
+		RequestedEvent: event,
+		ProviderID:     binding.RecipeID,
+	}
+
+	obs, err := loadReconcileObservation(obsPath)
+	if err != nil {
+		out.Outcome = reconcileInvalidObservation
+		// No observation loaded, so only the graded primary can name the item.
+		out.ItemID = boundItemID(verdict.Item)
+		out.Detail = fmt.Sprintf("observation %s: %v", obsPath, err)
+		return out
+	}
+	out.ItemID = boundReconcileItemID(verdict, obs)
+	out.ObservedEvent = obs.Event
+	out.ObservedAt = obs.ObservedAt
+
+	scope, expected, maxAge, err := resolveReconcileMapping(root, binding.RecipeID, event)
+	if err != nil {
+		out.Outcome = reconcileUnconfigured
+		out.Detail = err.Error()
+		return out
+	}
+	out.Scope = scope
+	if len(expected) == 0 {
+		out.Outcome = reconcileUnmappedEvent
+		out.Detail = fmt.Sprintf("recipe %q declares no expectation for event %q", binding.RecipeID, event)
+		return out
+	}
+	if obs.Event != event {
+		out.Outcome = reconcileEventMismatch
+		out.Findings = []ledger.Finding{eventFinding(event, obs.Event)}
+		return out
+	}
+
+	result := ledger.Reconcile(ledger.ReconcileInput{
+		ProviderID: binding.RecipeID,
+		Scope:      scope,
+		ItemID:     out.ItemID,
+		Expected:   expected,
+		Observed: &ledger.Observation{
+			ProviderID: obs.ProviderID,
+			Scope:      obs.Scope,
+			ItemID:     obs.ItemID,
+			ObservedAt: obs.ObservedAt,
+			Properties: obs.Properties,
+		},
+		Now:    now,
+		MaxAge: maxAge,
+	})
+	out.Outcome = result.Outcome
+	out.Findings = result.Findings
+	return out
+}
+
+// eventFinding reports the observed event against the requested one, reusing the
+// comparison grader's finding vocabulary: an absent event is missing, another
+// event is different.
+func eventFinding(requested, observed string) ledger.Finding {
+	status := ledger.FindingDifferent
+	if observed == "" {
+		status = ledger.FindingMissing
+	}
+	return ledger.Finding{Property: reconcileEventFacet, Expected: requested, Observed: observed, Status: status}
+}
+
+// boundItemID is the native id of the item the grade bound, or "" when the grade
+// selected none. A nil item means no safe target: the comparison then reports an
+// unbound identity instead of borrowing an unrelated item.
+func boundItemID(item *ledger.Item) string {
+	if item == nil {
+		return ""
+	}
+	return item.ItemID
+}
+
+// boundReconcileItemID resolves the item a comparison is about. The graded
+// primary item always wins. A closed-only store has no primary (D17), so after a
+// merge the observation's item id binds a closed row only when exactly one
+// locally stored closed row for the current identity corroborates it: the
+// provider-reported id is never trusted on its own, a missing or ambiguous match
+// stays unbound, and the lookup is read-only. It never makes the row primary and
+// never changes the graded verdict.
+func boundReconcileItemID(verdict ledger.Verdict, obs reconcileObservation) string {
+	if id := boundItemID(verdict.Item); id != "" {
+		return id
+	}
+	return corroboratedClosedItemID(verdict.Identity, obs.ItemID)
+}
+
+// corroboratedClosedItemID returns observedID only when exactly one closed row
+// for ident's identity carries it. The match is the D17 identity unit (common dir
+// and branch); when the current identity names a change the row must name the
+// same change, while a row whose archived change the current derivation no longer
+// sees still matches. A missing identity, an unreadable store, and a zero or
+// multiple match all return "" so the comparison reports an unbound identity.
+func corroboratedClosedItemID(ident ledger.Identity, observedID string) string {
+	if observedID == "" || !ident.Available() || ident.CommonDir == "" {
+		return ""
+	}
+	store, err := ledger.LoadStore(ledger.StorePath(ident.CommonDir))
+	if err != nil {
+		return ""
+	}
+	matches := 0
+	for _, item := range store.Items {
+		if item.Status != ledger.StatusClosed || item.ItemID != observedID {
+			continue
+		}
+		if item.Identity.CommonDir != ident.CommonDir || item.Identity.Branch != ident.Branch {
+			continue
+		}
+		if ident.Change != "" && item.Identity.Change != ident.Change {
+			continue
+		}
+		matches++
+	}
+	if matches != 1 {
+		return ""
+	}
+	return observedID
+}
+
+// loadReconcileObservation reads the transport's observation. It is a trust
+// boundary, so the payload is strict: unknown fields and trailing content are
+// rejected rather than silently ignored, and a non-string property value is
+// invalid input rather than a coerced comparison. Only a plain file is opened, and
+// it is read under the acquisition size budget, so a FIFO, a device or an endless
+// file cannot block or flood the comparison.
+func loadReconcileObservation(path string) (reconcileObservation, error) {
+	if err := regularFile(path); err != nil {
+		return reconcileObservation{}, err
+	}
+	handle, err := os.Open(path)
+	if err != nil {
+		return reconcileObservation{}, err
+	}
+	defer handle.Close()
+	data, err := io.ReadAll(io.LimitReader(handle, acquisitionLimit+1))
+	if err != nil {
+		return reconcileObservation{}, err
+	}
+	if len(data) > acquisitionLimit {
+		return reconcileObservation{}, fmt.Errorf("larger than %d bytes", acquisitionLimit)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var obs reconcileObservation
+	if err := dec.Decode(&obs); err != nil {
+		return reconcileObservation{}, err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return reconcileObservation{}, errors.New("unexpected trailing content after the observation object")
+	}
+	return obs, nil
+}
+
+// resolveReconcileMapping reads the recipe-declared mapping from the project
+// manifest and resolves one event's declared scope, expectations and freshness.
+// An empty expectation list means the event is unmapped, which the caller reports
+// as pending. An error means the configuration itself is unusable.
+func resolveReconcileMapping(root, recipeID, event string) (string, []ledger.Expectation, time.Duration, error) {
+	config, err := readManifestRecipeConfig(root, recipeID)
+	if err != nil {
+		return "", nil, 0, err
+	}
+	raw, ok := config["reconcile"]
+	if !ok {
+		return "", nil, 0, fmt.Errorf("recipe %q declares no reconcile mapping in %s", recipeID, manifestPath(root))
+	}
+	var declared reconcileConfig
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&declared); err != nil {
+		return "", nil, 0, fmt.Errorf("recipe %q reconcile mapping: %w", recipeID, err)
+	}
+
+	scope, ok := configValue(config, declared.ScopeField)
+	if declared.ScopeField == "" || !ok {
+		return "", nil, 0, fmt.Errorf("recipe %q reconcile mapping: scope config field %q has no value", recipeID, declared.ScopeField)
+	}
+
+	var expected []ledger.Expectation
+	for _, decl := range declared.Expectations {
+		if decl.Event != event {
+			continue
+		}
+		if decl.Property == "" || decl.ConfigField == "" {
+			return "", nil, 0, fmt.Errorf("recipe %q reconcile mapping: expectation for event %q needs property and config_field", recipeID, event)
+		}
+		// A declared conditional field replaces the default target only when it
+		// resolves to a non-empty string. An absent or blank value leaves the
+		// declared default standing; a present value that is not a string is
+		// unusable config and is reported rather than coerced.
+		field := decl.ConfigField
+		if decl.ConfigFieldWhenSet != "" {
+			if _, present := config[decl.ConfigFieldWhenSet]; present {
+				candidate, ok := configValue(config, decl.ConfigFieldWhenSet)
+				if !ok {
+					return "", nil, 0, fmt.Errorf("recipe %q reconcile mapping: conditional config field %q is not a string", recipeID, decl.ConfigFieldWhenSet)
+				}
+				if strings.TrimSpace(candidate) != "" {
+					field = decl.ConfigFieldWhenSet
+				}
+			}
+		}
+		value, ok := configValue(config, field)
+		if !ok {
+			return "", nil, 0, fmt.Errorf("recipe %q reconcile mapping: config field %q has no value", recipeID, field)
+		}
+		expected = append(expected, ledger.Expectation{Name: decl.Property, Value: value})
+	}
+
+	// No freshness default is invented: an undeclared window is forwarded as zero
+	// so the comparison grader classifies invalid input. A declared window is
+	// validated against the representable range before any conversion, so a
+	// non-positive or oversized value can never wrap into a usable window.
+	var maxAge time.Duration
+	if declared.MaxAgeSeconds != nil {
+		seconds := *declared.MaxAgeSeconds
+		if seconds <= 0 || seconds > manifestMaxAgeSeconds {
+			return "", nil, 0, fmt.Errorf("recipe %q reconcile mapping: max_age_seconds %d is outside 1..%d",
+				recipeID, seconds, manifestMaxAgeSeconds)
+		}
+		maxAge = time.Duration(seconds) * time.Second
+	}
+	return scope, expected, maxAge, nil
+}
+
+// manifestPath is the project manifest location for one project root.
+func manifestPath(root string) string {
+	return filepath.Join(root, "ai-specs", "ai-specs.toml")
+}
+
+// manifestRecipe is one [recipes.<id>] table. Only the raw config table is kept:
+// the reconcile mapping inside it is decoded separately and strictly. Enabled is
+// a pointer so an explicit enabled = false is distinguishable from an absent key.
+type manifestRecipe struct {
+	Enabled *bool                      `json:"enabled"`
+	Config  map[string]json.RawMessage `json:"config"`
+}
+
+// acquisitionLimit is the one size budget for acquisition in and out: a read
+// or a reconciled observation payload may not exceed it. It is a fixed
+// constant, not configuration: bounding acquisition is acquisition safety, not
+// a new grader input.
+const acquisitionLimit = 1 << 20
+
+// readManifestRecipeConfig loads the bound recipe's config table from the project
+// manifest through the standard parser. Every failure is returned so the caller
+// can report it: a comparison with unreadable configuration never agrees, and a
+// recipe the manifest explicitly disabled grants no authority at all.
+func readManifestRecipeConfig(root, recipeID string) (map[string]json.RawMessage, error) {
+	if recipeID == "" {
+		return nil, errors.New("no tracker recipe is bound (missing or unbound witness)")
+	}
+	manifest := manifestPath(root)
+	recipes, err := readManifestRecipes(manifest)
+	if err != nil {
+		return nil, fmt.Errorf("manifest %s: %w", manifest, err)
+	}
+	recipe, ok := recipes[recipeID]
+	if !ok {
+		return nil, fmt.Errorf("manifest %s: recipe %q is not configured", manifest, recipeID)
+	}
+	if recipe.Enabled != nil && !*recipe.Enabled {
+		return nil, fmt.Errorf("manifest %s: recipe %q is disabled", manifest, recipeID)
+	}
+	if recipe.Config == nil {
+		return nil, fmt.Errorf("manifest %s: recipe %q has no config table", manifest, recipeID)
+	}
+	return recipe.Config, nil
+}
+
+// readManifestRecipes deserializes the manifest's [recipes] table. Provider
+// adaptation lives in the manifest values, so this function is provider-neutral:
+// it returns raw tables for the caller to decode. The parse happens in process,
+// so --reconcile needs no ambient interpreter.
+func readManifestRecipes(path string) (map[string]manifestRecipe, error) {
+	if err := regularFile(path); err != nil {
+		return nil, err
+	}
+	out, err := shared.ReadManifestRecipesJSON(path)
+	if err != nil {
+		return nil, err
+	}
+	var recipes map[string]manifestRecipe
+	if err := json.Unmarshal(out, &recipes); err != nil {
+		return nil, fmt.Errorf("deserialized recipes: %w", err)
+	}
+	return recipes, nil
+}
+
+// regularFile refuses anything that is not a plain file before it is opened: a
+// read of a FIFO or device would block acquisition, and a directory cannot hold
+// this content. The check is a cheapest-first guard, not a security boundary.
+func regularFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("not a regular file (%s)", info.Mode().Type())
+	}
+	return nil
+}
+
+// configValue resolves one configured string. A missing field or a non-string
+// value is unusable config: it is reported, never defaulted or coerced.
+func configValue(config map[string]json.RawMessage, field string) (string, bool) {
+	raw, ok := config[field]
+	if !ok {
+		return "", false
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", false
+	}
+	return value, true
+}
