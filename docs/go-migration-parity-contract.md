@@ -98,6 +98,16 @@ digest, or cache size. The tracker-ledger doctor query also reaches the same
 CLI via the `worktree-gate` subcommand. Approved by Robert in L5; this is the
 intentional divergence from the legacy binary-inspection contract.
 
+#### Sync no longer warns about a missing gate binary — accepted divergence (T6)
+
+With the separate gate binary retired, `sync` no longer tries to acquire it, so
+the warning it printed when no usable gate binary was available (for example
+offline) is gone. The stderr of that scenario is therefore no longer compared in
+the frozen materialization differential. The gate is now served by the
+installed CLI: `doctor` reports a missing or failing CLI (`ERROR`) and a
+materialized launcher that still resolves the retired binary (`WARN`), and the
+launcher itself fails open with its own one-line warning.
+
 #### Malformed-manifest guidance — accepted divergence (U2c)
 
 For an unparseable `ai-specs/ai-specs.toml`, the `manifest` ERROR check keeps
