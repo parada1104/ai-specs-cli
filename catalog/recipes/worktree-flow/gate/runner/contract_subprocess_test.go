@@ -15,11 +15,27 @@ var contractBinary string
 func contractBin(t *testing.T) string {
 	t.Helper()
 	if contractBinary == "" {
-		contractBinary = filepath.Join(t.TempDir(), "worktree-gate")
+		root, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for {
+			data, readErr := os.ReadFile(filepath.Join(root, "go.mod"))
+			if readErr == nil && strings.Contains(string(data), "module ai-specs.dev/ai-specs") {
+				break
+			}
+			parent := filepath.Dir(root)
+			if parent == root {
+				t.Fatal("could not find root ai-specs.dev/ai-specs go.mod")
+			}
+			root = parent
+		}
+		contractBinary = filepath.Join(t.TempDir(), "ai-specs")
 		t.Cleanup(func() { contractBinary = "" })
-		cmd := exec.Command("go", "build", "-o", contractBinary, "..")
+		cmd := exec.Command("go", "build", "-o", contractBinary, "./cmd/ai-specs")
+		cmd.Dir = root
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("build gate: %v\n%s", err, out)
+			t.Fatalf("build ai-specs CLI: %v\n%s", err, out)
 		}
 	}
 	return contractBinary
@@ -27,10 +43,14 @@ func contractBin(t *testing.T) string {
 
 func runContract(t *testing.T, dir, input string, args ...string) (int, string, string) {
 	t.Helper()
-	cmd := exec.Command(contractBin(t), args...)
+	cmd := exec.Command(contractBin(t), append([]string{"worktree-gate"}, args...)...)
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(input)
-	cmd.Env = append(os.Environ(), "WORKTREE_GATE_MODE=", "WORKTREE_GATE_SCOPE=")
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "VERSION"), []byte("dev\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Env = append(os.Environ(), "AI_SPECS_HOME="+home, "WORKTREE_GATE_MODE=", "WORKTREE_GATE_SCOPE=")
 	var out, errOut strings.Builder
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	err := cmd.Run()

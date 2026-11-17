@@ -1,6 +1,6 @@
 """Go-only parity fixtures for the tracker ledger (``--ledger``).
 
-Drives the built ``dist/worktree-gate-current --ledger`` against real Git
+Drives the ``ai-specs worktree-gate --ledger`` CLI route against real Git
 fixtures described by the pinned corpus under
 ``tests/fixtures/tracker-ledger-corpus/``. The corpus pins
 ``(identity + witness + evidence + mode + checkpoint) -> (decision, conflict,
