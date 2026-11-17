@@ -77,6 +77,7 @@ class WorktreeCleanupTests(unittest.TestCase):
         if script is None:
             script = "\n".join([
                 "#!/usr/bin/env bash", '[ "$1" = worktree-gate ] || exit 91',
+                'if [ "$2" = --version ]; then echo dev; exit 0; fi',
                 "shift", f'exec {self.CLEANUP_BINARY} "$@"', "",
             ])
         cli = dist / "ai-specs"
@@ -101,7 +102,8 @@ class WorktreeCleanupTests(unittest.TestCase):
     def test_cli_route_preserves_arguments_output_and_exit(self):
         repo = self._make_repo()
         home = self._cli_home("\n".join([
-            "#!/usr/bin/env bash", "printf '%s\\n' \"$*\" > \"$CLI_ARGS\"",
+            "#!/usr/bin/env bash", 'if [ "$2" = --version ]; then exit 0; fi',
+            "printf '%s\\n' \"$*\" > \"$CLI_ARGS\"",
             "printf 'cleanup-out\\n'", "printf 'cleanup-err\\n' >&2", "exit 0", "",
         ]))
         env = dict(os.environ, AI_SPECS_HOME=str(home), CLI_ARGS=str(repo.parent / "args"), TOPOLOGY="auto")
@@ -113,6 +115,24 @@ class WorktreeCleanupTests(unittest.TestCase):
                          (0, "cleanup-out\n", "cleanup-err\n"))
         self.assertEqual(Path(env["CLI_ARGS"]).read_text().strip(),
                          "worktree-gate --cleanup --topology auto --base main --dry-run")
+
+    def test_old_cli_fails_closed_before_cleanup(self):
+        repo = self._make_repo()
+        log = repo.parent / "cli.log"
+        home = self._cli_home("#!/usr/bin/env bash\n"
+                              'if [ "$2" = --version ]; then exit 2; fi\n'
+                              'echo "$*" >> "$CLI_LOG"\n')
+        result = subprocess.run(
+            ["bash", str(CLEANUP_SCRIPT), "--base", "main"], cwd=repo,
+            env=dict(os.environ, AI_SPECS_HOME=str(home), CLI_LOG=str(log)),
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr,
+                         "worktree-cleanup: installed ai-specs CLI is too old (no worktree-gate verb); no destructive action taken\n"
+                         f"worktree-cleanup: run 'ai-specs upgrade' (expected at {home / 'dist' / 'ai-specs'})\n")
+        self.assertFalse(log.exists(), "old CLI must not receive --cleanup")
 
     def test_cleanup_bin_override_is_used(self):
         repo = self._make_repo()

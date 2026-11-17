@@ -96,7 +96,11 @@ gate fails open. This replaces inspection of a separately acquired, cached,
 digest-verified gate binary; doctor no longer validates its version, receipt,
 digest, or cache size. The tracker-ledger doctor query also reaches the same
 CLI via the `worktree-gate` subcommand. Approved by Robert in L5; this is the
-intentional divergence from the legacy binary-inspection contract.
+intentional divergence from the legacy binary-inspection contract. The same
+advisory `WARN worktree-gate` check also flags a preserved
+`ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh` that still
+resolves `cache/bin/worktree-gate` without resolving the installed CLI; delete
+the customized override and run `ai-specs sync` to refresh it.
 
 #### Sync no longer warns about a missing gate binary — accepted divergence (T6)
 

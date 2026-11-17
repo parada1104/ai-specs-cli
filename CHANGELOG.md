@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+After upgrading, run `ai-specs sync` in each project to refresh hook launchers.
+Until then, `worktree-cleanup.sh` fails closed with `no verified Go implementation available`;
+the gate enforces only while its old cached gate exists, otherwise it warns and does
+not enforce. Upgrade the CLI across the team together: an older CLI re-renders old
+launchers and the tracked cleanup override flips between versions; the gate warns
+and does not block when the CLI is too old. Customized `worktree-gate.sh` files
+are preserved; refresh them with `ai-specs sync --refresh-gates`. Delete a
+customized `worktree-cleanup.sh` override and run `ai-specs sync` to refresh it.
+
 ### Changed
 - **The worktree gate ships inside the CLI.** Separate `worktree-gate` release
   assets and their checksum trust root are retired; the standalone gate adapter

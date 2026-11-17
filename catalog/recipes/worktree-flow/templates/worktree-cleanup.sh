@@ -24,5 +24,10 @@ if [ ! -x "$cli_bin" ]; then
     echo "worktree-cleanup: install or upgrade the ai-specs CLI (expected at $cli_bin)" >&2
     exit 2
 fi
+if ! "$cli_bin" worktree-gate --version >/dev/null 2>&1; then
+    echo "worktree-cleanup: installed ai-specs CLI is too old (no worktree-gate verb); no destructive action taken" >&2
+    echo "worktree-cleanup: run 'ai-specs upgrade' (expected at $cli_bin)" >&2
+    exit 2
+fi
 
 exec "$cli_bin" worktree-gate --cleanup --topology "${TOPOLOGY:-$stamped_repo_topology}" "$@"
