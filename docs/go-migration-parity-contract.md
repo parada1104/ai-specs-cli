@@ -38,7 +38,8 @@ recorded in full below:
 
 ## 1. Command surface
 
-`bin/ai-specs` dispatches 14 verbs. Bare invocation (no arguments) is rewritten
+`bin/ai-specs` dispatches the verbs below, including the native `worktree-gate`
+route added by `odd/tasks/gate-into-cli.md` T4. Bare invocation (no arguments) is rewritten
 to `hub`, **not** to `help` — a deliberate product decision documented in
 `README.md`.
 
@@ -58,6 +59,7 @@ to `hub`, **not** to `help` — a deliberate product decision documented in
 | `version` | `-v`, `--version` | `lib/version.sh` | no | no |
 | `help` | `-h`, `--help` | inline heredoc | no | no |
 | `hub` | *(bare `ai-specs`)* | `lib/hub.sh` | **yes** (claims no) | **yes** |
+| `worktree-gate` | — | `catalog/recipes/worktree-flow/gate/runner` | varies | no |
 
 `recipe configure` and `hub` are **absent from `ai-specs help`** despite being
 real, reachable commands — `hub` is even the default.
