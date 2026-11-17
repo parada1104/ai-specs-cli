@@ -63,6 +63,15 @@ func (d *Doctor) checkWorktreeGate() {
 			"doctor is read-only; set gate_impl to auto or go, then run ai-specs sync")
 		return
 	}
+	if isFile(launcher) {
+		if raw, err := os.ReadFile(launcher); err == nil &&
+			strings.Contains(string(raw), "cache/bin/worktree-gate/") &&
+			!strings.Contains(string(raw), "dist/ai-specs") {
+			d.add(WARN, "worktree-gate",
+				"materialized worktree-gate.sh still resolves the retired separate gate binary",
+				"run ai-specs sync (or ai-specs sync --refresh-gates if the file was customized and preserved)")
+		}
+	}
 
 	binary := installedCLIPath(d.Home)
 	if !isExecutable(binary) {

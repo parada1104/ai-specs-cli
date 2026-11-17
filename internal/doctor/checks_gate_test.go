@@ -40,6 +40,45 @@ func TestCheckWorktreeGateNotInPlay(t *testing.T) {
 	})
 }
 
+func TestCheckWorktreeGateWarnsForLegacyLauncher(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		launcher   string
+		wantLegacy bool
+	}{
+		{
+			name:       "old launcher",
+			launcher:   "bin=\"$home/cache/bin/worktree-gate/$stamped_gate_version/$_goos-$_goarch/worktree-gate\"\n# WORKTREE_GATE_VERIFY=1\nstamped_gate_impl=\"go\"\n",
+			wantLegacy: true,
+		},
+		{
+			name:     "new launcher",
+			launcher: "cli_bin=\"${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs\"\nexec \"$cli_bin\" worktree-gate\n",
+		},
+		{name: "no launcher"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			home := t.TempDir()
+			writeManifest(t, root, "[recipes.worktree-flow]\nenabled = true\n")
+			writeDoctorCLI(t, home, "#!/bin/sh\n[ \"$1\" = worktree-gate ] && [ \"$2\" = --selftest ] && { echo ok; exit 0; }\nexit 1\n")
+			if tc.launcher != "" {
+				writeFile(t, filepath.Join(root, "ai-specs", "recipes", "worktree-flow", "hooks", "worktree-gate.sh"), tc.launcher)
+			}
+			d := New(root, home)
+			d.checkWorktreeGate()
+			if tc.wantLegacy {
+				assertChecks(t, d, []Check{
+					{WARN, "worktree-gate", "materialized worktree-gate.sh still resolves the retired separate gate binary", "run ai-specs sync (or ai-specs sync --refresh-gates if the file was customized and preserved)"},
+					{OK, "worktree-gate", fmt.Sprintf("CLI at %s serves worktree-gate; selftest passed", installedCLIPath(d.Home)), ""},
+				})
+			} else {
+				assertChecks(t, d, []Check{{OK, "worktree-gate", fmt.Sprintf("CLI at %s serves worktree-gate; selftest passed", installedCLIPath(d.Home)), ""}})
+			}
+		})
+	}
+}
+
 func TestCheckWorktreeGateInstalledCLI(t *testing.T) {
 	root := t.TempDir()
 	writeManifest(t, root, "[recipes.worktree-flow]\nenabled = true\n")

@@ -222,6 +222,18 @@ cache**. Non-negotiable.
 | `<target>/.claude/commands/` etc. | **`rm -rf` every run** — user-added command files are destroyed |
 | git index | **Never touched.** Remediation is printed as copy-pasteable `git rm --cached` text |
 
+T6b (`odd/tasks/gate-into-cli.md`): sync replaces a launcher whose bytes still
+match the lock's managed hash when the rendered catalog version differs;
+customized launchers are preserved and already emit the hook-actuator warning
+with `rm <path> && ai-specs sync` / `--refresh-gates` guidance. The
+`--refresh-gates` option explicitly bypasses ownership classification and
+replaces the launcher after backing up its previous bytes. This task adds an
+advisory `worktree-gate` doctor warning for the retired cache-binary launcher;
+it directs users to `ai-specs sync` and names `--refresh-gates` for customized
+files. Sync's existing warning and output are unchanged: adding another
+stderr line would alter the FROZEN exact-output surface (S5), so no special
+old-launcher sync warning is added here.
+
 ### Symlink kinds — FROZEN
 
 - Instructions (`CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md`,
