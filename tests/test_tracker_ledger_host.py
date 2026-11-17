@@ -94,10 +94,16 @@ class TrackerLedgerHostDirectModeTests(unittest.TestCase):
         cls._cli_tmp = tempfile.TemporaryDirectory()
         cls.cli_home = Path(cls._cli_tmp.name)
         (cls.cli_home / "dist").mkdir(parents=True)
+        native = cls.cli_home / "dist" / "ai-specs-native"
         subprocess.run(
-            ["go", "build", "-o", str(cls.cli_home / "dist" / "ai-specs"), "./cmd/ai-specs"],
+            ["go", "build", "-o", str(native), "./cmd/ai-specs"],
             cwd=ROOT, check=True, capture_output=True, text=True,
         )
+        cli = cls.cli_home / "dist" / "ai-specs"
+        cli.write_text(
+            f'#!/usr/bin/env bash\nif [ "$1" = worktree-gate ]; then shift; exec "$STUB_GATE" "$@"; fi\nexec "{native}" "$@"\n'
+        )
+        cli.chmod(0o755)
 
     @classmethod
     def tearDownClass(cls):
@@ -135,7 +141,7 @@ class TrackerLedgerHostDirectModeTests(unittest.TestCase):
         for key in ("TRACKER_CARD_GATE_MODE", "TRACKER_LEDGER_MODE",
                     "TRACKER_CARD_GATE_PATHS", "AI_SPECS_HOME"):
             env.pop(key, None)
-        env["WORKTREE_GATE_BIN"] = str(self.stub)
+        env["STUB_GATE"] = str(self.stub)
         env["STUB_LOG"] = str(self.stub_log)
         env["STUB_DECISION"] = decision
         env["STUB_REASON"] = reason
@@ -285,7 +291,7 @@ class TrackerLedgerHostDirectModeTests(unittest.TestCase):
 
     def test_missing_verified_binary_fails_open(self):
         env = self._env(decision="block")
-        env.pop("WORKTREE_GATE_BIN", None)
+        env.pop("STUB_GATE", None)
         env["AI_SPECS_HOME"] = str(Path(self.tmp.name) / "cold-home")
         r = self._run_host("--root", str(self.repo), "--checkpoint", "pre-merge", env=env)
         self.assertEqual(r.returncode, 0, r.stderr)

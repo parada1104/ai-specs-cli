@@ -927,6 +927,19 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         self._write_marker(self.bin_marker, "MARKER:project-local")
         # A scratch AI_SPECS_HOME so cache lookups are hermetic.
         self.home = self.install / "home"
+        self.cli = self.home / "dist" / "ai-specs"
+
+    def _write_cli(self, *, status: int = 0, stdout: str = "CLI-OUT\n", stderr: str = "CLI-ERR\n") -> None:
+        self.cli.parent.mkdir(parents=True, exist_ok=True)
+        self.cli.write_text("\n".join([
+            "#!/usr/bin/env bash",
+            "printf '%s\\n' \"$*\" > \"$CLI_LOG\"",
+            f"printf '%s' {stdout!r}",
+            f"printf '%s' {stderr!r} >&2",
+            f"exit {status}",
+            "",
+        ]))
+        self.cli.chmod(0o755)
 
     def _stamped_launcher(self, **overrides) -> str:
         content = (ROOT / "catalog" / "recipes" / "worktree-flow" /
@@ -960,13 +973,33 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         d.mkdir(exist_ok=True)
         return d
 
+    def test_routes_gate_args_and_streams_through_installed_cli(self):
+        self._write_cli(status=2)
+        env = self._gate_env(CLI_LOG=str(self.install / "cli.log"))
+        r = self._run(self.launcher, self._elsewhere(), stdin="payload", env=env)
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(r.stdout, "CLI-OUT\\n")
+        self.assertEqual(r.stderr, "CLI-ERR\\n")
+        self.assertEqual((self.install / "cli.log").read_text().strip(),
+                         "worktree-gate --gate-mode always --gate-scope auto --repo-topology auto --protected main")
+
+    def test_routes_success_output_through_installed_cli(self):
+        self._write_cli(status=0, stdout="allowed", stderr="diagnostic")
+        r = self._run(self.launcher, self._elsewhere(), env=self._gate_env(CLI_LOG=str(self.install / "cli.log")))
+        self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "allowed", "diagnostic"))
+
+    def test_missing_cli_fails_open_with_existing_warning(self):
+        r = self._run(self.launcher, self._elsewhere())
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("no usable gate", r.stderr)
+
     def test_relative_invocation_selects_project_local_bin_from_physical_root(self):
         cwd = self._elsewhere()
         rel = os.path.relpath(self.launcher, cwd)
         r = self._run(Path(rel), cwd)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("MARKER:project-local", r.stderr)
-        self.assertNotIn("MARKER:legacy", r.stderr)
+        self.assertNotIn("MARKER:project-local", r.stderr)
+        self.assertIn("no usable gate", r.stderr)
 
     def test_symlink_invocation_resolves_physical_installation(self):
         link_dir = self.install / "linked"
@@ -975,13 +1008,14 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         link.symlink_to(self.launcher)
         r = self._run(link, self._elsewhere())
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("MARKER:project-local", r.stderr,
-                      "symlinked invocation must resolve to the physical install")
+        self.assertNotIn("MARKER:project-local", r.stderr)
+        self.assertIn("no usable gate", r.stderr)
 
     def test_unrelated_process_cwd_finds_launcher_beside_itself(self):
         r = self._run(self.launcher, self._elsewhere())
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("MARKER:project-local", r.stderr)
+        self.assertNotIn("MARKER:project-local", r.stderr)
+        self.assertIn("no usable gate", r.stderr)
 
     def test_worktree_gate_bin_override_wins(self):
         override = self.install / "override-bin"
@@ -989,9 +1023,9 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         r = self._run(self.launcher, self._elsewhere(),
                       env=self._gate_env(WORKTREE_GATE_BIN=str(override)))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("MARKER:override", r.stderr)
+        self.assertNotIn("MARKER:override", r.stderr)
         self.assertNotIn("MARKER:project-local", r.stderr)
-        self.assertNotIn("no usable gate", r.stderr)
+        self.assertIn("no usable gate", r.stderr)
 
     def test_cache_precedence_when_project_local_missing(self):
         self.bin_marker.unlink()
@@ -1002,14 +1036,14 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         self._write_marker(cache_bin, "MARKER:cache")
         r = self._run(self.launcher, self._elsewhere())
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("MARKER:cache", r.stderr)
-        self.assertNotIn("no usable gate", r.stderr)
+        self.assertNotIn("MARKER:cache", r.stderr)
+        self.assertIn("no usable gate", r.stderr)
 
     def test_project_local_resolves_with_no_fail_open_warning(self):
         r = self._run(self.launcher, self._elsewhere())
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("MARKER:project-local", r.stderr)
-        self.assertNotIn("no usable gate", r.stderr)
+        self.assertNotIn("MARKER:project-local", r.stderr)
+        self.assertIn("no usable gate", r.stderr)
 
     def test_unresolved_binary_fails_open_one_warning_never_execs_legacy(self):
         """No env, pin, or cache: fail open with one warning; planted legacy is inert."""

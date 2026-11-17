@@ -87,9 +87,26 @@ class WorktreeCleanupTests(unittest.TestCase):
         git(repo, "worktree", "add", "-q", "-b", branch, str(wt), "main")
         return wt
 
+    def _cli_home(self, script: str | None = None) -> Path:
+        home = Path(tempfile.mkdtemp(prefix="cleanup-cli-home-"))
+        self.addCleanup(lambda: shutil.rmtree(home))
+        dist = home / "dist"
+        dist.mkdir()
+        if script is None:
+            script = "\n".join([
+                "#!/usr/bin/env bash", '[ "$1" = worktree-gate ] || exit 91',
+                "shift", f'exec {self.CLEANUP_BINARY} "$@"', "",
+            ])
+        cli = dist / "ai-specs"
+        cli.write_text(script)
+        cli.chmod(0o755)
+        return home
+
     def _run_cleanup(self, repo: Path, *extra: str):
         env = dict(os.environ)
-        env["WORKTREE_CLEANUP_BIN"] = str(self.CLEANUP_BINARY)
+        env["AI_SPECS_HOME"] = str(self._cli_home())
+        env["TOPOLOGY"] = "auto"
+        env.pop("WORKTREE_CLEANUP_BIN", None)
         return subprocess.run(
             ["bash", str(CLEANUP_SCRIPT), "--base", "main", *extra],
             cwd=repo,
@@ -98,6 +115,33 @@ class WorktreeCleanupTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
+
+    def test_cli_route_preserves_arguments_output_and_exit(self):
+        repo = self._make_repo()
+        home = self._cli_home("\n".join([
+            "#!/usr/bin/env bash", "printf '%s\\n' \"$*\" > \"$CLI_ARGS\"",
+            "printf 'cleanup-out\\n'", "printf 'cleanup-err\\n' >&2", "exit 0", "",
+        ]))
+        env = dict(os.environ, AI_SPECS_HOME=str(home), CLI_ARGS=str(repo.parent / "args"), TOPOLOGY="auto")
+        result = subprocess.run(
+            ["bash", str(CLEANUP_SCRIPT), "--base", "main", "--dry-run"],
+            cwd=repo, env=env, capture_output=True, text=True,
+        )
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, "cleanup-out\n", "cleanup-err\n"))
+        self.assertEqual(Path(env["CLI_ARGS"]).read_text().strip(),
+                         "worktree-gate --cleanup --topology auto --base main --dry-run")
+
+    def test_missing_cli_fails_closed_without_running_cleanup(self):
+        repo = self._make_repo()
+        home = Path(tempfile.mkdtemp(prefix="cleanup-no-cli-"))
+        self.addCleanup(lambda: shutil.rmtree(home))
+        result = subprocess.run(
+            ["bash", str(CLEANUP_SCRIPT), "--base", "main"], cwd=repo,
+            env=dict(os.environ, AI_SPECS_HOME=str(home)), capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("no verified Go implementation available", result.stderr)
 
     def test_removes_merged_worktree(self):
         repo = self._make_repo()
@@ -517,7 +561,9 @@ class WorktreeCleanupTests(unittest.TestCase):
         # would violate the bounded-candidate requirement.
         env = dict(os.environ)
         env["GIT_TRACE"] = "1"
-        env["WORKTREE_CLEANUP_BIN"] = str(self.CLEANUP_BINARY)
+        env["AI_SPECS_HOME"] = str(self._cli_home())
+        env["TOPOLOGY"] = "auto"
+        env.pop("WORKTREE_CLEANUP_BIN", None)
 
         result = subprocess.run(
             ["bash", str(CLEANUP_SCRIPT), "--base", "main", "--dry-run"],
