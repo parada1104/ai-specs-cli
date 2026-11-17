@@ -16,7 +16,6 @@ boundary:
 from __future__ import annotations
 
 import json
-import platform
 import re
 import subprocess
 import sys
@@ -49,22 +48,11 @@ BUNDLED_COMMANDS = ("rules-audit", "skills-as-rules")
 _LINE_RE = re.compile(r"^\s*(OK|INFO|WARN|ERROR)\s+(?P<name>\S+)\s+(?P<body>.*)$")
 
 
-def _platform() -> tuple[str, str]:
-    """Mirror gate_binary.detect_platform for staging cache paths in tests."""
-    goos = {"Darwin": "darwin", "Linux": "linux"}.get(platform.system(), "")
-    machine = platform.machine()
-    goarch = "arm64" if machine in ("arm64", "aarch64") else (
-        "amd64" if machine in ("x86_64", "amd64") else "")
-    return goos, goarch
-
-
 def _make_home(base: Path) -> Path:
-    """Isolated CLI home with an EMPTY catalog.
+    """Isolated CLI home with an EMPTY catalog and no installed CLI by default.
 
-    The empty catalog keeps the SHA256SUMS trust root out of the way so a
-    receipt-backed stub binary is accepted exactly like an acquired one, and
     ``lib/`` is dropped from the install tree: doctor is the Go binary, so no
-    test reads or copies it.
+    test reads or copies it. Tests that need the gate install a CLI stub here.
     """
     home = isolated_home(base, catalog=False)
     (home / "lib").unlink(missing_ok=True)
@@ -89,20 +77,16 @@ def _stage_gate_stub(
     ledger_payload: dict | None = None,
     ledger_stdout: str | None = None,
 ) -> None:
-    """Install a receipt-backed stub binary at the version-keyed cache path.
-
-    The canned verdict is embedded in the stub script itself. The stub is a test
-    double, not a release binary: it cannot satisfy the native digest, version and
-    self-test trust root. `_render` pins it through the documented
-    WORKTREE_GATE_BIN seam, so only rendering is under test; trust evaluation stays
-    covered by the gatebinary tests.
-    """
-    version = (home / "VERSION").read_text(encoding="utf-8").strip()
-    goos, goarch = _platform()
-    bindir = home / "cache" / "bin" / "worktree-gate" / version / f"{goos}-{goarch}"
+    """Install a tiny installed-CLI stand-in that serves the gate commands."""
+    bindir = home / "dist"
     bindir.mkdir(parents=True, exist_ok=True)
-    stub = bindir / "worktree-gate"
-    lines = ["#!/bin/sh"]
+    stub = bindir / "ai-specs"
+    lines = [
+        "#!/bin/sh",
+        '[ "$1" = worktree-gate ] || exit 2',
+        'if [ "$2" = --selftest ]; then echo ok; exit 0; fi',
+        '[ "$2" = --ledger ] || exit 2',
+    ]
     if ledger_payload is not None:
         lines += ["cat <<'JSON'", json.dumps(ledger_payload), "JSON"]
     elif ledger_stdout is not None:
@@ -110,7 +94,6 @@ def _stage_gate_stub(
     lines.append("exit 0")
     stub.write_text("\n".join(lines) + "\n", encoding="utf-8")
     stub.chmod(0o755)
-    (bindir / "worktree-gate.verified").write_text("status=verified\n", encoding="utf-8")
 
 
 def _named_checks(stdout: str, name: str) -> list[tuple[str, str]]:
@@ -182,12 +165,8 @@ class DoctorTrackerLedgerTests(unittest.TestCase):
         (ledger_dir / "witness.json").write_text(json.dumps(payload))
 
     def _render(self, root: Path) -> tuple[list[tuple[str, str]], int]:
-        # The staged stub is a canned verdict, not a release binary: it cannot satisfy
-        # the native digest/selftest trust root (accepted divergence, gate receipt).
-        # Pin it through the documented WORKTREE_GATE_BIN seam; rendering is under test.
-        stubs = sorted(self.home.glob("cache/bin/worktree-gate/*/*/worktree-gate"))
-        extra = {"WORKTREE_GATE_BIN": str(stubs[0])} if stubs else None
-        result = invoke(root, "doctor", cli_home=self.home, env_extra=extra)
+        # The temp install home owns the CLI stub, so ambient home/cache state is irrelevant.
+        result = invoke(root, "doctor", cli_home=self.home)
         return _named_checks(result.stdout, "tracker-ledger"), result.returncode
 
     # --- severity rendering (one grader: doctor renders the Go finding) ---
@@ -383,8 +362,7 @@ class DoctorTrackerLedgerTests(unittest.TestCase):
     # --- infra fail-closed ---
 
     def test_missing_binary_renders_error(self):
-        # CLI-observable equivalent of the WORKTREE_GATE_BIN pin to a missing
-        # path: with no verified binary resolvable at all, the check fails
+        # With no installed CLI resolvable in this isolated home, the check fails
         # closed to ERROR.
         root = self._project()
         checks, code = self._render(root)
