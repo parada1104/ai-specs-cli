@@ -1,10 +1,6 @@
 package doctor
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"os"
-
 	"ai-specs.dev/ai-specs/internal/deps"
 	"ai-specs.dev/ai-specs/internal/schema"
 )
@@ -63,17 +59,4 @@ func readCatalogRecipe(home, recipeID string) (*schema.Recipe, error) {
 // whichBinary is shutil.which(binary) is not None, through the one authority.
 func whichBinary(binary string) bool {
 	return deps.Which(binary)
-}
-
-// fileSHA256 is provider_install._sha256, kept here because the gate binary
-// verification (gatebinary.go) also hashes an on-disk candidate. The provider
-// resolver hashes through internal/provider; this stays the doctor-local helper
-// for the gate path.
-func fileSHA256(filePath string) (string, error) {
-	raw, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:]), nil
 }

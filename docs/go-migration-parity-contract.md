@@ -85,6 +85,19 @@ Additionally: `2` for unknown flag / extra positional; `1` for a nonexistent
 path (raw bash `cd:` error — `doctor.sh` lacks the `-d` guard that
 `rules-audit.sh` has, so the Python guard is dead code).
 
+#### Worktree-gate doctor probe — accepted divergence (T6, Robert L5)
+
+The `worktree-gate` check keeps its roster id/name, report-line format, and
+advisory severity/exit behavior, but checks the installed CLI at
+`$AI_SPECS_HOME/dist/ai-specs` (or `$HOME/.ai-specs/dist/ai-specs` when the
+install-home default applies) by running `worktree-gate --selftest`. A missing
+or non-executable CLI, or a failing selftest, remains an `ERROR` because the
+gate fails open. This replaces inspection of a separately acquired, cached,
+digest-verified gate binary; doctor no longer validates its version, receipt,
+digest, or cache size. The tracker-ledger doctor query also reaches the same
+CLI via the `worktree-gate` subcommand. Approved by Robert in L5; this is the
+intentional divergence from the legacy binary-inspection contract.
+
 #### Malformed-manifest guidance — accepted divergence (U2c)
 
 For an unparseable `ai-specs/ai-specs.toml`, the `manifest` ERROR check keeps
@@ -262,7 +275,7 @@ Three commands are documented as read-only and are not.
 
 | Command | Claim | Reality |
 |---|---|---|
-| `doctor` | "read-only" in `ai-specs help` | No project writes, but writes `__pycache__` into `$AI_SPECS_HOME/lib/_internal/`, and **executes** `git`, the gate binary's `--selftest`, and every recipe dep's `version_check` with `shell=True` |
+| `doctor` | "read-only" in `ai-specs help` | No project writes, but legacy Python wrote `__pycache__`; Go **executes** `git`, the installed CLI's `worktree-gate --selftest` and `--ledger` routes, and every recipe dep's `version_check` with `shell=True` |
 | `refresh-bundled` | Standalone verb: none (compatibility no-op, D26). Refresh runs inside `sync`. | Standalone verb: no effect (Go). Inside `sync`: flattens bundled skills and commands into the cache, deletes leftover in-project copies under `ai-specs/skills/` and `ai-specs/commands/`, rewrites `ai-specs/.ai-specs.lock` |
 | `hub` | implied by "status" | Rewrites `ai-specs.toml`, may run `pip install`, delegates to `init`/`sync`/`upgrade` |
 
@@ -329,7 +342,7 @@ the whole `--help` surface stay FROZEN and are compared by the corpus
 | `upgrade` | `git fetch origin main`, `git merge --ff-only origin/main` | Only network calls; `--ff-only` is the "never break the install" guarantee |
 | `upgrade` | `pip install --target lib/_vendor rich questionary` | Second network call; **never fatal** |
 | `doctor` | each dep's `version_check` via `shell=True`, timeout 5 | Arbitrary shell |
-| `doctor` | gate binary `--version` / `--selftest` | Timeouts 10 / 30 |
+| `doctor` | installed CLI `worktree-gate --selftest` and tracker-ledger route | Selftest timeout 30 seconds |
 | `configure-recipes` | `direnv allow <root>`, timeout 10 | Mutates the user's direnv trust store |
 
 **`skills add` has no revision pinning.** `[[deps]]` has no `ref`/`rev` key and
