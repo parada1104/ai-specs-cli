@@ -109,32 +109,23 @@ from `ai-specs/ai-specs.toml` at runtime (falling back to `gate_mode`), and
 `worktree-flow`'s `worktree-gate.sh` is a **thin launcher** (bash 3.2 only) that
 resolves the gate implementation and `exec`s it, so stdin and the exit code pass
 through untouched. The only implementation is a single zero-dependency Go
-binary. `gate_impl` accepts `auto | go` only; both acquire the verified binary
-and fail open when none resolves (`ai-specs doctor` reports ERROR).
+binary. `gate_impl` accepts `auto | go` only; both use the worktree-gate route provided
+by the CLI and fail open if that route is unavailable (`ai-specs doctor` reports ERROR).
 
 Resolution order (first hit wins):
 
 1. `$WORKTREE_GATE_BIN` — explicit per-invocation override (debugging/pinning).
-2. Project-local pin `bin/worktree-gate` under the launcher's `BASH_SOURCE[0]`
-   physical installation root (the `hooks/../bin` layout) — never `$PWD`.
-3. Version-keyed cache
-   `$AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/worktree-gate`,
-   populated by `ai-specs sync` (digest-verified against the committed
-   `SHA256SUMS` trust root, mode 0755, self-tested, atomic install).
-4. Otherwise one stderr warning naming the missing path and the
-   `ai-specs sync` / `ai-specs sync --refresh-gates` / `ai-specs doctor`
-   remedy, then exit `0` (fail open).
+2. The installed CLI's `worktree-gate` route.
+3. Otherwise one stderr warning naming the unavailable CLI route and the
+   `ai-specs sync` / `ai-specs doctor` remedy, then exit `0` (fail open).
 
-The build matrix is `darwin/arm64`, `darwin/amd64`, `linux/amd64`,
-`linux/arm64` (reproducible: `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false`,
-version stamped at link time). The gate never computes a digest on the
-invocation path unless `WORKTREE_GATE_VERIFY=1` requests it.
+The gate ships inside the CLI release; there are no separate gate release
+assets, cache downloads, or gate checksum trust root.
 
 **Recovery (no Bash rollback path):** per invocation, set
-`WORKTREE_GATE_MODE=off` or `WORKTREE_GATE_BIN=<path>`. Per install, `rm -rf
-$AI_SPECS_HOME/cache/bin/worktree-gate` then `ai-specs sync`. Full revert is
-install the previous CLI release and run `ai-specs sync`. `gate_impl = auto`
-with no usable binary is a doctor ERROR, not a silent fallback.
+`WORKTREE_GATE_MODE=off` or `WORKTREE_GATE_BIN=<path>`. Full revert is install
+the previous CLI release and run `ai-specs sync`. `gate_impl = auto` with an
+unavailable CLI route is a doctor ERROR, not a silent fallback.
 
 Because every renderer references only `hook["script_path"]`, all five harnesses
 keep working without re-render churn: the launcher materializes at the unchanged

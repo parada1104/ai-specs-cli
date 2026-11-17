@@ -161,8 +161,7 @@ class CliReleaseTrustRootTests(unittest.TestCase):
         self.assertIn("ai-specs-", verify, "the CLI verifier must canonicalize the CLI asset prefix")
 
     def test_release_workflow_builds_and_verifies_both_binaries(self):
-        """The release channel is only real if CI builds, verifies and ships the
-        CLI assets — and does not regress the gate's path while doing it."""
+        """The release channel builds, verifies, and ships CLI assets only."""
         self.assertTrue(WORKFLOW.is_file(), f"{WORKFLOW.name} must exist")
         self.assertFalse(
             OLD_WORKFLOW.exists(),
@@ -175,10 +174,12 @@ class CliReleaseTrustRootTests(unittest.TestCase):
         self.assertIn("sha256sum ai-specs-* > CLI-SHA256SUMS", text)
         self.assertIn("verify-cli-sums.sh dist/CLI-SHA256SUMS bin/SHA256SUMS", text)
         self.assertIn("dist/ai-specs-*", text)
-        # The gate side is not regressed by the addition.
-        self.assertIn("verify-gate-sums.sh dist/SHA256SUMS", text)
-        self.assertIn("catalog/recipes/worktree-flow/bin/SHA256SUMS", text)
-        self.assertIn("dist/worktree-gate-*", text)
+        # The gate is part of the CLI and has no separate release trust root.
+        self.assertNotIn("verify-gate-sums.sh", text)
+        self.assertNotIn("catalog/recipes/worktree-flow/bin/SHA256SUMS", text)
+        self.assertNotIn("dist/worktree-gate-*", text)
+        self.assertNotIn("worktree-gate-<os>-<arch>", text)
+        self.assertNotIn("Parity corpus against Go gate", text)
 
 
 if __name__ == "__main__":

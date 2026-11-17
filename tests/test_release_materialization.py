@@ -22,7 +22,6 @@ from _blackbox import cli_path, isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = cli_path()
-SHA256SUMS = ROOT / "catalog" / "recipes" / "worktree-flow" / "bin" / "SHA256SUMS"
 DOGFOOD_LOCK = ROOT / "ai-specs" / ".ai-specs.lock"
 
 ENABLED_AGENTS = ("claude", "cursor", "opencode", "pi", "omp")
@@ -33,19 +32,9 @@ CLI_BUNDLED_SKILL_IDS = (
     "skill-creator",
     "skill-sync",
 )
-GATE_PLATFORMS = (
-    "worktree-gate-darwin-arm64",
-    "worktree-gate-darwin-amd64",
-    "worktree-gate-linux-amd64",
-    "worktree-gate-linux-arm64",
-)
 # Doctor Check.render: ``f"{severity:5s}  {name:15s}  {message}"``, then
 # ``report()`` prefixes two spaces. Summary "N ERROR" must not match.
 DOCTOR_ERROR_LINE = re.compile(r"(?m)^\s*ERROR  ")
-DIGEST_LINE = re.compile(
-    r"^[0-9a-f]{64}  (worktree-gate-(?:darwin-arm64|darwin-amd64|linux-amd64|linux-arm64))$",
-    re.MULTILINE,
-)
 
 # Generated output paths the CLI contract materializes per enabled agent
 # (the doctor PLATFORM table, mirrored as fixture data — no lib/_internal
@@ -98,6 +87,9 @@ def _make_home(base: Path) -> Path:
     """
     home = isolated_home(base)
     (home / "lib").unlink(missing_ok=True)
+    dist = home / "dist"
+    dist.mkdir()
+    (dist / "ai-specs").symlink_to(CLI.resolve())
     return home
 
 
@@ -156,19 +148,6 @@ class ReleaseMaterializationTests(unittest.TestCase):
             env=self._env(),
             check=False,
             input="",
-        )
-
-    def test_sha256sums_declares_candidate_version_and_four_platforms(self):
-        version = candidate_version()
-        text = SHA256SUMS.read_text()
-        self.assertIn(f"v{version}", text)
-        for name in GATE_PLATFORMS:
-            self.assertIn(name, text, f"SHA256SUMS missing {name}")
-        found = set(DIGEST_LINE.findall(text))
-        self.assertEqual(
-            found,
-            set(GATE_PLATFORMS),
-            f"expected four digest lines, got {sorted(found)!r}\n{text}",
         )
 
     def test_isolated_init_sync_doctor_materializes_clean_consumer(self):
