@@ -30,6 +30,11 @@ _resolve_gate_scope() {
 gate_scope="$(_resolve_gate_scope)"
 if [ -n "${WORKTREE_GATE_BIN:-}" ]; then
   if [ -x "$WORKTREE_GATE_BIN" ]; then
+    # WORKTREE_GATE_VERIFY=1 applies to the explicit override too.
+    if [ "${WORKTREE_GATE_VERIFY:-0}" = "1" ] && ! "$WORKTREE_GATE_BIN" --selftest >/dev/null 2>&1; then
+      echo "worktree-gate: WORKTREE_GATE_BIN failed --selftest: $WORKTREE_GATE_BIN; see 'ai-specs doctor'." >&2
+      exit 0
+    fi
     exec "$WORKTREE_GATE_BIN" --gate-mode "$stamped_gate_mode" --gate-scope "$gate_scope" --repo-topology "$stamped_repo_topology" --protected "$protected"
   fi
   echo "worktree-gate: WORKTREE_GATE_BIN='$WORKTREE_GATE_BIN' is not executable; ignoring." >&2
@@ -43,7 +48,7 @@ if [ -x "$cli_bin" ]; then
   # WORKTREE_GATE_VERIFY=1 opts into the same self-test via the CLI verb.
   if [ "${WORKTREE_GATE_VERIFY:-0}" = "1" ]; then
     if ! "$cli_bin" worktree-gate --selftest >/dev/null 2>&1; then
-      echo "worktree-gate: cached binary failed --selftest: $cli_bin; see 'ai-specs doctor'." >&2
+      echo "worktree-gate: installed CLI failed worktree-gate --selftest: $cli_bin; see 'ai-specs doctor'." >&2
       exit 0
     fi
   fi
