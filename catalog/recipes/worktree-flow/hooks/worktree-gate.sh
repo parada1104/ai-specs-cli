@@ -30,14 +30,17 @@ _resolve_gate_scope() {
 gate_scope="$(_resolve_gate_scope)"
 if [ -n "${WORKTREE_GATE_BIN:-}" ]; then
   if [ -x "$WORKTREE_GATE_BIN" ]; then
-    # WORKTREE_GATE_VERIFY=1 applies to the explicit override too.
+    # WORKTREE_GATE_VERIFY=1 applies to the explicit override too; a failing
+    # override is ignored (like a non-executable one) so enforcement continues
+    # with the installed CLI instead of silently allowing the write.
     if [ "${WORKTREE_GATE_VERIFY:-0}" = "1" ] && ! "$WORKTREE_GATE_BIN" --selftest >/dev/null 2>&1; then
-      echo "worktree-gate: WORKTREE_GATE_BIN failed --selftest: $WORKTREE_GATE_BIN; see 'ai-specs doctor'." >&2
-      exit 0
+      echo "worktree-gate: WORKTREE_GATE_BIN failed --selftest: $WORKTREE_GATE_BIN; ignoring." >&2
+    else
+      exec "$WORKTREE_GATE_BIN" --gate-mode "$stamped_gate_mode" --gate-scope "$gate_scope" --repo-topology "$stamped_repo_topology" --protected "$protected"
     fi
-    exec "$WORKTREE_GATE_BIN" --gate-mode "$stamped_gate_mode" --gate-scope "$gate_scope" --repo-topology "$stamped_repo_topology" --protected "$protected"
+  else
+    echo "worktree-gate: WORKTREE_GATE_BIN='$WORKTREE_GATE_BIN' is not executable; ignoring." >&2
   fi
-  echo "worktree-gate: WORKTREE_GATE_BIN='$WORKTREE_GATE_BIN' is not executable; ignoring." >&2
 fi
 cli_bin="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"
 if [ -x "$cli_bin" ]; then
