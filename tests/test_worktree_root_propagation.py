@@ -12,24 +12,21 @@ prove, with a temporary Git main checkout plus a linked worktree:
    under the worktree, and the Git **common root** (the main checkout) is
    byte-for-byte untouched.
 
-2. The gate event ``cwd`` propagates verbatim through the launcher to the Go
-   binary: an event whose cwd is the linked worktree is **allowed**, an event
+2. The gate event ``cwd`` propagates verbatim through the launcher to the
+   installed CLI: an event whose cwd is the linked worktree is **allowed**, an event
    whose cwd is the main checkout is **blocked**, and ``--explain`` echoes the
    exact event cwd string.
 
 No production file is modified. The suite is hermetic: a scratch AI_SPECS_HOME
-(symlink-farm over this checkout, cache excluded) plus ``AI_SPECS_GATE_OFFLINE=1
-AI_SPECS_GATE_BUILD=1`` builds the gate binary into the scratch cache (no
-network), exactly like the sync-pipeline tests do for the CLI. The Go gate
-binary itself is likewise acquired through the CLI's own offline local-build
-path — never from ``dist/`` and never with a network fetch.
+(symlink-farm over this checkout, cache excluded). The fixture installs the CLI
+into that isolated home, while sync must not acquire a separate gate binary or
+write outside the requested worktree.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import platform
 import subprocess
 import sys
 import tempfile
@@ -37,18 +34,12 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _blackbox import cli_path, isolated_home  # noqa: E402
+from _blackbox import cli_path  # noqa: E402
+from gate_cli import gate_command, install_cli
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = cli_path()
-GATE_DIR = ROOT / "catalog" / "recipes" / "worktree-flow" / "gate"
 KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
-RECIPE_VERSION = "1.6.0"  # catalog/recipes/worktree-flow/recipe.toml
-
-# Module-level memo for the CLI-acquired Go gate binary (built once offline).
-_ACQUIRED_GATE: list[Path] = []
-_GATE_HOLDER: list[tempfile.TemporaryDirectory] = []
-
 MANIFEST = (
     "[project]\n"
     "name = 'worktree-root-fixture'\n"
@@ -80,9 +71,9 @@ def _git(cwd: Path, *args: str) -> None:
 def _scratch_ai_specs_home() -> tuple[Path, Path]:
     """Symlink-farm AI_SPECS_HOME over this checkout (cache excluded).
 
-    Mirrors the pattern in tests/test_sync_output_verbosity.py so the sync
-    pipeline (recipe materialize, gate acquisition, project cache) never
-    touches the developer's real ~/.ai-specs or this worktree's cache/.
+    Mirrors the pattern in tests/test_sync_output_verbosity.py so recipe
+    materialization and project-cache writes stay outside the developer's
+    real ~/.ai-specs and this worktree's cache/.
     Returns (home, tmpdir_holder) — the caller owns the tempdir.
     """
     holder = tempfile.TemporaryDirectory(prefix="ai-specs-wtr-home-")
@@ -95,71 +86,6 @@ def _scratch_ai_specs_home() -> tuple[Path, Path]:
     return home, holder
 
 
-def _platform() -> tuple[str, str]:
-    """Mirror the gate acquisition's platform mapping for staging cache paths
-    in tests (Rosetta x86_64 -> amd64 included)."""
-    goos = {"Darwin": "darwin", "Linux": "linux"}.get(platform.system(), "")
-    machine = platform.machine()
-    goarch = "arm64" if machine in ("arm64", "aarch64") else (
-        "amd64" if machine in ("x86_64", "amd64") else "")
-    return goos, goarch
-
-
-def _host_cache_platform() -> str:
-    """Return the `<goos>-<goarch>` cache segment for the host, exactly as
-    gate acquisition computes it."""
-    goos, goarch = _platform()
-    return f"{goos}-{goarch}"
-
-
-def _acquired_gate_binary() -> Path:
-    """Acquire the REAL Go gate binary offline through the CLI's own
-    local-build path: sync a fixture project with AI_SPECS_GATE_OFFLINE=1
-    AI_SPECS_GATE_BUILD=1 into a scratch home, then return the acquired
-    version-keyed cache binary. Memoized module-wide; no network, no dist/.
-    """
-    if _ACQUIRED_GATE:
-        return _ACQUIRED_GATE[0]
-    holder = tempfile.TemporaryDirectory(prefix="wtr-gate-acquire-")
-    base = Path(holder.name)
-    home = isolated_home(base)
-    project = base / "proj"
-    (project / "ai-specs").mkdir(parents=True)
-    _git(project, "init", "-q")
-    _git(project, "config", "user.email", "t@t.t")
-    _git(project, "config", "user.name", "t")
-    (project / "README.md").write_text("gate acquisition fixture\n")
-    _git(project, "add", "-A")
-    _git(project, "commit", "-qm", "init")
-    (project / "ai-specs" / "ai-specs.toml").write_text(MANIFEST)
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": str(base / "home"),
-        "TMPDIR": str(base),
-        "AI_SPECS_HOME": str(home),
-        "AI_SPECS_NO_NETWORK": "1",
-        "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
-        "AI_SPECS_GATE_OFFLINE": "1",
-        "AI_SPECS_GATE_BUILD": "1",
-        "LC_ALL": "C",
-        "LANG": "C",
-    }
-    (base / "home").mkdir()
-    for verb in ("init", "sync"):
-        proc = subprocess.run(
-            [str(CLI), verb, str(project)], cwd=ROOT, env=env,
-            capture_output=True, text=True, check=False, input="",
-        )
-        assert proc.returncode == 0, (
-            f"gate acquisition `{verb}` failed:\n{proc.stdout}\n{proc.stderr}"
-        )
-    version = (home / "VERSION").read_text().strip()
-    binary = (home / "cache" / "bin" / "worktree-gate" / version /
-              _host_cache_platform() / "worktree-gate")
-    assert binary.is_file(), f"gate binary was not built into the scratch cache: {binary}"
-    _GATE_HOLDER.append(holder)
-    _ACQUIRED_GATE.append(binary)
-    return binary
 
 
 class WorktreeRootPropagationSyncTests(unittest.TestCase):
@@ -191,8 +117,6 @@ class WorktreeRootPropagationSyncTests(unittest.TestCase):
             **os.environ,
             "AI_SPECS_HOME": str(self.home),
             "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
-            "AI_SPECS_GATE_OFFLINE": "1",
-            "AI_SPECS_GATE_BUILD": "1",
         }
 
     def _init_and_sync(self, wt: Path) -> subprocess.CompletedProcess:
@@ -245,22 +169,12 @@ class WorktreeRootPropagationSyncTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
         hook = (wt / "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh").read_text()
-        self.assertIn('stamped_gate_impl="auto"', hook)
         self.assertNotIn("__WORKTREE_GATE_IMPL__", hook)
+        self.assertIn('cli_bin="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"', hook)
         self.assertIn('stamped_gate_mode="always"', hook)
-        # Stamped version comes from the scratch AI_SPECS_HOME VERSION.
-        installed = (self.home / "VERSION").read_text().strip()
-        self.assertIn(f'stamped_gate_version="{installed}"', hook)
-
-        # Gate binary acquired into the scratch version-keyed cache (offline
-        # local build; never the developer's real cache).
-        cache_bin = (self.home / "cache" / "bin" / "worktree-gate" / installed /
-                     _host_cache_platform() / "worktree-gate")
-        self.assertTrue(cache_bin.is_file(),
-                        "gate binary must be built into the scratch cache")
-        ver = subprocess.run([str(cache_bin), "--version"], capture_output=True,
-                             text=True, check=False)
-        self.assertEqual(ver.stdout.strip(), installed)
+        self.assertIn('dist/ai-specs', hook)
+        self.assertFalse((self.home / "cache" / "bin" / "worktree-gate").exists(),
+                         "sync must not acquire a separate gate binary")
 
     def test_no_derived_artifact_escapes_into_git_common_root(self):
         wt = self._worktree()
@@ -278,9 +192,7 @@ class WorktreeEventCwdPropagationTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        # Hermetic: the real Go gate binary is built offline by the CLI's own
-        # acquisition path into a scratch cache (no dist/ dependency).
-        cls.GO_BINARY = _acquired_gate_binary()
+        cls.GO_BINARY = gate_command()
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="wtr-cwd-")
@@ -300,25 +212,18 @@ class WorktreeEventCwdPropagationTests(unittest.TestCase):
         self.wt = Path(self.tmp.name) / "wt"
         _git(base, "worktree", "add", "-q", "-b", "feat", str(self.wt))
 
-        # Materialize the launcher with the real binary pinned project-local
-        # (exactly like a synced project would), with valid stamps, in BOTH
-        # roots: the launcher resolves the pin from $PWD, so the process cwd
-        # must be flippable to either root without failing open.
+        # Materialize the launcher and install the CLI in the isolated home;
+        # both roots use the installed CLI route, independent of process cwd.
         launcher_src = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
         content = launcher_src.read_text()
         for token, value in (
             ("__WORKTREE_GATE_MODE__", "always"),
             ("__WORKTREE_GATE_SCOPE__", "auto"),
             ("__WORKTREE_REPO_TOPOLOGY__", "auto"),
-            ("__WORKTREE_GATE_IMPL__", "go"),
-            ("__WORKTREE_GATE_VERSION__", "test"),
         ):
             content = content.replace(token, value)
+        install_cli(self.home)
         for root in (base, self.wt):
-            pin = root / "ai-specs" / "recipes" / "worktree-flow" / "bin" / "worktree-gate"
-            pin.parent.mkdir(parents=True, exist_ok=True)
-            pin.write_bytes(self.GO_BINARY.read_bytes())
-            pin.chmod(0o755)
             hook = root / "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh"
             hook.parent.mkdir(parents=True, exist_ok=True)
             hook.write_text(content)
@@ -395,14 +300,14 @@ class SubmoduleRequestContextIntegrationTests(unittest.TestCase):
 
     Uses a real superproject with an initialized submodule. The Python
     ``resolve_request_context`` planner has no CLI-observable surface, so the
-    contract is proven through the Go gate binary's ``--resolve-central-root``
+    contract is proven through the CLI gate route's ``--resolve-central-root``
     read-only proof (same proven git facts: superproject root + registered
     initialized submodule path, failing closed on ambiguity).
     """
 
     def _gate_central_root(self, cwd: Path) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [str(_acquired_gate_binary()), "--resolve-central-root"],
+            [str(gate_command()), "--resolve-central-root"],
             capture_output=True, text=True, check=False, cwd=cwd,
             env={"PATH": os.environ.get("PATH", ""), "LC_ALL": "C", "LANG": "C"},
         )

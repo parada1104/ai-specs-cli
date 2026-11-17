@@ -18,9 +18,9 @@ Covers three things at once:
    host keeps its own blocking authority (spec "All five checkpoints reach one
    predicate").
 
-The hosts are acquisition/JSON bridges, so every test drives them with a stub
-``worktree-gate`` binary (``WORKTREE_GATE_BIN``) that records its argv. No host
-may re-implement the ``## Tracker`` predicate (5.7).
+The hosts are CLI/JSON bridges, so every test installs a stub CLI at
+``AI_SPECS_HOME/dist/ai-specs`` that records gate argv. No host may
+re-implement the ``## Tracker`` predicate (5.7).
 """
 from __future__ import annotations
 
@@ -32,34 +32,27 @@ import tomllib
 import unittest
 from pathlib import Path
 
+from tests.gate_cli import gate_binary
+
 ROOT = Path(__file__).resolve().parents[1]
 RECIPE_DIR = ROOT / "catalog" / "recipes" / "trello-mcp-workflow"
 RECIPE_TOML = RECIPE_DIR / "recipe.toml"
 PLAN_BUILD_GATE = ROOT / "catalog" / "recipes" / "plan-build-flow" / "hooks" / "plan-build-gate.sh"
 TRACKER_GATE = RECIPE_DIR / "hooks" / "tracker-card-gate.sh"
 
-_CLI_HOME: Path | None = None
-
-
-def _cli_home() -> Path:
-    """A stamped CLI home holding the native ai-specs binary (verdict display reads through it)."""
-    global _CLI_HOME
-    if _CLI_HOME is None:
-        home = Path(tempfile.mkdtemp(prefix="ai-specs-cli-home-"))
-        (home / "dist").mkdir(parents=True)
-        subprocess.run(
-            ["go", "build", "-o", str(home / "dist" / "ai-specs"), "./cmd/ai-specs"],
-            cwd=ROOT, check=True, capture_output=True, text=True,
-        )
-        _CLI_HOME = home
-    return _CLI_HOME
-
-
 GUARDIAN = ROOT / "internal" / "gates" / "gates.go"  # native port of the deleted premerge_guardian.py
 DOCTOR_TRACKER = ROOT / "internal" / "doctor" / "checks_tracker.go"  # native port of doctor.py's ledger check
 LEGACY_RECIPE = "trello-mcp-workflow"
 
 STUB_BINARY = """#!/usr/bin/env bash
+if [ "$1" != worktree-gate ]; then
+  exec "$REAL_CLI" "$@"
+fi
+shift
+if [ "$1" = --version ]; then
+  echo dev
+  exit 0
+fi
 printf '%s\\n' "$*" >> "${STUB_LOG}"
 decision="${STUB_DECISION:-allow}"
 reason="${STUB_REASON:-}"
@@ -105,7 +98,10 @@ class LedgerModeConfigTests(unittest.TestCase):
         _git(self.repo, "add", "-A")
         _git(self.repo, "commit", "-qm", "init")
         self.stub_log = base / "stub.log"
-        self.stub = base / "worktree-gate"
+        self.cli_home = base / "ai-specs-home"
+        dist = self.cli_home / "dist"
+        dist.mkdir(parents=True)
+        self.stub = dist / "ai-specs"
         self.stub.write_text(STUB_BINARY)
         self.stub.chmod(0o755)
 
@@ -280,7 +276,7 @@ class LedgerModeConfigTests(unittest.TestCase):
         text = (
             TRACKER_GATE.read_text()
             .replace("__TRACKER_CARD_GATE_MODE__", gate_mode)
-            .replace("__TRACKER_CLI_HOME__", str(_cli_home()))
+            .replace("__TRACKER_CLI_HOME__", str(self.cli_home))
         )
         path.write_text(text)
         path.chmod(0o755)
@@ -297,11 +293,11 @@ class LedgerModeConfigTests(unittest.TestCase):
         env = dict(os.environ)
         env.pop("TRACKER_CARD_GATE_MODE", None)
         env.pop("TRACKER_LEDGER_MODE", None)
-        # The native CLI home: plan-build normalizes and reads verdicts through
-        # dist/ai-specs (GO-20 U2e U-F2a). Without it the hook fails open.
-        env["AI_SPECS_HOME"] = str(_cli_home())
-        env["WORKTREE_GATE_BIN"] = str(self.stub)
+        # Hosts resolve the gate through the installed CLI path.
+        env["AI_SPECS_HOME"] = str(self.cli_home)
+        env.pop("WORKTREE_GATE_BIN", None)
         env["STUB_LOG"] = str(self.stub_log)
+        env["REAL_CLI"] = str(gate_binary())
         env.update(extra)
         return env
 
