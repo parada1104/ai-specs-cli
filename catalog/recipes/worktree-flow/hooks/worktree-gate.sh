@@ -28,8 +28,18 @@ _resolve_gate_scope() {
 }
 
 gate_scope="$(_resolve_gate_scope)"
+if [ -n "${WORKTREE_GATE_BIN:-}" ]; then
+  if [ -x "$WORKTREE_GATE_BIN" ]; then
+    exec "$WORKTREE_GATE_BIN" --gate-mode "$stamped_gate_mode" --gate-scope "$gate_scope" --repo-topology "$stamped_repo_topology" --protected "$protected"
+  fi
+  echo "worktree-gate: WORKTREE_GATE_BIN='$WORKTREE_GATE_BIN' is not executable; ignoring." >&2
+fi
 cli_bin="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"
 if [ -x "$cli_bin" ]; then
+  if ! "$cli_bin" worktree-gate --version >/dev/null 2>&1; then
+    echo "worktree-gate: installed ai-specs CLI is too old; gate is not enforcing. Run 'ai-specs upgrade'." >&2
+    exit 0
+  fi
   # WORKTREE_GATE_VERIFY=1 opts into the same self-test via the CLI verb.
   if [ "${WORKTREE_GATE_VERIFY:-0}" = "1" ]; then
     if ! "$cli_bin" worktree-gate --selftest >/dev/null 2>&1; then

@@ -929,11 +929,12 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         self.home = self.install / "home"
         self.cli = self.home / "dist" / "ai-specs"
 
-    def _write_cli(self, *, status: int = 0, stdout: str = "CLI-OUT\n", stderr: str = "CLI-ERR\n") -> None:
+    def _write_cli(self, *, status: int = 0, stdout: str = "CLI-OUT\n", stderr: str = "CLI-ERR\n", supports_version: bool = True) -> None:
         self.cli.parent.mkdir(parents=True, exist_ok=True)
         self.cli.write_text("\n".join([
             "#!/usr/bin/env bash",
             "printf '%s\\n' \"$*\" > \"$CLI_LOG\"",
+            *(["[ \"$*\" = 'worktree-gate --version' ] && exit 0"] if supports_version else []),
             f"printf '%s' {stdout!r}",
             f"printf '%s' {stderr!r} >&2",
             f"exit {status}",
@@ -1017,15 +1018,28 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         self.assertNotIn("MARKER:project-local", r.stderr)
         self.assertIn("no usable gate", r.stderr)
 
-    def test_worktree_gate_bin_override_wins(self):
+    def test_worktree_gate_bin_override_wins_without_cli(self):
+        self.bin_marker.unlink()
         override = self.install / "override-bin"
-        self._write_marker(override, "MARKER:override")
-        r = self._run(self.launcher, self._elsewhere(),
-                      env=self._gate_env(WORKTREE_GATE_BIN=str(override)))
+        args_file = self.install / "override.args"
+        override.write_text("\n".join(["#!/usr/bin/env bash", "printf '%s\\n' \"$*\" > \"$OVERRIDE_ARGS\"", ""]))
+        override.chmod(0o755)
+        r = self._run(self.launcher, self._elsewhere(), env=self._gate_env(
+            WORKTREE_GATE_BIN=str(override), OVERRIDE_ARGS=str(args_file)))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertNotIn("MARKER:override", r.stderr)
-        self.assertNotIn("MARKER:project-local", r.stderr)
-        self.assertIn("no usable gate", r.stderr)
+        self.assertEqual(args_file.read_text().strip(),
+                         "--gate-mode always --gate-scope auto --repo-topology auto --protected main")
+        self.assertNotIn("worktree-gate ", args_file.read_text())
+
+    def test_old_cli_fails_open_before_gate_exec(self):
+        self._write_cli(status=2, supports_version=False)
+        r = self._run(self.launcher, self._elsewhere(), env=self._gate_env(
+            CLI_LOG=str(self.install / "cli.log")))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("too old", r.stderr)
+        self.assertIn("ai-specs upgrade", r.stderr)
+        self.assertEqual((self.install / "cli.log").read_text().strip(),
+                         "worktree-gate --version")
 
     def test_cache_precedence_when_project_local_missing(self):
         self.bin_marker.unlink()
