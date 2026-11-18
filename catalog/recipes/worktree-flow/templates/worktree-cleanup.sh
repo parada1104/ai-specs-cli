@@ -16,7 +16,8 @@ if [ -n "${WORKTREE_CLEANUP_BIN:-}" ]; then
         echo "worktree-cleanup: WORKTREE_CLEANUP_BIN='$WORKTREE_CLEANUP_BIN' is not executable" >&2
         exit 2
     fi
-    exec "$WORKTREE_CLEANUP_BIN" --cleanup --topology "${TOPOLOGY:-$stamped_repo_topology}" "$@"
+    echo "worktree-cleanup: WORKTREE_CLEANUP_BIN is no longer supported; no destructive action taken" >&2
+    exit 2
 fi
 cli_bin="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"
 if [ ! -x "$cli_bin" ]; then

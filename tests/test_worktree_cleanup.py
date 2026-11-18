@@ -145,9 +145,9 @@ class WorktreeCleanupTests(unittest.TestCase):
                    WORKTREE_CLEANUP_BIN=str(override), OVERRIDE_ARGS=str(args_file))
         result = subprocess.run(["bash", str(CLEANUP_SCRIPT), "--base", "main"],
                                 cwd=repo, env=env, capture_output=True, text=True)
-        self.assertEqual((result.returncode, result.stdout), (0, "override-out\n"))
-        self.assertEqual(args_file.read_text().strip(),
-                         "--cleanup --topology auto --base main")
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(args_file.exists())
+        self.assertIn("no destructive action taken", result.stderr)
 
     def test_non_executable_cleanup_override_fails_closed_without_cli(self):
         repo = self._make_repo()

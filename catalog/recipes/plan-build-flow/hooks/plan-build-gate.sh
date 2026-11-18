@@ -138,6 +138,16 @@ _ledger_grade() {
   local out rc
   out="$("$bin" worktree-gate --ledger --checkpoint "$checkpoint" --project-root "$root" 2>/dev/null)"
   rc=$?
+  if [ -z "$out" ] && [ "$rc" != 0 ]; then
+    local probe
+    probe="$("$bin" worktree-gate --selftest 2>&1)" || :
+    case "$probe" in
+      *"ai-specs: unknown command 'worktree-gate'"*)
+        echo "${prefix}: installed ai-specs CLI is too old to grade ${checkpoint}; run 'ai-specs upgrade'; blocking." >&2
+        return 2
+        ;;
+    esac
+  fi
   [ -n "$out" ] || return 0
   local decision reason active
   decision="$(printf '%s' "$out" | _ledger_field decision)" || return 0

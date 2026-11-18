@@ -112,6 +112,14 @@ installed CLI: `doctor` reports a missing or failing CLI (`ERROR`) and a
 materialized launcher that still resolves the retired binary (`WARN`), and the
 launcher itself fails open with its own one-line warning.
 
+#### `worktree-gate` verb in help — accepted divergence (gate-into-cli)
+
+`ai-specs help` lists the new `worktree-gate [gate args...]` verb, which the
+legacy help never had. The parity harness drops exactly that line (N14) and
+canonicalizes the wording of doctor's fail-open `ERROR tracker-ledger` line
+(N15, per the doctor-probe divergence above); severity and line identity are
+still compared.
+
 #### Malformed-manifest guidance — accepted divergence (U2c)
 
 For an unparseable `ai-specs/ai-specs.toml`, the `manifest` ERROR check keeps
