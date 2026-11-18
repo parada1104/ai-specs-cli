@@ -867,7 +867,12 @@ func TestProviderResolveDifferentialAgainstPython(t *testing.T) {
 				}
 			}
 
-			home := t.TempDir()
+			// Resolve reports symlink-free paths; on macOS TMPDIR lives under the
+			// /var -> /private/var symlink, so canonicalize the frozen placeholders too.
+			home, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
 			pathDir := t.TempDir()
 			if tc.pathVersion != "" {
 				writeExecutable(t, filepath.Join(pathDir, "jinna"), "#!/bin/sh\necho jinna "+tc.pathVersion+"\n")
