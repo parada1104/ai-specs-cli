@@ -54,7 +54,9 @@ from tests.test_worktree_gate_parity import (
 
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
-BINARY = ROOT / "dist" / "worktree-gate-current"
+from tests.gate_cli import gate_command, install_cli
+
+BINARY = gate_command()
 
 REAL_GIT = shutil.which("git")
 if REAL_GIT is None:  # pragma: no cover
@@ -247,10 +249,7 @@ class WorktreeGateNoHashHotPathTests(unittest.TestCase):
     def _install_cli(self, home: Path) -> None:
         cli = home / "dist" / "ai-specs"
         cli.parent.mkdir(parents=True, exist_ok=True)
-        cli.write_text(
-            f'#!/usr/bin/env bash\n[ "$1" = worktree-gate ] || exit 91\nshift\nexec "{BINARY}" "$@"\n'
-        )
-        cli.chmod(0o755)
+        install_cli(home)
 
     """Spec 'No hashing on the hot path by default' (launcher contract 3.x)."""
 

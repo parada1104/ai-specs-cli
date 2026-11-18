@@ -18,11 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 CLEANUP_SCRIPT = (
     ROOT / "catalog" / "recipes" / "worktree-flow" / "templates" / "worktree-cleanup.sh"
 )
-CLEANUP_MODULE = ROOT / "catalog" / "recipes" / "worktree-flow" / "gate"
-
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parent))
+from gate_cli import gate_command
 from test_repo_topology import make_super_with_submodule
 
 
@@ -51,24 +50,7 @@ class WorktreeCleanupTests(unittest.TestCase):
     def setUpClass(cls):
         if shutil.which("go") is None:
             raise unittest.SkipTest("Go toolchain is required for Go cleanup integration tests")
-        cls._cleanup_binary_tmp = tempfile.TemporaryDirectory()
-        cls.CLEANUP_BINARY = Path(cls._cleanup_binary_tmp.name) / "worktree-gate"
-        subprocess.run(
-            ["go", "build", "-trimpath", "-buildvcs=false", "-o", str(cls.CLEANUP_BINARY), "."],
-            cwd=CLEANUP_MODULE,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        cls.CLEANUP_BINARY.chmod(0o755)
-        cls.CLEANUP_BINARY.with_name(cls.CLEANUP_BINARY.name + ".verified").write_text(
-            "status=verified\nversion=test\ndigest=test\nselftest=passed\n"
-        )
-
-    @classmethod
-    def tearDownClass(cls):
-        cls._cleanup_binary_tmp.cleanup()
-        super().tearDownClass()
+        cls.CLEANUP_BINARY = gate_command()
 
     def _make_repo(self) -> Path:
         tmp = tempfile.TemporaryDirectory()

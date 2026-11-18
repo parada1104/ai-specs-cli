@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **The worktree gate ships inside the CLI.** Separate `worktree-gate` release
-  assets and their checksum trust root are retired; the launcher override behavior
-  is unchanged.
+  assets and their checksum trust root are retired; the standalone gate adapter
+  and `scripts/build-gate.sh` were removed; the launcher override behavior is
+  unchanged.
 
 ## [0.25.2] — 2026-11-16
 
