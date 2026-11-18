@@ -170,10 +170,8 @@ class WorktreeGateDoctorTests(unittest.TestCase):
     def test_go_without_binary_reports_error_failing_open(self):
         root = self._project(gate_impl="go")
         checks, code = self._checks(root)
-        self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0][0], "ERROR")
-        self.assertIn("failing open", checks[0][1])
-        self.assertIn("dist/ai-specs", checks[0][1])
+        self.assertEqual(checks, [("ERROR", "ai-specs CLI is missing or not executable at <TEMP>/dist/ai-specs; "
+                                            "the gate is failing open  (reinstall ai-specs via install.sh)")])
         self.assertEqual(code, 1)
 
     def test_auto_without_binary_reports_error_failing_open(self):
@@ -199,11 +197,8 @@ class WorktreeGateDoctorTests(unittest.TestCase):
         root = self._project()
         _stage_gate_cli(self.home, working=False)
         checks, code = self._checks(root)
-        self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0][0], "ERROR")
-        self.assertIn("failed worktree-gate --selftest", checks[0][1])
-        self.assertIn("selftest exploded", checks[0][1])
-        self.assertIn("failing open", checks[0][1])
+        self.assertEqual(checks, [("ERROR", "ai-specs CLI at <TEMP>/dist/ai-specs failed worktree-gate --selftest: "
+                                            "selftest exploded; the gate is failing open  (run ai-specs upgrade)")])
         self.assertEqual(code, 1)
 
 

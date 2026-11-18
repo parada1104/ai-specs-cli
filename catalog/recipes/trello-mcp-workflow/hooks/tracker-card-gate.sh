@@ -23,7 +23,7 @@
 #     blocks a source change or a Tracker lifecycle boundary.
 #   exit 2 → reserved for a usage error (bad/missing --root, --checkpoint, or
 #     --stage), never for a ledger verdict.
-# Fail-open: a missing CLI, an unstamped/missing evidence bridge,
+# Fail-open: a missing or outdated CLI, an unstamped/missing evidence bridge,
 # any parse/lookup/git error, or an ambiguous event allows the action.
 # Fail-closed (Go binary, not this host): a `--write` that cannot be recorded
 # (validation, lock timeout, ambiguous identity, store IO) exits 2 with no verdict
@@ -100,8 +100,8 @@ fi  # end hook-payload parsing (skipped in direct host mode)
 # The evidence and classify bridge is the native CLI (`ai-specs tracker
 # slug|evidence|classify`) at the stamped CLI home. An empty or unstamped home, or
 # a missing/non-executable CLI, means the bridge is unavailable, so both the
-# event classification and the evidence file are skipped (fail open), exactly
-# like a missing/unverified binary. The bridge is acquisition only: no host
+# event classification and the evidence file are skipped (fail open).
+# The bridge is acquisition only: no host
 # derives a ledger write from a planning-tree artifact (R1).
 _ledger_field() {
   # stdin: verdict JSON. $1: dotted path in that object. Read through the native
@@ -162,9 +162,8 @@ _ledger_grade() {
   local checkpoint="$1" root="$2" prefix="$3" explicit_slug="${4:-}"
   local bin
   if ! bin="$(_tracker_cli_bridge)"; then
-    # Missing/unverified binary fails open rather than blocking a merge; say so,
-    # because a silent skip looks identical to a passing checkpoint.
-    echo "${prefix}: tracker-ledger: no verified gate binary resolved; failing open (run ai-specs sync / ai-specs doctor)" >&2
+    # Say why the checkpoint was skipped: a silent skip looks like a pass.
+    echo "${prefix}: tracker-ledger: no installed ai-specs CLI resolved; failing open (see ai-specs doctor; reinstall via install.sh if missing)." >&2
     return 0
   fi
   local extra=() evidence="" cli=""
@@ -190,6 +189,15 @@ _ledger_grade() {
       --project-root "$root" "${extra[@]}" 2>/dev/null)"
   rc=$?
   [ -z "$evidence" ] || rm -f "$evidence"
+  if [ -z "$out" ] && [ "$rc" != 0 ]; then
+    local probe
+    probe="$("$bin" worktree-gate --selftest 2>&1)" || :
+    case "$probe" in
+      *"ai-specs: unknown command 'worktree-gate'"*)
+        echo "${prefix}: installed ai-specs CLI is too old to grade ${checkpoint}; run 'ai-specs upgrade'; failing open." >&2
+        ;;
+    esac
+  fi
   [ -n "$out" ] || return 0
   local decision reason active
   decision="$(printf '%s' "$out" | _ledger_field decision)" || return 0

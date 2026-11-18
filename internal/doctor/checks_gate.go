@@ -87,13 +87,13 @@ func (d *Doctor) checkWorktreeGate() {
 	if !isExecutable(binary) {
 		d.add(ERROR, "worktree-gate",
 			fmt.Sprintf("ai-specs CLI is missing or not executable at %s; the gate is failing open", binary),
-			"run ai-specs sync")
+			"reinstall ai-specs via install.sh")
 		return
 	}
 	if failure := cliWorktreeGateSelftest(binary); failure != "" {
 		d.add(ERROR, "worktree-gate",
 			fmt.Sprintf("ai-specs CLI at %s failed worktree-gate --selftest: %s; the gate is failing open", binary, failure),
-			"run ai-specs sync")
+			"run ai-specs upgrade")
 		return
 	}
 	d.add(OK, "worktree-gate",

@@ -133,7 +133,7 @@ func TestCheckWorktreeGateMissingCLIUsesFailOpenSeverity(t *testing.T) {
 	binary := installedCLIPath(d.Home)
 	assertChecks(t, d, []Check{{ERROR, "worktree-gate",
 		fmt.Sprintf("ai-specs CLI is missing or not executable at %s; the gate is failing open", binary),
-		"run ai-specs sync"}})
+		"reinstall ai-specs via install.sh"}})
 }
 
 func TestCheckWorktreeGateCLISelftestFailureUsesFailOpenSeverity(t *testing.T) {
@@ -145,7 +145,7 @@ func TestCheckWorktreeGateCLISelftestFailureUsesFailOpenSeverity(t *testing.T) {
 	d.checkWorktreeGate()
 	assertChecks(t, d, []Check{{ERROR, "worktree-gate",
 		fmt.Sprintf("ai-specs CLI at %s failed worktree-gate --selftest: selftest exploded; the gate is failing open", installedCLIPath(d.Home)),
-		"run ai-specs sync"}})
+		"run ai-specs upgrade"}})
 }
 
 func TestCheckWorktreeGateBashRetired(t *testing.T) {

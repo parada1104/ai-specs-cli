@@ -990,7 +990,7 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertIn("no usable gate", r.stderr)
 
-    def test_relative_invocation_selects_project_local_bin_from_physical_root(self):
+    def test_relative_invocation_ignores_retired_project_local_bin(self):
         cwd = self._elsewhere()
         rel = os.path.relpath(self.launcher, cwd)
         r = self._run(Path(rel), cwd)
@@ -998,7 +998,7 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         self.assertNotIn("MARKER:project-local", r.stderr)
         self.assertIn("no usable gate", r.stderr)
 
-    def test_symlink_invocation_resolves_physical_installation(self):
+    def test_symlink_invocation_ignores_retired_project_local_bin(self):
         link_dir = self.install / "linked"
         link_dir.mkdir()
         link = link_dir / "gate-link.sh"
@@ -1008,7 +1008,7 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         self.assertNotIn("MARKER:project-local", r.stderr)
         self.assertIn("no usable gate", r.stderr)
 
-    def test_unrelated_process_cwd_finds_launcher_beside_itself(self):
+    def test_unrelated_process_cwd_does_not_enable_retired_project_local_bin(self):
         r = self._run(self.launcher, self._elsewhere())
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("MARKER:project-local", r.stderr)
@@ -1037,7 +1037,7 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         self.assertEqual((self.install / "cli.log").read_text().strip(),
                          "worktree-gate --version")
 
-    def test_cache_precedence_when_project_local_missing(self):
+    def test_retired_cache_bin_is_ignored(self):
         self.bin_marker.unlink()
         platform = self._host_platform()
         cache_bin = (self.home / "cache" / "bin" / "worktree-gate" / "1.0.0" /
@@ -1049,7 +1049,7 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         self.assertNotIn("MARKER:cache", r.stderr)
         self.assertIn("no usable gate", r.stderr)
 
-    def test_project_local_resolves_with_no_fail_open_warning(self):
+    def test_retired_project_local_bin_is_ignored(self):
         r = self._run(self.launcher, self._elsewhere())
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("MARKER:project-local", r.stderr)

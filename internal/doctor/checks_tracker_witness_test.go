@@ -38,7 +38,7 @@ func TestTrackerLedgerBoundWitnessStaysInPlay(t *testing.T) {
 			"enable the plan-build-flow recipe, or grade work-start with an explicit --write"},
 		{ERROR, "tracker-ledger",
 			"ai-specs CLI is missing or not executable; the tracker ledger is failing open",
-			"run ai-specs sync"},
+			"reinstall ai-specs via install.sh"},
 	})
 }
 
@@ -49,6 +49,6 @@ func TestTrackerLedgerAmbiguousWitnessStaysInPlay(t *testing.T) {
 	assertChecks(t, d, []Check{
 		{ERROR, "tracker-ledger",
 			"ai-specs CLI is missing or not executable; the tracker ledger is failing open",
-			"run ai-specs sync"},
+			"reinstall ai-specs via install.sh"},
 	})
 }

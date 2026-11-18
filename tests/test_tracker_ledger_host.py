@@ -80,8 +80,9 @@ exit 0
 """
 
 
-def _git(cwd: Path, *args: str) -> None:
-    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True)
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(cwd), *args], check=True,
+                          capture_output=True, text=True).stdout
 
 
 class TrackerLedgerHostDirectModeTests(unittest.TestCase):
@@ -126,12 +127,12 @@ class TrackerLedgerHostDirectModeTests(unittest.TestCase):
         self.stub.write_text(STUB_BINARY)
         self.stub.chmod(0o755)
 
-    def _stamped_host(self, mode: str = "warn") -> Path:
+    def _stamped_host(self, mode: str = "warn", *, cli_home: Path | None = None) -> Path:
         stamped = Path(self.tmp.name) / f"tracker-card-gate-host-{mode}.sh"
         stamped.write_text(
             GATE.read_text()
             .replace("__TRACKER_CARD_GATE_MODE__", mode)
-            .replace("__TRACKER_CLI_HOME__", str(self.cli_home))
+            .replace("__TRACKER_CLI_HOME__", str(cli_home or self.cli_home))
         )
         stamped.chmod(0o755)
         return stamped
@@ -162,18 +163,18 @@ class TrackerLedgerHostDirectModeTests(unittest.TestCase):
         mode: str = "warn",
         decision: str = "allow",
         reason: str = "",
-        env: dict | None = None,
+        cli_home: Path | None = None,
         stdin: str = "",
     ) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["bash", str(self._stamped_host(mode)), *args],
+            ["bash", str(self._stamped_host(mode, cli_home=cli_home)), *args],
             input=stdin,
             capture_output=True,
             text=True,
             # A new session has no controlling terminal, so the ask prompt's
             # /dev/tty open fails deterministically instead of blocking.
             start_new_session=True,
-            env=env or self._env(decision=decision, reason=reason),
+            env=self._env(decision=decision, reason=reason),
         )
 
     def _logged(self) -> list[str]:
@@ -286,16 +287,28 @@ class TrackerLedgerHostDirectModeTests(unittest.TestCase):
             "--root", str(self.repo), "--checkpoint", "pre-merge",
             mode="off", decision="block",
         )
-        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""))
         self.assertEqual(self._logged_checkpoints(), [])
 
-    def test_missing_verified_binary_fails_open(self):
-        env = self._env(decision="block")
-        env.pop("STUB_GATE", None)
-        env["AI_SPECS_HOME"] = str(Path(self.tmp.name) / "cold-home")
-        r = self._run_host("--root", str(self.repo), "--checkpoint", "pre-merge", env=env)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self._logged_checkpoints(), [])
+    def test_old_cli_warns_and_fails_open(self):
+        self.stub.write_text(
+            '#!/bin/sh\necho "ai-specs: unknown command \'worktree-gate\'" >&2\nexit 2\n'
+        )
+        before = _git(self.repo, "status", "--porcelain")
+        r = self._run_host("--root", str(self.repo), "--checkpoint", "pre-merge")
+        self.assertEqual((r.returncode, r.stdout), (0, ""))
+        self.assertEqual(r.stderr, "tracker-card-gate: installed ai-specs CLI is too old to grade "
+                                   "pre-merge; run 'ai-specs upgrade'; failing open.\n")
+        self.assertEqual(_git(self.repo, "status", "--porcelain"), before)
+        self.assertEqual(self._logged(), [])
+
+    def test_missing_installed_cli_warns_and_fails_open(self):
+        r = self._run_host("--root", str(self.repo), "--checkpoint", "pre-merge",
+                           cli_home=Path(self.tmp.name) / "cold-home")
+        self.assertEqual((r.returncode, r.stdout), (0, ""))
+        self.assertEqual(r.stderr, "tracker-card-gate: tracker-ledger: no installed ai-specs CLI resolved; "
+                                   "failing open (see ai-specs doctor; reinstall via install.sh if missing).\n")
+        self.assertEqual(self._logged(), [])
 
     # --- argv selection, not stdin ---
 
