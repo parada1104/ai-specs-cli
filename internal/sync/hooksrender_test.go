@@ -9,9 +9,138 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/ai-specs/internal/lock"
 )
+
+func TestSyncPrunesRuntimeHooks(t *testing.T) {
+	const enabled = "[recipes.hookdemo]\nenabled = true\n"
+	const pre = "pre-tool-use"
+	for _, tc := range []struct{ name, manifest, event string }{
+		{"disabled", "[recipes.hookdemo]\nenabled = false\n", pre},
+		{"removed", "", pre}, {"dropped", enabled, ""}, {"event changed", enabled, "stop"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, _ := spineEnv(t)
+			isolated := t.TempDir()
+			for _, name := range []string{"templates", "bundled-skills", "bundled-commands", "VERSION"} {
+				if err := os.Symlink(filepath.Join(home, name), filepath.Join(isolated, name)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			const agents = "[project]\nname = 'hooks'\n[brief]\nrender = false\n[agents]\nenabled = ['claude', 'cursor', 'opencode', 'pi', 'omp']\n"
+			const dir = "ai-specs/recipes/hookdemo/"
+			const launcher = dir + "hooks/main.sh"
+			const override = dir + "overrides/user.txt"
+			project := spineProject(t, agents+enabled)
+			recipe := filepath.Join(isolated, "catalog/recipes/hookdemo")
+			writeRecipe := func(event string) {
+				body := "[recipe]\nid = 'hookdemo'\nname = 'Demo'\ndescription = 'Fixture'\nversion = '1.0.0'\n"
+				for _, item := range [][2]string{{"keeper", "pre-tool-use"}, {"main", event}} {
+					if item[1] != "" {
+						body += fmt.Sprintf("[[provides.hooks]]\nid = '%s'\nevent = '%s'\nscript = 'hooks/%s.sh'\nmatcher = 'Bash'\n", item[0], item[1], item[0])
+					}
+				}
+				spineWrite(t, filepath.Join(recipe, "recipe.toml"), body, 0o644)
+			}
+			paths := []string{".claude/settings.json", ".cursor/hooks.json", ".cursor/hooks/hookdemo-main.sh", ".opencode/plugin/hookdemo-main.ts", ".pi/extensions/hookdemo-main.ts", ".omp/extensions/hookdemo-main.ts", launcher, override, ".pi/extensions/hookdemo-user.ts"}
+			writeRecipe(pre)
+			for _, key := range []string{"main", "keeper"} {
+				spineWrite(t, filepath.Join(recipe, "hooks", key+".sh"), "#!/bin/sh\nexit 0\n", 0o755)
+			}
+			for i, event := range []string{"PreToolUse", "beforeShellExecution"} {
+				spineWrite(t, filepath.Join(project, paths[i]), `{"hooks":{"`+event+`":[{"command":"user"}]}}`, 0o644)
+			}
+			for _, path := range paths[7:] {
+				spineWrite(t, filepath.Join(project, path), "user", 0o644)
+			}
+			sync := func(wantStderr string) {
+				t.Helper()
+				var out, stderr bytes.Buffer
+				rc := Run([]string{"sync", project}, isolated, strings.NewReader(""), &out, &stderr)
+				if rc != 0 || !strings.HasSuffix(out.String(), "\n✓ ai-specs sync complete\n") || stderr.String() != wantStderr {
+					t.Fatalf("sync rc=%d, stderr=%q, stdout=%s", rc, stderr.String(), out.String())
+				}
+			}
+			managed := func() map[string]map[string]any {
+				lk, err := lock.LoadLock(filepath.Join(project, "ai-specs/.ai-specs.lock"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				return lk.Managed
+			}
+			sync("")
+			initial, _ := hooksSnapshot(t, project)
+			if initial[paths[4]] == "" || managed()[launcher]["recipe"] != "hookdemo" {
+				t.Fatal("initial sync did not install the hook and record launcher ownership")
+			}
+			active, moved := tc.manifest == enabled, tc.event == "stop"
+			warn := ""
+			if moved {
+				warn = "  ! event 'stop' has no native mapping for harness 'opencode' (recipe 'hookdemo', hook 'main') — skipped\n"
+			} else {
+				spineWrite(t, filepath.Join(project, launcher), "locally edited", 0o755)
+			}
+			initialPi, _ := base64.StdEncoding.DecodeString(initial[paths[4]])
+			spineWrite(t, filepath.Join(project, paths[4]), string(initialPi)+"// locally edited\n", 0o644)
+			spineWrite(t, materializeManifestPath(project), agents+tc.manifest, 0o644)
+			writeRecipe(tc.event)
+			sync(warn)
+			before, _ := hooksSnapshot(t, project)
+			read := func(path string) string {
+				decoded, _ := base64.StdEncoding.DecodeString(before[path])
+				return string(decoded)
+			}
+			for i, event := range []string{"PreToolUse", "beforeShellExecution"} {
+				var doc struct{ Hooks map[string][]map[string]any }
+				if err := json.Unmarshal([]byte(read(paths[i])), &doc); err != nil {
+					t.Fatal(err)
+				}
+				old, next := doc.Hooks[event], doc.Hooks[[]string{"Stop", "stop"}[i]]
+				if len(old) == 0 || !reflect.DeepEqual(old[0], map[string]any{"command": "user"}) ||
+					active && (len(old) != 2 || old[1]["_ai_specs_managed"] != "ai-specs:hooks:hookdemo:keeper") || !active && len(old) != 1 ||
+					moved && (len(next) != 1 || next[0]["_ai_specs_managed"] != "ai-specs:hooks:hookdemo:main") || !moved && len(next) != 0 {
+					t.Errorf("%s: stale wiring or user entry changed: %#v", paths[i], doc.Hooks)
+				}
+			}
+			for i, path := range paths[2:7] {
+				if moved && i != 1 {
+					if data := read(path); data == "" || (i == 2 || i == 3) && (!strings.Contains(data, `pi.on("agent_end"`) || strings.Contains(data, `pi.on("tool_call"`)) {
+						t.Errorf("%s was not rewired", path)
+					}
+				} else if _, err := os.Lstat(filepath.Join(project, path)); !os.IsNotExist(err) {
+					t.Errorf("%s still exists: %v", path, err)
+				}
+			}
+			if !active {
+				entries, err := os.ReadDir(filepath.Join(project, dir))
+				if err != nil || len(entries) != 1 || entries[0].Name() != "overrides" {
+					t.Errorf("disabled recipe directory should contain only overrides: %v, %v", entries, err)
+				}
+			}
+			beforeLock := managed()
+			if (beforeLock[launcher] != nil) != moved || (beforeLock[dir+"hooks/keeper.sh"] != nil) != active {
+				t.Errorf("unexpected lock ownership: %v", beforeLock)
+			}
+			if before[override] != initial[override] || before[paths[8]] != initial[paths[8]] {
+				t.Error("user-owned files did not survive")
+			}
+			sync(warn)
+			after, _ := hooksSnapshot(t, project)
+			for _, path := range paths {
+				if after[path] != before[path] {
+					t.Errorf("resync changed %s", path)
+				}
+			}
+			if !reflect.DeepEqual(beforeLock, managed()) {
+				t.Error("resync changed managed lock entries")
+			}
+		})
+	}
+}
 
 // --- frozen oracle ----------------------------------------------------------
 

@@ -20,9 +20,16 @@
 package sync
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"maps"
 	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"syscall"
 
 	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/worktree-gate/shared"
@@ -37,6 +44,63 @@ type OrphanCleanupInput struct {
 	Roots     shared.OrphanApplyRoots
 	LockPath  string
 	Output    io.Writer
+}
+
+// pruneRecipeArtifacts uses managed ownership, not the skill-hash recipes table.
+func pruneRecipeArtifacts(root string, enabledIDs []string, hooks []any) error {
+	lockPath := filepath.Join(root, "ai-specs", ".ai-specs.lock")
+	lk, err := lock.LoadLock(lockPath)
+	if err != nil {
+		return err
+	}
+	enabled := materializeStringSet(enabledIDs)
+	launchers := map[string]bool{}
+	for _, raw := range hooks {
+		h, _ := raw.(*mcpObj)
+		if path, ok := hooksGet(h, "script_path").(string); ok {
+			launchers[path] = true
+		}
+	}
+	changed := false
+	for _, rel := range slices.Sorted(maps.Keys(lk.Managed)) {
+		record := lk.Managed[rel]
+		id, _ := record["recipe"].(string)
+		if !fs.ValidPath(rel) || strings.Contains(rel, `\`) || id == "" || strings.Contains(id, "/") || id == "." || id == ".." {
+			continue
+		}
+		dir := "ai-specs/recipes/" + id
+		suffix, ok := strings.CutPrefix(rel, dir+"/")
+		if !ok || suffix == "overrides" || strings.HasPrefix(suffix, "overrides/") {
+			continue
+		}
+		if enabled[id] && (record["kind"] != "gate" || !strings.HasPrefix(suffix, "hooks/") || launchers[rel]) {
+			continue
+		}
+		path := filepath.Join(root, rel)
+		if err := shared.EnsureTemplateAncestorsReal(root, path); err != nil {
+			return err
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		// Sweep only emptied parents. Overrides and other untracked contents
+		// keep their directories, even when the recipe has been disabled.
+		for parent, base := filepath.Dir(path), filepath.Join(root, dir); shared.TemplatePathContained(base, parent); parent = filepath.Dir(parent) {
+			err := os.Remove(parent)
+			if errors.Is(err, syscall.ENOTEMPTY) || errors.Is(err, syscall.EEXIST) {
+				break
+			}
+			if err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+		delete(lk.Managed, rel)
+		changed = true
+	}
+	if changed {
+		return lock.WriteLock(lockPath, lk)
+	}
+	return nil
 }
 
 // orphanScopePrefix mirrors Python _APPLY_SCOPE_MESSAGE_PREFIX. The in-project

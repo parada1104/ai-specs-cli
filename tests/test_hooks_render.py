@@ -73,7 +73,7 @@ def _hook_recipe_toml(recipe_id: str, hook_id: str, event: str, matcher: str) ->
     )
 
 
-class _HookFixtureMixin:
+class _HookFixtureMixin(unittest.TestCase):
     """One shared isolated cli_home and temp project per test command sequence."""
 
     def setUp(self):
@@ -121,14 +121,32 @@ class _HookFixtureMixin:
         )
         return result
 
-    def seed_and_sync(self, recipe_id: str, hook_id: str, *agents: str, **kw) -> object:
+    def seed_and_sync(self, recipe_id: str, hook_id: str, *agents: str, **kw):
         self._hook_id = hook_id
         self.seed_recipe(recipe_id, hook_id, **kw)
         self.write_manifest(*agents)
         return self.sync()
 
 
-class HooksRenderTests(_HookFixtureMixin, unittest.TestCase):
+class HooksRenderTests(_HookFixtureMixin):
+    def test_removed_recipe_prunes_all_wiring(self):
+        self.seed_and_sync(RECIPE_SHELL, "shell-gate", "claude", "cursor",
+                           "opencode", "pi", "omp")
+        paths = [self.root / self.script_path]
+        paths += [self.root / f"{directory}/{self.shim_base}.{extension}"
+                  for directory, extension in ((".cursor/hooks", "sh"),
+                      (".opencode/plugin", "ts"), (".pi/extensions", "ts"),
+                      (".omp/extensions", "ts"))]
+        self.assertTrue(all(path.is_file() for path in paths))
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        manifest.write_text(manifest.read_text().split("[recipes.")[0])
+        self.sync()
+        paths.append(self.root / f"ai-specs/recipes/{RECIPE_SHELL}")
+        self.assertEqual([str(p.relative_to(self.root)) for p in paths if p.exists()], [])
+        for config in (".claude/settings.json", ".cursor/hooks.json"):
+            self.assertNotIn(f"ai-specs:hooks:{RECIPE_SHELL}:", (self.root / config).read_text())
+        self.assertNotIn(self.script_path, (self.root / "ai-specs/.ai-specs.lock").read_text())
+
     def test_claude_pretooluse_managed_block(self):
         self.seed_and_sync(RECIPE_SHELL, "shell-gate", "claude")
         settings = json.loads((self.root / ".claude" / "settings.json").read_text())
@@ -259,7 +277,7 @@ class HooksRenderTests(_HookFixtureMixin, unittest.TestCase):
         self.assertIn("Bash", matchers)       # managed hook added
 
 
-class WorkspaceContextProcessBoundaryTests(_HookFixtureMixin, unittest.TestCase):
+class WorkspaceContextProcessBoundaryTests(_HookFixtureMixin):
     """Deterministic Node process-boundary tests for generated adapters.
 
     Render the generated adapter for a real hook through ``bin/ai-specs sync``,

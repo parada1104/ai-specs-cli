@@ -88,6 +88,7 @@ type agentOptions struct {
 	recipeMCP          string
 	resolvedConfig     string
 	resolvedHooks      string
+	syncHookEvents     bool
 	adoptBrief         bool
 	selectAll          bool
 	selected           []string
@@ -323,6 +324,7 @@ type agentRun struct {
 	recipeMCP      string
 	resolvedConfig string
 	resolvedHooks  string
+	syncHookEvents bool
 	adoptBrief     bool
 	verbose        bool
 	selectAll      bool
@@ -363,6 +365,7 @@ func buildAgentRun(r *runner, opts agentOptions, s agentStreams, nested bool) (*
 		recipeMCP:      opts.recipeMCP,
 		resolvedConfig: opts.resolvedConfig,
 		resolvedHooks:  opts.resolvedHooks,
+		syncHookEvents: opts.syncHookEvents,
 		adoptBrief:     opts.adoptBrief,
 		verbose:        opts.verbose,
 		selectAll:      opts.selectAll,
@@ -826,7 +829,7 @@ func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 	// swallowed by the shell's `if python3 ...; then echo ✓; fi`: no notice,
 	// no failure.
 	if hooksTarget, _ := platformGet(agent, "runtime_hooks_target"); hooksTarget != "" && a.resolvedHooks != "" && isRegularFilePath(a.resolvedHooks) {
-		if RenderHooks(a.resolvedHooks, agent, a.targetPath, out, errW) == 0 {
+		if renderHooks(a.resolvedHooks, agent, a.targetPath, errW, a.syncHookEvents) == 0 {
 			fmt.Fprintf(out, "    ✓ runtime hooks %s\n", hooksTarget)
 		}
 	}

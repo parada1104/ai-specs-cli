@@ -395,6 +395,11 @@ func (r *runner) run(opts options) int {
 	removeIfSet(recipeOutFile)
 	removeIfSet(recipeErrFile)
 
+	if err := pruneRecipeArtifacts(root, materialized.EnabledRecipeIDs, materialized.resolvedHooks); err != nil {
+		fmt.Fprintf(r.stderr, "ERROR: cannot prune recipe artifacts: %v\n", err)
+		return 1
+	}
+
 	// AGENTS.md: policy gate then render, both native since T3 of U2a. D3 is
 	// preserved, not fixed: the policy's failure status is ignored and the gate
 	// is its verdict alone, so a manifest the policy cannot read skips the brief
@@ -416,6 +421,7 @@ func (r *runner) run(opts options) int {
 			sourceRoot:     root,
 			target:         target,
 			selectAll:      true,
+			syncHookEvents: true,
 			recipeMCP:      recipeMcpTemp,
 			resolvedConfig: resolvedConfigTemp,
 			resolvedHooks:  resolvedHooksTemp,
@@ -423,6 +429,10 @@ func (r *runner) run(opts options) int {
 			verbose:        opts.verbose,
 		}
 		rc := r.runStep(label+" → "+target, func(out, errW io.Writer) int {
+			if err := pruneRuntimeHooks(target, materialized.resolvedHooks); err != nil {
+				fmt.Fprintf(errW, "ERROR: cannot prune runtime hooks: %v\n", err)
+				return 1
+			}
 			return runAgentSingle(r, agentOpts, agentStreams{out: out, errW: errW}, true)
 		})
 		if rc != 0 {
