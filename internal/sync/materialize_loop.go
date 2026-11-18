@@ -6,15 +6,14 @@ package sync
 // per-recipe frame; this file owns everything the Python authority performs
 // inside that frame after the config merge: the project-owned config pass, the
 // bundled/dep skills, the commands, the governed templates and docs, the
-// sync-time hooks, the runtime-hook collection with the resolved-hooks entries,
-// and the worktree-flow gate-binary acquisition.
+// sync-time hooks and the runtime-hook collection with the resolved-hooks
+// entries.
 //
 // Every decision stays in the merged native authority (shared actuators, the
 // copy authority, lock mutation helpers, RunRecipeHooks, MaterializeHook); this
 // file only sequences those calls, prints their messages verbatim and writes
-// the lock through ONE shared helper (applyLockRecord). One step is the
-// deliberate, documented, single non-native delegation (the gate-binary
-// acquisition runs natively through internal/gatebinary):
+// the lock through ONE shared helper (applyLockRecord). The deliberate
+// delegation is dependency-skill vendoring:
 //
 //   - materializeDepSkill: dependency-skill vendoring runs natively through
 //     internal/sync/vendorskills.go (the vendor-skills.py port).
@@ -34,7 +33,6 @@ import (
 	"unicode"
 
 	"ai-specs.dev/ai-specs/internal/cliversion"
-	"ai-specs.dev/ai-specs/internal/gatebinary"
 	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/projectcache"
 	"ai-specs.dev/ai-specs/internal/schema"
@@ -128,9 +126,6 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 		resolvedHooks = append(resolvedHooks, entry)
 	}
 
-	if err := materializeWorktreeGateAcquisition(req, mergedCfg); err != nil {
-		return nil, err
-	}
 	return resolvedHooks, nil
 }
 
@@ -523,31 +518,6 @@ func materializePyStr(value any) string {
 	}
 }
 
-// materializeWorktreeGateAcquisition mirrors the Phase 3 distribution branch of
-// the loop (:4087-4103): only worktree-flow with gate_impl auto|go acquires,
-// acquisition never fails the sync, and a status warning prints verbatim.
-func materializeWorktreeGateAcquisition(req materializeArtifactRequest, mergedCfg map[string]any) error {
-	if req.Recipe.ID != legacyTopologyRecipeID {
-		return nil
-	}
-	impl := "auto"
-	if value, ok := mergedCfg["gate_impl"]; ok && materializeConfigTruthy(value) {
-		impl = materializePyStr(value)
-	}
-	if impl != "auto" && impl != "go" {
-		return nil
-	}
-	warning, err := acquireGateBinary(req.AISpecsHome, impl)
-	if err != nil {
-		warnf(req.Stderr, "worktree-flow: gate binary acquisition failed (%s); gate degrades per gate_impl (see 'ai-specs doctor')", err.Error())
-		return nil
-	}
-	if warning != "" {
-		warnf(req.Stderr, "worktree-flow: %s", warning)
-	}
-	return nil
-}
-
 // materializeConfigTruthy mirrors Python truthiness over the merged-config
 // value domain for the `merged_cfg.get("gate_impl") or "auto"` fallback: an
 // absent, null, empty, false or zero value falls back.
@@ -570,28 +540,4 @@ func materializeConfigTruthy(value any) bool {
 		return typed != nil && len(typed.Keys()) > 0
 	}
 	return true
-}
-
-// --- the deliberate delegation ----------------------------------------------
-
-// acquireGateBinary runs the native gatebinary.Acquire with the arguments the
-// Python loop passes (gate_impl, the CLI home, AI_SPECS_GATE_OFFLINE) and
-// returns the status warning ("" when none). Acquire never errors; a panic is
-// the only failure left, reported as "<Type>: <message>" so the caller prints
-// the frozen degradation warning instead of failing the sync.
-func acquireGateBinary(aiSpecsHome, impl string) (warning string, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("RuntimeError: %v", r)
-		}
-	}()
-	status := gatebinary.Acquire(gatebinary.AcquireOptions{
-		GateImpl: impl,
-		Home:     aiSpecsHome,
-		Offline:  os.Getenv("AI_SPECS_GATE_OFFLINE") == "1",
-	})
-	if status.Warn != nil {
-		return *status.Warn, nil
-	}
-	return "", nil
 }

@@ -21,8 +21,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-
-	"ai-specs.dev/ai-specs/internal/gatebinary"
 	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/projectcache"
 )
@@ -271,11 +269,25 @@ func TestMaterializeLoopDifferentialFrozen(t *testing.T) {
 			if goRC != ref.RC {
 				t.Fatalf("rc: go=%d frozen=%d\n--- go stderr ---\n%s\n--- frozen stderr ---\n%s", goRC, ref.RC, stderr.String(), ref.Stderr)
 			}
+			if scenario.name == "worktree-flow gate acquisition degrades offline" {
+				if goRC != 0 {
+					t.Fatalf("worktree-flow materialization exit = %d, want success", goRC)
+				}
+				gateCache := filepath.Join(home, "cache", "bin", "worktree-gate")
+				if _, err := os.Stat(gateCache); !os.IsNotExist(err) {
+					t.Fatalf("gate cache directory stat error = %v; expected no directory at %s", err, gateCache)
+				}
+			}
 			if got := freezeMaterializePaths(normalizeRecipeMCPPath(stdout.String()), home, project); got != ref.Stdout {
 				t.Fatalf("stdout:\n--- go ---\n%q\n--- frozen ---\n%q", got, ref.Stdout)
 			}
-			if got := freezeMaterializePaths(stderr.String(), home, project); got != ref.Stderr {
-				t.Fatalf("stderr:\n--- go ---\n%q\n--- frozen ---\n%q", got, ref.Stderr)
+			gotStderr := freezeMaterializePaths(stderr.String(), home, project)
+			if scenario.name == "worktree-flow gate acquisition degrades offline" {
+				if gotStderr != "" {
+					t.Fatalf("stderr = %q; gate acquisition must not run or warn", gotStderr)
+				}
+			} else if gotStderr != ref.Stderr {
+				t.Fatalf("stderr:\n--- go ---\n%q\n--- frozen ---\n%q", gotStderr, ref.Stderr)
 			}
 			if scenario.recipeMCPOut {
 				got := freezeMaterializePaths(result.RecipeMCPDocument, home, project)
@@ -430,15 +442,6 @@ url = "__DEP_SRC__"
 		body:  syncRecipeHeader("worktree-flow", "Worktree Flow") + "\n",
 		files: map[string]string{},
 	}
-	// The offline gate-acquisition scenario seeds a committed trust root: since
-	// WU3 the native acquisition fails closed without a committed digest (the
-	// decided same-user boundary), a branch where Python instead attempts the
-	// local build. The digest pins both graders to the shared local-build
-	// branch, whose failure warning stays byte-identical.
-	gateGoos, gateGoarch := gatebinary.DetectHostPlatform()
-	gateRecipe.files["bin/SHA256SUMS"] = strings.Repeat("a", 64) + "  worktree-gate-" +
-		gateGoos + "-" + gateGoarch + "\n"
-
 	return []materializeLoopScenario{
 		{
 			name:         "bundled skill and command with an overwrite warning and the lock bytes",

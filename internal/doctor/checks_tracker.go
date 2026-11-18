@@ -1,11 +1,8 @@
 package doctor
 
 // Native port of doctor._check_tracker_ledger and its acquisition helpers
-// (ledger_bridge witness read and the literal recipe fallback). The
-// gate_binary.resolve_verified_binary resolution the check consumes lives once
-// in gatebinary.go with the other gate-binary subset helpers. Read-only:
-// subprocesses are a git rev-parse probe and the gate binary's --ledger verdict
-// query; nothing is written, created, or deleted.
+// (ledger_bridge witness read and the literal recipe fallback). Read-only:
+// subprocesses are git probes and the installed CLI's --ledger verdict query.
 
 import (
 	"bytes"
@@ -170,7 +167,7 @@ func (d *Doctor) trackerLedgerInPlay() bool {
 // presentation-only action hint keyed off the Go reason.
 func trackerLedgerGuidance(reason string, severity Severity) string {
 	if severity == ERROR {
-		return "run ai-specs sync or ai-specs sync --refresh-gates"
+		return "run ai-specs sync"
 	}
 	switch reason {
 	case "witness-missing":
@@ -187,15 +184,14 @@ func trackerLedgerGuidance(reason string, severity Severity) string {
 	return ""
 }
 
-// --- gate_binary.resolve_verified_binary subset ------------------------------
-
-// The verified-gate-binary resolution and its cache/trust-root helpers live once
-// in gatebinary.go; the tracker ledger check calls them there.
-
-// trackerLedgerBinary mirrors doctor._tracker_ledger_binary: a verified
-// worktree-gate binary, or "" (fail closed to ERROR).
-func (d *Doctor) trackerLedgerBinary() string {
-	return resolveVerifiedGateBinary(d.Home)
+// trackerLedgerCLI is the installed CLI used for the worktree-gate ledger
+// verdict, or empty when that executable is unavailable.
+func (d *Doctor) trackerLedgerCLI() string {
+	binary := installedCLIPath(d.Home)
+	if !isExecutable(binary) {
+		return ""
+	}
+	return binary
 }
 
 // --- the check ---------------------------------------------------------------
@@ -252,13 +248,13 @@ func ledgerText(value any) string {
 	}
 }
 
-// runTrackerLedger invokes the verified binary's non-blocking warn verdict and
+// runTrackerLedger invokes the installed CLI's non-blocking warn verdict and
 // returns the `doctor` finding. ok is false when stdout was not the expected
 // machine-readable object (the legacy exception / non-dict branch).
 func runTrackerLedger(binary, root string) (finding map[string]any, reason string, ok bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, binary,
+	cmd := exec.CommandContext(ctx, binary, "worktree-gate",
 		"--ledger", "--checkpoint", "work-start", "--ledger-mode", "warn",
 		"--project-root", root)
 	var stdout bytes.Buffer
@@ -295,11 +291,11 @@ func (d *Doctor) checkTrackerLedger() {
 			"work-start is unhosted: enable plan-build-flow to grade that checkpoint",
 			"enable the plan-build-flow recipe, or grade work-start with an explicit --write")
 	}
-	binary := d.trackerLedgerBinary()
+	binary := d.trackerLedgerCLI()
 	if binary == "" {
 		d.add(ERROR, "tracker-ledger",
-			"no verified worktree-gate binary; the tracker ledger is failing open",
-			"run ai-specs sync or ai-specs sync --refresh-gates")
+			"ai-specs CLI is missing or not executable; the tracker ledger is failing open",
+			"run ai-specs sync")
 		return
 	}
 	finding, reason, ok := runTrackerLedger(binary, d.Root)
