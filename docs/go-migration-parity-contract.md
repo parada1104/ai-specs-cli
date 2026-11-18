@@ -92,10 +92,14 @@ advisory severity/exit behavior, but checks the installed CLI at
 `$AI_SPECS_HOME/dist/ai-specs` (or `$HOME/.ai-specs/dist/ai-specs` when the
 install-home default applies) by running `worktree-gate --selftest`. A missing
 or non-executable CLI, or a failing selftest, remains an `ERROR` because the
-gate fails open. This replaces inspection of a separately acquired, cached,
+gate fails open. Doctor says `reinstall ai-specs via install.sh` if the CLI is
+missing or not executable, and `run ai-specs upgrade` if the selftest fails.
+This replaces inspection of a separately acquired, cached,
 digest-verified gate binary; doctor no longer validates its version, receipt,
 digest, or cache size. The tracker-ledger doctor query also reaches the same
-CLI via the `worktree-gate` subcommand. Approved by Robert in L5; this is the
+CLI via the `worktree-gate` subcommand, with the same reinstall guidance for
+an unavailable CLI and upgrade guidance for a non-machine-readable verdict.
+Approved by Robert in L5; this is the
 intentional divergence from the legacy binary-inspection contract. The same
 advisory `WARN worktree-gate` check also flags a preserved
 `ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh` that still
@@ -116,9 +120,10 @@ launcher itself fails open with its own one-line warning.
 
 `ai-specs help` lists the new `worktree-gate [gate args...]` verb, which the
 legacy help never had. The parity harness drops exactly that line (N14) and
-canonicalizes the wording of doctor's fail-open `ERROR tracker-ledger` line
+canonicalizes the wording of the unavailable-gate `ERROR tracker-ledger` line
 (N15, per the doctor-probe divergence above); severity and line identity are
-still compared.
+still compared. N15 does not normalize `worktree-gate` check lines or the
+unreadable Tracker verdict diagnostic.
 
 #### Malformed-manifest guidance — accepted divergence (U2c)
 

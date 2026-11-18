@@ -81,6 +81,10 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.24.13"
+      - name: Run go vet for the worktree gate module
+        run: go -C catalog/recipes/worktree-flow/gate vet ./...
+      - name: Run go test for the worktree gate module
+        run: go -C catalog/recipes/worktree-flow/gate test ./...
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
