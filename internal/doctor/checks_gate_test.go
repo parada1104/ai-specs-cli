@@ -79,6 +79,37 @@ func TestCheckWorktreeGateWarnsForLegacyLauncher(t *testing.T) {
 	}
 }
 
+func TestCheckWorktreeGateWarnsForRetiredCleanupOverride(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"old override", `bin="$home/cache/bin/worktree-gate/1/linux-amd64/worktree-gate"` + "\n", true},
+		{"new override", `exec "$cli_bin" worktree-gate --cleanup` + "\n", false},
+		{"absent", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, home := t.TempDir(), t.TempDir()
+			writeManifest(t, root, "[recipes.worktree-flow]\nenabled = true\n")
+			writeDoctorCLI(t, home, "#!/bin/sh\n[ \"$1\" = worktree-gate ] && [ \"$2\" = --selftest ] && { echo ok; exit 0; }\nexit 1\n")
+			if tc.body != "" {
+				writeFile(t, filepath.Join(root, "ai-specs", "recipes", "worktree-flow", "overrides", "bin", "worktree-cleanup.sh"), tc.body)
+			}
+			d := New(root, home)
+			d.checkWorktreeGate()
+			want := []Check{}
+			if tc.want {
+				want = append(want, Check{WARN, "worktree-gate",
+					"preserved worktree-cleanup.sh override still resolves the retired separate gate binary",
+					"delete ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh and run ai-specs sync (a preserved customized override is not refreshed by --refresh-gates)"})
+			}
+			want = append(want, Check{OK, "worktree-gate", fmt.Sprintf("CLI at %s serves worktree-gate; selftest passed", installedCLIPath(d.Home)), ""})
+			assertChecks(t, d, want)
+		})
+	}
+}
+
 func TestCheckWorktreeGateInstalledCLI(t *testing.T) {
 	root := t.TempDir()
 	writeManifest(t, root, "[recipes.worktree-flow]\nenabled = true\n")
@@ -102,7 +133,7 @@ func TestCheckWorktreeGateMissingCLIUsesFailOpenSeverity(t *testing.T) {
 	binary := installedCLIPath(d.Home)
 	assertChecks(t, d, []Check{{ERROR, "worktree-gate",
 		fmt.Sprintf("ai-specs CLI is missing or not executable at %s; the gate is failing open", binary),
-		"run ai-specs sync"}})
+		"reinstall ai-specs via install.sh"}})
 }
 
 func TestCheckWorktreeGateCLISelftestFailureUsesFailOpenSeverity(t *testing.T) {
@@ -114,7 +145,7 @@ func TestCheckWorktreeGateCLISelftestFailureUsesFailOpenSeverity(t *testing.T) {
 	d.checkWorktreeGate()
 	assertChecks(t, d, []Check{{ERROR, "worktree-gate",
 		fmt.Sprintf("ai-specs CLI at %s failed worktree-gate --selftest: selftest exploded; the gate is failing open", installedCLIPath(d.Home)),
-		"run ai-specs sync"}})
+		"run ai-specs upgrade"}})
 }
 
 func TestCheckWorktreeGateBashRetired(t *testing.T) {

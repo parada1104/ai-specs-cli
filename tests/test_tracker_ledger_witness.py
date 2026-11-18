@@ -43,11 +43,6 @@ TRACKING_DECLARATION = (
     '  board_id: "69ec097f13e2d38ecd89a557"\n'
 )
 
-# Module-level memo for the CLI-acquired Go gate binary (built once offline).
-_ACQUIRED_GATE: list[Path] = []
-_GATE_HOLDER: list[tempfile.TemporaryDirectory] = []
-
-
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(
         ["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True
@@ -77,70 +72,6 @@ def git_common_dir(root: Path) -> str:
         capture_output=True, text=True, check=False,
     )
     return proc.stdout.strip() if proc.returncode == 0 else ""
-
-
-def _platform() -> tuple[str, str]:
-    """Mirror the gate acquisition's platform mapping for cache paths."""
-    import platform as _platform
-
-    goos = {"Darwin": "darwin", "Linux": "linux"}.get(_platform.system(), "")
-    machine = _platform.machine()
-    goarch = "arm64" if machine in ("arm64", "aarch64") else (
-        "amd64" if machine in ("x86_64", "amd64") else "")
-    return goos, goarch
-
-
-def acquired_gate_binary() -> Path:
-    """Acquire the REAL Go gate binary offline through the CLI's own
-    local-build path (AI_SPECS_GATE_OFFLINE=1 AI_SPECS_GATE_BUILD=1 sync into
-    a scratch home). Memoized module-wide; no network, no dist/ dependency.
-    """
-    if _ACQUIRED_GATE:
-        return _ACQUIRED_GATE[0]
-    holder = tempfile.TemporaryDirectory(prefix="witness-gate-acquire-")
-    base = Path(holder.name)
-    home = _make_home(base / "home")
-    project = base / "proj"
-    (project / "ai-specs").mkdir(parents=True)
-    _git(project, "init", "-q")
-    _git(project, "config", "user.email", "t@t.t")
-    _git(project, "config", "user.name", "t")
-    (project / "README.md").write_text("gate acquisition fixture\n")
-    _git(project, "add", "-A")
-    _git(project, "commit", "-qm", "init")
-    (project / "ai-specs" / "ai-specs.toml").write_text(
-        "[project]\nname = 'gate-acquire'\n\n[agents]\nenabled = ['claude']\n\n"
-        "[recipes.worktree-flow]\nenabled = true\n"
-    )
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": str(base / "subhome"),
-        "TMPDIR": str(base),
-        "AI_SPECS_HOME": str(home),
-        "AI_SPECS_NO_NETWORK": "1",
-        "AI_SPECS_VENDOR_FIXTURE_ROOT": str(KEPANO_FIXTURE),
-        "AI_SPECS_GATE_OFFLINE": "1",
-        "AI_SPECS_GATE_BUILD": "1",
-        "LC_ALL": "C",
-        "LANG": "C",
-    }
-    (base / "subhome").mkdir()
-    for verb in ("init", "sync"):
-        proc = subprocess.run(
-            [str(CLI), verb, str(project)], cwd=ROOT, env=env,
-            capture_output=True, text=True, check=False, input="",
-        )
-        assert proc.returncode == 0, (
-            f"gate acquisition `{verb}` failed:\n{proc.stdout}\n{proc.stderr}"
-        )
-    version = (home / "VERSION").read_text().strip()
-    goos, goarch = _platform()
-    binary = (home / "cache" / "bin" / "worktree-gate" / version /
-              f"{goos}-{goarch}" / "worktree-gate")
-    assert binary.is_file(), f"gate binary was not built into the scratch cache: {binary}"
-    _GATE_HOLDER.append(holder)
-    _ACQUIRED_GATE.append(binary)
-    return binary
 
 
 class TrackerLedgerWitnessTests(unittest.TestCase):
@@ -350,35 +281,12 @@ class TrackerLedgerWitnessTests(unittest.TestCase):
 
         self._sync(root)
 
-        # The Go gate binary is acquired offline through the CLI's own
-        # local-build path (no dist/ dependency, no network).
-        env = {
-            "PATH": os.environ.get("PATH", ""),
-            "HOME": str(base / "subhome"),
-            "TMPDIR": str(base),
-            "AI_SPECS_NO_NETWORK": "1",
-            "LC_ALL": "C",
-            "LANG": "C",
-        }
-        (base / "subhome").mkdir()
-        proc = subprocess.run(
-            [
-                str(acquired_gate_binary()),
-                "--ledger",
-                "--checkpoint",
-                "apply-start",
-                "--ledger-mode",
-                "warn",
-                "--project-root",
-                str(linked),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            env=env,
-            input="",
+        proc = self._run_cli(
+            linked, "worktree-gate", "--ledger", "--checkpoint", "apply-start",
+            "--ledger-mode", "warn", "--project-root",
         )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(proc.stderr, "")
         verdict = json.loads(proc.stdout)
         self.assertTrue(verdict["active"])
         self.assertEqual(verdict["decision"], "allow")

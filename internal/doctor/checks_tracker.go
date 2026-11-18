@@ -295,14 +295,14 @@ func (d *Doctor) checkTrackerLedger() {
 	if binary == "" {
 		d.add(ERROR, "tracker-ledger",
 			"ai-specs CLI is missing or not executable; the tracker ledger is failing open",
-			"run ai-specs sync")
+			"reinstall ai-specs via install.sh")
 		return
 	}
 	finding, reason, ok := runTrackerLedger(binary, d.Root)
 	if !ok {
 		d.add(ERROR, "tracker-ledger",
 			"tracker ledger verdict was not machine-readable; failing open",
-			"run ai-specs sync or ai-specs sync --refresh-gates")
+			"run ai-specs upgrade")
 		return
 	}
 	severity := ledgerSeverity(finding["severity"])

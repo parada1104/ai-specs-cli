@@ -27,12 +27,14 @@ class WorktreeGateReleaseTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "release-binaries.yml").read_text(
             encoding="utf-8")
         match = re.search(r'go-version:\s*"([0-9]+\.[0-9]+\.[0-9]+)"', workflow)
-        self.assertIsNotNone(match, "workflow must pin an exact Go version")
+        if match is None:
+            self.fail("workflow must pin an exact Go version")
         proc = subprocess.run(["go", "version"], capture_output=True, text=True,
                               timeout=30)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         local = re.search(r"go([0-9]+\.[0-9]+\.[0-9]+)", proc.stdout)
-        self.assertIsNotNone(local, f"cannot parse local go version: {proc.stdout!r}")
+        if local is None:
+            self.fail(f"cannot parse local go version: {proc.stdout!r}")
         self.assertEqual(
             local.group(1), match.group(1),
             "local Go toolchain must match the release workflow pin")
@@ -43,6 +45,14 @@ class WorktreeGateReleaseTests(unittest.TestCase):
         self.assertIn("worktree-gate-parity:", workflow)
         self.assertIn("python3 -m unittest tests.test_worktree_gate_parity tests.test_worktree_gate_hook -q", workflow)
         self.assertRegex(workflow, r"needs: \[build-cli, worktree-gate-parity\]")
+
+    def test_release_workflow_vets_and_tests_nested_gate_module(self):
+        workflow = (ROOT / ".github" / "workflows" / "release-binaries.yml").read_text(
+            encoding="utf-8")
+        gate_job = workflow.split("\n  worktree-gate-parity:\n", 1)[1].split("\n  checksum:\n", 1)[0]
+        for command in ("vet", "test"):
+            with self.subTest(command=command):
+                self.assertIn(f"run: go -C catalog/recipes/worktree-flow/gate {command} ./...", gate_job)
 
 
 if __name__ == "__main__":

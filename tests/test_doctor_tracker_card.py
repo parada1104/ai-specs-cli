@@ -366,17 +366,16 @@ class DoctorTrackerLedgerTests(unittest.TestCase):
         # closed to ERROR.
         root = self._project()
         checks, code = self._render(root)
-        self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0][0], "ERROR")
-        self.assertIn("failing open", checks[0][1])
+        self.assertEqual(checks, [("ERROR", "ai-specs CLI is missing or not executable; "
+                                            "the tracker ledger is failing open  (reinstall ai-specs via install.sh)")])
         self.assertEqual(code, 1)
 
     def test_unparseable_verdict_renders_error(self):
         root = self._project()
         _stage_gate_stub(self.home, ledger_stdout="not json at all")
         checks, code = self._render(root)
-        self.assertEqual(checks[0][0], "ERROR")
-        self.assertIn("failing open", checks[0][1])
+        self.assertEqual(checks, [("ERROR", "tracker ledger verdict was not machine-readable; "
+                                            "failing open  (run ai-specs upgrade)")])
         self.assertEqual(code, 1)
 
     # --- legacy compatibility: doctor no longer grades the ## Tracker section ---

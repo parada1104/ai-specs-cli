@@ -72,18 +72,28 @@ func (d *Doctor) checkWorktreeGate() {
 				"run ai-specs sync (or ai-specs sync --refresh-gates if the file was customized and preserved)")
 		}
 	}
+	override := filepath.Join(d.Root, "ai-specs", "recipes", "worktree-flow", "overrides", "bin", "worktree-cleanup.sh")
+	if isFile(override) {
+		if raw, err := os.ReadFile(override); err == nil &&
+			strings.Contains(string(raw), "cache/bin/worktree-gate") &&
+			!strings.Contains(string(raw), "dist/ai-specs") {
+			d.add(WARN, "worktree-gate",
+				"preserved worktree-cleanup.sh override still resolves the retired separate gate binary",
+				"delete ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh and run ai-specs sync (a preserved customized override is not refreshed by --refresh-gates)")
+		}
+	}
 
 	binary := installedCLIPath(d.Home)
 	if !isExecutable(binary) {
 		d.add(ERROR, "worktree-gate",
 			fmt.Sprintf("ai-specs CLI is missing or not executable at %s; the gate is failing open", binary),
-			"run ai-specs sync")
+			"reinstall ai-specs via install.sh")
 		return
 	}
 	if failure := cliWorktreeGateSelftest(binary); failure != "" {
 		d.add(ERROR, "worktree-gate",
 			fmt.Sprintf("ai-specs CLI at %s failed worktree-gate --selftest: %s; the gate is failing open", binary, failure),
-			"run ai-specs sync")
+			"run ai-specs upgrade")
 		return
 	}
 	d.add(OK, "worktree-gate",

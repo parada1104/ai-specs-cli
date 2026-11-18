@@ -30,7 +30,7 @@ class OverrideVerification(unittest.TestCase):
     def _run(self, d: Path, selftest_rc: int):
         env = dict(os.environ, WORKTREE_GATE_BIN=str(self._override(d, selftest_rc)),
                    WORKTREE_GATE_VERIFY="1", TRACE=str(d / "trace"),
-                   AI_SPECS_HOME=str(d / "no-home"))
+                   WORKTREE_GATE_PROTECTED="main development", AI_SPECS_HOME=str(d / "home"))
         return subprocess.run(["bash", str(self._launcher(d))], input="{}",
                               text=True, capture_output=True, env=env)
 
@@ -52,6 +52,24 @@ class OverrideVerification(unittest.TestCase):
             self.assertEqual((p.returncode, p.stdout), (0, ""))
             self.assertIn("WORKTREE_GATE_BIN failed --selftest", p.stderr)
             self.assertIn("not enforcing", p.stderr)  # no CLI to fall through to
+            self.assertEqual((d / "trace").read_text().splitlines(), ["--selftest"])
+
+    def test_failing_override_selftest_falls_back_to_cli_enforcement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            cli = d / "home" / "dist" / "ai-specs"
+            cli.parent.mkdir(parents=True)
+            cli.write_text(
+                '#!/bin/sh\n[ "$1" = worktree-gate ] || exit 1\n'
+                'case "$2" in --version|--selftest) exit 0 ;; esac\n'
+                'echo "blocked by CLI" >&2\nexit 2\n'
+            )
+            cli.chmod(0o755)
+
+            p = self._run(d, 1)
+            self.assertEqual((p.returncode, p.stdout), (2, ""))
+            self.assertEqual(p.stderr, f"worktree-gate: WORKTREE_GATE_BIN failed --selftest: "
+                                       f"{d / 'override'}; ignoring.\nblocked by CLI\n")
             self.assertEqual((d / "trace").read_text().splitlines(), ["--selftest"])
 
 

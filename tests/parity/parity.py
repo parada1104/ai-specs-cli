@@ -233,6 +233,28 @@ def _norm_gate_cache_size(text: str, ctx: dict) -> str:
     return _GATE_CACHE_KB_RE.sub(r"\1<CACHE_KB>\2", text)
 
 
+# gate-into-cli: the gate is served by the CLI itself. The Go help lists the new
+# verb and doctor's tracker-ledger probe reports on the installed CLI instead of
+# a separately acquired binary (contract: "Worktree-gate doctor probe").
+_GATE_HELP_LINE = ("  worktree-gate [gate args...]  Run the worktree gate "
+                   "(arguments passed through unchanged)\n")
+_TRACKER_LEDGER_ERROR_RE = re.compile(
+    r"^(  ERROR  tracker-ledger   ).*the tracker ledger is failing open.*$",
+    re.MULTILINE)
+
+
+def _norm_gate_help_line(text: str, ctx: dict) -> str:
+    if tuple(ctx.get("argv") or ())[:1] != ("help",):
+        return text
+    return text.replace(_GATE_HELP_LINE, "")
+
+
+def _norm_tracker_ledger_probe(text: str, ctx: dict) -> str:
+    if tuple(ctx.get("argv") or ())[:1] != ("doctor",):
+        return text
+    return _TRACKER_LEDGER_ERROR_RE.sub(r"\1<TRACKER_LEDGER_FAIL_OPEN>", text)
+
+
 # GO-20 U2e T5 (v0.25.0 merge): CLI version stamps move with every release.
 # The frozen goldens were captured at 0.24.0; after the bump the live legs
 # legitimately print 0.25.0 in doctor lines, the version verb, the hub banner
@@ -487,6 +509,25 @@ NORMALIZATIONS = (
                       "fixture). Scoped to a whole-line exact semver so no "
                       "embedded literal is touched.",
         fn=_norm_bare_version_line,
+    ),
+    Normalization(
+        rule_id="N14-gate-help-verb",
+        surfaces=("stdout",),
+        description="Drop the `worktree-gate` verb line from `ai-specs help`.",
+        justification="gate-into-cli: the gate is now a CLI verb the legacy "
+                      "help never listed. Scoped to that exact line.",
+        fn=_norm_gate_help_line,
+    ),
+    Normalization(
+        rule_id="N15-tracker-ledger-probe",
+        surfaces=("stdout",),
+        description="Canonicalize the text of doctor's fail-open "
+                    "`ERROR tracker-ledger` line.",
+        justification="Accepted divergence 'Worktree-gate doctor probe' "
+                      "(T6, Robert L5): the probe checks the installed CLI, "
+                      "so its wording and remedy differ. Severity and "
+                      "line identity stay compared.",
+        fn=_norm_tracker_ledger_probe,
     ),
 )
 
@@ -1600,6 +1641,8 @@ def run_leg(label: str, cli_path: Path, fixture: Fixture, scratch: Path,
            "AI_SPECS_HOME": home_str}
     if gate_bin is not None:
         env["WORKTREE_GATE_BIN"] = str(gate_bin)
+        (home / "dist").mkdir()
+        (home / "dist" / "ai-specs").symlink_to(gate_bin)
     if cli_path.name == "ai-specs" and cli_path.parent.name == "bin":
         # The launcher self-heals a missing binary (download/go build); the
         # self-test shim must keep failing instantly and identically instead.
@@ -1707,10 +1750,15 @@ def build_gate_binary(dest_dir: Path) -> Path | None:
            "GOPATH": os.environ.get("GOPATH", str(dest_dir / "gopath")),
            "GOCACHE": str(dest_dir / "gocache")}
     proc = subprocess.run(
-        ["go", "-C", str(GATE_MODULE_DIR), "build", "-o", str(dest), "."],
-        env=env, text=True, capture_output=True, check=False)
+        ["go", "build", "-o", str(dest), "./cmd/ai-specs"],
+        cwd=ROOT, env=env, text=True, capture_output=True, check=False)
     if proc.returncode != 0:
         sys.stderr.write(f"parity: worktree-gate build failed\n{proc.stderr}\n")
+        return None
+    probe = subprocess.run([str(dest), "worktree-gate", "--selftest"],
+                           env=env, text=True, capture_output=True, check=False)
+    if probe.returncode != 0:
+        sys.stderr.write(f"parity: worktree-gate CLI probe failed\n{probe.stderr}\n")
         return None
     return dest
 

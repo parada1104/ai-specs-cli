@@ -77,6 +77,7 @@ class WorktreeCleanupTests(unittest.TestCase):
         if script is None:
             script = "\n".join([
                 "#!/usr/bin/env bash", '[ "$1" = worktree-gate ] || exit 91',
+                'if [ "$2" = --version ]; then echo dev; exit 0; fi',
                 "shift", f'exec {self.CLEANUP_BINARY} "$@"', "",
             ])
         cli = dist / "ai-specs"
@@ -101,7 +102,8 @@ class WorktreeCleanupTests(unittest.TestCase):
     def test_cli_route_preserves_arguments_output_and_exit(self):
         repo = self._make_repo()
         home = self._cli_home("\n".join([
-            "#!/usr/bin/env bash", "printf '%s\\n' \"$*\" > \"$CLI_ARGS\"",
+            "#!/usr/bin/env bash", 'if [ "$2" = --version ]; then exit 0; fi',
+            "printf '%s\\n' \"$*\" > \"$CLI_ARGS\"",
             "printf 'cleanup-out\\n'", "printf 'cleanup-err\\n' >&2", "exit 0", "",
         ]))
         env = dict(os.environ, AI_SPECS_HOME=str(home), CLI_ARGS=str(repo.parent / "args"), TOPOLOGY="auto")
@@ -114,37 +116,60 @@ class WorktreeCleanupTests(unittest.TestCase):
         self.assertEqual(Path(env["CLI_ARGS"]).read_text().strip(),
                          "worktree-gate --cleanup --topology auto --base main --dry-run")
 
-    def test_cleanup_bin_override_is_used(self):
+    def test_old_cli_fails_closed_before_cleanup(self):
         repo = self._make_repo()
-        override = Path(tempfile.mkdtemp(prefix="cleanup-override-")) / "bin"
-        self.addCleanup(lambda: shutil.rmtree(override.parent))
-        args_file = override.parent / "args"
-        override.write_text("\n".join(["#!/usr/bin/env bash", "printf '%s\\n' \"$*\" > \"$OVERRIDE_ARGS\"", "printf 'override-out\\n'", ""]))
-        override.chmod(0o755)
-        env = dict(os.environ, AI_SPECS_HOME=str(self._cli_home()), TOPOLOGY="auto",
-                   WORKTREE_CLEANUP_BIN=str(override), OVERRIDE_ARGS=str(args_file))
-        result = subprocess.run(["bash", str(CLEANUP_SCRIPT), "--base", "main"],
-                                cwd=repo, env=env, capture_output=True, text=True)
-        self.assertEqual((result.returncode, result.stdout), (0, "override-out\n"))
-        self.assertEqual(args_file.read_text().strip(),
-                         "--cleanup --topology auto --base main")
-
-    def test_non_executable_cleanup_override_fails_closed_without_cli(self):
-        repo = self._make_repo()
-        home = self._cli_home("\n".join(["#!/usr/bin/env bash", "echo invoked > \"$CLI_LOG\"", ""]))
-        pin = Path(tempfile.mkdtemp(prefix="cleanup-invalid-pin-")) / "not-executable"
-        self.addCleanup(lambda: shutil.rmtree(pin.parent))
-        pin.write_text("not executable")
-        log = pin.parent / "cli.log"
+        log = repo.parent / "cli.log"
+        home = self._cli_home("#!/usr/bin/env bash\n"
+                              'if [ "$2" = --version ]; then exit 2; fi\n'
+                              'echo "$*" >> "$CLI_LOG"\n')
         result = subprocess.run(
             ["bash", str(CLEANUP_SCRIPT), "--base", "main"], cwd=repo,
-            env=dict(os.environ, AI_SPECS_HOME=str(home), WORKTREE_CLEANUP_BIN=str(pin),
-                     CLI_LOG=str(log)), capture_output=True, text=True,
+            env=dict(os.environ, AI_SPECS_HOME=str(home), CLI_LOG=str(log)),
+            capture_output=True, text=True,
         )
         self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
         self.assertEqual(result.stderr,
-                         f"worktree-cleanup: WORKTREE_CLEANUP_BIN='{pin}' is not executable\n")
-        self.assertFalse(log.exists())
+                         "worktree-cleanup: installed ai-specs CLI is too old (no worktree-gate verb); no destructive action taken\n"
+                         f"worktree-cleanup: run 'ai-specs upgrade' (expected at {home / 'dist' / 'ai-specs'})\n")
+        self.assertFalse(log.exists(), "old CLI must not receive --cleanup")
+
+    def _logging_cli_home(self, log: Path) -> Path:
+        return self._cli_home("\n".join([
+            "#!/usr/bin/env bash",
+            'if [ "$2" = --version ]; then echo dev; exit 0; fi',
+            f'printf \'%s\\n\' "$*" > "{log}"', "",
+        ]))
+
+    def _assert_override_ignored(self, override: Path) -> None:
+        repo = self._make_repo()
+        log = override.parent / "cli.log"
+        override_log = override.parent / "override.log"
+        result = subprocess.run(
+            ["bash", str(CLEANUP_SCRIPT), "--base", "main"], cwd=repo,
+            env=dict(os.environ, AI_SPECS_HOME=str(self._logging_cli_home(log)), TOPOLOGY="auto",
+                     WORKTREE_CLEANUP_BIN=str(override), OVERRIDE_LOG=str(override_log)),
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr,
+                         "worktree-cleanup: WORKTREE_CLEANUP_BIN is retired; ignoring it and "
+                         "running cleanup through the installed ai-specs CLI\n")
+        self.assertFalse(override_log.exists(), "the retired override must never run")
+        self.assertEqual(log.read_text(), "worktree-gate --cleanup --topology auto --base main\n")
+
+    def test_executable_cleanup_override_is_ignored_and_cli_runs(self):
+        override = Path(tempfile.mkdtemp(prefix="cleanup-override-")) / "bin"
+        self.addCleanup(lambda: shutil.rmtree(override.parent))
+        override.write_text("#!/usr/bin/env bash\necho ran > \"$OVERRIDE_LOG\"\n")
+        override.chmod(0o755)
+        self._assert_override_ignored(override)
+
+    def test_non_executable_cleanup_override_is_ignored_and_cli_runs(self):
+        override = Path(tempfile.mkdtemp(prefix="cleanup-invalid-pin-")) / "not-executable"
+        self.addCleanup(lambda: shutil.rmtree(override.parent))
+        override.write_text("not executable")
+        self._assert_override_ignored(override)
 
     def test_missing_cli_fails_closed_without_running_cleanup(self):
         repo = self._make_repo()

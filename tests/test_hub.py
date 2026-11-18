@@ -33,6 +33,7 @@ from _blackbox import (
     populate_catalog,
 )
 import _go_cli  # noqa: E402
+from gate_cli import install_cli  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 # The NON-interactive flows below still run the legacy launcher: they are GO-20
@@ -80,17 +81,13 @@ def _cli_env(home: Path, base: Path) -> dict:
 
 
 def _run_hub(project: Path, home: Path, base: Path,
-             *args: str, cwd: Path | None = None,
-             extra_env: dict | None = None) -> tuple[int, str, str]:
+             *args: str, cwd: Path | None = None) -> tuple[int, str, str]:
     """Run bare ``ai-specs [args…]`` from ``project`` (bare == hub)."""
     (base / "home").mkdir(exist_ok=True)
-    env = _cli_env(home, base)
-    if extra_env:
-        env.update(extra_env)
     proc = subprocess.run(
         [str(CLI), *args],
         cwd=str(cwd or project),
-        env=env,
+        env=_cli_env(home, base),
         text=True,
         capture_output=True,
         input="",
@@ -864,17 +861,13 @@ class TestWidgetHelpers(unittest.TestCase):
 
 
 class TestTopologySurfacing(unittest.TestCase):
-    # The worktree-flow recipe materializes gate hooks; without a verified
-    # binary doctor records a digest-mismatch ERROR and the hub would
-    # honestly exit 1 (D5). Build the real gate binary offline so the
-    # fixture is doctor-green and rc 0 is HONEST.
-    _GATE_LOCAL_BUILD_ENV = {"AI_SPECS_GATE_OFFLINE": "1", "AI_SPECS_GATE_BUILD": "1"}
-
     @classmethod
     def setUpClass(cls):
         cls._tmp = tempfile.TemporaryDirectory()
         cls.base = Path(cls._tmp.name)
         cls.home = _make_home(cls.base)
+        # Doctor self-tests the installed CLI when worktree-flow is enabled.
+        install_cli(cls.home)
 
     @classmethod
     def tearDownClass(cls):
@@ -900,19 +893,18 @@ class TestTopologySurfacing(unittest.TestCase):
         applied and a re-sync keeps the lock fresh, so rc 0 is HONEST.
         """
         self._write_wf_manifest(root, topology)
-        rc, _, err = _run_hub(root, self.home, self.base, "init", "--name", root.name,
-                              extra_env=self._GATE_LOCAL_BUILD_ENV)
+        rc, _, err = _run_hub(root, self.home, self.base, "init", "--name", root.name)
         self.assertEqual(rc, 0, err)
         if rewrite is not None:
             rewrite(root)
-        rc, _, err = _run_hub(root, self.home, self.base, "sync",
-                              extra_env=self._GATE_LOCAL_BUILD_ENV)
+        rc, _, err = _run_hub(root, self.home, self.base, "sync")
         self.assertEqual(rc, 0, err)
         return root
 
     def _topology_line(self, root: Path, home: Path) -> str:
         rc, out, err = _run_hub(root, home, self.base)
-        self.assertEqual(rc, 0, err)
+        self.assertEqual(rc, 0, out + err)
+        self.assertEqual(err, "")
         lines = [ln for ln in out.splitlines() if ln.strip().startswith("topology:")]
         self.assertEqual(len(lines), 1, out)
         return lines[0].strip()

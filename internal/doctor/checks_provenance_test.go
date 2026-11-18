@@ -57,6 +57,25 @@ func TestCheckGateProvenanceBaselineMatch(t *testing.T) {
 	assertChecks(t, d, []Check{})
 }
 
+func TestCheckGateProvenanceDeduplicatesRepeatedHookPaths(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	body := hookRecipeBody("myrecipe") + "\n[[provides.hooks]]\nid = \"my-hook-again\"\nevent = \"pre-tool-use\"\nscript = \"other/gate.sh\"\n"
+	writeFile(t, filepath.Join(home, "catalog", "recipes", "myrecipe", "recipe.toml"), body)
+	rel := "ai-specs/recipes/myrecipe/hooks/gate.sh"
+	writeFile(t, filepath.Join(root, filepath.FromSlash(rel)), "#!/bin/sh\nexit 0\n")
+	writeManifest(t, root, overrideManifest("myrecipe", ""))
+	writeFile(t, filepath.Join(root, "ai-specs", ".ai-specs.lock"),
+		"[managed.\""+rel+"\"]\nsha256 = \""+lock.Sha256Bytes([]byte("older bytes"))+"\"\n")
+
+	d := New(root, home)
+	d.checkGateProvenance()
+	assertChecks(t, d, []Check{
+		{WARN, "gate-provenance", rel + " is user-modified; sync will preserve it",
+			"rm " + rel + " && ai-specs sync (or ai-specs sync --refresh-gates)"},
+	})
+}
+
 func TestCheckGateProvenanceUserModified(t *testing.T) {
 	root := t.TempDir()
 	home := t.TempDir()

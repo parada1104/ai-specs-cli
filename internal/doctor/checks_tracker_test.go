@@ -42,17 +42,16 @@ func TestTrackerLedgerNotInPlay(t *testing.T) {
 	assertChecks(t, d, []Check{})
 }
 
-func TestTrackerLedgerNoVerifiedBinary(t *testing.T) {
+func TestTrackerLedgerMissingInstalledCLI(t *testing.T) {
 	root := t.TempDir()
 	writeOpenspecTrackingConfig(t, root)
-	t.Setenv("WORKTREE_GATE_BIN", "")
 
 	d := New(root, t.TempDir())
 	d.checkTrackerLedger()
 	assertChecks(t, d, []Check{
 		{ERROR, "tracker-ledger",
 			"ai-specs CLI is missing or not executable; the tracker ledger is failing open",
-			"run ai-specs sync"},
+			"reinstall ai-specs via install.sh"},
 	})
 }
 
@@ -90,7 +89,7 @@ func TestTrackerLedgerUnreadableVerdict(t *testing.T) {
 	assertChecks(t, d, []Check{
 		{ERROR, "tracker-ledger",
 			"tracker ledger verdict was not machine-readable; failing open",
-			"run ai-specs sync or ai-specs sync --refresh-gates"},
+			"run ai-specs upgrade"},
 	})
 }
 

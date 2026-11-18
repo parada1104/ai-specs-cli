@@ -632,6 +632,22 @@ class PlanBuildGateHookTests(unittest.TestCase):
 
     # --- ledger work-start checkpoint (5.3) ---
 
+    def test_old_cli_cannot_silently_skip_work_start(self):
+        self._seed_change()
+        self.stub.write_text("#!/usr/bin/env bash\necho \"ai-specs: unknown command 'worktree-gate'\" >&2\nexit 2\n")
+        event = self._event("Write", str(self.repo / "src" / "app.py"))
+        result = self._run(event, extra_env=self._ledger_env(decision="block"))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("too old", result.stderr)
+
+    def test_work_start_other_empty_failure_preserves_plan_gate(self):
+        self._seed_change()
+        self.stub.write_text('#!/usr/bin/env bash\necho "temporary failure" >&2\nexit 2\n')
+        event = self._event("Write", str(self.repo / "src" / "app.py"))
+        result = self._run(event, extra_env=self._ledger_env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+
     def test_work_start_grades_production_write(self):
         self._seed_change()
         event = self._event("Write", str(self.repo / "src" / "app.py"))

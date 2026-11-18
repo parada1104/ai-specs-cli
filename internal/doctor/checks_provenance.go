@@ -50,8 +50,13 @@ func (d *Doctor) checkGateProvenance() {
 		if err != nil {
 			continue
 		}
+		seen := make(map[string]bool)
 		for _, hook := range recipe.RuntimeHooks {
 			rel := "ai-specs/recipes/" + rid + "/hooks/" + filepath.Base(hook.Script)
+			if seen[rel] {
+				continue
+			}
+			seen[rel] = true
 			dest := filepath.Join(d.Root, filepath.FromSlash(rel))
 			if !isFile(dest) {
 				continue

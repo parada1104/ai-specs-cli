@@ -11,17 +11,20 @@
 set -euo pipefail
 
 stamped_repo_topology="__WORKTREE_REPO_TOPOLOGY__"
+# The retired override never runs: an unverified binary must not replace the
+# CLI's merge-proof and protected-branch checks.
 if [ -n "${WORKTREE_CLEANUP_BIN:-}" ]; then
-    if [ ! -x "$WORKTREE_CLEANUP_BIN" ]; then
-        echo "worktree-cleanup: WORKTREE_CLEANUP_BIN='$WORKTREE_CLEANUP_BIN' is not executable" >&2
-        exit 2
-    fi
-    exec "$WORKTREE_CLEANUP_BIN" --cleanup --topology "${TOPOLOGY:-$stamped_repo_topology}" "$@"
+    echo "worktree-cleanup: WORKTREE_CLEANUP_BIN is retired; ignoring it and running cleanup through the installed ai-specs CLI" >&2
 fi
 cli_bin="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"
 if [ ! -x "$cli_bin" ]; then
     echo "worktree-cleanup: no verified Go implementation available; no destructive action taken" >&2
     echo "worktree-cleanup: install or upgrade the ai-specs CLI (expected at $cli_bin)" >&2
+    exit 2
+fi
+if ! "$cli_bin" worktree-gate --version >/dev/null 2>&1; then
+    echo "worktree-cleanup: installed ai-specs CLI is too old (no worktree-gate verb); no destructive action taken" >&2
+    echo "worktree-cleanup: run 'ai-specs upgrade' (expected at $cli_bin)" >&2
     exit 2
 fi
 
