@@ -138,6 +138,7 @@ func TestDelegateArgvShape(t *testing.T) {
 		{"no extra appends the target", ActionDoctor, nil, "/p", []string{cli, "doctor", "/p"}},
 		{"extra goes before the target", ActionRecipe, []string{"add", "demo"}, "/p", []string{cli, "recipe", "add", "demo", "/p"}},
 		{"version carries no target", ActionVersion, nil, "", []string{cli, "version"}},
+		{"help carries no target", ActionHelp, nil, "/p", []string{cli, "help"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
