@@ -22,8 +22,8 @@ customized `worktree-cleanup.sh` override and run `ai-specs sync` to refresh it.
   assets, their checksum trust root, the standalone gate adapter, and
   `scripts/build-gate.sh` are retired. The launcher no longer uses the
   project-local pin or cached gate binary. `WORKTREE_GATE_BIN` remains available
-  for the write gate; cleanup refuses `WORKTREE_CLEANUP_BIN` overrides and
-  runs only through the installed CLI.
+  for the write gate; cleanup ignores a set `WORKTREE_CLEANUP_BIN` with a
+  warning and runs only through the installed CLI.
 
 ## [0.25.2] — 2026-11-16
 

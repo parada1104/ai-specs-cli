@@ -50,7 +50,8 @@ Then run `ai-specs sync`. The cleanup launcher materializes to
 `ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh` and invokes
 `worktree-gate --cleanup` through the installed CLI at
 `${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs`. Cleanup fails closed if the
-CLI cannot serve the gate and refuses `WORKTREE_CLEANUP_BIN` overrides.
+CLI cannot serve the gate; a set `WORKTREE_CLEANUP_BIN` is ignored with a
+warning.
 
 ## Worktree-gate modes
 
