@@ -7,17 +7,21 @@ Exit-code contract (parity contract §2, FROZEN):
 from __future__ import annotations
 
 import json
-import os
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
 from pathlib import Path
 
-import sys
-
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _blackbox import invoke, isolated_home, populate_catalog  # noqa: E402
+from _blackbox import (  # noqa: E402
+    CLIResult,
+    cache_project_dir,
+    invoke,
+    isolated_home,
+    populate_catalog,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -52,21 +56,18 @@ class RecipeConfigureTests(unittest.TestCase):
     def _configure(self, root: Path, *args: str):
         return invoke(root, "recipe", "configure", *args, cli_home=self.home)
 
-    def _configure_json(self, root: Path, *args: str) -> tuple[dict, object]:
+    def _configure_json(self, root: Path, *args: str) -> tuple[dict, CLIResult]:
         result = self._configure(root, *args, "--json")
         return json.loads(result.stdout), result
 
-    def _sync_fail_home(self) -> Path:
-        """A fresh install root whose cold cache is unwritable.
-
-        The sync's first write step (bundled skills + commands) must then fail,
-        deterministically, regardless of test order.
-        """
+    def _sync_fail_home(self, root: Path) -> Path:
+        """Let sync acquire its lock, then fail rebuilding the bundled cache."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         home = isolated_home(Path(tmp.name))
-        os.chmod(home / "cache", 0o500)
-        self.addCleanup(os.chmod, home / "cache", 0o755)
+        cache = cache_project_dir(root, home)
+        cache.mkdir(parents=True)
+        (cache / ".bundled").touch()  # A file prevents creating .bundled/skills.
         return home
 
     @staticmethod
@@ -185,15 +186,16 @@ class RecipeConfigureTests(unittest.TestCase):
     def test_sync_failure_is_partial_after_successful_write(self):
         tmp, root, manifest = self._project()
         self.addCleanup(tmp.cleanup)
-        home = self._sync_fail_home()
+        home = self._sync_fail_home(root)
         result = invoke(root, "recipe", "configure", "worktree-flow",
                         "--set", "integration_branch=dev", "--sync", "--json", cli_home=home)
         report = json.loads(result.stdout)
         self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr, "")
         self.assertEqual(report["status"], "partial")
         self.assertTrue(report["sync"]["ran"])
-        self.assertNotEqual(report["sync"]["exit_code"], 0)
-        self.assertTrue(report["sync"]["failed_step"])
+        self.assertEqual(report["sync"]["exit_code"], 1)
+        self.assertEqual(report["sync"]["failed_step"], "bundled skills + commands")
         self.assertFalse(report["sync"]["rolled_back"])
         self.assertFalse(report["sync"]["lock_stamped"])
         self.assertIn('integration_branch = "dev"', manifest.read_text())
@@ -206,7 +208,7 @@ class RecipeConfigureTests(unittest.TestCase):
     def test_unparsed_doctor_summary_is_not_zero(self):
         tmp, root, _manifest = self._project()
         self.addCleanup(tmp.cleanup)
-        home = self._sync_fail_home()
+        home = self._sync_fail_home(root)
         result = invoke(root, "recipe", "configure", "worktree-flow",
                         "--set", "integration_branch=dev", "--sync", "--json", cli_home=home)
         report = json.loads(result.stdout)

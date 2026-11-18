@@ -165,6 +165,9 @@ exit code stays FROZEN.
 | 2 | Uninitialized **and** non-TTY (bash pre-guard, never launches Python) |
 | 3 | `rich`/`questionary` unavailable and not installed |
 
+The interactive Help action runs `ai-specs help` without a project path:
+`help` treats a positional argument as a command topic, not a target.
+
 ### Cross-cutting
 
 - `2` — unknown flag or unexpected positional, in every shell wrapper.
@@ -772,8 +775,10 @@ with exit 1 for: an unknown agent in `[agents].enabled` (the remaining agents
 still sync, the run ends 1 without the success footer); `[agents].enabled` that
 is not a list; a manifest without a `[project]` table (checked before any
 write); `skills list` and `recipe list` on an unparseable manifest (`skills
-list` still prints every section). The `sync-agent-arg-contract` legacy goldens
-still record the old rc 0 for the unknown-agent step.
+list` still prints every section). In both gate modes, the
+`sync-agent-arg-contract` goldens pin exit 1 and the exact error summary
+`ERROR: 3 unknown agent(s) in the agent list; the others were synced.` for the
+unknown-agent step, with no success footer. The partial tree is unchanged.
 
 ### Non-symlink instructions refusal continues agent fan-out — TOLERANT (settled)
 
@@ -850,14 +855,22 @@ product changes, so for those four fixtures the frozen side is Go, not legacy
 with exit 2 instead of freezing native output over the legacy corpus (S7b,
 `118694e1`, PR #525). Regenerating the corpus is a human decision, never a
 script run.
-- Normalization registry (`tests/parity/parity.py:251-437`): N1-N6 are run
+- Install fixture modes: the parity harness stages the shipped install assets
+  in each scratch home as 0755 directories and 0644 regular files (0755 for
+  executables). Some sync steps copy asset modes, so using the live checkout
+  directly would leak its local permissions. Project snapshots still compare
+  actual output modes, including explicitly seeded fixture permissions.
+- Normalization registry (`tests/parity/parity.py`): N1-N6 are run
 artifacts and the frozen help-heredoc quirk; N7/N8 were removed as dead (S7b);
 N9 covers the `sync` clone-failure wrapper; **N10 (T7 cursor deny line) and N11
 (`add-dep`/`skills add` clone failure) are ACTIVE pending a corpus recapture
 decision** — measured in S7b, dropping them fails three fixtures in both gate
 modes, because the frozen bytes still carry the legacy shapes; **N12-gate-cache-size
 is PERMANENT**, never expires, because it normalizes the cached gate binary's
-byte total, which moves with every legitimate gate change.
+byte total, which moves with every legitimate gate change. **N13-version-stamps**
+  also normalizes the matching version in `doctor`'s successful `worktree-gate`
+  detail and its cache directory segment under `cache/bin/worktree-gate/`;
+  the rest of the path, check status and selftest result stay compared.
 - The other oracles are the same shape: `internal/*/testdata/*_golden.json`
 (frozen records captured once from the Python authority), `internal/cli/testdata/smoke_legacy.golden.json`
 (17 pre-flip launcher records) and `tests/fixtures/init-{brief,native}/` (T3d,
