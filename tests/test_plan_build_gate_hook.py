@@ -99,10 +99,16 @@ def _cli_home() -> Path:
     if _CLI_HOME is None:
         home = Path(tempfile.mkdtemp(prefix="ai-specs-cli-home-"))
         (home / "dist").mkdir(parents=True)
+        native = home / "dist" / "ai-specs-native"
         subprocess.run(
-            ["go", "build", "-o", str(home / "dist" / "ai-specs"), "./cmd/ai-specs"],
+            ["go", "build", "-o", str(native), "./cmd/ai-specs"],
             cwd=ROOT, check=True, capture_output=True, text=True,
         )
+        cli = home / "dist" / "ai-specs"
+        cli.write_text(
+            f'#!/usr/bin/env bash\nif [ "$1" = worktree-gate ]; then shift; exec "$STUB_GATE" "$@"; fi\nexec "{native}" "$@"\n'
+        )
+        cli.chmod(0o755)
         _CLI_HOME = home
     return _CLI_HOME
 
@@ -129,7 +135,7 @@ class PlanBuildGateHookTests(unittest.TestCase):
 
     def _ledger_env(self, *, decision: str = "allow") -> dict:
         return {
-            "WORKTREE_GATE_BIN": str(self.stub),
+            "STUB_GATE": str(self.stub),
             "STUB_LOG": str(self.stub_log),
             "STUB_DECISION": decision,
         }
@@ -560,7 +566,7 @@ class PlanBuildGateHookTests(unittest.TestCase):
         (Go exits nonzero) that no shell-side proof may recover from.
         """
         env = {
-            "WORKTREE_GATE_BIN": str(self.stub),
+            "STUB_GATE": str(self.stub),
             "STUB_LOG": str(self.stub_log),
             "STUB_TOPOLOGY": "" if empty else str(self.topology),
         }
@@ -715,7 +721,7 @@ class PlanBuildGateHookTests(unittest.TestCase):
     def test_work_start_fails_open_without_a_binary(self):
         self._seed_change()
         env = self._ledger_env(decision="block")
-        env.pop("WORKTREE_GATE_BIN")
+        env.pop("STUB_GATE", None)
         env["AI_SPECS_HOME"] = str(Path(self.tmp.name) / "cold-home")
         event = self._event("Write", str(self.repo / "src" / "app.py"))
         r = self._run(event, extra_env=env)

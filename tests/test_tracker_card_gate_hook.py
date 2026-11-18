@@ -72,10 +72,16 @@ def _git(cwd: Path, *args: str) -> None:
 def _build_cli(home: Path) -> None:
     """Build the native CLI this worktree ships into <home>/dist/ai-specs."""
     (home / "dist").mkdir(parents=True, exist_ok=True)
+    native = home / "dist" / "ai-specs-native"
     subprocess.run(
-        ["go", "build", "-o", str(home / "dist" / "ai-specs"), "./cmd/ai-specs"],
+        ["go", "build", "-o", str(native), "./cmd/ai-specs"],
         cwd=ROOT, check=True, capture_output=True, text=True,
     )
+    cli = home / "dist" / "ai-specs"
+    cli.write_text(
+        f'#!/usr/bin/env bash\nif [ "$1" = worktree-gate ]; then shift; exec "$STUB_GATE" "$@"; fi\nexec "{native}" "$@"\n'
+    )
+    cli.chmod(0o755)
 
 
 class TrackerCardGateHookTests(unittest.TestCase):
@@ -154,7 +160,7 @@ class TrackerCardGateHookTests(unittest.TestCase):
         for key in ("TRACKER_CARD_GATE_MODE", "TRACKER_LEDGER_MODE",
                     "TRACKER_CARD_GATE_PATHS", "AI_SPECS_HOME"):
             env.pop(key, None)
-        env["WORKTREE_GATE_BIN"] = str(self.stub)
+        env["STUB_GATE"] = str(self.stub)
         env["STUB_LOG"] = str(self.stub_log)
         env["STUB_DECISION"] = decision
         env["STUB_REASON"] = reason
@@ -423,7 +429,7 @@ class TrackerCardGateHookTests(unittest.TestCase):
 
     def test_missing_binary_fail_open(self):
         env = self._env(decision="block")
-        env.pop("WORKTREE_GATE_BIN", None)
+        env.pop("STUB_GATE", None)
         env["AI_SPECS_HOME"] = str(Path(self.tmp.name) / "cold-home")
         r = self._run(
             self._event("Edit", str(self.repo / "lib" / "foo.py")),
@@ -720,7 +726,7 @@ class TrackerCardGateHookTests(unittest.TestCase):
             for key in ("TRACKER_CARD_GATE_MODE", "TRACKER_LEDGER_MODE",
                         "TRACKER_CARD_GATE_PATHS", "AI_SPECS_HOME"):
                 env.pop(key, None)
-            env["WORKTREE_GATE_BIN"] = str(self.stub)
+            env["STUB_GATE"] = str(self.stub)
             env["STUB_LOG"] = str(self.stub_log)
             env["STUB_DECISION"] = "block"
             return subprocess.run(

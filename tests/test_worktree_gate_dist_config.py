@@ -91,8 +91,9 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         result = self._sync(proj)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         content = self._hook(proj).read_text()
-        self.assertIn('stamped_gate_impl="auto"', content)
-        self.assertIn('stamped_gate_version="0.21.0"', content)
+        self.assertIn('cli_bin="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"', content)
+        self.assertNotIn('stamped_gate_impl="', content)
+        self.assertNotIn('stamped_gate_version="', content)
         self.assertNotIn("__WORKTREE_GATE_IMPL__", content)
         self.assertNotIn("__WORKTREE_GATE_VERSION__", content)
 
@@ -118,9 +119,9 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         )
         result = self._sync(proj)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(
-            'stamped_gate_impl="go"', self._hook(proj).read_text()
-        )
+        content = self._hook(proj).read_text()
+        self.assertIn('worktree-gate --gate-mode', content)
+        self.assertNotIn('WORKTREE_GATE_BIN', content)
         self.assertFalse(
             self._legacy_hook(proj).exists(),
             "ordinary sync must not write LEGACY_HOOK_REL",
@@ -193,7 +194,8 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         self.assertIn("--gate-mode", content, "must be replaced by the launcher")
         self.assertNotIn("_resolve_gate_mode", content,
                          "mode resolution is Go-owned; the launcher must not resolve")
-        self.assertIn("stamped_gate_impl=", content, "launcher must carry gate_impl")
+        self.assertNotIn("_resolve_binary", content, "legacy binary resolution must be gone")
+        self.assertIn("/dist/ai-specs", content, "launcher must route through installed CLI")
 
     def test_launcher_forwards_the_raw_stamped_mode_to_go(self):
         # The launcher is transport only: env/stamp precedence and fallback are
