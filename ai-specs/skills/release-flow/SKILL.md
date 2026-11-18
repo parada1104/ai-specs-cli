@@ -98,8 +98,9 @@ everyone who crosses this version, oldest release first.
 ## [X.Y.Z] — YYYY-MM-DD
 
 ### Upgrade notes
-Run `ai-specs sync` in each project to acquire the verified Go worktree-gate
-binary. Until you do, the gate keeps falling back to the Bash implementation.
+Run `ai-specs sync` in each project to refresh the worktree-gate launcher so
+it uses the gate bundled in the CLI. The `WORKTREE_GATE_BIN` launcher override
+continues to work.
 ```
 
 Rules:
@@ -160,7 +161,7 @@ Promote development tip (includes VERSION X.Y.Z) to main for release.
 ## Test plan
 - [ ] Merge with merge commit (not squash)
 - [ ] Tag vX.Y.Z on main
-- [ ] Release workflow green and 4 gate assets attached
+- [ ] Release workflow green and the four CLI assets attached
 - [ ] gh release edit — title and notes
 
 EOF
@@ -192,18 +193,18 @@ test "$(git rev-list -n1 "vX.Y.Z")" = "$(git rev-parse origin/main)"
 ```
 
 **The tag push creates the release — you do not.** Pushing `v*` triggers
-`.github/workflows/release-binaries.yml`, which builds the four gate
-binaries, verifies them against the committed
-`catalog/recipes/worktree-flow/bin/SHA256SUMS`, and attaches them via
-`softprops/action-gh-release`. That action creates the GitHub Release for the
-tag, with an empty body and the bare tag as its title.
+`.github/workflows/release-binaries.yml`, which builds the four CLI binaries,
+verifies them against `bin/SHA256SUMS`, and attaches them via
+`softprops/action-gh-release`. The worktree gate ships inside the CLI and has
+no separate release assets or checksum trust root. That action creates the
+GitHub Release for the tag, with an empty body and the bare tag as its title.
 
 So `gh release create` **fails with "already exists"**. Wait for the workflow,
 then fill in the release:
 
 ```bash
 gh run watch <run-id> --exit-status          # 6 jobs, all must pass
-gh release view vX.Y.Z --json assets          # expect 4 worktree-gate-* assets
+gh release view vX.Y.Z --json assets          # expect the four ai-specs-* CLI assets
 
 gh release edit "vX.Y.Z" --title "vX.Y.Z — <short summary>" \
   --notes-file - <<'EOF'
@@ -223,12 +224,10 @@ gh api repos/parada1104/ai-specs-cli/releases/tags/vX.Y.Z \
   --jq '.assets[] | "\(.digest)  \(.name)"'
 ```
 
-Before tagging, reproduce the digests locally with the CANONICAL toolchain
-(`go1.24.13`): run `scripts/build-gate.sh`, then compare `shasum -a 256` of the
-four `dist/worktree-gate-<os>-<arch>` files against the committed `SHA256SUMS`.
-Exclude `dist/worktree-gate-current` — CI does not build it. A mismatch means
-the release workflow will fail and publish **no** assets, leaving every user on
-the Bash fallback.
+Before tagging, rebuild the CLI digests with the canonical toolchain and update
+`bin/SHA256SUMS` using `scripts/build-cli.sh`. Regenerate the release goldens
+that this version changes. The release workflow verifies the CLI sums; it does
+not build or publish separate worktree-gate assets.
 
 Installer default ref is `main` (`AI_SPECS_REF=main`). Point release notes at
 repo-root `install.sh`, not a nested path.

@@ -15,11 +15,8 @@
 //
 // Carve-out: go:embed structurally excludes nested Go modules, so the
 // worktree-gate source module (catalog/recipes/worktree-flow/gate, own
-// go.mod) is NOT embedded. Its runtime-read sibling
-// catalog/recipes/worktree-flow/bin/SHA256SUMS (the acquisition trust root)
-// IS embedded. The gate source is a build-time input for the opt-in
-// local-build path (AI_SPECS_GATE_BUILD=1, lib/_internal/gate_binary.py) and
-// stays on disk; the gate module is not restructured by this card.
+// go.mod) is NOT embedded. The source stays on disk; the CLI imports its
+// runner from the module through the Go workspace.
 //
 // User-vendored skill/dep content is NOT an asset and never lives here: it
 // stays on disk under the project's ai-specs/ tree (card [Go 11]).

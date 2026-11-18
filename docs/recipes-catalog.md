@@ -328,17 +328,14 @@ ones, and never touches the main worktree.
   and applies the proven-topology `gate_scope` policy — see
   [`docs/runtime-hooks.md`](runtime-hooks.md); capabilities
   `worktree-isolation`, `worktree-cleanup`.
-- **Gate implementation:** the gate ships as a single zero-dependency Go
-  binary. `gate_impl` selects acquisition policy: `auto` (default) or `go`
-  (explicit pin). Both acquire the verified binary; when none is usable the
+- **Gate implementation:** the gate ships inside the single zero-dependency
+  Go CLI. `gate_impl` accepts `auto` (default) or `go`; both use the CLI's
+  `worktree-gate` route. `ai-specs sync` materializes a thin bash-3.2 launcher
+  at the unchanged hook path. There are no separate gate release assets, cache
+  acquisitions, or checksum trust root. If the CLI route is unavailable, the
   launcher fails open with one stderr warning and `ai-specs doctor` reports
-  ERROR. `ai-specs sync` materializes a thin bash-3.2 launcher at the unchanged
-  hook path, acquires the binary into
-  `$AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/`,
-  verifies SHA-256 against the committed `SHA256SUMS` trust root before install,
-  and degrades with a warning on any failure — acquisition never fails sync.
-  `ai-specs doctor` reports the resolved implementation, version, and digest
-  state. `gate_impl = bash` is rejected at sync.
+  ERROR. `ai-specs doctor` reports the resolved implementation and version;
+  `gate_impl = bash` is rejected at sync.
 - **Gate provenance:** sync records a baseline of the exact bytes the CLI last
   rendered for the generated gate hook. A baseline match means unmodified and
   may be force-updated; a byte mismatch or missing baseline is preserved with a

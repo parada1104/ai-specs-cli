@@ -133,6 +133,7 @@ class WorktreeGateReleaseTests(unittest.TestCase):
             _sha256(native), _sha256(rebuilt),
             "worktree-gate-current must equal the native build output")
 
+    @unittest.skip("T7 retires separate worktree-gate release assets and their platform-build checks.")
     def test_darwin_arm64_asset_executes_on_apple_silicon(self):
         # Task 4.8 release gate: the CI-produced darwin/arm64 asset must run on
         # real Apple Silicon. Locally the CI artifact is byte-identical to
@@ -154,6 +155,7 @@ class WorktreeGateReleaseTests(unittest.TestCase):
         )
         self.assertEqual(ver.stdout.strip(), VERSION)
 
+    @unittest.skip("T7 retires separate worktree-gate release assets and their platform-build checks.")
     def test_build_is_reproducible(self):
         # Spec scenario "Repeated builds are byte-identical".
         assets = self._build()
@@ -173,6 +175,7 @@ class WorktreeGateReleaseTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(_sha256(target), _sha256(rebuild))
 
+    @unittest.skip("T7 retires the standalone worktree-gate checksum trust root.")
     def test_every_target_has_a_committed_digest_entry(self):
         # The trust root (bin/SHA256SUMS) must declare exactly the four
         # published targets. The CI workflow diffs its generated SHA256SUMS
@@ -185,6 +188,7 @@ class WorktreeGateReleaseTests(unittest.TestCase):
             with self.subTest(asset=name):
                 self.assertIn(name, sums, f"committed SHA256SUMS must list {name}")
 
+    @unittest.skip("T7 retires the standalone worktree-gate checksum trust root.")
     def test_committed_digests_match_locally_built_assets(self):
         # Task 4.9: the committed SHA256SUMS must match the published assets.
         # When the file carries real digests (release state), they MUST equal
@@ -208,6 +212,7 @@ class WorktreeGateReleaseTests(unittest.TestCase):
                     )
                 self.assertEqual(actual, committed)
 
+    @unittest.skip("T7 retires the standalone worktree-gate checksum trust root.")
     def test_ci_generated_sums_file_parses_and_matches_build(self):
         # The CI checksum job emits `sha256sum worktree-gate-* > SHA256SUMS`
         # from the built artifacts; that file must equal the committed digests.
@@ -226,6 +231,7 @@ class WorktreeGateReleaseTests(unittest.TestCase):
                     continue  # pre-release placeholder, covered by the other test
                 self.assertEqual(digest, committed_digest)
 
+    @unittest.skip("T7 retires the standalone worktree-gate checksum trust root.")
     def test_canonical_sums_comparison_ignores_header_and_order(self):
         # Regression (verify finding F8): the CI checksum gate must compare
         # the CANONICAL digest entries of the generated and committed
@@ -322,22 +328,11 @@ class WorktreeGateReleaseTests(unittest.TestCase):
             "local Go toolchain must match the release workflow pin; "
             "regenerate SHA256SUMS with the pinned toolchain")
 
-    def test_release_workflow_parity_job_runs_unittest_not_pytest(self):
-        # Release blocker regression: the parity CI job must run the
-        # repository's actual unittest-based parity test
-        # (tests/test_worktree_gate_parity.py) exactly like ./tests/run.sh.
-        # The previous `python3 -m pytest ...` relied on an undeclared
-        # pytest dependency and failed on the stock GitHub runner.
+    def test_release_workflow_defers_parity_corpus_to_t8(self):
         workflow = (ROOT / ".github" / "workflows" / "release-binaries.yml").read_text(
             encoding="utf-8")
-        parity_tail = workflow.split("parity:", 1)[1]
-        self.assertIn(
-            "python3 -m unittest", parity_tail,
-            "parity job must run the unittest runner")
-        self.assertIn("test_worktree_gate_parity.py", parity_tail)
-        self.assertNotIn(
-            "pytest", parity_tail,
-            "parity job must not depend on the undeclared pytest dependency")
+        self.assertNotIn("Parity corpus against Go gate", workflow)
+        self.assertTrue((ROOT / "tests" / "test_worktree_gate_parity.py").is_file())
 
 
 if __name__ == "__main__":
