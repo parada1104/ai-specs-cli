@@ -562,7 +562,7 @@ func hooksMatcherLiteral(h *mcpObj) string {
 	return hooksJSONDumpsCompact(v)
 }
 
-// hooksLoadJSONFile mirrors _load_json_file exactly:
+// hooksLoadJSONFile mirrors _load_json_file for the read-only resolved hooks input:
 //
 //   - a path that is not a regular file → {}
 //   - an unreadable file (OSError) → {}
@@ -665,11 +665,9 @@ func hooksObjOrNew(container *mcpObj, key string) *mcpObj {
 
 // --- Claude (direct, exit-code native) ---------------------------------------
 
-func hooksRenderClaude(h *mcpObj, nativeEvent, projectRoot string, _ io.Writer) error {
+func hooksRenderClaude(h *mcpObj, nativeEvent, projectRoot string, stderr io.Writer) error {
 	settingsPath := filepath.Join(projectRoot, ".claude", "settings.json")
-	// _load_json_file runs before _managed_id, so a bad settings file wins over
-	// a missing recipe/id.
-	settings, err := hooksLoadJSONFile(settingsPath)
+	settings, invalid, err := loadJSONTarget(settingsPath)
 	if err != nil {
 		return err
 	}
@@ -708,6 +706,9 @@ func hooksRenderClaude(h *mcpObj, nativeEvent, projectRoot string, _ io.Writer) 
 
 	hooks.set(nativeEvent, bucket)
 	settings.set("hooks", hooks)
+	if err := backupInvalidJSON(settingsPath, invalid, stderr); err != nil {
+		return err
+	}
 	return hooksWriteJSONFile(settingsPath, settings)
 }
 
@@ -786,7 +787,7 @@ func hooksRenderCursor(h *mcpObj, nativeEvent, projectRoot string, stderr io.Wri
 
 	// Reference the wrapper from .cursor/hooks.json under the native event.
 	hooksJSONPath := filepath.Join(projectRoot, ".cursor", "hooks.json")
-	cfg, err := hooksLoadJSONFile(hooksJSONPath)
+	cfg, invalid, err := loadJSONTarget(hooksJSONPath)
 	if err != nil {
 		return err
 	}
@@ -802,6 +803,9 @@ func hooksRenderCursor(h *mcpObj, nativeEvent, projectRoot string, stderr io.Wri
 	bucket = append(bucket, entry)
 	hooks.set(nativeEvent, bucket)
 	cfg.set("hooks", hooks)
+	if err := backupInvalidJSON(hooksJSONPath, invalid, stderr); err != nil {
+		return err
+	}
 	return hooksWriteJSONFile(hooksJSONPath, cfg)
 }
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -819,6 +820,30 @@ func TestHooksRenderDifferential(t *testing.T) {
 				t.Fatalf("frozen record stderr/dropped mismatch (traceback=%v)", tc.tracebackStderr)
 			}
 			goOut, goErr, goRC, goTree, goModes := runHooksGo(t, tc)
+
+			// S4 intentionally diverges from Python for invalid output targets.
+			var repaired string
+			switch tc.name {
+			case "claude existing settings invalid json", "claude settings invalid utf8":
+				repaired = ".claude/settings.json"
+				ref = frozenHooksRecord(t, golden, "claude existing settings invalid json")
+			case "cursor hooks.json invalid json", "cursor wrapper written then hooks json invalid utf8":
+				repaired = ".cursor/hooks.json"
+				ref = frozenHooksRecord(t, golden, "cursor hooks.json invalid json")
+			case "claude settings unreadable swallowed":
+				// Without the original bytes there is no safe recovery.
+				path := tc.unreadableRel
+				ref.RC = 1
+				ref.Stderr = hooksStr("error: open <TEMP>/" + path + ": permission denied\n")
+				ref.Tree[path] = base64.StdEncoding.EncodeToString([]byte(tc.files[path]))
+			}
+			if repaired != "" {
+				ref.Tree, ref.Modes = maps.Clone(ref.Tree), maps.Clone(ref.Modes)
+				ref.Tree[repaired+".bak"] = base64.StdEncoding.EncodeToString([]byte(tc.files[repaired]))
+				ref.Modes[repaired+".bak"] = 0o600
+				ref.Stderr = hooksStr(fmt.Sprintf("warning: invalid JSON in <TEMP>/%s; backed up to <TEMP>/%s.bak\n", repaired, repaired))
+				tc.tracebackStderr = false
+			}
 
 			if goOut != ref.Stdout {
 				t.Errorf("stdout differs\n--- go ---\n%q\n--- frozen ---\n%q", goOut, ref.Stdout)

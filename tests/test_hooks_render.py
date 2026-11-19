@@ -129,6 +129,41 @@ class _HookFixtureMixin(unittest.TestCase):
 
 
 class HooksRenderTests(_HookFixtureMixin):
+    def test_invalid_hook_and_mcp_json_backed_up_before_regeneration(self):
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("claude")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        manifest.write_text(manifest.read_text() + "\n[mcp.demo]\ncommand = 'echo'\n")
+        hook, mcp = ".claude/settings.json", ".mcp.json"
+        original = b'{\r\n  "user": true,\r\n}\r\n'
+        (self.root / hook).parent.mkdir()
+        for rel in (hook, mcp):
+            (self.root / rel).write_bytes(original)
+        result = self.sync()
+        self.assertTrue(result.stdout.endswith("\n✓ ai-specs sync complete\n"))
+        self.assertEqual(result.stderr, "".join(
+            f"warning: invalid JSON in <TEMP>/{rel}; backed up to <TEMP>/{rel}.bak\n"
+            for rel in (hook, mcp)
+        ))
+        for rel in (hook, mcp):
+            self.assertEqual((self.root / (rel + ".bak")).read_bytes(), original)
+        hooks = json.loads((self.root / hook).read_text())["hooks"]["PreToolUse"]
+        self.assertEqual([entry["_ai_specs_managed"] for entry in hooks],
+                         [f"ai-specs:hooks:{RECIPE_SHELL}:shell-gate"])
+        self.assertEqual(json.loads((self.root / mcp).read_text()),
+                         {"mcpServers": {"demo": {"command": "echo", "args": [], "env": {}}}})
+
+        manifest.write_text(manifest.read_text().split("[recipes.")[0])
+        edited = b'{ // keep this comment\n}\n'
+        (self.root / hook).write_bytes(edited)
+        result = self.sync()
+        self.assertTrue(result.stdout.endswith("\n✓ ai-specs sync complete\n"))
+        self.assertEqual(result.stderr, f"warning: invalid JSON in <TEMP>/{hook}; "
+                         f"backed up to <TEMP>/{hook}.bak.1\n")
+        self.assertEqual(json.loads((self.root / hook).read_text()), {})
+        self.assertEqual((self.root / (hook + ".bak")).read_bytes(), original)
+        self.assertEqual((self.root / (hook + ".bak.1")).read_bytes(), edited)
+
     def test_removed_recipe_prunes_all_wiring(self):
         self.seed_and_sync(RECIPE_SHELL, "shell-gate", "claude", "cursor",
                            "opencode", "pi", "omp")

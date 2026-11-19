@@ -70,8 +70,8 @@ func pruneFile(root, path string) (bool, error) {
 
 // Plan all runtimes, including ones not selected for this fan-out. Absence
 // of an agent alone is not a reason to remove its otherwise current wiring.
-func planRuntimeHookPrune(projectRoot, root string, hooks []any) (func() error, error) {
-	var apply []func() error
+func planRuntimeHookPrune(projectRoot, root string, hooks []any) (func(io.Writer) error, error) {
+	var apply []func(io.Writer) error
 	for _, target := range []struct{ agent, json, dir, ext, header string }{
 		{"claude", ".claude/settings.json", "", "", ""},
 		{"cursor", ".cursor/hooks.json", ".cursor/hooks", ".sh", hooksCursorHeader},
@@ -108,12 +108,12 @@ func planRuntimeHookPrune(projectRoot, root string, hooks []any) (func() error, 
 			return nil, err
 		}
 		if len(files) > 0 {
-			apply = append(apply, func() error { return applyHookShimPrune(projectRoot, root, files) })
+			apply = append(apply, func(io.Writer) error { return applyHookShimPrune(projectRoot, root, files) })
 		}
 	}
-	return func() error {
+	return func(stderr io.Writer) error {
 		for _, op := range apply {
-			if err := op(); err != nil {
+			if err := op(stderr); err != nil {
 				return err
 			}
 		}
@@ -121,7 +121,7 @@ func planRuntimeHookPrune(projectRoot, root string, hooks []any) (func() error, 
 	}, nil
 }
 
-func planHookBucketPrune(root, rel string, ids map[string]string) (func() error, error) {
+func planHookBucketPrune(root, rel string, ids map[string]string) (func(io.Writer) error, error) {
 	if rel == "" {
 		return nil, nil
 	}
@@ -129,20 +129,20 @@ func planHookBucketPrune(root, rel string, ids map[string]string) (func() error,
 	if _, err := pruneFile(root, path); err != nil {
 		return nil, err
 	}
-	return func() error { return applyHookBucketPrune(root, path, ids) }, nil
+	return func(stderr io.Writer) error { return applyHookBucketPrune(root, path, ids, stderr) }, nil
 }
 
-func applyHookBucketPrune(root, path string, ids map[string]string) error {
+func applyHookBucketPrune(root, path string, ids map[string]string, stderr io.Writer) error {
 	if exists, err := pruneFile(root, path); err != nil || !exists {
 		return err
 	}
 	// Materialization may have replaced this JSON file since preflight.
-	doc, err := hooksLoadJSONFile(path)
-	if err != nil { // Invalid JSON recovery belongs to the renderer.
-		return nil
+	doc, invalid, err := loadJSONTarget(path)
+	if err != nil {
+		return err
 	}
 	hooks := hooksObjOrNew(doc, "hooks")
-	changed := false
+	changed := invalid != nil
 	for _, event := range hooks.keys {
 		bucket := mcpAsList(hooks.vals[event])
 		keep := slices.DeleteFunc(bucket, func(raw any) bool {
@@ -157,6 +157,9 @@ func applyHookBucketPrune(root, path string, ids map[string]string) error {
 		}
 	}
 	if changed {
+		if err := backupInvalidJSON(path, invalid, stderr); err != nil {
+			return err
+		}
 		return hooksWriteJSONFile(path, doc)
 	}
 	return nil

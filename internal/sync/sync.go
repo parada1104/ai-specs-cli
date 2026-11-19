@@ -280,7 +280,7 @@ func (r *runner) run(opts options) int {
 	enabled, hooks, commands, inputErr := loadPruneInputs(root, r.home)
 	var applyRecipePrune func() error
 	var applyCommandPrune func(io.Writer) (map[string]bool, error)
-	applyRuntimePrunes := make([]func() error, len(paths))
+	applyRuntimePrunes := make([]func(io.Writer) error, len(paths))
 	// If the inputs are invalid, leave their diagnostics to materialization.
 	if inputErr == nil {
 		applyRecipePrune, err = planRecipeArtifactPrune(root, enabled, hooks)
@@ -466,7 +466,7 @@ func (r *runner) run(opts options) int {
 			verbose:        opts.verbose,
 		}
 		rc := r.runStep(label+" → "+target, func(out, errW io.Writer) int {
-			if err := applyRuntimePrunes[i](); err != nil {
+			if err := applyRuntimePrunes[i](errW); err != nil {
 				fmt.Fprintf(errW, "ERROR: cannot prune runtime hooks: %v\n", err)
 				return 1
 			}

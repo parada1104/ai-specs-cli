@@ -6,11 +6,8 @@ package sync
 // the sync-agent fan-out moves to Go in S15 (same treatment as S2's
 // gitignore-render.py); there is deliberately no GO_SYNC_STEP_* flag yet.
 //
-// The port mirrors the script's observable surface exactly: the merged
-// per-agent config bytes, stdout, stderr and exit code. Every Python quirk that
-// affects those bytes is reproduced rather than "fixed" (see the inline notes
-// on Python's `$`-anchor regex, dict first-position/last-value duplicate keys,
-// and str.splitlines() boundaries).
+// The port preserves the script's merge rules and output, except that invalid
+// JSON targets are backed up and reported before being regenerated.
 
 import (
 	"errors"
@@ -120,10 +117,8 @@ type mcpBigInt string
 // instead die with a fatal stack overflow (rc 2), losing the port's rc 1.
 const mcpJSONMaxDepth = 100000
 
-// errMCPJSONTooDeep is the fatal depth-overflow error. Unlike an ordinary JSON
-// syntax error it must NOT degrade to {} (nor be silently ignored for a
-// --recipe-mcp file): Python lets RecursionError escape uncaught, so it
-// propagates as `error: …` rc 1 with nothing written.
+// errMCPJSONTooDeep distinguishes depth overflow from a syntax error when the
+// caller decides whether read-only recipe and hook inputs may be ignored.
 var errMCPJSONTooDeep = errors.New("json: maximum recursion depth exceeded")
 
 // mcpParseJSONOrdered mirrors json.loads with its defaults: insertion-ordered
@@ -131,8 +126,7 @@ var errMCPJSONTooDeep = errors.New("json: maximum recursion depth exceeded")
 // integer literals (mcpBigInt when wider than int64), float64 otherwise, the
 // bare NaN / Infinity / -Infinity constants, and \uXXXX lone-surrogate escapes
 // kept verbatim (a valid surrogate pair still combines). Any structural error
-// (including trailing data or invalid UTF-8) is returned so the caller can
-// degrade to {}.
+// (including trailing data or invalid UTF-8) is returned to the caller.
 //
 // encoding/json cannot express the last two, so this is a hand-written
 // recursive-descent decoder. Python's json scanner accepts exactly the
@@ -1102,22 +1096,7 @@ func mcpSlimConfigForWrite(cfg *mcpObj) *mcpObj {
 // mcpMergeIntoJSON mirrors merge_into_json: preserve other top-level keys (and
 // their order) from the existing file, force $schema first for opencode, then
 // replace our mcp key.
-func mcpMergeIntoJSON(targetPath, mcpKey string, servers *mcpObj, agent string) (string, error) {
-	existing := newMCPObj()
-	if mcpIsFile(targetPath) {
-		text, err := mcpReadTextFile(targetPath)
-		if err != nil {
-			return "", err
-		}
-		if parsed, perr := mcpParseJSONOrdered([]byte(text)); perr == nil {
-			if obj, ok := parsed.(*mcpObj); ok {
-				existing = obj
-			}
-		} else if errors.Is(perr, errMCPJSONTooDeep) {
-			return "", perr
-		}
-	}
-
+func mcpMergeIntoJSON(existing *mcpObj, mcpKey string, servers *mcpObj, agent string) (string, error) {
 	if agent == "opencode" {
 		var schema any = "https://opencode.ai/config.json"
 		if v, ok := existing.get("$schema"); ok {
@@ -1234,10 +1213,7 @@ func mcpHasLoneSurrogate(s string) bool {
 	return false
 }
 
-// RenderMCPFile is the byte-exact port of mcp-render.py's main() body: it
-// returns the process exit code and writes the same stdout/stderr the script
-// would. It is a library entry point only; the Bash spine still execs the
-// script until S15.
+// RenderMCPFile renders one agent's MCP configuration and returns its exit code.
 func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOptions, stdout, stderr io.Writer) int {
 	if !mcpIsFile(tomlPath) {
 		fmt.Fprintf(stderr, "error: %s not found\n", tomlPath)
@@ -1275,10 +1251,15 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 	}
 
 	var content string
+	var invalid []byte
 	if mcpPathSuffix(targetPath) == ".toml" {
 		content, err = mcpMergeIntoTOML(targetPath, mcpKey, slimmed)
 	} else {
-		content, err = mcpMergeIntoJSON(targetPath, mcpKey, slimmed, agent)
+		var existing *mcpObj
+		existing, invalid, err = loadJSONTarget(targetPath)
+		if err == nil {
+			content, err = mcpMergeIntoJSON(existing, mcpKey, slimmed, agent)
+		}
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %s\n", err)
@@ -1322,6 +1303,10 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 		return 0
 	}
 
+	if err := backupInvalidJSON(targetPath, invalid, stderr); err != nil {
+		fmt.Fprintf(stderr, "error: %s\n", err)
+		return 1
+	}
 	if err := os.WriteFile(targetPath, []byte(content), 0o666); err != nil {
 		fmt.Fprintf(stderr, "error: %s\n", err)
 		return 1
