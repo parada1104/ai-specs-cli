@@ -25,6 +25,11 @@ customized `worktree-cleanup.sh` override and run `ai-specs sync` to refresh it.
   for the write gate; cleanup ignores a set `WORKTREE_CLEANUP_BIN` with a
   warning and runs only through the installed CLI.
 
+### Fixed
+- **`vault-canonical-store` sync vendors its kepano Obsidian skills again.** Upstream
+  moved them to `plugins/obsidian/skills/<id>`, so the recipe's dep paths follow and
+  sync stops failing with `SKILL.md not found`.
+
 ## [0.25.2] — 2026-11-16
 
 ### Fixed

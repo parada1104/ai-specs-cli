@@ -35,11 +35,11 @@ RECIPE_ID = "vault-canonical-store"
 KEPANO_FIXTURE = ROOT / "tests" / "fixtures" / "kepano-obsidian-skills"
 KEPANO_URL = "https://github.com/kepano/obsidian-skills.git"
 KEPANO_SKILLS = (
-    ("obsidian-markdown", "skills/obsidian-markdown"),
-    ("obsidian-bases", "skills/obsidian-bases"),
-    ("json-canvas", "skills/json-canvas"),
-    ("obsidian-cli", "skills/obsidian-cli"),
-    ("defuddle", "skills/defuddle"),
+    ("obsidian-markdown", "plugins/obsidian/skills/obsidian-markdown"),
+    ("obsidian-bases", "plugins/obsidian/skills/obsidian-bases"),
+    ("json-canvas", "plugins/obsidian/skills/json-canvas"),
+    ("obsidian-cli", "plugins/obsidian/skills/obsidian-cli"),
+    ("defuddle", "plugins/obsidian/skills/defuddle"),
 )
 SCRIPT_ARG = "ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh"
 
