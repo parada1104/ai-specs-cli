@@ -1451,7 +1451,7 @@ func mcpTOMLAppendBlock(outside, block string) string {
 // kept byte-for-byte. The outside content must parse with the project's TOML
 // parser so the server names it declares are read semantically, not by matching
 // text; when it does not, nothing is added or changed.
-func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj) (string, mcpMergePlan, error) {
+func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[string]bool, ownedNames []string) (string, mcpMergePlan, error) {
 	text := ""
 	if mcpIsFile(targetPath) {
 		raw, err := mcpReadTextFile(targetPath)
@@ -1464,6 +1464,20 @@ func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj) (string, mcpMe
 	block, err := mcpTOMLSplitBlock(text, targetPath, mcpKey)
 	if err != nil {
 		return "", mcpMergePlan{}, err
+	}
+	// A block is ours only around servers the lock records: a hand-moved marker
+	// makes the reconstruction check pass but must never gain ownership of a
+	// user table, so an unrecorded name inside the markers refuses the render.
+	if block.present {
+		unowned := []string{}
+		for _, name := range block.names {
+			if !owned[name] {
+				unowned = append(unowned, name)
+			}
+		}
+		if len(unowned) > 0 {
+			return "", mcpMergePlan{}, fmt.Errorf("%s: refusing to rewrite Codex MCP config: %s inside the managed MCP block is not recorded as ai-specs-managed; move it/them outside the block", targetPath, mcpQuotedNames(unowned))
+		}
 	}
 	outsideTable, err := toml.Parse([]byte(block.outside))
 	if err != nil {
@@ -1533,15 +1547,62 @@ func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj) (string, mcpMe
 // otherwise a quoted basic string (the json.dumps escapes are valid TOML), so a
 // name like `dev.server` stays one key instead of becoming a nested table.
 func mcpTOMLKey(name string) string {
-	for i := 0; i < len(name); i++ {
-		if b := name[i]; !(b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_' || b == '-') {
-			return mcpJSONString(name)
+	bare := name != ""
+	for i := 0; bare && i < len(name); i++ {
+		if !mcpTOMLBareKeyByte(name[i]) {
+			bare = false
 		}
 	}
-	if name == "" {
-		return mcpJSONString(name)
+	if bare {
+		return name
 	}
-	return name
+	// A quoted key is a TOML basic string: json.dumps uses UTF-16 surrogate
+	// pairs above U+FFFF, which TOML rejects, so those use the \U escape and a
+	// lone surrogate (not a scalar at all) is emitted as \uXXXX for the
+	// post-render parse to refuse.
+	var sb strings.Builder
+	sb.WriteByte('"')
+	for i := 0; i < len(name); {
+		r, size := mcpDecodeRune(name[i:])
+		switch {
+		case r == '"':
+			sb.WriteString(`\"`)
+		case r == '\\':
+			sb.WriteString(`\\`)
+		case r == '\b':
+			sb.WriteString(`\b`)
+		case r == '\t':
+			sb.WriteString(`\t`)
+		case r == '\n':
+			sb.WriteString(`\n`)
+		case r == '\f':
+			sb.WriteString(`\f`)
+		case r == '\r':
+			sb.WriteString(`\r`)
+		case r > 0xFFFF:
+			fmt.Fprintf(&sb, `\U%08x`, r)
+		case r < 0x20 || r == 0x7F || r > 0x7E || mcpIsSurrogate(r):
+			fmt.Fprintf(&sb, `\u%04x`, r)
+		default:
+			sb.WriteByte(byte(r))
+		}
+		i += size
+	}
+	sb.WriteByte('"')
+	return sb.String()
+}
+
+func mcpTOMLBareKeyByte(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_' || b == '-'
+}
+
+// mcpQuotedNames renders a name list for one refusal line.
+func mcpQuotedNames(names []string) string {
+	quoted := make([]string, len(names))
+	for i, name := range names {
+		quoted[i] = fmt.Sprintf("%q", name)
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // mcpTOMLRenderBlock renders the marker block around one table per managed
@@ -1685,7 +1746,7 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 	var invalid []byte
 	var plan mcpMergePlan
 	if mcpPathSuffix(targetPath) == ".toml" {
-		content, plan, err = mcpMergeIntoTOML(targetPath, mcpKey, slimmed)
+		content, plan, err = mcpMergeIntoTOML(targetPath, mcpKey, slimmed, owned, ownedNames)
 	} else {
 		var existing *mcpObj
 		existing, invalid, err = loadJSONTarget(targetPath)

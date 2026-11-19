@@ -640,3 +640,68 @@ func TestMCPOwnershipCodexDottedNameIsOneQuotedKey(t *testing.T) {
 		t.Errorf("dotted managed server is not one key at mcp_servers.dev.server: %v", servers.Keys())
 	}
 }
+
+// TestMCPOwnershipCodexBlockRequiresOwnershipRecord pins the ownership guard: a
+// block that wraps a server the lock does not record (a hand-moved end marker)
+// is refused with the file byte-identical, so a prune can never delete a server
+// that was never ours.
+func TestMCPOwnershipCodexBlockRequiresOwnershipRecord(t *testing.T) {
+	block := mcpTOMLBlockBegin + "\n[mcp_servers.same]\ncommand = \"managed\"\n\n" +
+		"[mcp_servers.user_owned]\ncommand = \"keep-user\"\n\n" + mcpTOMLBlockEnd + "\n"
+	dir := t.TempDir()
+	target := filepath.Join(dir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte(block), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// `same` is recorded, `user_owned` is not.
+	out, stderr, rc, _ := mcpRenderOwned(t, dir, mcpOwnershipManifestNone, "codex", target, "mcp_servers", []string{"same"})
+	if rc != 1 {
+		t.Fatalf("rc=%d want 1 (stdout %q stderr %q)", rc, out, stderr)
+	}
+	if !strings.Contains(stderr, `"user_owned"`) {
+		t.Errorf("refusal does not name the unowned server: %q", stderr)
+	}
+	if lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n"); len(lines) != 1 || !strings.HasPrefix(lines[0], "error: ") {
+		t.Errorf("stderr is not exactly one error line: %q", stderr)
+	}
+	if got := mcpReadTarget(t, target); got != block {
+		t.Errorf("refused rewrite modified the target: got %q want %q", got, block)
+	}
+
+	// A block with no record at all is refused the same way.
+	if _, stderr, rc, _ := mcpRenderOwned(t, dir, mcpOwnershipManifestNone, "codex", target, "mcp_servers", nil); rc != 1 || !strings.Contains(stderr, "not recorded") {
+		t.Errorf("no-record block: rc=%d stderr=%q", rc, stderr)
+	}
+}
+
+// TestMCPOwnershipCodexNonBMPNameRoundTrips pins the TOML quoting of a non-BMP
+// managed name: JSON surrogate-pair escapes are not valid TOML, so the key must
+// use a \\U code point escape (or raw UTF-8) and survive a re-parse.
+func TestMCPOwnershipCodexNonBMPNameRoundTrips(t *testing.T) {
+	name := "dev🙂"
+	manifest := "[project]\nname = 'own'\n\n[mcp.\"" + name + "\"]\ncommand = 'owned'\n"
+	dir := t.TempDir()
+	target := filepath.Join(dir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, rc, res := mcpRenderOwned(t, dir, manifest, "codex", target, "mcp_servers", nil)
+	if rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, stderr)
+	}
+	if got := mcpManagedNames(res); len(got) != 1 || got[0] != name {
+		t.Errorf("managed = %v, want [%s]", got, name)
+	}
+	text := mcpReadTarget(t, target)
+	parsed, err := toml.Parse([]byte(text))
+	if err != nil {
+		t.Fatalf("merged document does not parse: %v\n%s", err, text)
+	}
+	servers, _ := parsed.Table("mcp_servers")
+	if _, ok := servers.Table(name); !ok {
+		t.Errorf("non-BMP server not at mcp_servers.%s: %v\n%s", name, servers.Keys(), text)
+	}
+}

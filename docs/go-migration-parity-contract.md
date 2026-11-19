@@ -858,9 +858,16 @@ only those:
   — an example inside a user multi-line string, a begin marker moved above a
   user table — refuse the render: rc 1, one `error:` line, file byte-identical.
   A managed server name that is not a bare TOML key is written quoted
-  (`[mcp_servers."dev.server"]`), and after rendering every written name must
-  exist at `<mcp_key>.<name>` in the parsed result or the render refuses, so a
-  dotted name can never nest into a user server. The outside
+  (`[mcp_servers."dev.server"]`, with `\UXXXXXXXX` above U+FFFF so a non-BMP
+  name round-trips instead of becoming an invalid UTF-16 surrogate pair), and
+  after rendering every written name must exist at `<mcp_key>.<name>` in the
+  parsed result or the render refuses, so a dotted name can never nest into a
+  user server. Beyond proving the reconstruction, the block is ours only around
+  servers the lock records: any server inside the markers that is not in the
+  `[mcp."<target>"]` record (a hand-moved end marker wrapping a user table, or a
+  block with no record at all) refuses the render with one line naming the
+  unowned server(s) and telling the user to move them outside the block, leaving
+  the file and the lock byte-identical. The outside
   content must parse with `internal/toml.Parse` before anything is written, so
   the user's servers are read semantically: a manifest server whose name already
   exists outside is preserved with the collision warning and no table is emitted
