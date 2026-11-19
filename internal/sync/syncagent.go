@@ -742,6 +742,12 @@ func (a *agentRun) ensureTargetWorkspace(out, errW io.Writer) int {
 	}
 
 	targetAiSpecs := filepath.Join(a.targetPath, "ai-specs")
+	// Containment before the first write of the mirror (T6d): `sub-ai-specs`
+	// may be a symlink; the mirror must never land outside the target.
+	if err := projectWriteGuard(a.targetPath, targetAiSpecs, true); err != nil {
+		fmt.Fprintf(errW, "    ✗ %s\n", err)
+		return 1
+	}
 	// `mkdir -p "$TARGET_AI_SPECS"` runs bare at top level (set -e): the
 	// mkdir binary prints its coreutils shape — an occupied leaf is File
 	// exists — and the script dies rc 1 (measured RED probe P4).
@@ -756,10 +762,10 @@ func (a *agentRun) ensureTargetWorkspace(out, errW io.Writer) int {
 	}); rc != 0 {
 		return rc
 	}
-	if rc := mirrorDirectory(a.resolvedSkillsDir, filepath.Join(targetAiSpecs, "skills"), errW); rc != 0 {
+	if rc := mirrorDirectory(a.targetPath, a.resolvedSkillsDir, filepath.Join(targetAiSpecs, "skills"), errW); rc != 0 {
 		return rc
 	}
-	if rc := mirrorDirectory(a.mergedCommandsDir, filepath.Join(targetAiSpecs, "commands"), errW); rc != 0 {
+	if rc := mirrorDirectory(a.targetPath, a.mergedCommandsDir, filepath.Join(targetAiSpecs, "commands"), errW); rc != 0 {
 		return rc
 	}
 
@@ -956,18 +962,20 @@ func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 	}
 
 	// Runtime hooks: only when --resolved-hooks was passed AND the file
-	// exists (D22: standalone runs render no hooks). A render failure is
-	// swallowed by the shell's `if python3 ...; then echo ✓; fi`: no notice,
-	// no failure.
+	// exists (D22: standalone runs render no hooks). A render failure used to be
+	// swallowed by the shell's `if python3 ...; then echo ✓; fi`; a REFUSAL now
+	// fails the run (T6d): silently exiting 0 would report success after a write
+	// did not happen.
 	if hooksTarget, _ := platformGet(agent, "runtime_hooks_target"); hooksTarget != "" && a.resolvedHooks != "" && isRegularFilePath(a.resolvedHooks) {
 		shims := map[string]string{}
-		if renderHooksRecording(a.resolvedHooks, agent, a.targetPath, a.sourceRoot, errW, a.syncHookEvents, shims) == 0 {
-			if err := a.recordHookShims(shims); err != nil {
-				fmt.Fprintln(errW, err)
-				return 1
-			}
-			fmt.Fprintf(out, "    ✓ runtime hooks %s\n", hooksTarget)
+		if rc := renderHooksRecording(a.resolvedHooks, agent, a.targetPath, a.sourceRoot, errW, a.syncHookEvents, shims); rc != 0 {
+			return rc
 		}
+		if err := a.recordHookShims(shims); err != nil {
+			fmt.Fprintln(errW, err)
+			return 1
+		}
+		fmt.Fprintf(out, "    ✓ runtime hooks %s\n", hooksTarget)
 	}
 	return 0
 }
@@ -1521,7 +1529,13 @@ func mkdirPMirror(path string) error {
 // mirrorDirectory is mirror_directory (lib/sync-agent.sh:298-308). Its bare
 // `mkdir -p`/`rm -rf`/`cp -R` run at top level (set -e): failures print the
 // coreutils shape and die rc 1.
-func mirrorDirectory(src, dest string, errW io.Writer) int {
+func mirrorDirectory(root, src, dest string, errW io.Writer) int {
+	// The mirror REPLACES dest (rm -rf + mkdir + cp -R), so a leaf link is
+	// replaced unsafe-free; only the ancestors must stay inside the root (T6d).
+	if err := projectWriteGuard(root, dest, false); err != nil {
+		fmt.Fprintf(errW, "    ✗ %s\n", err)
+		return 1
+	}
 	if rc := removeTree(dest, errW); rc != 0 {
 		return rc
 	}

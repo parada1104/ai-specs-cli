@@ -1,75 +1,63 @@
 package sync
 
-// Write containment for agent destinations (T6c of sync-ownership).
-//
-// The agent preflight checks the LISTED destinations, but a write then follows
-// the destination leaf (`.pi/mcp.json` may be a symlink) or a generated child
-// (`.pi/extensions/<shim>.ts`, a file inside `.claude/commands/`). One guard
-// resolves where a write would ACTUALLY land — following an existing leaf
-// symlink and every ancestor — and refuses when that location is outside the
-// resolved main project root, or inside the protected `ai-specs/` / `.git/`
-// trees. Every agent-destination write and create in the sync package routes
-// through it.
+// Write containment for agent destinations (T6c), extended to the project tree
+// and the CLI caches (T6d). The mechanism lives in internal/projectcache
+// (ContainWrite/ResolveWriteTarget) so the sync package and projectcache share
+// one implementation; these wrappers pin the three policies.
 
 import (
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
-
-	shared "ai-specs.dev/worktree-gate/shared"
 
 	"ai-specs.dev/ai-specs/internal/projectcache"
 )
 
-// protectedTrees are never an agent-destination write target, even inside the
-// project: `ai-specs/` is the reconciled project tree and `.git/` the repository.
+// protectedTrees are never a valid agent destination, even inside the root:
+// `ai-specs/` is the reconciled project tree and `.git/` the repository.
 var protectedTrees = []string{"ai-specs", ".git"}
 
-// agentWriteGuard refuses a write whose resolved location leaves the project.
-// followLeaf follows an existing symlink at `path` itself (a real write through
-// it); false checks only the parent chain, for writes that REPLACE the leaf —
-// the agent skills and instruction links ai-specs owns.
-func agentWriteGuard(projectRoot, path string, followLeaf bool) error {
-	probe := path
-	if !followLeaf {
-		probe = filepath.Dir(path)
-	}
-	effective, err := resolveWriteTarget(probe)
-	if err != nil {
-		return fmt.Errorf("refuse to write %s: %v", path, err)
-	}
-	rootReal := projectcache.ResolvePath(projectRoot)
-	if !shared.TemplatePathContained(rootReal, effective) {
-		return fmt.Errorf("refuse to write %s: it resolves outside the project root (%s)", path, effective)
-	}
-	for _, tree := range protectedTrees {
-		if shared.TemplatePathContained(filepath.Join(rootReal, tree), effective) {
-			return fmt.Errorf("refuse to write %s: it resolves inside the protected %s/ tree (%s)", path, tree, effective)
-		}
-	}
-	return nil
+// agentWriteGuard contains an agent destination: a symlink that resolves inside
+// the project root is allowed, and the protected `ai-specs/` / `.git/` trees are
+// refused (agents never write there).
+func agentWriteGuard(root, path string, followLeaf bool) error {
+	return projectcache.ContainWrite(root, path, followLeaf, false, true)
 }
 
-// resolveWriteTarget reports where a write to path would land: an existing
-// symlink (leaf or ancestor) resolves to its target, and a not-yet-existing
-// tail is re-joined onto the deepest existing ancestor. A link that exists but
-// cannot be resolved — dangling or looping — is an error, never a guess.
-func resolveWriteTarget(path string) (string, error) {
-	cur := filepath.Clean(path)
-	var tail []string
-	for {
-		resolved, err := filepath.EvalSymlinks(cur)
-		if err == nil {
-			return filepath.Join(append([]string{resolved}, tail...)...), nil
-		}
-		if _, lerr := os.Lstat(cur); lerr == nil {
-			return "", err
-		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return filepath.Join(append([]string{cur}, tail...)...), nil
-		}
-		tail = append([]string{filepath.Base(cur)}, tail...)
-		cur = parent
+// projectWriteGuard contains a project-tree write or delete (the ai-specs
+// mirror, .gitignore and env scaffolding, AGENTS.md): links that resolve inside
+// the project root are allowed; `ai-specs/` is a legitimate destination.
+func projectWriteGuard(root, path string, followLeaf bool) error {
+	return projectcache.ContainWrite(root, path, followLeaf, false, false)
+}
+
+// homeWriteGuard contains a cache or lock path in the CLI home: any symlink
+// below that home refuses, because ai-specs owns those paths outright.
+func homeWriteGuard(root, path string, followLeaf bool) error {
+	return projectcache.ContainWrite(root, path, followLeaf, true, false)
+}
+
+// projectTreePreflight refuses the run before its first step when a
+// project-tree destination is redirected outside the project (T6d): the
+// scaffolding files the env step manages, the ai-specs/.gitignore, the brief,
+// and every fan-out target's ai-specs/ mirror. Paths come from the existing
+// helpers so the names live in one place.
+func projectTreePreflight(root string, targets []string, errW io.Writer) int {
+	paths := []string{
+		filepath.Join(root, "ai-specs", ".gitignore"),
+		filepath.Join(root, ".gitignore"),
+		harnessEnvExamplePath(root),
+		RootEnvRcPath(root),
+		filepath.Join(root, "AGENTS.md"),
 	}
+	for _, target := range targets {
+		paths = append(paths, filepath.Join(target, "ai-specs"))
+	}
+	for _, path := range paths {
+		if err := projectWriteGuard(root, path, true); err != nil {
+			fmt.Fprintf(errW, "    ✗ %s\n", err)
+			return 1
+		}
+	}
+	return 0
 }

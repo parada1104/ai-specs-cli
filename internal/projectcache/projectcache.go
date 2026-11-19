@@ -191,11 +191,22 @@ func CacheRoot(projectRoot, cliHome string) string {
 func EnsureCache(projectRoot, cliHome string) (string, error) {
 	root := ResolvePath(projectRoot)
 	cache := CacheRoot(root, cliHome)
+	// Containment (T6d): the cache tree is ai-specs-owned, so any symlink on the
+	// way in — the cache dir, a dangling meta.toml leaf — refuses instead of
+	// writing outside the CLI home. The root is the RESOLVED home CacheRoot used,
+	// because callers may pass an empty home and let the env decide.
+	home := AISpecsHome(cliHome)
+	if err := ContainWrite(home, cache, true, true, false); err != nil {
+		return "", fmt.Errorf("cache not writable at %s: %s", cache, err)
+	}
 	if err := os.MkdirAll(cache, 0o777); err != nil {
 		return "", fmt.Errorf("cache not writable at %s: %s", cache, err)
 	}
 
 	meta := filepath.Join(cache, "meta.toml")
+	if err := ContainWrite(home, meta, true, true, false); err != nil {
+		return "", fmt.Errorf("cache not writable at %s: %s", cache, err)
+	}
 	if info, err := os.Stat(meta); err != nil || !info.Mode().IsRegular() {
 		createdAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 		content := "project_root = \"" + root + "\"\n" +

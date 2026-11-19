@@ -151,6 +151,16 @@ func syncDepTarget(dep vendorDepSpec, projectRoot, cliHome string, inProject boo
 		depsRoot = projectcache.DepsSkillsRoot(projectRoot, cliHome)
 	}
 	targetDir := filepath.Join(depsRoot, dep.id, "skills", dep.id)
+	// Containment before the tree is deleted and repopulated (T6d): a symlinked
+	// `.deps` (cache) or `ai-specs/.deps` (in-project) must not delete or write
+	// outside its root.
+	if inProject {
+		if err := projectWriteGuard(projectRoot, targetDir, true); err != nil {
+			return "", err
+		}
+	} else if err := homeWriteGuard(cliHome, targetDir, true); err != nil {
+		return "", err
+	}
 
 	fmt.Fprintf(stdout, "  ▸ %s  ←  %s", dep.id, dep.source)
 	if dep.path != "" {

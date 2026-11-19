@@ -437,7 +437,7 @@ func TestMirrorDirectoryReadOnlySource(t *testing.T) {
 		})
 	})
 	var errOut bytes.Buffer
-	if rc := mirrorDirectory(src, dest, &errOut); rc != 0 {
+	if rc := mirrorDirectory(base, src, dest, &errOut); rc != 0 {
 		t.Fatalf("rc = %d, stderr=%s", rc, errOut.String())
 	}
 	data, err := os.ReadFile(filepath.Join(dest, "skill-a", "SKILL.md"))

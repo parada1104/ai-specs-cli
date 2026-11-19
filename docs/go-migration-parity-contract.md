@@ -337,6 +337,32 @@ old-launcher sync warning is added here.
   `.gitignore`/`.envrc` scaffolding, vendored/bundled caches, recipe artifacts
   and the mktemp capture files — none of them is an agent destination, and the
   `ai-specs/` refusal would reject the first two by design.
+- **Project-tree, cache and brief containment (T6d).** The same mechanism
+  (`internal/projectcache` `ContainWrite`/`ResolveWriteTarget`, used through
+  `projectWriteGuard` / `homeWriteGuard` in `internal/sync`) now covers the
+  sites the agent preflight cannot see:
+  - project tree — the subrepo `ai-specs/` mirror and its `skills/`+`commands/`
+    tree (`internal/sync/syncagent.go` `ensureTargetWorkspace`,
+    `mirrorDirectory`, including the `rm -rf` that precedes the copy), the
+    ai-specs and root `.gitignore` renders (`internal/sync/gitignore.go`), the
+    env scaffolding files and their `.bak` (`internal/sync/envscaffold.go`),
+    and the brief render (`internal/sync/agentsrender.go`, which now refuses
+    BEFORE creating a dangling outside target). `sync` also runs a
+    project-tree preflight over those destinations plus every fan-out target's
+    `ai-specs/` mirror before its first step, so a refusal is write-free.
+    Unlike an agent destination, `ai-specs/` is a legitimate target here; only
+    the resolved-root containment applies.
+  - CLI home — the per-project cache and its `meta.toml`
+    (`internal/projectcache` `EnsureCache`), the `sync.lock`
+    (`internal/sync/synclock_unix.go`), the `.deps` vendoring tree
+    (`internal/sync/vendorskills.go`, project-owned variant included) and the
+    `.bundled` caches (`internal/sync/refreshbundled.go`). These paths are
+    ai-specs-owned, so the strict rule applies: ANY symlink below the home —
+    a dangling leaf included — refuses instead of being created or written
+    through.
+  - A refused generated hook shim now fails the run (rc 1) instead of leaving
+    the shell's `if python3 ...; then echo ✓; fi` swallow in place: reporting
+    success after a write that did not happen is worse than the deviation.
 
 ---
 

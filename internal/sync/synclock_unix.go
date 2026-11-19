@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"ai-specs.dev/ai-specs/internal/projectcache"
-	"ai-specs.dev/worktree-gate/shared"
 )
 
 // These modes preserve existing cache permissions; polling bounds lock retry granularity.
@@ -24,7 +23,9 @@ const (
 func acquireSyncLock(root, home string) (func(), error) {
 	// CacheRoot resolves symlinks; check the lexical path before opening the lock.
 	home = projectcache.AISpecsHome(home)
-	if err := shared.EnsureTemplateAncestorsReal(home, filepath.Join(home, "cache", "projects", projectcache.CacheKey(root), "sync.lock")); err != nil {
+	// The lock is ai-specs-owned: any symlink on the way (a dangling leaf
+	// included) refuses instead of creating or writing outside the home (T6d).
+	if err := homeWriteGuard(home, filepath.Join(home, "cache", "projects", projectcache.CacheKey(root), "sync.lock"), true); err != nil {
 		return nil, err
 	}
 	cacheRoot := projectcache.CacheRoot(root, home)

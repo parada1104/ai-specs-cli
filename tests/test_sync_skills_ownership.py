@@ -309,6 +309,126 @@ class SyncSkillsOwnershipTests(unittest.TestCase):
         self.assertIn("    ✗ ", result.stderr)
         self.assertFalse((self.project / "ai-specs" / "claude").exists())
 
+    # ── T6d: project-tree, scaffold, cache and brief containment ────────
+
+    def test_symlinked_ai_specs_mirror_does_not_write_outside(self) -> None:
+        from _blackbox import snapshot
+
+        # The setUp fixture's real `.claude/skills` would refuse first; drop it so
+        # the run reaches the subrepo mirror.
+        shutil.rmtree(self.project / ".claude")
+        outside = self.base / "outside-aispecs"
+        (outside / "skills" / "mine").mkdir(parents=True)
+        user = outside / "skills" / "mine" / "SKILL.md"
+        user.write_text("# user owned\n", encoding="utf-8")
+        sub = self.project / "sub-a"
+        sub.mkdir()
+        (sub / "ai-specs").symlink_to(outside)
+        manifest = self.project / "ai-specs/ai-specs.toml"
+        manifest.write_text(
+            "[project]\nname = 't'\nsubrepos = ['sub-a']\n[agents]\nenabled = ['claude']\n",
+            encoding="utf-8",
+        )
+        outside_before = snapshot(outside)
+
+        result = self.sync()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(snapshot(outside), outside_before, "mirror wrote or deleted outside")
+
+    def test_symlinked_scaffolding_files_do_not_write_outside(self) -> None:
+        from _blackbox import snapshot
+
+        # Each scaffold file syncing writes or refreshes: the root .gitignore,
+        # ai-specs/.gitignore, the env rc file and the env example.
+        for rel in (".gitignore", "ai-specs/.gitignore", ".envrc", "ai-specs.env.example"):
+            with self.subTest(rel=rel):
+                project = self.base / ("scaffold-" + rel.replace("/", "-"))
+                for name in ("skills", "commands"):
+                    (project / "ai-specs" / name).mkdir(parents=True)
+                (project / "ai-specs/ai-specs.toml").write_text(
+                    "[project]\nname = 't'\n[agents]\nenabled = ['claude']\n", encoding="utf-8"
+                )
+                outside = self.base / ("outside-" + rel.replace("/", "-"))
+                outside.write_text("user owned\n", encoding="utf-8")
+                (project / rel).symlink_to(outside)
+                before = snapshot(project)
+
+                result = self.run_cli("sync", str(project))
+
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(outside.read_text(encoding="utf-8"), "user owned\n", f"{rel} written outside")
+                self.assertEqual(snapshot(project), before, f"{rel} refusal was not write-free")
+
+    def test_symlinked_cache_paths_do_not_write_or_delete_outside(self) -> None:
+        from _blackbox import cache_project_dir, snapshot
+
+        cache = cache_project_dir(self.project, self.home)
+        cases = (
+            (".bundled", "dir"),
+            ("sync.lock", "dangling"),
+            ("meta.toml", "dangling"),
+        )
+        for rel, kind in cases:
+            with self.subTest(rel=rel):
+                outside = self.base / ("outside-" + rel.replace(".", "-"))
+                if kind == "dir":
+                    outside.mkdir()
+                    (outside / "user.md").write_text("user owned\n", encoding="utf-8")
+                else:
+                    shutil.rmtree(cache, ignore_errors=True)
+                cache.mkdir(parents=True, exist_ok=True)
+                (cache / rel).symlink_to(outside)
+                before = snapshot(outside) if kind == "dir" else None
+
+                result = self.sync()
+                shutil.rmtree(cache, ignore_errors=True)
+
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                if kind == "dir":
+                    self.assertEqual(snapshot(outside), before, f"{rel} written or deleted outside")
+                else:
+                    self.assertFalse(outside.exists(), f"{rel} created an outside file")
+
+    def test_dangling_agents_md_symlink_does_not_create_outside_target(self) -> None:
+        # Reaches the brief render: drop the setUp real `.claude/skills` fixture.
+        shutil.rmtree(self.project / ".claude")
+        outside = self.base / "outside-brief.md"
+        (self.project / "AGENTS.md").symlink_to(outside)
+
+        result = self.sync()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertFalse(outside.exists(), "brief render created the outside target before refusing")
+
+    def test_outside_generated_shim_refusal_is_not_success(self) -> None:
+        from _blackbox import populate_catalog
+        from test_hooks_render import _hook_recipe_toml
+
+        recipe = populate_catalog(
+            self.home, "probe",
+            _hook_recipe_toml("probe", "check", "pre-tool-use", "Bash"),
+        )
+        (recipe / "hooks").mkdir()
+        (recipe / "hooks/gate.sh").write_text("#!/bin/sh\nexit 0\n")
+        (self.project / "ai-specs/ai-specs.toml").write_text(
+            "[project]\nname = 't'\n[agents]\nenabled = ['pi']\n"
+            "[recipes.probe]\nenabled = true\n"
+        )
+        outside = self.base / "user.ts"
+        original = b"// user content\n"
+        outside.write_bytes(original)
+        inner = self.project / "config/pi"
+        (inner / "extensions").mkdir(parents=True)
+        (self.project / ".pi").symlink_to("./config/pi")
+        (inner / "extensions/probe-check.ts").symlink_to(outside)
+
+        result = self.sync()
+
+        self.assertEqual(outside.read_bytes(), original)
+        self.assertIn("it resolves outside the project root", result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

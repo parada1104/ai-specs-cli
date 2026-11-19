@@ -274,6 +274,13 @@ func (r *runner) run(opts options) int {
 		}
 	}
 
+	// Project-tree containment preflight (T6d): a symlinked .gitignore, env rc
+	// file, env example, AGENTS.md or target ai-specs/ mirror is refused before
+	// the first step writes anything, so a refusal is write-free.
+	if rc := projectTreePreflight(root, paths, r.stderr); rc != 0 {
+		return rc
+	}
+
 	// Strangler flags a-c: GO_SYNC_STEP_GITIGNORE and GO_SYNC_STEP_GITIGNORE_ROOT
 	// selected the native Go gitignore renderers, GO_SYNC_STEP_AGENTS_RENDER the
 	// native brief-render-policy + agents-render pair. All of them are native

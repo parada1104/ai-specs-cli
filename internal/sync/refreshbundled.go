@@ -104,6 +104,11 @@ func bundledSkillHashes(skills map[string]map[string]any) map[string]map[string]
 // number of skill directories copied.
 func flattenBundledSkills(project, cliSource string) (int, error) {
 	dest := filepath.Join(projectcache.BundledSkillsRoot(project, cliSource), "skills")
+	// Containment (T6d): the bundled cache is ai-specs-owned; a symlinked
+	// `.bundled` refuses instead of deleting or filling a directory outside.
+	if err := homeWriteGuard(cliSource, dest, true); err != nil {
+		return 0, err
+	}
 	if _, err := os.Stat(dest); err == nil {
 		if err := projectcache.RemoveTreePy(dest); err != nil {
 			return 0, err
@@ -145,6 +150,9 @@ func flattenBundledSkills(project, cliSource string) (int, error) {
 // number of files copied.
 func flattenBundledCommands(project, cliSource string) (int, error) {
 	dest := projectcache.BundledCommandsRoot(project, cliSource)
+	if err := homeWriteGuard(cliSource, dest, true); err != nil {
+		return 0, err
+	}
 	if _, err := os.Stat(dest); err == nil {
 		if err := projectcache.RemoveTreePy(dest); err != nil {
 			return 0, err
