@@ -1463,3 +1463,149 @@ func TestManifestFatalPathContractPinned(t *testing.T) {
 		t.Errorf("no step work may happen: %q", out.String())
 	}
 }
+
+// ── T6 (S1): a real skills path is never removed ──────────────────────────
+
+// skillsRefusalLine is the one-line refusal for an occupied skills path.
+func skillsRefusalLine(path string) string {
+	return "    ✗ refuse to overwrite non-symlink: " + path +
+		" — move or delete it so ai-specs can create the symlink\n"
+}
+
+func mustSymlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRunBodyRefusesRealSkillsPath: parity contract §4 — a real directory (or
+// regular file) at `<agent>/skills` is a hard error. Nothing in it is touched,
+// and the refusal happens in preflight so no OTHER agent of the run is
+// written either. A symlink (correct, stale or dangling) keeps the relink.
+func TestRunBodyRefusesRealSkillsPath(t *testing.T) {
+	twoAgents := func(t *testing.T) *agentRun {
+		run := newAgentRun(t, t.TempDir())
+		run.enabledAgents = []string{"claude", "pi"}
+		manifest := "[project]\nname = 't'\n\n[agents]\nenabled = ['claude', 'pi']\n"
+		if err := os.WriteFile(run.tomlPath, []byte(manifest), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return run
+	}
+
+	t.Run("real directory", func(t *testing.T) {
+		run := twoAgents(t)
+		bad := filepath.Join(run.targetPath, ".claude", "skills")
+		userSkill := filepath.Join(bad, "mine", "SKILL.md")
+		if err := os.MkdirAll(filepath.Dir(userSkill), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(userSkill, []byte("# mine\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		var out, errOut bytes.Buffer
+		run.out, run.errW = &out, &errOut
+		if rc := run.runBody(); rc != 1 {
+			t.Fatalf("rc = %d, want 1; stdout=%q stderr=%q", rc, out.String(), errOut.String())
+		}
+		if got, err := os.ReadFile(userSkill); err != nil || string(got) != "# mine\n" {
+			t.Errorf("user skill changed: %q (%v)", got, err)
+		}
+		if info, err := os.Lstat(bad); err != nil || info.Mode()&os.ModeSymlink != 0 {
+			t.Errorf("skills path was replaced: info=%v err=%v", info, err)
+		}
+		if errOut.String() != skillsRefusalLine(bad) {
+			t.Errorf("stderr = %q, want %q", errOut.String(), skillsRefusalLine(bad))
+		}
+		// Preflight: the other agent of the run stays untouched.
+		if _, err := os.Lstat(filepath.Join(run.targetPath, ".pi", "skills")); !os.IsNotExist(err) {
+			t.Errorf(".pi/skills was written despite the refusal (err=%v)", err)
+		}
+		if _, err := os.Lstat(filepath.Join(run.targetPath, "CLAUDE.md")); !os.IsNotExist(err) {
+			t.Errorf("CLAUDE.md was written despite the refusal (err=%v)", err)
+		}
+		if _, err := os.Lstat(filepath.Join(run.targetPath, ".claude", "commands")); !os.IsNotExist(err) {
+			t.Errorf(".claude/commands was written despite the refusal (err=%v)", err)
+		}
+	})
+
+	t.Run("regular file", func(t *testing.T) {
+		run := twoAgents(t)
+		bad := filepath.Join(run.targetPath, ".pi", "skills")
+		if err := os.MkdirAll(filepath.Dir(bad), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(bad, []byte("not a symlink\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		var out, errOut bytes.Buffer
+		run.out, run.errW = &out, &errOut
+		if rc := run.runBody(); rc != 1 {
+			t.Fatalf("rc = %d, want 1; stdout=%q stderr=%q", rc, out.String(), errOut.String())
+		}
+		if got, err := os.ReadFile(bad); err != nil || string(got) != "not a symlink\n" {
+			t.Errorf("file at skills path changed: %q (%v)", got, err)
+		}
+		if errOut.String() != skillsRefusalLine(bad) {
+			t.Errorf("stderr = %q, want %q", errOut.String(), skillsRefusalLine(bad))
+		}
+	})
+
+	t.Run("stale symlink is relinked", func(t *testing.T) {
+		run := newAgentRun(t, t.TempDir())
+		stale := filepath.Join(run.targetPath, "old-skills")
+		if err := os.MkdirAll(stale, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(run.targetPath, ".claude", "skills")
+		mustSymlink(t, stale, link)
+
+		var out, errOut bytes.Buffer
+		if rc := run.syncOneAgent("claude", &out, &errOut); rc != 0 {
+			t.Fatalf("rc = %d, want 0; stderr=%q", rc, errOut.String())
+		}
+		got, err := os.Readlink(link)
+		if err != nil || got != projectcache.ResolvePath(run.skillsSource) {
+			t.Errorf("skills link = %q (%v), want %q", got, err, projectcache.ResolvePath(run.skillsSource))
+		}
+	})
+
+	t.Run("dangling symlink is relinked", func(t *testing.T) {
+		run := newAgentRun(t, t.TempDir())
+		link := filepath.Join(run.targetPath, ".claude", "skills")
+		mustSymlink(t, filepath.Join(run.targetPath, "does-not-exist"), link)
+
+		var out, errOut bytes.Buffer
+		if rc := run.syncOneAgent("claude", &out, &errOut); rc != 0 {
+			t.Fatalf("rc = %d, want 0; stderr=%q", rc, errOut.String())
+		}
+		got, err := os.Readlink(link)
+		if err != nil || got != projectcache.ResolvePath(run.skillsSource) {
+			t.Errorf("skills link = %q (%v), want %q", got, err, projectcache.ResolvePath(run.skillsSource))
+		}
+	})
+
+	t.Run("correct symlink is a no-op", func(t *testing.T) {
+		run := newAgentRun(t, t.TempDir())
+		link := filepath.Join(run.targetPath, ".claude", "skills")
+		want := projectcache.ResolvePath(run.skillsSource)
+		mustSymlink(t, want, link)
+
+		var out, errOut bytes.Buffer
+		if rc := run.syncOneAgent("claude", &out, &errOut); rc != 0 {
+			t.Fatalf("rc = %d, want 0; stderr=%q", rc, errOut.String())
+		}
+		if got, _ := os.Readlink(link); got != want {
+			t.Errorf("skills link = %q, want %q", got, want)
+		}
+		if !strings.Contains(out.String(), "    · symlink ok      "+link+" → "+want+"\n") {
+			t.Errorf("stdout missing the idempotent line:\n%s", out.String())
+		}
+	})
+}

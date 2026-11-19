@@ -549,6 +549,15 @@ func (a *agentRun) runBody() int {
 		targets = a.enabledAgents
 	}
 
+	// Skills ownership preflight (S1, parity contract §4): a real directory or
+	// file where an agent's skills symlink belongs is a hard error, never
+	// removed. Checked for every agent of this run BEFORE any target write, so
+	// a refusal leaves the whole run unmodified instead of syncing some agents
+	// and then stopping.
+	if rc := a.preflightSkillsPaths(targets); rc != 0 {
+		return rc
+	}
+
 	// D24 (lib/sync-agent.sh:403-410): ensure the target workspace BEFORE
 	// reporting success, so a subrepo still receives its artifacts and a root
 	// workspace missing AGENTS.md fails instead of exiting 0.
@@ -759,6 +768,29 @@ func (a *agentRun) ensureTargetWorkspace(out, errW io.Writer) int {
 	return 0
 }
 
+// preflightSkillsPaths refuses the run when a selected agent's skills path is
+// occupied by anything that is not a symlink. Nothing in that path is touched,
+// and no target write of this run has happened yet (S1).
+func (a *agentRun) preflightSkillsPaths(targets []string) int {
+	for _, agent := range targets {
+		if _, ok := platformGet(agent, "native"); !ok {
+			continue // counted by the per-agent loop
+		}
+		skillsDir, _ := platformGet(agent, "skills_dir")
+		if skillsDir == "" {
+			continue
+		}
+		path := filepath.Join(a.targetPath, skillsDir)
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			continue // absent, or a symlink (correct, stale or dangling)
+		}
+		fmt.Fprintf(a.errW, "    ✗ refuse to overwrite non-symlink: %s — move or delete it so ai-specs can create the symlink\n", path)
+		return 1
+	}
+	return 0
+}
+
 // syncOneAgent is lib/sync-agent.sh:448-542.
 func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 	if _, ok := platformGet(agent, "native"); !ok {
@@ -790,17 +822,12 @@ func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 		}
 	}
 
-	// Skills: an ABSOLUTE symlink to the cache-backed resolved skills; a real
-	// directory from a legacy install is replaced (lib/sync-agent.sh:476-481).
+	// Skills: an ABSOLUTE symlink to the cache-backed resolved skills. A real
+	// directory or file here is refused (never overwritten, parity contract
+	// §4), already caught by the preflight; only a symlink reaches this point,
+	// where writeSymlinkWithRefusal relinks a stale or dangling one in place.
 	if skillsDir, _ := platformGet(agent, "skills_dir"); skillsDir != "" {
 		skillsLink := filepath.Join(a.targetPath, skillsDir)
-		if _, err := os.Stat(skillsLink); err == nil {
-			if info, lerr := os.Lstat(skillsLink); lerr == nil && info.Mode()&os.ModeSymlink == 0 {
-				if rc := removeTree(skillsLink, errW); rc != 0 {
-					return rc
-				}
-			}
-		}
 		if rc := makeSkillsSymlink(a.skillsSource, skillsLink, out, errW); rc != 0 {
 			return rc
 		}

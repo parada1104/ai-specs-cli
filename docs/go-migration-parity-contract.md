@@ -271,6 +271,14 @@ old-launcher sync warning is added here.
 - Skills dirs (`.claude/skills`, `.cursor/skills`, …) → **absolute** symlink.
 - A real file where a symlink belongs is a **hard error**, never overwritten:
   `    ✗ refuse to overwrite non-symlink: <path>`.
+- A **real directory** at a skills path (`.claude/skills`, `.pi/skills`, …) is
+  the same hard error, never removed. Since T6 of `sync-ownership`, the legacy
+  `rm -rf` of a real skills dir is gone: `sync`/`sync-agent` refuses it in
+  preflight, before any target write of that run, with one line naming the path
+  and its resolution —
+  `    ✗ refuse to overwrite non-symlink: <path> — move or delete it so ai-specs can create the symlink`
+  — and exit 1; the directory and its contents are untouched. A symlink there
+  (correct, stale or dangling) keeps the relink behavior.
 
 ---
 
