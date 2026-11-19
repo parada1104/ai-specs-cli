@@ -59,6 +59,19 @@ func SetMCPOwnership(lock *Lock, target string, servers map[string]string, notic
 	lock.MCP[target] = entry
 }
 
+// SetMCPBlockHash records the sha256 of the exact managed-block bytes ai-specs
+// last wrote for a target; an empty hash drops the entry.
+func SetMCPBlockHash(lock *Lock, target, sha string) {
+	if lock.MCPBlock == nil {
+		lock.MCPBlock = map[string]string{}
+	}
+	if sha == "" {
+		delete(lock.MCPBlock, target)
+		return
+	}
+	lock.MCPBlock[target] = sha
+}
+
 // SetRecipeSkillHashes is set_recipe_skill_hashes: recipes.setdefault(
 // recipe_id, {})[skill_name] = dict(hashes). The hashes map is copied.
 func SetRecipeSkillHashes(lock *Lock, recipeID, skillName string, hashes map[string]string) {

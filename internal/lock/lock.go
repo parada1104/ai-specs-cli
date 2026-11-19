@@ -66,19 +66,24 @@ type Lock struct {
 	// relative config path → server name → hash of the rendered entry. Only a
 	// recorded server may be replaced or removed by sync.
 	MCP map[string]map[string]any
+	// MCPBlock is the sha256 of the exact managed-block bytes ai-specs last
+	// wrote for a target (project relative config path → hex). Any difference
+	// means the user edited ai-specs' block, which sync refuses to rewrite.
+	MCPBlock map[string]string
 }
 
 // NewLock returns a Lock with all six maps initialized empty (the shape
 // load_lock returns for a missing file).
 func NewLock() *Lock {
 	return &Lock{
-		Skills:  map[string]map[string]any{},
-		Meta:    map[string]string{},
-		Recipes: map[string]map[string]map[string]any{},
-		Deps:    map[string]map[string]map[string]any{},
-		Agents:  map[string]map[string]any{},
-		Managed: map[string]map[string]any{},
-		MCP:     map[string]map[string]any{},
+		Skills:   map[string]map[string]any{},
+		Meta:     map[string]string{},
+		Recipes:  map[string]map[string]map[string]any{},
+		Deps:     map[string]map[string]map[string]any{},
+		Agents:   map[string]map[string]any{},
+		Managed:  map[string]map[string]any{},
+		MCP:      map[string]map[string]any{},
+		MCPBlock: map[string]string{},
 	}
 }
 
@@ -178,6 +183,19 @@ func LoadLock(lockPath string) (*Lock, error) {
 	copyVerbatimDicts(root, "skills", lock.Skills)
 	copyVerbatimDicts(root, "agents", lock.Agents)
 	copyVerbatimDicts(root, "mcp", lock.MCP)
+	if blocks, ok := root.Table("mcp-block"); ok {
+		for _, target := range blocks.Keys() {
+			entry, ok := blocks.Table(target)
+			if !ok {
+				continue
+			}
+			if sha, ok := entry.String("sha256"); ok {
+				if trimmed := strings.TrimSpace(sha); trimmed != "" {
+					lock.MCPBlock[target] = trimmed
+				}
+			}
+		}
+	}
 
 	// recipes and deps: _load_skill_groups normalization.
 	lock.Recipes = loadSkillGroups(root, "recipes")
@@ -580,6 +598,10 @@ func refuseControlChars(lockPath string, lock *Lock) error {
 			appendCheck("mcp hash", s)
 		}
 	}
+	for _, target := range sortedKeys(lock.MCPBlock) {
+		appendCheck("mcp block target", target)
+		appendCheck("mcp block sha256", lock.MCPBlock[target])
+	}
 	depIDs := make([]string, 0, len(lock.Deps))
 	for depID := range lock.Deps {
 		depIDs = append(depIDs, depID)
@@ -669,6 +691,12 @@ func renderLock(lock *Lock) (string, error) {
 				lines = append(lines, key+" = "+TOMLString(value))
 			}
 		}
+		lines = append(lines, "")
+	}
+
+	for _, target := range sortedKeys(lock.MCPBlock) {
+		lines = append(lines, "[mcp-block."+TOMLString(target)+"]")
+		lines = append(lines, "sha256 = "+TOMLString(lock.MCPBlock[target]))
 		lines = append(lines, "")
 	}
 

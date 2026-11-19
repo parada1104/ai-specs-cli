@@ -48,6 +48,13 @@ HOOK_SCRIPT_REL = "hooks/gate.sh"
 HOOK_SCRIPT_BODY = "#!/usr/bin/env bash\n# launcher marker\nexit 0\n"
 
 
+def mcp_record_bytes(raw: bytes):
+    import tomllib
+
+    data = tomllib.loads(raw.decode())
+    return data.get("mcp", {}), data.get("mcp-block", {})
+
+
 def _make_home(base: Path) -> Path:
     """Isolated CLI install root.
 
@@ -501,6 +508,42 @@ class HooksRenderTests(_HookFixtureMixin):
         result = invoke(self.root, "sync", cli_home=self.home)
         if result.returncode == 1:
             self.assertEqual(target.read_bytes(), moved)
+        else:
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(note, target.read_bytes())
+
+    def test_codex_prune_does_not_delete_inline_user_comment(self):
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("codex")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        base = manifest.read_text()
+        manifest.write_text(base + '\n[mcp.same]\ncommand = "managed"\n')
+        self.sync()
+
+        target = self.root / ".codex/config.toml"
+        lock = self.root / "ai-specs/.ai-specs.lock"
+        note = b"# User note: keep this explanation."
+        annotated = target.read_bytes().replace(
+            b"[mcp_servers.same]\n", b"[mcp_servers.same] " + note + b"\n", 1
+        )
+        self.assertIn(note, annotated)
+        target.write_bytes(annotated)
+        original_lock = lock.read_bytes()
+        manifest.write_text(base)
+
+        result = invoke(self.root, "sync", cli_home=self.home)
+        if result.returncode == 1:
+            self.assertEqual(target.read_bytes(), annotated)
+            # The AGENTS.md brief baseline is legitimately restamped for the
+            # changed manifest, so compare the MCP ownership record, which is the
+            # state this refusal must leave untouched.
+            import tomllib
+
+            def mcp_record(path):
+                data = tomllib.loads(path.read_text())
+                return data.get("mcp", {}), data.get("mcp-block", {})
+
+            self.assertEqual(mcp_record(lock), mcp_record_bytes(original_lock))
         else:
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(note, target.read_bytes())

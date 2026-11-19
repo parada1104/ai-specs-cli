@@ -74,19 +74,20 @@ var mcpOwnershipAgents = []mcpOwnershipAgent{
 // mcpRenderOwned runs one render with the recorded ownership and returns the
 // stdout, stderr, rc and ownership outcome. owned nil models "no record entry
 // yet" (so the upgrade notice applies); a non-nil slice models a record.
-func mcpRenderOwned(t *testing.T, dir, manifest, agent, target, key string, owned []string) (string, string, int, MCPResult) {
+func mcpRenderOwned(t *testing.T, dir, manifest, agent, target, key string, owned []string, blockSHA ...string) (string, string, int, MCPResult) {
 	t.Helper()
 	manifestPath := filepath.Join(dir, "ai-specs.toml")
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
-	var out, errBuf bytes.Buffer
+	opts := RenderMCPOptions{Owned: owned, Recorded: owned != nil}
+	if len(blockSHA) > 0 {
+		opts.BlockSHA = blockSHA[0]
+	}
 	res := MCPResult{}
-	rc := RenderMCPFile(manifestPath, agent, target, key, RenderMCPOptions{
-		Owned:    owned,
-		Recorded: owned != nil,
-		Result:   &res,
-	}, &out, &errBuf)
+	opts.Result = &res
+	var out, errBuf bytes.Buffer
+	rc := RenderMCPFile(manifestPath, agent, target, key, opts, &out, &errBuf)
 	return out.String(), errBuf.String(), rc, res
 }
 
@@ -735,5 +736,90 @@ func TestMCPOwnershipCodexBlockCommentRefuses(t *testing.T) {
 	}
 	if got := mcpReadTarget(t, target); got != block {
 		t.Errorf("refused rewrite modified the target: got %q want %q", got, block)
+	}
+}
+
+// TestMCPOwnershipCodexEditedBlockRefuses pins the block-hash guard: once the
+// lock records the exact block bytes ai-specs wrote, any hand edit inside them —
+// an edited value, an inline comment on a generated line — refuses the render
+// with the target byte-identical instead of overwriting the user's change.
+func TestMCPOwnershipCodexEditedBlockRefuses(t *testing.T) {
+	for _, tc := range []struct{ name, edit string }{
+		{"edited value", "managed-edit"},
+		{"inline comment on a generated line", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(dir, ".codex", "config.toml")
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			_, _, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifestSame, "codex", target, "mcp_servers", nil)
+			if rc != 0 || res.BlockSHA == "" {
+				t.Fatalf("first render rc=%d blockSHA=%q", rc, res.BlockSHA)
+			}
+			written := mcpReadTarget(t, target)
+			edited := strings.Replace(written, `command = "manifest-cmd"`, `command = "`+tc.edit+`"`, 1)
+			if tc.edit == "" {
+				edited = strings.Replace(written, "[mcp_servers.same]\n", "[mcp_servers.same] # mine\n", 1)
+			}
+			if edited == written {
+				t.Fatalf("fixture did not change: %q", written)
+			}
+			if err := os.WriteFile(target, []byte(edited), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, stderr, rc, _ := mcpRenderOwned(t, dir, mcpOwnershipManifestSame, "codex", target, "mcp_servers", []string{"same"}, res.BlockSHA)
+			if rc != 1 {
+				t.Fatalf("rc=%d want 1 (stdout %q stderr %q)", rc, out, stderr)
+			}
+			if !strings.Contains(stderr, "edited by hand") {
+				t.Errorf("refusal does not explain the edit: %q", stderr)
+			}
+			if lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n"); len(lines) != 1 || !strings.HasPrefix(lines[0], "error: ") {
+				t.Errorf("stderr is not exactly one error line: %q", stderr)
+			}
+			if got := mcpReadTarget(t, target); got != edited {
+				t.Errorf("refused rewrite modified the target: got %q want %q", got, edited)
+			}
+		})
+	}
+}
+
+// TestMCPOwnershipCodexUnchangedBlockIsStable pins the other half of the guard:
+// an untouched block keeps its recorded hash across syncs (so an update and a
+// prune both proceed) and the bytes are identical every time.
+func TestMCPOwnershipCodexUnchangedBlockIsStable(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifestSame, "codex", target, "mcp_servers", nil)
+	if rc != 0 {
+		t.Fatalf("first render rc=%d stderr=%q", rc, stderr)
+	}
+	first := mcpReadTarget(t, target)
+	// A second sync with the recorded hash and the same manifest changes nothing.
+	_, stderr, rc, again := mcpRenderOwned(t, dir, mcpOwnershipManifestSame, "codex", target, "mcp_servers", []string{"same"}, res.BlockSHA)
+	if rc != 0 || stderr != "" {
+		t.Fatalf("second render rc=%d stderr=%q", rc, stderr)
+	}
+	if again.BlockSHA != res.BlockSHA {
+		t.Errorf("block hash changed across syncs: %q → %q", res.BlockSHA, again.BlockSHA)
+	}
+	if got := mcpReadTarget(t, target); got != first {
+		t.Errorf("re-sync changed the block:\n--- first ---\n%s\n--- second ---\n%s", first, got)
+	}
+	// A prune (manifest server gone) still proceeds on the untouched block.
+	_, stderr, rc, pruned := mcpRenderOwned(t, dir, mcpOwnershipManifestNone, "codex", target, "mcp_servers", []string{"same"}, again.BlockSHA)
+	if rc != 0 || stderr != "" {
+		t.Fatalf("prune rc=%d stderr=%q", rc, stderr)
+	}
+	if pruned.BlockSHA != "" {
+		t.Errorf("pruned block hash = %q, want none", pruned.BlockSHA)
+	}
+	if got := mcpReadTarget(t, target); got != "" {
+		t.Errorf("pruned target = %q, want empty", got)
 	}
 }

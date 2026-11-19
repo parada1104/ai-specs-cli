@@ -847,6 +847,7 @@ func (a *agentRun) syncMCP(agent, mcpPath, mcpKey string, out, errW io.Writer) i
 	var owned []string
 	var record map[string]any
 	recorded := false
+	blockSHA := ""
 	if relErr == nil {
 		lk, err := lock.LoadLock(lockPath)
 		if err != nil {
@@ -854,6 +855,7 @@ func (a *agentRun) syncMCP(agent, mcpPath, mcpKey string, out, errW io.Writer) i
 			return 1
 		}
 		record, recorded = lk.MCP[rel]
+		blockSHA = lk.MCPBlock[rel]
 		for name := range record {
 			owned = append(owned, name)
 		}
@@ -865,7 +867,7 @@ func (a *agentRun) syncMCP(agent, mcpPath, mcpKey string, out, errW io.Writer) i
 		return 0
 	}
 	res := MCPResult{}
-	opts := RenderMCPOptions{RecipeMCPPath: a.recipeMCP, Owned: owned, Recorded: recorded, Result: &res}
+	opts := RenderMCPOptions{RecipeMCPPath: a.recipeMCP, Owned: owned, Recorded: recorded, BlockSHA: blockSHA, Result: &res}
 	if rc := RenderMCPFile(a.tomlPath, agent, target, mcpKey, opts, out, errW); rc != 0 {
 		return rc
 	}
@@ -877,11 +879,12 @@ func (a *agentRun) syncMCP(agent, mcpPath, mcpKey string, out, errW io.Writer) i
 	// unrecorded or preserved in a name collision.
 	userServers := len(res.Unrecorded) > 0 || len(res.Preserved) > 0
 	notice := res.Noticed || (recorded && userServers)
-	if relErr != nil || mcpOwnershipEqual(record, recorded, res.Managed, notice) {
+	if relErr != nil || (mcpOwnershipEqual(record, recorded, res.Managed, notice) && blockSHA == res.BlockSHA) {
 		return 0
 	}
 	if err := applyLockRecord(lockPath, func(lk *lock.Lock) {
 		lock.SetMCPOwnership(lk, rel, res.Managed, notice)
+		lock.SetMCPBlockHash(lk, rel, res.BlockSHA)
 	}); err != nil {
 		fmt.Fprintln(errW, err)
 		return 1

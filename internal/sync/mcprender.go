@@ -10,6 +10,8 @@ package sync
 // JSON targets are backed up and reported before being regenerated.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -1135,6 +1137,10 @@ type mcpMergePlan struct {
 	removed    []string
 	preserved  []string
 	unrecorded []string
+	// blockSHA is the sha256 of the managed block bytes this render wrote
+	// (markers inclusive, through the end marker's newline), "" when the target
+	// keeps no block.
+	blockSHA string
 }
 
 func mcpPlanMerge(desired *mcpObj, owned map[string]bool, ownedNames []string, current *mcpObj) mcpMergePlan {
@@ -1248,6 +1254,9 @@ type mcpTOMLBlock struct {
 	present bool
 	outside string
 	names   []string
+	// sha is the sha256 of the block bytes as they stand in the file: from the
+	// begin marker line through the end marker line, end-of-line included.
+	sha string
 }
 
 // mcpTOMLSplitBlock finds the managed block. Malformed markers (begin without
@@ -1313,7 +1322,20 @@ func mcpTOMLSplitBlock(text, targetPath, mcpKey string) (mcpTOMLBlock, error) {
 	if !mcpTOMLValidSplit(whole, outside, block, mcpKey) {
 		return mcpTOMLBlock{}, untrusted
 	}
-	return mcpTOMLBlock{present: true, outside: outsideText, names: mcpTOMLServerNames(block, mcpKey)}, nil
+	return mcpTOMLBlock{
+		present: true,
+		outside: outsideText,
+		names:   mcpTOMLServerNames(block, mcpKey),
+		sha:     mcpTOMLSHA256(blockText),
+	}, nil
+}
+
+// mcpTOMLSHA256 is the exact-bytes hash of a managed block: unlike the lock's
+// line-ending-normalizing Sha256Bytes, an edit is an edit even if it only
+// changes a line ending.
+func mcpTOMLSHA256(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
 }
 
 // mcpTOMLValidSplit accepts a split only when the block holds nothing but the
@@ -1460,7 +1482,7 @@ func mcpTOMLAppendBlock(outside, block string) string {
 // kept byte-for-byte. The outside content must parse with the project's TOML
 // parser so the server names it declares are read semantically, not by matching
 // text; when it does not, nothing is added or changed.
-func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[string]bool, ownedNames []string) (string, mcpMergePlan, error) {
+func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[string]bool, ownedNames []string, blockSHA string) (string, mcpMergePlan, error) {
 	text := ""
 	if mcpIsFile(targetPath) {
 		raw, err := mcpReadTextFile(targetPath)
@@ -1474,6 +1496,15 @@ func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[stri
 	if err != nil {
 		return "", mcpMergePlan{}, err
 	}
+	// The block is ours only as long as it is byte-identical to what ai-specs
+	// wrote: any change (an inline comment on a generated line, an edited value,
+	// an added table, a moved marker) is a user edit this render must not
+	// overwrite. A block recorded before the hash existed is adopted once, after
+	// the split and ownership checks below.
+	if block.present && blockSHA != "" && block.sha != blockSHA {
+		return "", mcpMergePlan{}, fmt.Errorf("%s: refusing to rewrite Codex MCP config: the managed MCP block was edited by hand; move user content outside the markers or restore the block (e.g. by deleting it)", targetPath)
+	}
+
 	// A block is ours only around servers the lock records: a hand-moved marker
 	// makes the reconstruction check pass but must never gain ownership of a
 	// user table, so an unrecorded name inside the markers refuses the render.
@@ -1531,6 +1562,7 @@ func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[stri
 	if err != nil {
 		return "", plan, err
 	}
+	plan.blockSHA = mcpTOMLSHA256(rendered + "\n")
 	content := mcpTOMLAppendBlock(block.outside, rendered)
 	if mcpHasLoneSurrogate(content) {
 		// RenderMCPFile refuses this atomically with its own message.
@@ -1649,7 +1681,10 @@ type RenderMCPOptions struct {
 	DryRun        bool
 	Owned         []string
 	Recorded      bool
-	Result        *MCPResult
+	// BlockSHA is the lock's recorded sha256 of the managed block for this
+	// target ("" when none is recorded yet).
+	BlockSHA string
+	Result   *MCPResult
 }
 
 // MCPResult is one target render's ownership outcome: the server names
@@ -1663,6 +1698,9 @@ type MCPResult struct {
 	Unrecorded []string
 	Noticed    bool
 	Wrote      bool
+	// BlockSHA is the sha256 of the managed block bytes this render wrote, ""
+	// when the target keeps no block.
+	BlockSHA string
 }
 
 // mcpServerHashes is the lock witness for the servers ai-specs owns at one
@@ -1755,7 +1793,7 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 	var invalid []byte
 	var plan mcpMergePlan
 	if mcpPathSuffix(targetPath) == ".toml" {
-		content, plan, err = mcpMergeIntoTOML(targetPath, mcpKey, slimmed, owned, ownedNames)
+		content, plan, err = mcpMergeIntoTOML(targetPath, mcpKey, slimmed, owned, ownedNames, opts.BlockSHA)
 	} else {
 		var existing *mcpObj
 		existing, invalid, err = loadJSONTarget(targetPath)
@@ -1772,6 +1810,7 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 		opts.Result.Removed = plan.removed
 		opts.Result.Preserved = plan.preserved
 		opts.Result.Unrecorded = plan.unrecorded
+		opts.Result.BlockSHA = plan.blockSHA
 	}
 	for _, name := range plan.preserved {
 		fmt.Fprintf(stderr, "    ! preserved user MCP server %q in %s (not recorded as ai-specs-managed)\n", name, targetPath)

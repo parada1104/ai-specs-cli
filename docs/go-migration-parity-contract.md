@@ -871,7 +871,20 @@ only those:
   block other than the two markers, so a comment line between them (the parsed
   comparison cannot see text) is user content the marker cut would delete: the
   render refuses, names the comment and asks for it to be moved outside the
-  markers, leaving the file and the lock byte-identical. The outside
+  markers, leaving the file and the lock byte-identical. The definitive guard is
+  the **block hash**: the lock records `[mcp-block."<target>"]` with the sha256
+  of the exact bytes ai-specs last wrote for the block (from the begin marker
+  line through the end marker line, end-of-line included — the same span the
+  marker cut removes). On every sync, a block whose current bytes differ from
+  that hash was edited by hand — an inline comment on a generated line, an
+  edited value, an added table, a moved marker — and refuses atomically: rc 1,
+  one `error:` line saying the block was edited and to move user content outside
+  the markers or restore the block (e.g. by deleting it), with the file and the
+  MCP record byte-identical. A matching hash proceeds normally (update or prune).
+  A block written before the hash existed is adopted once, after the split and
+  ownership checks, so upgrades keep working. This tightens an earlier behavior:
+  a manual edit to a managed value inside the block used to be overwritten on
+  the next sync and now refuses, under "if in doubt, don't touch". The outside
   content must parse with `internal/toml.Parse` before anything is written, so
   the user's servers are read semantically: a manifest server whose name already
   exists outside is preserved with the collision warning and no table is emitted
