@@ -46,12 +46,12 @@ type OrphanCleanupInput struct {
 	Output    io.Writer
 }
 
-// pruneRecipeArtifacts uses managed ownership, not the skill-hash recipes table.
-func pruneRecipeArtifacts(root string, enabledIDs []string, hooks []any) error {
+// planRecipeArtifactPrune uses managed ownership, not the skill-hash recipes table.
+func planRecipeArtifactPrune(root string, enabledIDs []string, hooks []any) (func() error, error) {
 	lockPath := filepath.Join(root, "ai-specs", ".ai-specs.lock")
 	lk, err := lock.LoadLock(lockPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	enabled := materializeStringSet(enabledIDs)
 	launchers := map[string]bool{}
@@ -61,31 +61,49 @@ func pruneRecipeArtifacts(root string, enabledIDs []string, hooks []any) error {
 			launchers[path] = true
 		}
 	}
-	// Select and validate every record before deleting anything, so a refused
-	// path never leaves earlier files removed while the lock still lists them.
-	var doomed []string
-	for _, rel := range slices.Sorted(maps.Keys(lk.Managed)) {
-		record := lk.Managed[rel]
+	recipeDir := func(rel string, record map[string]any) string {
 		id, _ := record["recipe"].(string)
 		if !fs.ValidPath(rel) || strings.Contains(rel, `\`) || id == "" || strings.Contains(id, "/") || id == "." || id == ".." {
-			continue
+			return ""
 		}
 		dir := "ai-specs/recipes/" + id
 		suffix, ok := strings.CutPrefix(rel, dir+"/")
 		if !ok || suffix == "overrides" || strings.HasPrefix(suffix, "overrides/") {
-			continue
+			return ""
 		}
 		if enabled[id] && (record["kind"] != "gate" || !strings.HasPrefix(suffix, "hooks/") || launchers[rel]) {
+			return ""
+		}
+		return dir
+	}
+	var doomed []string
+	for _, rel := range slices.Sorted(maps.Keys(lk.Managed)) {
+		if recipeDir(rel, lk.Managed[rel]) == "" {
 			continue
 		}
-		if err := shared.EnsureTemplateAncestorsReal(root, filepath.Join(root, rel)); err != nil {
-			return err
+		if _, err := pruneFile(root, filepath.Join(root, rel)); err != nil {
+			return nil, err
 		}
 		doomed = append(doomed, rel)
 	}
+	return func() error { return applyRecipeArtifactPrune(root, lockPath, doomed, recipeDir) }, nil
+}
+
+func applyRecipeArtifactPrune(root, lockPath string, doomed []string, recipeDir func(string, map[string]any) string) error {
+	if len(doomed) == 0 {
+		return nil
+	}
+	// Keep records materialization added or repurposed since preflight.
+	lk, err := lock.LoadLock(lockPath)
+	if err != nil {
+		return err
+	}
+	changed := false
 	for _, rel := range doomed {
-		id, _ := lk.Managed[rel]["recipe"].(string)
-		dir := "ai-specs/recipes/" + id
+		dir := recipeDir(rel, lk.Managed[rel])
+		if dir == "" {
+			continue
+		}
 		path := filepath.Join(root, rel)
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
@@ -102,8 +120,9 @@ func pruneRecipeArtifacts(root string, enabledIDs []string, hooks []any) error {
 			}
 		}
 		delete(lk.Managed, rel)
+		changed = true
 	}
-	if len(doomed) > 0 {
+	if changed {
 		return lock.WriteLock(lockPath, lk)
 	}
 	return nil

@@ -39,7 +39,7 @@ func TestPruneRecipeArtifactsRefusalPreservesFilesAndLock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := pruneRecipeArtifacts(root, nil, nil); err == nil {
+	if _, err := planRecipeArtifactPrune(root, nil, nil); err == nil {
 		t.Fatal("expected symlinked ancestor to be refused")
 	}
 	for path, want := range map[string][]byte{

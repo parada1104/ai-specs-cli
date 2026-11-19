@@ -72,7 +72,6 @@ type MaterializeResult struct {
 	ResolvedBindings       map[string]string
 	EnabledRecipeIDs       []string
 	PrintedRecipeIDs       []string
-	resolvedHooks          []any
 }
 
 // materializeFatal mirrors the Python fail() helper: "  ✗ <msg>" on stderr,
@@ -358,7 +357,6 @@ func MaterializeRecipes(req MaterializeRequest) (MaterializeResult, error) {
 		fmt.Fprintf(stdout, "  ✓ wrote resolved-hooks (%d hook(s))\n", len(resolvedHooks))
 	}
 
-	result.resolvedHooks = resolvedHooks
 	return result, nil
 }
 

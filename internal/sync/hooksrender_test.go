@@ -142,6 +142,96 @@ func TestSyncPrunesRuntimeHooks(t *testing.T) {
 	}
 }
 
+func TestSyncPruneRefusalKeepsWiringAndLock(t *testing.T) {
+	for _, variant := range []string{"runtime-symlink", "blocked-leaf"} {
+		t.Run(variant, func(t *testing.T) {
+			source, _ := spineEnv(t)
+			home := t.TempDir()
+			for _, name := range []string{"templates", "bundled-skills", "bundled-commands", "VERSION", "catalog"} {
+				if err := os.Symlink(filepath.Join(source, name), filepath.Join(home, name)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			const base = "[project]\nname = 'prune-refusal'\n[brief]\nrender = false\n[agents]\nenabled = ['claude', 'pi']\n"
+			project := spineProject(t, base+"[recipes.plan-build-flow]\nenabled = true\n")
+			sync := func() (int, string, string) {
+				var out, stderr bytes.Buffer
+				rc := Run([]string{"sync", project}, home, strings.NewReader(""), &out, &stderr)
+				return rc, out.String(), stderr.String()
+			}
+			if rc, _, stderr := sync(); rc != 0 {
+				t.Fatalf("seed sync rc=%d: %s", rc, stderr)
+			}
+
+			const recipe = "ai-specs/recipes/plan-build-flow/"
+			const launcher = recipe + "hooks/plan-build-gate.sh"
+			const lockRel = "ai-specs/.ai-specs.lock"
+			lockPath := filepath.Join(project, lockRel)
+			lockBytes, err := os.ReadFile(lockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Detect an early normalization write as well as removal of lock records.
+			spineWrite(t, lockPath, string(lockBytes)+"\n# keep this byte-for-byte on refusal\n", 0o644)
+
+			root := spinePlan(t, project).Root
+			wantError := fmt.Sprintf("ERROR: cannot prune runtime hooks: ancestor path is a symlink: %s\n", filepath.Join(root, ".pi/extensions"))
+			if variant == "runtime-symlink" {
+				extensions := filepath.Join(project, ".pi", "extensions")
+				outside := filepath.Join(t.TempDir(), "extensions")
+				if err := os.Rename(extensions, outside); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, extensions); err != nil {
+					t.Fatal(err)
+				}
+				before, modes := hooksSnapshot(t, outside)
+				if len(before) == 0 {
+					t.Fatal("seed sync did not install a Pi shim")
+				}
+				t.Cleanup(func() {
+					after, afterModes := hooksSnapshot(t, outside)
+					if !reflect.DeepEqual(before, after) || !reflect.DeepEqual(modes, afterModes) {
+						t.Error("Pi shims changed outside the project")
+					}
+					if link, err := os.Readlink(extensions); err != nil || link != outside {
+						t.Errorf("Pi extensions symlink changed: %q, %v", link, err)
+					}
+				})
+			} else {
+				path := filepath.Join(project, launcher)
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				spineWrite(t, filepath.Join(path, "user.txt"), "user data", 0o644)
+				wantError = fmt.Sprintf("ERROR: cannot prune recipe artifacts: destination is a directory: %s\n", filepath.Join(root, launcher))
+			}
+
+			spineWrite(t, materializeManifestPath(project), base, 0o644)
+			before, modes := hooksSnapshot(t, project)
+			wantOut := fmt.Sprintf("\nai-specs sync\n  root:    %s\n  planning: %s\n", root, root) +
+				"  topology: standalone (via auto; source: default)\n  targets: root:.\n" +
+				"  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n" +
+				"  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n"
+			if rc, out, stderr := sync(); rc != 1 || stderr != wantError || out != wantOut {
+				t.Fatalf("refusal rc=%d, stderr=%q, stdout=%q; want rc=1 and %q", rc, stderr, out, wantError)
+			}
+			after, afterModes := hooksSnapshot(t, project)
+			for _, rel := range []string{recipe + "README.md", ".claude/settings.json", lockRel} {
+				if before[rel] == "" {
+					t.Errorf("%s missing from fixture", rel)
+				}
+			}
+			if !hooksTreeEqual(before, after) {
+				t.Errorf("project files changed on refusal:\n%s", hooksTreeDiff(before, after))
+			}
+			if !hooksModesEqual(modes, afterModes) {
+				t.Error("project file modes changed on refusal")
+			}
+		})
+	}
+}
+
 // --- frozen oracle ----------------------------------------------------------
 
 // hooksGoldenCase is one frozen record of testdata/hooksrender_golden.json: the

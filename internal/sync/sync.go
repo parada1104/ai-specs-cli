@@ -275,6 +275,27 @@ func (r *runner) run(opts options) int {
 			return 1
 		}
 	}
+	// Plan both prunes for every target before any project writes, including
+	// the bundled refresh that normalizes the project lock.
+	enabled, hooks, inputErr := loadPruneInputs(root, r.home)
+	var applyRecipePrune func() error
+	applyRuntimePrunes := make([]func() error, len(paths))
+	// If the inputs are invalid, leave their diagnostics to materialization.
+	if inputErr == nil {
+		applyRecipePrune, err = planRecipeArtifactPrune(root, enabled, hooks)
+		if err != nil {
+			fmt.Fprintf(r.stderr, "ERROR: cannot prune recipe artifacts: %v\n", err)
+			return 1
+		}
+		for i, path := range paths {
+			applyRuntimePrunes[i], err = planRuntimeHookPrune(path, hooks)
+			if err != nil {
+				fmt.Fprintf(r.stderr, "ERROR: cannot prune runtime hooks: %v\n", err)
+				return 1
+			}
+		}
+	}
+
 	rootTemplate := filepath.Join(r.home, "templates", "gitignore-root.tmpl")
 	if rc := r.runStep("ai-specs/.gitignore", func(out, errW io.Writer) int {
 		return RenderAiSpecsGitignore(tomlPath, aiGitignore, out)
@@ -395,7 +416,11 @@ func (r *runner) run(opts options) int {
 	removeIfSet(recipeOutFile)
 	removeIfSet(recipeErrFile)
 
-	if err := pruneRecipeArtifacts(root, materialized.EnabledRecipeIDs, materialized.resolvedHooks); err != nil {
+	if inputErr != nil { // Inputs changed during sync; there is no safe plan to apply.
+		fmt.Fprintf(r.stderr, "ERROR: cannot plan prune: %v\n", inputErr)
+		return 1
+	}
+	if err := applyRecipePrune(); err != nil {
 		fmt.Fprintf(r.stderr, "ERROR: cannot prune recipe artifacts: %v\n", err)
 		return 1
 	}
@@ -429,7 +454,7 @@ func (r *runner) run(opts options) int {
 			verbose:        opts.verbose,
 		}
 		rc := r.runStep(label+" → "+target, func(out, errW io.Writer) int {
-			if err := pruneRuntimeHooks(target, materialized.resolvedHooks); err != nil {
+			if err := applyRuntimePrunes[i](); err != nil {
 				fmt.Fprintf(errW, "ERROR: cannot prune runtime hooks: %v\n", err)
 				return 1
 			}
