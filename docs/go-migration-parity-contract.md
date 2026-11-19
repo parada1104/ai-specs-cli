@@ -311,6 +311,32 @@ old-launcher sync warning is added here.
   relaxed because the inside-root full-sync case never reaches them (the linked
   agent dirs hold no command cache, recipe artifact or sync lock). The per-run
   body repeats the check for nested and direct child runs.
+- **Write containment (T6c).** A listed destination is not the whole write path:
+  the leaf itself (`.pi/mcp.json`), a generated child
+  (`.pi/extensions/<shim>.ts`) or a generated subdirectory
+  (`commands/`, `hooks/`, `plugin/`) can be its own symlink. One guard,
+  `agentWriteGuard` (`internal/sync/agentwrite.go`), resolves where a write
+  would ACTUALLY land — following an existing leaf symlink and every ancestor,
+  with `resolveWriteTarget` re-joining a not-yet-existing tail onto the deepest
+  existing ancestor and treating a dangling/looping link as an error — and
+  refuses when that location is outside the resolved main project root or
+  inside the protected `ai-specs/` / `.git/` trees. Every agent-destination
+  write and create routes through it: the MCP JSON/TOML renderer
+  (`internal/sync/mcprender.go` target + `.bak`), the hook settings/shim
+  writers (`internal/sync/hooksrender.go` `hooksWriteJSONFile`/`hooksWriteText`,
+  all five renderers, including the prune rewrite), the invalid-JSON backup
+  (`internal/sync/jsontarget.go`), the command copies and their directory
+  (`internal/sync/syncagent.go` `syncCommands`), and the agent skills /
+  instruction links (`makeSkillsSymlink` / `makeRelativeSymlinkWithRefusal`
+  guard the parent because those writes REPLACE the leaf link, never write
+  through it). The preflight runs the same guard over the five listed
+  destinations, so the common cases refuse before any write. An agent parent
+  that resolves inside the root but into `ai-specs/` or `.git/` is refused
+  (case-insensitive spellings are a follow-up). Deliberately NOT routed: the
+  target's own `ai-specs/**` mirror (`mirrorDirectory`), AGENTS.md rendering,
+  `.gitignore`/`.envrc` scaffolding, vendored/bundled caches, recipe artifacts
+  and the mktemp capture files — none of them is an agent destination, and the
+  `ai-specs/` refusal would reject the first two by design.
 
 ---
 

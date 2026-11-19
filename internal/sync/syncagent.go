@@ -826,9 +826,17 @@ func symlinkedAncestorOutside(root, targetPath, dest string) (string, bool) {
 		}
 		// Compare against the RESOLVED roots: the platform's temp/home paths are
 		// themselves reached through symlinks (/var → /private/var).
-		if !shared.TemplatePathContained(projectcache.ResolvePath(root), resolved) &&
+		rootReal := projectcache.ResolvePath(root)
+		if !shared.TemplatePathContained(rootReal, resolved) &&
 			!shared.TemplatePathContained(projectcache.ResolvePath(targetPath), resolved) {
 			return cur, true
+		}
+		// Inside the root is not enough: an agent parent may not resolve into the
+		// reconciled project tree or the repository (T6c follow-up).
+		for _, tree := range protectedTrees {
+			if shared.TemplatePathContained(filepath.Join(rootReal, tree), resolved) {
+				return cur, true
+			}
 		}
 	}
 	return "", false
@@ -860,6 +868,13 @@ func preflightAgentPaths(root, targetPath string, targets []string, errW io.Writ
 			}
 			if ancestor, bad := symlinkedAncestorOutside(root, targetPath, path); bad {
 				fmt.Fprintf(errW, "    ✗ ancestor path is a symlink: %s — replace it with a real directory so ai-specs can write inside the project\n", ancestor)
+				return 1
+			}
+			// The listed destination is not the whole story: the write follows
+			// its leaf or a generated child. Guard the resolved location too.
+			followLeaf := field != "skills_dir" && field != "instructions_path"
+			if err := agentWriteGuard(root, path, followLeaf); err != nil {
+				fmt.Fprintf(errW, "    ✗ %s\n", err)
 				return 1
 			}
 		}
@@ -902,7 +917,7 @@ func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 
 	// Instructions: a RELATIVE symlink to the target AGENTS.md.
 	if instr, _ := platformGet(agent, "instructions_path"); instr != "" {
-		if rc, refused := makeRelativeSymlinkWithRefusal(filepath.Join(a.targetPath, "AGENTS.md"), filepath.Join(a.targetPath, instr), out, errW); rc != 0 {
+		if rc, refused := makeRelativeSymlinkWithRefusal(a.sourceRoot, filepath.Join(a.targetPath, "AGENTS.md"), filepath.Join(a.targetPath, instr), out, errW); rc != 0 {
 			if refused {
 				fmt.Fprintln(errW, "    → move or delete the file above, then re-run sync")
 				a.blockedInstructions = append(a.blockedInstructions, agent)
@@ -918,7 +933,7 @@ func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 	// where writeSymlinkWithRefusal relinks a stale or dangling one in place.
 	if skillsDir, _ := platformGet(agent, "skills_dir"); skillsDir != "" {
 		skillsLink := filepath.Join(a.targetPath, skillsDir)
-		if rc := makeSkillsSymlink(a.skillsSource, skillsLink, out, errW); rc != 0 {
+		if rc := makeSkillsSymlink(a.sourceRoot, a.skillsSource, skillsLink, out, errW); rc != 0 {
 			return rc
 		}
 	}
@@ -946,7 +961,7 @@ func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 	// no failure.
 	if hooksTarget, _ := platformGet(agent, "runtime_hooks_target"); hooksTarget != "" && a.resolvedHooks != "" && isRegularFilePath(a.resolvedHooks) {
 		shims := map[string]string{}
-		if renderHooksRecording(a.resolvedHooks, agent, a.targetPath, errW, a.syncHookEvents, shims) == 0 {
+		if renderHooksRecording(a.resolvedHooks, agent, a.targetPath, a.sourceRoot, errW, a.syncHookEvents, shims) == 0 {
 			if err := a.recordHookShims(shims); err != nil {
 				fmt.Fprintln(errW, err)
 				return 1
@@ -1071,6 +1086,12 @@ func mcpOwnershipEqual(record map[string]any, recorded bool, managed map[string]
 // warning (lib/sync-agent.sh:497-531).
 func (a *agentRun) syncCommands(cmdDir string, out, errW io.Writer) int {
 	dest := filepath.Join(a.targetPath, cmdDir)
+	// Writes go INTO the commands dir, so the dir's own leaf is followed: a
+	// `commands` symlink that resolves outside the project refuses here (T6c).
+	if err := agentWriteGuard(a.sourceRoot, dest, true); err != nil {
+		fmt.Fprintf(errW, "    ✗ %s\n", err)
+		return 1
+	}
 	// `mkdir -p "$dest" || return $?`: the mkdir binary prints the
 	// coreutils-shaped error (an intermediate occupied component is Not a
 	// directory) and the failure DOES abort the agent step with mkdir's rc.
@@ -1094,6 +1115,12 @@ func (a *agentRun) syncCommands(cmdDir string, out, errW io.Writer) int {
 	for _, src := range globMDFilesSh(a.commandsSource) {
 		name := filepath.Base(src)
 		targetFile := filepath.Join(dest, name)
+		// The managed name's leaf is replaced (unlinked first), so only its
+		// parent chain has to stay inside the project.
+		if err := agentWriteGuard(a.sourceRoot, targetFile, false); err != nil {
+			fmt.Fprintf(errW, "    ✗ %s\n", err)
+			return 1
+		}
 		info, statErr := os.Lstat(targetFile)
 		if statErr == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
@@ -1367,8 +1394,12 @@ func argValue(args []string, i *int) (string, bool) {
 
 // makeSkillsSymlink links with an ABSOLUTE realpath target: cache-backed
 // resolved skills live out of tree.
-func makeSkillsSymlink(targetAbs, linkPath string, out, errW io.Writer) int {
+func makeSkillsSymlink(projectRoot, targetAbs, linkPath string, out, errW io.Writer) int {
 	linkDir := filepath.Dir(linkPath)
+	if err := agentWriteGuard(projectRoot, linkPath, false); err != nil {
+		fmt.Fprintf(errW, "    ✗ %s\n", err)
+		return 1
+	}
 	if err := mkdirPMirror(linkDir); err != nil {
 		// `mkdir -p "$link_dir"` has no `|| return` in the oracle: the failure
 		// prints coreutils-shaped stderr and the helper CONTINUES (errexit is
@@ -1381,12 +1412,19 @@ func makeSkillsSymlink(targetAbs, linkPath string, out, errW io.Writer) int {
 }
 
 // makeRelativeSymlinkWithRefusal links relative to the link's directory and reports hard refusal on non-symlink occupancy.
-func makeRelativeSymlinkWithRefusal(targetAbs, linkPath string, out, errW io.Writer) (int, bool) {
+func makeRelativeSymlinkWithRefusal(projectRoot, targetAbs, linkPath string, out, errW io.Writer) (int, bool) {
 	linkDir := filepath.Dir(linkPath)
+	if err := agentWriteGuard(projectRoot, linkPath, false); err != nil {
+		fmt.Fprintf(errW, "    ✗ %s\n", err)
+		return 1, false
+	}
 	if err := mkdirPMirror(linkDir); err != nil {
 		printChildErr(errW, "mkdir", err)
 	}
-	rel, err := filepath.Rel(linkDir, targetAbs)
+	// The link lives at the link directory's RESOLVED location (`.omp` may be a
+	// symlink), so the relative target is computed between RESOLVED paths or it
+	// dangles (and /var → /private/var must not leak into the link text).
+	rel, err := filepath.Rel(projectcache.ResolvePath(linkDir), projectcache.ResolvePath(targetAbs))
 	if err != nil {
 		fmt.Fprintf(errW, "error: %s\n", err)
 		return 1, false

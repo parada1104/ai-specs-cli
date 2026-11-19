@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/lock"
+	"ai-specs.dev/ai-specs/internal/projectcache"
 )
 
 func TestSyncPrunesRuntimeHooks(t *testing.T) {
@@ -176,7 +177,9 @@ func TestSyncPruneRefusalKeepsWiringAndLock(t *testing.T) {
 			spineWrite(t, lockPath, string(lockBytes)+"\n# keep this byte-for-byte on refusal\n", 0o644)
 
 			root := spinePlan(t, project).Root
-			wantError := fmt.Sprintf("ERROR: cannot prune runtime hooks: ancestor path is a symlink: %s\n", filepath.Join(root, ".pi/extensions"))
+			// The write-containment preflight (T6c) now refuses this leaf before
+			// the hook-prune plan gets to it: same rc 1, tighter diagnostic.
+			wantError := ""
 			if variant == "runtime-symlink" {
 				extensions := filepath.Join(project, ".pi", "extensions")
 				outside := filepath.Join(t.TempDir(), "extensions")
@@ -186,6 +189,8 @@ func TestSyncPruneRefusalKeepsWiringAndLock(t *testing.T) {
 				if err := os.Symlink(outside, extensions); err != nil {
 					t.Fatal(err)
 				}
+				wantError = fmt.Sprintf("    ✗ refuse to write %s: it resolves outside the project root (%s)\n",
+					filepath.Join(root, ".pi/extensions"), projectcache.ResolvePath(outside))
 				before, modes := hooksSnapshot(t, outside)
 				if len(before) == 0 {
 					t.Fatal("seed sync did not install a Pi shim")

@@ -1837,6 +1837,15 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 		return 0
 	}
 
+	// Write containment (T6c): the target's leaf or any ancestor may be a
+	// symlink; resolve where the write would land and refuse if it leaves the
+	// project. Computed from the manifest path, so a subrepo target is still
+	// judged against the main project root.
+	if err := agentWriteGuard(filepath.Dir(filepath.Dir(tomlPath)), targetPath, true); err != nil {
+		fmt.Fprintf(stderr, "error: %s\n", err)
+		return 1
+	}
+
 	if !opts.DryRun {
 		if dir := filepath.Dir(targetPath); dir != "" {
 			if err := os.MkdirAll(dir, 0o777); err != nil {
@@ -1860,7 +1869,7 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 		return 0
 	}
 
-	if err := backupInvalidJSON(targetPath, invalid, stderr); err != nil {
+	if err := backupInvalidJSON(filepath.Dir(filepath.Dir(tomlPath)), targetPath, invalid, stderr); err != nil {
 		fmt.Fprintf(stderr, "error: %s\n", err)
 		return 1
 	}

@@ -210,6 +210,105 @@ class SyncSkillsOwnershipTests(unittest.TestCase):
         self.assertIn("ai-specs:hooks:hookdemo:gone", (outside / "settings.json").read_text(encoding="utf-8"))
         self.assertEqual(snapshot(outside), outside_before, "pruned something outside the project")
 
+    # ── write containment: a leaf link below an allowed parent ──────────
+
+    def test_inside_agent_parent_does_not_write_through_outside_mcp_leaf(self):
+        from _blackbox import snapshot
+
+        inside = self.project / "config" / "pi"
+        inside.mkdir(parents=True)
+        (self.project / ".pi").symlink_to("./config/pi")
+        outside = self.base / "outside-client.json"
+        original = b'{"manual": true}\n'
+        outside.write_bytes(original)
+        (inside / "mcp.json").symlink_to(outside)
+        manifest = self.project / "ai-specs/ai-specs.toml"
+        manifest.write_text(
+            "[project]\nname = 't'\n"
+            "[agents]\nenabled = ['pi']\n"
+            "[mcp.demo]\ncommand = 'echo'\n"
+        )
+        before = snapshot(self.project)
+
+        result = self.sync()
+
+        self.assertEqual(outside.read_bytes(), original)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(snapshot(self.project), before)
+
+    def test_real_agent_dir_does_not_write_through_outside_mcp_leaf(self):
+        from _blackbox import snapshot
+
+        # A REAL (non-symlinked) `.pi`: the leaf `mcp.json` is the link.
+        inside = self.project / ".pi"
+        inside.mkdir()
+        outside = self.base / "outside-client.json"
+        original = b'{"manual": true}\n'
+        outside.write_bytes(original)
+        (inside / "mcp.json").symlink_to(outside)
+        manifest = self.project / "ai-specs/ai-specs.toml"
+        manifest.write_text(
+            "[project]\nname = 't'\n"
+            "[agents]\nenabled = ['pi']\n"
+            "[mcp.demo]\ncommand = 'echo'\n"
+        )
+        before = snapshot(self.project)
+
+        result = self.sync()
+
+        self.assertEqual(outside.read_bytes(), original)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(snapshot(self.project), before)
+
+    def test_inside_agent_parent_does_not_write_through_outside_commands_dir(self):
+        from _blackbox import snapshot
+
+        inside = self.project / "config" / "claude"
+        inside.mkdir(parents=True)
+        outside = self.base / "outside-commands"
+        outside.mkdir()
+        (outside / "manual.md").write_text("user owned\n", encoding="utf-8")
+        (inside / "commands").symlink_to(outside)
+        self.link_agent_parent("./config/claude")
+        before = snapshot(self.project)
+        outside_before = snapshot(outside)
+
+        result = self.sync()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(snapshot(self.project), before)
+        self.assertEqual(snapshot(outside), outside_before, "wrote commands outside the project")
+
+    # ── T6b follow-ups ──────────────────────────────────────────────────
+
+    def test_relative_instruction_link_uses_the_resolved_link_directory(self):
+        # `.omp -> ./config/omp`: the link is created at the RESOLVED dir, so the
+        # relative target must be computed from there (../../AGENTS.md), not from
+        # the lexical `.omp` spelling (../AGENTS.md, which dangles).
+        real = self.project / "config" / "omp"
+        real.mkdir(parents=True)
+        manifest = self.project / "ai-specs/ai-specs.toml"
+        manifest.write_text(
+            "[project]\nname = 't'\n[agents]\nenabled = ['omp']\n", encoding="utf-8"
+        )
+        (self.project / ".omp").symlink_to("./config/omp")
+
+        result = self.sync()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        link = real / "AGENTS.md"
+        self.assertTrue(link.is_symlink(), "instruction link not created in the linked dir")
+        self.assertTrue(link.exists(), f"instruction link dangles: {os.readlink(link)}")
+
+    def test_agent_parent_inside_protected_tree_is_refused(self):
+        self.link_agent_parent("./ai-specs/claude")
+
+        result = self.sync()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("    ✗ ", result.stderr)
+        self.assertFalse((self.project / "ai-specs" / "claude").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

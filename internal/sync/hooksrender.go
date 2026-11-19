@@ -595,8 +595,12 @@ func hooksLoadJSONFile(path string) (*mcpObj, error) {
 }
 
 // hooksWriteJSONFile mirrors _write_json_file: mkdir parents, then
-// json.dumps(indent=2, sort_keys=True) + "\n".
-func hooksWriteJSONFile(path string, data *mcpObj) error {
+// json.dumps(indent=2, sort_keys=True) + "\n". guardRoot is the main project
+// root the write must stay inside (T6c).
+func hooksWriteJSONFile(guardRoot, path string, data *mcpObj) error {
+	if err := agentWriteGuard(guardRoot, path, true); err != nil {
+		return err
+	}
 	if dir := filepath.Dir(path); dir != "" {
 		if err := os.MkdirAll(dir, 0o777); err != nil {
 			return err
@@ -611,7 +615,10 @@ func hooksWriteJSONFile(path string, data *mcpObj) error {
 // the open (the file is left created/truncated empty). json.dumps-escaped
 // content never carries a raw surrogate; only module paths, cursor wrappers and
 // TS adapters interpolate raw hook fields.
-func hooksWriteText(path, content string) error {
+func hooksWriteText(guardRoot, path, content string) error {
+	if err := agentWriteGuard(guardRoot, path, true); err != nil {
+		return err
+	}
 	if dir := filepath.Dir(path); dir != "" {
 		if err := os.MkdirAll(dir, 0o777); err != nil {
 			return err
@@ -684,7 +691,7 @@ func hooksShimPath(agent, projectRoot, base string) string {
 
 // --- Claude (direct, exit-code native) ---------------------------------------
 
-func hooksRenderClaude(h *mcpObj, nativeEvent, projectRoot string, stderr io.Writer) error {
+func hooksRenderClaude(h *mcpObj, nativeEvent, projectRoot, guardRoot string, stderr io.Writer) error {
 	settingsPath := filepath.Join(projectRoot, ".claude", "settings.json")
 	settings, invalid, err := loadJSONTarget(settingsPath)
 	if err != nil {
@@ -725,15 +732,15 @@ func hooksRenderClaude(h *mcpObj, nativeEvent, projectRoot string, stderr io.Wri
 
 	hooks.set(nativeEvent, bucket)
 	settings.set("hooks", hooks)
-	if err := backupInvalidJSON(settingsPath, invalid, stderr); err != nil {
+	if err := backupInvalidJSON(guardRoot, settingsPath, invalid, stderr); err != nil {
 		return err
 	}
-	return hooksWriteJSONFile(settingsPath, settings)
+	return hooksWriteJSONFile(guardRoot, settingsPath, settings)
 }
 
 // --- Cursor (shell wrapper, decision via stdout JSON) ------------------------
 
-func hooksRenderCursor(h *mcpObj, nativeEvent, projectRoot string, stderr io.Writer) (string, error) {
+func hooksRenderCursor(h *mcpObj, nativeEvent, projectRoot, guardRoot string, stderr io.Writer) (string, error) {
 	// `hook["event"] == "pre-tool-use" and _matcher_targets_file_writes(...)`;
 	// a non-str event is merely unequal, so the matcher is never evaluated.
 	eventVal, ok := hooksItem(h, "event")
@@ -797,7 +804,7 @@ func hooksRenderCursor(h *mcpObj, nativeEvent, projectRoot string, stderr io.Wri
 	b.WriteString("exit 0\n")
 
 	wrapperPath := hooksShimPath("cursor", projectRoot, base)
-	if err := hooksWriteText(wrapperPath, b.String()); err != nil {
+	if err := hooksWriteText(guardRoot, wrapperPath, b.String()); err != nil {
 		return "", err
 	}
 	if err := os.Chmod(wrapperPath, 0o755); err != nil {
@@ -822,15 +829,15 @@ func hooksRenderCursor(h *mcpObj, nativeEvent, projectRoot string, stderr io.Wri
 	bucket = append(bucket, entry)
 	hooks.set(nativeEvent, bucket)
 	cfg.set("hooks", hooks)
-	if err := backupInvalidJSON(hooksJSONPath, invalid, stderr); err != nil {
+	if err := backupInvalidJSON(guardRoot, hooksJSONPath, invalid, stderr); err != nil {
 		return "", err
 	}
-	return wrapperPath, hooksWriteJSONFile(hooksJSONPath, cfg)
+	return wrapperPath, hooksWriteJSONFile(guardRoot, hooksJSONPath, cfg)
 }
 
 // --- OpenCode (TS plugin, decision via throw) --------------------------------
 
-func hooksRenderOpencode(h *mcpObj, nativeEvent, projectRoot string) (string, error) {
+func hooksRenderOpencode(h *mcpObj, nativeEvent, projectRoot, guardRoot string) (string, error) {
 	recipe, id, err := hooksShimParts(h)
 	if err != nil {
 		return "", err
@@ -918,24 +925,24 @@ func hooksRenderOpencode(h *mcpObj, nativeEvent, projectRoot string) (string, er
 	b.WriteString("};\n")
 
 	path := filepath.Join(projectRoot, ".opencode", "plugin", hooksShimName(recipe, id)+".ts")
-	return path, hooksWriteText(path, b.String())
+	return path, hooksWriteText(guardRoot, path, b.String())
 }
 
 // --- Pi / Omp (TS extension, decision via return {block:true}) --------------
 
-func hooksRenderPi(h *mcpObj, nativeEvent, projectRoot string) (string, error) {
+func hooksRenderPi(h *mcpObj, nativeEvent, projectRoot, guardRoot string) (string, error) {
 	return hooksRenderPiExt(h, filepath.Join(projectRoot, ".pi", "extensions"),
-		"@earendil-works/pi-coding-agent", "pi", nativeEvent)
+		"@earendil-works/pi-coding-agent", "pi", nativeEvent, guardRoot)
 }
 
-func hooksRenderOmp(h *mcpObj, nativeEvent, projectRoot string) (string, error) {
+func hooksRenderOmp(h *mcpObj, nativeEvent, projectRoot, guardRoot string) (string, error) {
 	return hooksRenderPiExt(h, filepath.Join(projectRoot, ".omp", "extensions"),
-		hooksOMPExtImport, "omp", nativeEvent)
+		hooksOMPExtImport, "omp", nativeEvent, guardRoot)
 }
 
 // hooksRenderPiExt renders the shared pi/omp TS extension; the two differ only
 // in the ExtensionAPI import path and the adapter name in the comment.
-func hooksRenderPiExt(h *mcpObj, dir, extImport, adapter, nativeEvent string) (string, error) {
+func hooksRenderPiExt(h *mcpObj, dir, extImport, adapter, nativeEvent, guardRoot string) (string, error) {
 	recipe, id, err := hooksShimParts(h)
 	if err != nil {
 		return "", err
@@ -1001,7 +1008,7 @@ func hooksRenderPiExt(h *mcpObj, dir, extImport, adapter, nativeEvent string) (s
 	b.WriteString("}\n")
 
 	path := filepath.Join(dir, hooksShimName(recipe, id)+".ts")
-	return path, hooksWriteText(path, b.String())
+	return path, hooksWriteText(guardRoot, path, b.String())
 }
 
 func hooksShimName(recipe, id string) string { return recipe + "-" + id }
@@ -1014,17 +1021,17 @@ func hooksShimName(recipe, id string) string { return recipe + "-" + id }
 // and stdout the script would. stdout is always empty (the script only warns on
 // stderr); the argv/usage/exit-2 contract of main() stays in Bash until S15.
 func RenderHooks(resolvedHooksPath, agent, projectRoot string, stdout, stderr io.Writer) int {
-	return renderHooks(resolvedHooksPath, agent, projectRoot, stderr, false)
+	return renderHooks(resolvedHooksPath, agent, projectRoot, projectRoot, stderr, false)
 }
 
-func renderHooks(resolvedHooksPath, agent, projectRoot string, stderr io.Writer, syncEvents bool) int {
-	return renderHooksRecording(resolvedHooksPath, agent, projectRoot, stderr, syncEvents, nil)
+func renderHooks(resolvedHooksPath, agent, projectRoot, guardRoot string, stderr io.Writer, syncEvents bool) int {
+	return renderHooksRecording(resolvedHooksPath, agent, projectRoot, guardRoot, stderr, syncEvents, nil)
 }
 
 // renderHooksRecording is renderHooks plus the collection of every generated
 // shim it wrote, keyed by absolute path with the owning hook's managed id (S3).
 // A nil written map skips the collection (the standalone frozen route).
-func renderHooksRecording(resolvedHooksPath, agent, projectRoot string, stderr io.Writer, syncEvents bool, written map[string]string) int {
+func renderHooksRecording(resolvedHooksPath, agent, projectRoot, guardRoot string, stderr io.Writer, syncEvents bool, written map[string]string) int {
 	data, err := hooksLoadJSONFile(resolvedHooksPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %s\n", err)
@@ -1078,15 +1085,15 @@ func renderHooksRecording(resolvedHooksPath, agent, projectRoot string, stderr i
 		var werr error
 		switch agent {
 		case "claude":
-			werr = hooksRenderClaude(h, nativeEvent, projectRoot, stderr)
+			werr = hooksRenderClaude(h, nativeEvent, projectRoot, guardRoot, stderr)
 		case "cursor":
-			shim, werr = hooksRenderCursor(h, nativeEvent, projectRoot, stderr)
+			shim, werr = hooksRenderCursor(h, nativeEvent, projectRoot, guardRoot, stderr)
 		case "opencode":
-			shim, werr = hooksRenderOpencode(h, shimEvent, projectRoot)
+			shim, werr = hooksRenderOpencode(h, shimEvent, projectRoot, guardRoot)
 		case "pi":
-			shim, werr = hooksRenderPi(h, shimEvent, projectRoot)
+			shim, werr = hooksRenderPi(h, shimEvent, projectRoot, guardRoot)
 		case "omp":
-			shim, werr = hooksRenderOmp(h, shimEvent, projectRoot)
+			shim, werr = hooksRenderOmp(h, shimEvent, projectRoot, guardRoot)
 		default:
 			hooksWarn(stderr, fmt.Sprintf(
 				"harness '%s' has no runtime-hook renderer (recipe '%s', hook '%s') \u2014 skipped",

@@ -56,11 +56,17 @@ func hasBareNonFiniteConstant(data []byte) bool {
 	return false
 }
 
-func backupInvalidJSON(path string, data []byte, stderr io.Writer) error {
+// backupInvalidJSON copies an unparseable target aside as `<path>.bak`. The
+// backup is a write next to the agent destination, so it goes through the same
+// containment guard (T6c): a `.bak` symlink must not redirect it.
+func backupInvalidJSON(guardRoot, path string, data []byte, stderr io.Writer) error {
 	if data == nil {
 		return nil
 	}
 	backup := path + ".bak"
+	if err := agentWriteGuard(guardRoot, backup, true); err != nil {
+		return err
+	}
 	for n := 1; ; n++ {
 		f, err := os.OpenFile(backup, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if os.IsExist(err) {

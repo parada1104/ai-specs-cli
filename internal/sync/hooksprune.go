@@ -196,10 +196,10 @@ func applyHookBucketPrune(projectRoot, root, path string, ids map[string]string,
 		}
 	}
 	if changed {
-		if err := backupInvalidJSON(path, invalid, stderr); err != nil {
+		if err := backupInvalidJSON(projectRoot, path, invalid, stderr); err != nil {
 			return err
 		}
-		return hooksWriteJSONFile(path, doc)
+		return hooksWriteJSONFile(projectRoot, path, doc)
 	}
 	return nil
 }
