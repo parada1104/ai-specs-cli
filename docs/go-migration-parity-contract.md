@@ -844,9 +844,15 @@ only those:
   Codex table is emitted byte-for-byte, and its header is matched whether the
   key is bare, `'single'`-quoted (literal, verbatim) or `"double"`-quoted with
   its basic-string escapes decoded (`"\\u0073ame"` is the server `same`), so no
-  spelling can produce a duplicate `[mcp_servers.<name>]` table. A key whose
-  escapes cannot be decoded safely refuses the render instead (rc 1, one
-  `error:` line, target byte-identical), since guessing would merge two keys;
+  spelling can produce a duplicate `[mcp_servers.<name>]` table. Header
+  detection is line- and state-aware: `[...]` text inside a multi-line basic
+  string, a multi-line literal string, a single-line string or a comment is
+  content, never a table, so a prune can no longer rewrite a user value away. A
+  document that cannot be scanned unambiguously — an unterminated string, an
+  undecodable key (unknown escape, an out-of-range `\U` escape, a lone
+  surrogate), a trailing-junk header or an array of MCP tables — refuses the
+  render instead (rc 1, one `error:` line, target byte-identical), since
+  guessing would merge two keys or destroy a value;
 - removals print `    ✓ removed managed MCP server "<name>" from <target>`;
 - a target with recorded servers is regenerated through the same recovery path
   even when the manifest declares none left, so a corrupt target is still

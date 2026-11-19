@@ -292,6 +292,28 @@ class HooksRenderTests(_HookFixtureMixin):
                     {"same": {"command": "user-command"}},
                 )
 
+    def test_codex_prune_keeps_escaped_table_text_inside_multiline_string(self):
+        import tomllib
+
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("codex")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        base = manifest.read_text()
+        manifest.write_text(base + '\n[mcp.same]\ncommand = "echo"\n')
+        self.sync()
+
+        target = self.root / ".codex/config.toml"
+        user = (
+            b'user_note = """\n[mcp_servers."\\u0073ame"]\n'
+            b'this is user text, not a table\n"""\n'
+        )
+        target.write_bytes(user + b"\n" + target.read_bytes())
+        manifest.write_text(base)
+        self.assertEqual(self.sync().stderr, "")
+
+        self.assertEqual(target.read_bytes(), user)
+        self.assertEqual(tomllib.loads(target.read_text()), tomllib.loads(user.decode()))
+
     def test_corrupt_mcp_target_is_backed_up_when_pruning_last_server(self):
         self.seed_recipe(RECIPE_SHELL, "shell-gate")
         self.write_manifest("claude")

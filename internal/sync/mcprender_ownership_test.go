@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/ai-specs/internal/toml"
 )
 
 const mcpOwnershipManifest = `[project]
@@ -300,30 +302,74 @@ func TestMCPOwnershipCodexEncodingErrorLeavesTargetIntact(t *testing.T) {
 // key whose escapes cannot be decoded safely: guessing would merge two different
 // keys, so the render fails atomically and the target keeps its exact bytes.
 func TestMCPOwnershipUndecodableCodexKeyRefuses(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, ".codex", "config.toml")
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	original := "[mcp_servers.\"bad\\qname\"]\ncommand = \"user-cmd\"\n"
-	if err := os.WriteFile(target, []byte(original), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	for _, header := range []string{`"bad\qname"`, `"\UFFFFFFFF"`} {
+		t.Run(header, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(dir, ".codex", "config.toml")
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			original := "[mcp_servers." + header + "]\ncommand = \"user-cmd\"\n"
+			if err := os.WriteFile(target, []byte(original), 0o644); err != nil {
+				t.Fatal(err)
+			}
 
-	manifestPath := filepath.Join(dir, "ai-specs.toml")
-	if err := os.WriteFile(manifestPath, []byte(mcpOwnershipManifest), 0o644); err != nil {
-		t.Fatal(err)
+			manifestPath := filepath.Join(dir, "ai-specs.toml")
+			if err := os.WriteFile(manifestPath, []byte(mcpOwnershipManifest), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var out, errBuf bytes.Buffer
+			rc := RenderMCPFile(manifestPath, "codex", target, "mcp_servers", RenderMCPOptions{}, &out, &errBuf)
+			if rc != 1 {
+				t.Fatalf("rc=%d want 1 (stdout %q stderr %q)", rc, out.String(), errBuf.String())
+			}
+			if lines := strings.Split(strings.TrimSuffix(errBuf.String(), "\n"), "\n"); len(lines) != 1 || !strings.HasPrefix(lines[0], "error: ") {
+				t.Errorf("stderr is not exactly one error line: %q", errBuf.String())
+			}
+			if got := mcpReadTarget(t, target); got != original {
+				t.Errorf("undecodable key modified the target: got %q want %q", got, original)
+			}
+		})
 	}
-	var out, errBuf bytes.Buffer
-	rc := RenderMCPFile(manifestPath, "codex", target, "mcp_servers", RenderMCPOptions{}, &out, &errBuf)
-	if rc != 1 {
-		t.Fatalf("rc=%d want 1 (stdout %q stderr %q)", rc, out.String(), errBuf.String())
-	}
-	if lines := strings.Split(strings.TrimSuffix(errBuf.String(), "\n"), "\n"); len(lines) != 1 || !strings.HasPrefix(lines[0], "error: ") {
-		t.Errorf("stderr is not exactly one error line: %q", errBuf.String())
-	}
-	if got := mcpReadTarget(t, target); got != original {
-		t.Errorf("undecodable key modified the target: got %q want %q", got, original)
+}
+
+// TestMCPOwnershipCodexHeaderLookalikesAreContent pins that a table-header line
+// inside a multi-line string (basic or literal), a single-line string or a
+// comment is content, not a table: pruning a managed server must leave every
+// byte of it alone and keep the document parseable.
+func TestMCPOwnershipCodexHeaderLookalikesAreContent(t *testing.T) {
+	for _, tc := range []struct{ name, user string }{
+		{"basic multiline", "user_note = \"\"\"\n[mcp_servers.same]\nthis is user text, not a table\n\"\"\"\n"},
+		{"escaped basic multiline", "user_note = \"\"\"\n[mcp_servers.\"\\u0073ame\"]\ntext\n\"\"\"\n"},
+		{"literal multiline", "user_note = '''\n[mcp_servers.same]\ntext\n'''\n"},
+		{"comment", "# [mcp_servers.same]\n"},
+		{"single-line string", "note = \"[mcp_servers.same]\"\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(dir, ".codex", "config.toml")
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, []byte(tc.user), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			// The lock records `same` as managed but the manifest no longer
+			// declares it: the prune must find no table to remove.
+			out, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifestNone, "codex", target, "mcp_servers", []string{"same"})
+			if rc != 0 {
+				t.Fatalf("rc=%d stdout=%q stderr=%q", rc, out, stderr)
+			}
+			if len(res.Removed) != 0 {
+				t.Errorf("removed = %v, want none", res.Removed)
+			}
+			if got := mcpReadTarget(t, target); got != tc.user {
+				t.Errorf("header lookalike rewritten:\n--- got ---\n%s\n--- want ---\n%s", got, tc.user)
+			}
+			if _, err := toml.Parse([]byte(tc.user)); err != nil {
+				t.Fatalf("the pinned fixture must stay valid TOML: %v", err)
+			}
+		})
 	}
 }
 

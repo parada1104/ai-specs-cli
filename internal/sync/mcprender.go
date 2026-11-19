@@ -1203,65 +1203,235 @@ func mcpMergeIntoJSON(existing *mcpObj, mcpKey string, desired *mcpObj, owned ma
 	return document + "\n", plan, nil
 }
 
-// mcpTOMLSectionName extracts the server name of a `[<mcp_key>.<name>]` header
-// line (including a nested `[<mcp_key>.<name>.<sub>]`); ok is false for any
-// other line. A bare key ends at the first `.` or `]`; a quoted key ends at its
-// closing quote and is normalized to the name it denotes — a literal
-// (single-quoted) key verbatim, a basic (double-quoted) key with its escapes
-// decoded — so every spelling of a name matches the same server, and the writer
-// never emits a duplicate table. A key that cannot be decoded safely is an
-// error: the caller refuses the whole render instead of guessing.
-func mcpTOMLSectionName(line, prefix string) (name string, ok bool, err error) {
-	if !strings.HasPrefix(line, prefix) {
-		return "", false, nil
-	}
-	rest := strings.TrimSpace(line[len(prefix):])
-	if rest == "" {
-		return "", false, nil
-	}
-	switch rest[0] {
-	case '\'':
-		end := strings.IndexByte(rest[1:], '\'')
-		if end < 0 {
-			return "", false, mcpTOMLKeyError(line)
-		}
-		if name = rest[1 : 1+end]; name == "" {
-			return "", false, mcpTOMLKeyError(line)
-		}
-		return name, true, nil
-	case '"':
-		end := -1
-		for i := 1; i < len(rest); i++ {
-			if rest[i] == '\\' {
-				i++ // the escaped character cannot close the key
-				continue
-			}
-			if rest[i] == '"' {
-				end = i
-				break
-			}
-		}
-		if end < 0 {
-			return "", false, mcpTOMLKeyError(line)
-		}
-		name, err = mcpTOMLDecodeBasicKey(rest[1:end])
-		if err != nil || name == "" {
-			return "", false, mcpTOMLKeyError(line)
-		}
-		return name, true, nil
-	}
-	if i := strings.IndexAny(rest, ".]"); i >= 0 {
-		rest = rest[:i]
-	}
-	rest = strings.TrimSpace(rest)
-	if rest == "" || strings.ContainsAny(rest, "\"'") {
-		return "", false, mcpTOMLKeyError(line)
-	}
-	return rest, true, nil
+// mcpTOMLHeader is one table header the scanner understood: its 0-based line
+// index and the dotted key path it declares.
+type mcpTOMLHeader struct {
+	line int
+	path []string
 }
 
-func mcpTOMLKeyError(line string) error {
-	return fmt.Errorf("cannot decode the TOML server key in %q", line)
+// mcpTOMLScanState is the multi-line-string state of the header scanner.
+type mcpTOMLScanState int
+
+const (
+	mcpTOMLScanNone mcpTOMLScanState = iota
+	mcpTOMLScanBasicML
+	mcpTOMLScanLiteralML
+)
+
+// mcpTOMLScanHeaders lists every table header of a TOML document. The scan is
+// line- and state-aware because a `[mcp_servers.x]` line inside a multi-line
+// value or a comment is user text, not a table: mistaking it for one used to
+// rewrite the value away. A document the scanner cannot read unambiguously
+// (unterminated string, unparsable key, an array of MCP tables) is an error, so
+// the caller refuses instead of guessing.
+func mcpTOMLScanHeaders(lines []string, mcpKey string) ([]mcpTOMLHeader, error) {
+	var headers []mcpTOMLHeader
+	state := mcpTOMLScanNone
+	for i, line := range lines {
+		if state == mcpTOMLScanNone {
+			h, ok, err := mcpTOMLParseHeaderLine(line, mcpKey)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				h.line = i
+				headers = append(headers, h)
+			}
+		}
+		next, err := mcpTOMLScanStrings(line, state)
+		if err != nil {
+			return nil, err
+		}
+		state = next
+	}
+	if state != mcpTOMLScanNone {
+		return nil, fmt.Errorf("cannot scan the TOML target: unterminated multi-line string")
+	}
+	return headers, nil
+}
+
+// mcpTOMLQuoteRun counts the consecutive quote bytes starting at s[0].
+func mcpTOMLQuoteRun(s string, quote byte) int {
+	n := 0
+	for n < len(s) && s[n] == quote {
+		n++
+	}
+	return n
+}
+
+// mcpTOMLScanStrings advances the multi-line-string state across one line,
+// skipping comments and consuming single-line strings, so a `#` or a `[` inside
+// a value never confuses the header scan.
+func mcpTOMLScanStrings(line string, state mcpTOMLScanState) (mcpTOMLScanState, error) {
+	for i := 0; i < len(line); {
+		switch state {
+		case mcpTOMLScanBasicML, mcpTOMLScanLiteralML:
+			quote := byte('"')
+			if state == mcpTOMLScanLiteralML {
+				quote = '\''
+			} else if line[i] == '\\' {
+				i += 2 // an escaped character cannot close the string
+				continue
+			}
+			if !strings.HasPrefix(line[i:], strings.Repeat(string(quote), 3)) {
+				i++
+				continue
+			}
+			n := mcpTOMLQuoteRun(line[i:], quote)
+			if n > 5 {
+				return state, fmt.Errorf("cannot scan the TOML target: %d consecutive quotes", n)
+			}
+			i += n // up to two of them belong to the value
+			state = mcpTOMLScanNone
+		default:
+			switch line[i] {
+			case '#':
+				return mcpTOMLScanNone, nil
+			case '"', '\'':
+				quote := line[i]
+				if strings.HasPrefix(line[i:], strings.Repeat(string(quote), 3)) {
+					if quote == '"' {
+						state = mcpTOMLScanBasicML
+					} else {
+						state = mcpTOMLScanLiteralML
+					}
+					i += 3
+					continue
+				}
+				i++
+				closed := false
+				for i < len(line) {
+					if quote == '"' && line[i] == '\\' {
+						i += 2
+						continue
+					}
+					if line[i] == quote {
+						i++
+						closed = true
+						break
+					}
+					i++
+				}
+				if !closed {
+					return state, fmt.Errorf("cannot scan the TOML target: unterminated string")
+				}
+			default:
+				i++
+			}
+		}
+	}
+	return state, nil
+}
+
+// mcpTOMLParseHeaderLine decodes one table header line; ok is false for a line
+// that is not a header.
+func mcpTOMLParseHeaderLine(line, mcpKey string) (mcpTOMLHeader, bool, error) {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "[") {
+		return mcpTOMLHeader{}, false, nil
+	}
+	body := trimmed[1:]
+	array := false
+	if strings.HasPrefix(body, "[") {
+		array = true
+		body = body[1:]
+	}
+	path, rest, err := mcpTOMLParseKeyPath(body)
+	if err != nil {
+		return mcpTOMLHeader{}, false, fmt.Errorf("cannot scan the TOML table header %q: %w", line, err)
+	}
+	closers := 1
+	if array {
+		closers = 2
+	}
+	for k := 0; k < closers; k++ {
+		if !strings.HasPrefix(rest, "]") {
+			return mcpTOMLHeader{}, false, fmt.Errorf("cannot scan the TOML table header %q: missing ]", line)
+		}
+		rest = rest[1:]
+	}
+	if rest = strings.TrimSpace(rest); rest != "" && !strings.HasPrefix(rest, "#") {
+		return mcpTOMLHeader{}, false, fmt.Errorf("cannot scan the TOML table header %q: trailing text", line)
+	}
+	if array && path[0] == mcpKey {
+		// ai-specs never writes [[<mcp_key>.<name>]]: merging it would need a
+		// decision about elements the manifest does not express.
+		return mcpTOMLHeader{}, false, fmt.Errorf("cannot merge the TOML array of tables %q", line)
+	}
+	return mcpTOMLHeader{path: path}, true, nil
+}
+
+// mcpTOMLParseKeyPath decodes a dotted key path from the start of s and returns
+// it with the remaining text (which starts at the closing bracket). A bare key
+// is taken verbatim; a literal (single-quoted) key verbatim; a basic
+// (double-quoted) key with its escapes decoded, so every spelling of a name is
+// the same key.
+func mcpTOMLParseKeyPath(s string) ([]string, string, error) {
+	var path []string
+	i := 0
+	for {
+		for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+			i++
+		}
+		if i >= len(s) {
+			return nil, "", fmt.Errorf("empty key")
+		}
+		switch s[i] {
+		case '"', '\'':
+			quote := s[i]
+			j := i + 1
+			for j < len(s) {
+				if quote == '"' && s[j] == '\\' {
+					j += 2
+					continue
+				}
+				if s[j] == quote {
+					break
+				}
+				j++
+			}
+			if j >= len(s) {
+				return nil, "", fmt.Errorf("unterminated quoted key")
+			}
+			raw := s[i+1 : j]
+			name := raw
+			if quote == '"' {
+				decoded, err := mcpTOMLDecodeBasicKey(raw)
+				if err != nil {
+					return nil, "", err
+				}
+				name = decoded
+			}
+			if name == "" {
+				return nil, "", fmt.Errorf("empty quoted key")
+			}
+			path = append(path, name)
+			i = j + 1
+		default:
+			j := i
+			for j < len(s) && mcpTOMLBareKeyByte(s[j]) {
+				j++
+			}
+			if j == i {
+				return nil, "", fmt.Errorf("invalid bare key")
+			}
+			path = append(path, s[i:j])
+			i = j
+		}
+		for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+			i++
+		}
+		if i < len(s) && s[i] == '.' {
+			i++
+			continue
+		}
+		return path, s[i:], nil
+	}
+}
+
+func mcpTOMLBareKeyByte(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_' || b == '-'
 }
 
 // mcpTOMLDecodeBasicKey decodes the escapes of a TOML basic-string key
@@ -1308,18 +1478,20 @@ func mcpTOMLDecodeBasicKey(raw string) (string, error) {
 			if i+width >= len(raw) {
 				return "", fmt.Errorf("truncated unicode escape")
 			}
-			var r rune
+			// Accumulate wide enough to see an out-of-range \U code point
+			// instead of overflowing a signed rune and wrapping into U+FFFD.
+			var cp uint32
 			for j := 1; j <= width; j++ {
 				v, ok := mcpHexVal(raw[i+j])
 				if !ok {
 					return "", fmt.Errorf("invalid unicode escape")
 				}
-				r = r<<4 | rune(v)
+				cp = cp<<4 | uint32(v)
 			}
-			if mcpIsSurrogate(r) || r > 0x10FFFF {
+			if cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
 				return "", fmt.Errorf("invalid unicode code point")
 			}
-			sb.WriteRune(r)
+			sb.WriteRune(rune(cp))
 			i += width
 		default:
 			return "", fmt.Errorf("unknown escape")
@@ -1341,34 +1513,39 @@ func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[stri
 		existingLines = pySplitLines(text)
 	}
 
-	// A block runs from its header to the next header, so a nested
+	headers, err := mcpTOMLScanHeaders(existingLines, mcpKey)
+	if err != nil {
+		return "", mcpMergePlan{}, err
+	}
+
+	// A server's block runs from its header to the next header, so a nested
 	// [<mcp_key>.<name>.<sub>] block stays with the server it belongs to.
 	present := newMCPObj()
-	for _, line := range existingLines {
-		name, ok, err := mcpTOMLSectionName(pyStrip(line), "["+mcpKey+".")
-		if err != nil {
-			return "", mcpMergePlan{}, err
-		}
-		if ok {
-			present.set(name, true)
+	for _, h := range headers {
+		if h.path[0] == mcpKey && len(h.path) > 1 {
+			present.set(h.path[1], true)
 		}
 	}
 	plan := mcpPlanMerge(desired, owned, ownedNames, present)
 
-	outLines := []string{}
-	skip := false
-	for _, line := range existingLines {
-		stripped := pyStrip(line)
-		if strings.HasPrefix(stripped, "[") {
-			name, isMCP, err := mcpTOMLSectionName(stripped, "["+mcpKey+".")
-			if err != nil {
-				return "", plan, err
-			}
-			// A preserved user table is emitted exactly as it stands; only a
-			// recorded block is rebuilt from the manifest.
-			skip = isMCP && owned[name]
+	drop := make(map[int]bool, len(headers))
+	for i, h := range headers {
+		// A preserved user table is emitted exactly as it stands; only a
+		// recorded block is rebuilt from the manifest.
+		if h.path[0] != mcpKey || len(h.path) < 2 || !owned[h.path[1]] {
+			continue
 		}
-		if !skip {
+		end := len(existingLines)
+		if i+1 < len(headers) {
+			end = headers[i+1].line
+		}
+		for ln := h.line; ln < end; ln++ {
+			drop[ln] = true
+		}
+	}
+	outLines := make([]string, 0, len(existingLines))
+	for ln, line := range existingLines {
+		if !drop[ln] {
 			outLines = append(outLines, line)
 		}
 	}
