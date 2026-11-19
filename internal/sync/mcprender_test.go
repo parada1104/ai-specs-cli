@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/ai-specs/internal/toml"
 )
 
 // --- frozen oracle ----------------------------------------------------------
@@ -276,6 +278,11 @@ type mcpRefCase struct {
 	// document that does not parse): rc 1, empty stdout, no target written, and a
 	// single error line starting with the prefix.
 	refusedPrefix *string
+	// managedBlock marks a Codex case whose target ai-specs now writes inside its
+	// managed marker block instead of rewriting plain tables: rc and stdout are
+	// compared with the frozen record, and the target is checked against the
+	// block contract instead of the frozen bytes.
+	managedBlock bool
 }
 
 const mcpManifestRel = "ai-specs/ai-specs.toml"
@@ -413,6 +420,32 @@ func checkS5Target(tc mcpRefCase, got *string) error {
 	return nil
 }
 
+// checkManagedBlockText asserts the managed-block contract for a Codex target
+// (or its dry-run rendering) whose frozen record froze the legacy plain-table
+// rewrite: both markers appear exactly once, the frozen target bytes survive as
+// an untouched prefix, and the result parses.
+func checkManagedBlockText(t *testing.T, text string, tc mcpRefCase) {
+	t.Helper()
+	if text == "" {
+		t.Errorf("no target was written")
+		return
+	}
+	if strings.Count(text, mcpTOMLBlockBegin) != 1 || strings.Count(text, mcpTOMLBlockEnd) != 1 {
+		t.Errorf("managed block markers missing or duplicated:\n%s", text)
+		return
+	}
+	outside := text[:strings.Index(text, mcpTOMLBlockBegin)]
+	switch {
+	case tc.target != nil && !strings.HasPrefix(outside, *tc.target):
+		t.Errorf("outside bytes not preserved\n--- got ---\n%q\n--- want prefix ---\n%q", outside, *tc.target)
+	case tc.target == nil && outside != "":
+		t.Errorf("a fresh target must hold only the block, got %q", outside)
+	}
+	if _, err := toml.Parse([]byte(text)); err != nil {
+		t.Errorf("written document does not parse: %v\n%s", err, text)
+	}
+}
+
 // TestMCPRenderDifferential requires byte equality of the written file bytes,
 // stdout, stderr and exit code across the Go port and the frozen records captured
 // from the REAL mcp-render.py (PR2-B S11).
@@ -429,6 +462,24 @@ func TestMCPRenderDifferential(t *testing.T) {
 				t.Fatalf("frozen record stderr/dropped mismatch (traceback=%v)", tc.tracebackStderr)
 			}
 			goOut, goErr, goRC, goTarget := runMCPGo(t, tc)
+			if tc.managedBlock {
+				if goRC != ref.RC || (!tc.dryRun && goOut != ref.Stdout) {
+					t.Errorf("managed block case: rc=%d stdout=%q (want rc=%d stdout=%q)",
+						goRC, goOut, ref.RC, ref.Stdout)
+				}
+				if tc.dryRun {
+					// The dry-run banner line precedes the rendered content.
+					_, content, _ := strings.Cut(goOut, "\n")
+					checkManagedBlockText(t, content, tc)
+				} else if goTarget == nil {
+					checkManagedBlockText(t, "", tc)
+				} else if raw, derr := base64.StdEncoding.DecodeString(*goTarget); derr != nil {
+					t.Errorf("decode target: %v", derr)
+				} else {
+					checkManagedBlockText(t, string(raw), tc)
+				}
+				return
+			}
 			if tc.refusedPrefix != nil {
 				if goRC != 1 || goOut != "" || goTarget != nil || !strings.HasPrefix(goErr, *tc.refusedPrefix) {
 					t.Errorf("refused case: rc=%d stdout=%q stderr=%q target=%v", goRC, goOut, goErr, goTarget)
@@ -647,7 +698,7 @@ func mcpRenderCases() []mcpRefCase {
 		{name: "opencode opencode.json mcp", manifest: mcpStr(mcpBaseManifest),
 			targetRel: "opencode.json", agent: "opencode", mcpKey: "mcp"},
 		{name: "codex .codex/config.toml mcp_servers", manifest: mcpStr(mcpBaseManifest),
-			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers"},
+			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers", managedBlock: true},
 		{name: "gemini .gemini/settings.json mcpServers", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".gemini/settings.json", agent: "gemini", mcpKey: "mcpServers"},
 		{name: "pi .pi/mcp.json mcpServers", manifest: mcpStr(mcpBaseManifest),
@@ -711,8 +762,9 @@ func mcpRenderCases() []mcpRefCase {
 			name:      "recipe mcp big integer codex toml",
 			manifest:  mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
-			recipeRel: "recipe-mcp.json",
-			recipe:    mcpStr(`{"big": {"command": "d", "timeout": 123456789012345678901234567890}}`),
+			recipeRel:    "recipe-mcp.json",
+			recipe:       mcpStr(`{"big": {"command": "d", "timeout": 123456789012345678901234567890}}`),
+			managedBlock: true,
 		},
 		{
 			name:      "recipe mcp non-object json ignored",
@@ -733,9 +785,8 @@ func mcpRenderCases() []mcpRefCase {
 			name:      "codex strips prior blocks and keeps user tables",
 			manifest:  mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
-			target:   mcpStr("# user comment\n\n[user_table]\nx = 1\n\n[mcp_servers.old]\ncommand = \"old\"\n\n[mcp_servers.old.env]\nA = \"1\"\n\n[after]\ny = 2\n\n\n"),
-			s5Keeps:  []string{"[mcp_servers.old]", "[mcp_servers.old.env]"},
-			s5Stderr: mcpStr("    ! <TEMP>/.codex/config.toml: MCP servers not recorded as ai-specs-managed: old (remove them if ai-specs generated them)\n"),
+			target:  mcpStr("# user comment\n\n[user_table]\nx = 1\n\n[mcp_servers.old]\ncommand = \"old\"\n\n[mcp_servers.old.env]\nA = \"1\"\n\n[after]\ny = 2\n\n\n"),
+			s5Keeps: []string{"[mcp_servers.old]", "[mcp_servers.old.env]"}, s5Stderr: mcpStr("    ! <TEMP>/.codex/config.toml: MCP servers not recorded as ai-specs-managed: old (remove them if ai-specs generated them)\n"),
 		},
 		{
 			name:      "codex CRLF lines",
@@ -774,7 +825,8 @@ func mcpRenderCases() []mcpRefCase {
 		{name: "dry-run json", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".mcp.json", agent: "claude", mcpKey: "mcpServers", dryRun: true},
 		{name: "dry-run toml", manifest: mcpStr(mcpBaseManifest),
-			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers", dryRun: true},
+			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers", dryRun: true,
+			managedBlock: true},
 
 		// --- F1: existing target cannot be read (Python read_text raises) ---
 		{name: "target unreadable json", manifest: mcpStr(mcpBaseManifest),
@@ -849,7 +901,7 @@ func mcpRenderCases() []mcpRefCase {
 			recipe:    mcpStr(`{"delta": {"command": "d", "env": {"K": "\ud800"}}}`),
 			// Legacy wrote `env = { K = "\ud800" }`, which no TOML parser accepts:
 			// the safety net refuses instead of writing an unreadable config.
-			refusedPrefix: mcpStr("error: <TEMP>/.codex/config.toml: refusing to rewrite Codex MCP config: rendered document does not parse: toml:")},
+			refusedPrefix: mcpStr("error: <TEMP>/.codex/config.toml: refusing to rewrite Codex MCP config: merged document does not parse: toml:")},
 
 		// --- F5: a lone surrogate that reaches the rendered content raw. JSON
 		// and TOML *values* escape it via json.dumps, but a raw TOML table name

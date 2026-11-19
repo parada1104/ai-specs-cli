@@ -840,28 +840,33 @@ only those:
 - a server the lock does not record is never overwritten or deleted; a
   same-named entry that was never recorded as ours is kept and reported with
   `    ! preserved user MCP server "<name>" in <target> (not recorded as
-  ai-specs-managed)` (conservative choice: user-authored wins). A preserved
-  Codex table is emitted byte-for-byte, and its header is matched whether the
-  key is bare, `'single'`-quoted (literal, verbatim) or `"double"`-quoted with
-  its basic-string escapes decoded (`"\\u0073ame"` is the server `same`), so no
-  spelling can produce a duplicate `[mcp_servers.<name>]` table. Header
-  detection is line- and state-aware: `[...]` text inside a multi-line basic
-  string, a multi-line literal string, a single-line string or a comment is
-  content, never a table, so a prune can no longer rewrite a user value away. A
-  document that cannot be scanned unambiguously — an unterminated string, an
-  undecodable key (unknown escape, an out-of-range `\U` escape, a lone
-  surrogate), a trailing-junk header or an array of MCP tables — refuses the
-  render instead (rc 1, one `error:` line, target byte-identical), since
-  guessing would merge two keys or destroy a value. A server declared without
-  its own table header — an inline table or a dotted key under
-  `[<mcp_key>]`, or a root-level dotted `mcp_servers.<name>…` key — counts as a
-  present user server: a manifest server with that name is preserved (with the
-  collision warning) and no table is emitted for it, so a document is never made
-  to redeclare a key; declaring the whole `mcp_servers` table inline is refused;
+  ai-specs-managed)` (conservative choice: user-authored wins);
+- **Codex TOML is written inside one managed block** (`.codex/config.toml` only;
+  the JSON agents merge per server above). ai-specs emits
+  `# managed-by: ai-specs (do not remove block): MCP servers` /
+  `# end managed-by: ai-specs: MCP servers` — the same managed-block shape as
+  the `.envrc` block — around its own tables and never rewrites a byte outside
+  those markers: comments, CRLF line endings, ordering, formatting and servers
+  declared in any TOML form survive exactly. The block is appended after one
+  blank separator line when absent, and removed entirely (with that separator)
+  once no managed server remains, which restores the original bytes. Malformed
+  markers (begin without end, duplicates, end before begin, an unparsable block)
+  refuse the render: rc 1, one `error:` line, file byte-identical. The outside
+  content must parse with `internal/toml.Parse` before anything is written, so
+  the user's servers are read semantically: a manifest server whose name already
+  exists outside is preserved with the collision warning and no table is emitted
+  for it, so a document is never made to redeclare a key, and when the outside
+  does not parse nothing is added or changed. A final self-check re-parses the
+  merged document and refuses rather than write TOML our own parser rejects.
+  Accepted limitation: because user bytes are never rewritten, an outside
+  document that `internal/toml` accepts but a stricter TOML implementation
+  rejects is preserved as written — nothing is lost, the file is left exactly as
+  the user wrote it;
 - removals print `    ✓ removed managed MCP server "<name>" from <target>`;
-- a target with recorded servers is regenerated through the same recovery path
-  even when the manifest declares none left, so a corrupt target is still
-  backed up and rewritten instead of keeping a stale managed server;
+- a JSON target with recorded servers is regenerated through the same recovery
+  path even when the manifest declares none left, so a corrupt JSON target is
+  still backed up and rewritten instead of keeping a stale managed server
+  (Codex TOML has no such recovery: it is refused, never rewritten);
 - a target that holds servers ai-specs never recorded and has no lock entry yet
   (the upgrade case) gets ONE notice per target — `    ! <target>: MCP servers
   not recorded as ai-specs-managed: <names> (remove them if ai-specs generated
@@ -869,22 +874,13 @@ only those:
   told about the servers ai-specs does not manage here", so it is not repeated.
   The marker survives while an unrecorded server or a preserved collision
   remains at that target, and is dropped once none do. Nothing is deleted for it;
-- the Codex merge is gated by the project's real TOML parser (`internal/toml`,
-  the same one every other path uses) so no scanner gap can corrupt a config:
-  a target that does not parse is never touched (rc 1, one `error:` line, no
-  backup — TOML is user config, so the S4 backup/regenerate recovery stays JSON
-  only), and the rendered document is re-parsed and compared semantically before
-  it is written — every top-level key other than `<mcp_key>` unchanged, every
-  server outside the managed set unchanged, every removed managed server gone and
-  every written one equal to its desired value. Any difference refuses the render
-  (`refusing to rewrite Codex MCP config: could not merge without changing user
-  content`) with the target byte-identical. This net also refuses the legacy
-  Codex output for an unencodable recipe value, which no TOML parser accepts;
 - a lock read failure stops the MCP step before touching the target, so nothing
   is deleted without the ownership record.
 
-Accepted corpus divergence: `mcp-per-agent` (the seeded `stale` server survives
-in `.mcp.json`, `opencode.json` and `.codex/config.toml`) and
+Accepted corpus divergence: every Codex TOML target now carries the managed
+markers (and a plain rewrite therefore differs by construction), `mcp-per-agent`
+(the seeded `stale` server survives in `.mcp.json`, `opencode.json` and
+`.codex/config.toml`) and
 `sync-agent-recipe-mcp-matrix` (step 3's zero-server invocation prunes the
 `only` server recorded by step 2 instead of printing the skip notice), plus the
 new `[mcp.*]` lock section in fixtures that render an MCP target. The frozen

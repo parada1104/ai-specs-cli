@@ -272,6 +272,7 @@ class HooksRenderTests(_HookFixtureMixin):
                 target.write_text(
                     f'[mcp_servers.{header}]\ncommand = "user-command"\n'
                 )
+                user = target.read_bytes()
                 manifest.write_text(
                     base + '\n[mcp.same]\ncommand = "manifest-command"\n'
                     + '[mcp.new]\ncommand = "new-command"\n'
@@ -285,6 +286,8 @@ class HooksRenderTests(_HookFixtureMixin):
                 servers = tomllib.loads(target.read_text())["mcp_servers"]
                 self.assertEqual(servers["same"]["command"], "user-command")
                 self.assertEqual(servers["new"]["command"], "new-command")
+                # Everything outside the managed block is byte-identical.
+                self.assertTrue(target.read_bytes().startswith(user))
                 manifest.write_text(base)
                 self.sync()
                 self.assertEqual(
@@ -367,6 +370,22 @@ class HooksRenderTests(_HookFixtureMixin):
         self.assertIn(result.returncode, (0, 1), result.stderr)
         self.assertEqual(target.read_bytes(), original)
         self.assertEqual(tomllib.loads(target.read_text()), expected)
+
+    def test_codex_prune_keeps_comment_for_next_user_table(self):
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("codex")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        base = manifest.read_text()
+        manifest.write_text(base + '\n[mcp.same]\ncommand = "echo"\n')
+        self.sync()
+
+        target = self.root / ".codex/config.toml"
+        user = b"# User note for the features below.\n[features]\nshell_tool = true\n"
+        target.write_bytes(target.read_bytes() + b"\n" + user)
+        manifest.write_text(base)
+        self.sync()
+
+        self.assertEqual(target.read_bytes(), user)
 
     def test_corrupt_mcp_target_is_backed_up_when_pruning_last_server(self):
         self.seed_recipe(RECIPE_SHELL, "shell-gate")

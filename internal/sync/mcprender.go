@@ -16,7 +16,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -1160,15 +1159,6 @@ func mcpPlanMerge(desired *mcpObj, owned map[string]bool, ownedNames []string, c
 	return plan
 }
 
-func (p mcpMergePlan) preservedHas(name string) bool {
-	for _, n := range p.preserved {
-		if n == name {
-			return true
-		}
-	}
-	return false
-}
-
 // mcpMergeIntoJSON merges per server (S5): foreign top-level keys keep their
 // order, a recorded server is replaced or dropped, an unrecorded one is left to
 // the user, and the manifest servers are appended after the existing ones.
@@ -1213,627 +1203,214 @@ func mcpMergeIntoJSON(existing *mcpObj, mcpKey string, desired *mcpObj, owned ma
 	return document + "\n", plan, nil
 }
 
-// mcpTOMLHeader is one table header the scanner understood: its 0-based line
-// index and the dotted key path it declares.
-type mcpTOMLHeader struct {
-	line int
-	path []string
-}
+// ---------------------------------------------------------------------------
+// Codex TOML: one managed block, user bytes never rewritten
+// ---------------------------------------------------------------------------
 
-// mcpTOMLScanState is the multi-line-string state of the header scanner.
-type mcpTOMLScanState int
-
+// The Codex target is user config, so ai-specs only ever writes inside its own
+// marker block (the same managed-block shape as the .envrc block). Everything
+// outside the markers is preserved byte-for-byte — comments, CRLF, ordering,
+// formatting, servers declared in any TOML form — which is what makes the merge
+// safe on documents whose TOML dialect differs from ours.
 const (
-	mcpTOMLScanNone mcpTOMLScanState = iota
-	mcpTOMLScanBasicML
-	mcpTOMLScanLiteralML
+	mcpTOMLBlockBegin = "# managed-by: ai-specs (do not remove block): MCP servers"
+	mcpTOMLBlockEnd   = "# end managed-by: ai-specs: MCP servers"
 )
 
-// mcpTOMLDoc is what the header scan understood of a TOML document: its table
-// headers, and the server names declared without a header of their own.
-type mcpTOMLDoc struct {
-	headers []mcpTOMLHeader
-	// headerless are servers declared by an inline table or a dotted key instead
-	// of their own [<mcp_key>.<name>] header. They are present user servers: they
-	// count for collision and presence decisions but are never rewritten.
-	headerless []string
+// mcpTOMLRawLine is one line of the target with its byte offsets, so the block
+// can be cut and appended without touching a single byte outside it.
+type mcpTOMLRawLine struct {
+	start, end int // end is past the line terminator
+	text       string
 }
 
-// mcpTOMLScanDocument scans a TOML document for table headers and for servers
-// declared without one. The scan is line- and state-aware because a
-// `[mcp_servers.x]` line inside a multi-line value or a comment is user text,
-// not a table: mistaking it for one used to rewrite the value away. A document
-// the scanner cannot read unambiguously (unterminated string, unparsable key,
-// an array of MCP tables, the whole MCP table declared inline) is an error, so
-// the caller refuses instead of guessing.
-func mcpTOMLScanDocument(lines []string, mcpKey string) (mcpTOMLDoc, error) {
-	var doc mcpTOMLDoc
-	state := mcpTOMLScanNone
-	var section []string
+func mcpTOMLRawLines(text string) []mcpTOMLRawLine {
+	var lines []mcpTOMLRawLine
+	for start := 0; start < len(text); {
+		nl := strings.IndexByte(text[start:], '\n')
+		end := len(text)
+		if nl >= 0 {
+			end = start + nl + 1
+		}
+		content := text[start:end]
+		content = strings.TrimSuffix(content, "\n")
+		content = strings.TrimSuffix(content, "\r")
+		lines = append(lines, mcpTOMLRawLine{start: start, end: end, text: content})
+		start = end
+	}
+	return lines
+}
+
+// mcpTOMLBlock is the managed block found in a target: the byte span to replace
+// or remove (markers plus the blank separator line on either side, so removing
+// it restores the original bytes exactly) and the server names it declares.
+type mcpTOMLBlock struct {
+	present bool
+	outside string
+	names   []string
+}
+
+// mcpTOMLSplitBlock finds the managed block. Malformed markers (begin without
+// end, duplicates, end before begin, an unparsable block) are an error: the
+// caller refuses instead of guessing which markers are its own.
+func mcpTOMLSplitBlock(text, targetPath, mcpKey string) (mcpTOMLBlock, error) {
+	malformed := fmt.Errorf("%s: refusing to rewrite Codex MCP config: malformed %q / %q block markers", targetPath, mcpTOMLBlockBegin, mcpTOMLBlockEnd)
+	lines := mcpTOMLRawLines(text)
+	begins, ends := []int{}, []int{}
 	for i, line := range lines {
-		if state == mcpTOMLScanNone {
-			if strings.HasPrefix(strings.TrimSpace(line), "[") {
-				h, ok, err := mcpTOMLParseHeaderLine(line, mcpKey)
-				if err != nil {
-					return doc, err
-				}
-				if ok {
-					h.line = i
-					doc.headers = append(doc.headers, h)
-					section = h.path
-				}
-			} else if len(section) == 0 || (len(section) == 1 && section[0] == mcpKey) {
-				name, ok, err := mcpTOMLSectionKeyName(line, section, mcpKey)
-				if err != nil {
-					return doc, err
-				}
-				if ok {
-					doc.headerless = append(doc.headerless, name)
-				}
-			}
+		switch strings.TrimSpace(line.text) {
+		case mcpTOMLBlockBegin:
+			begins = append(begins, i)
+		case mcpTOMLBlockEnd:
+			ends = append(ends, i)
 		}
-		next, err := mcpTOMLScanStrings(line, state)
-		if err != nil {
-			return doc, err
-		}
-		state = next
 	}
-	if state != mcpTOMLScanNone {
-		return doc, fmt.Errorf("cannot scan the TOML target: unterminated multi-line string")
+	if len(begins) == 0 && len(ends) == 0 {
+		return mcpTOMLBlock{outside: text}, nil
 	}
-	return doc, nil
-}
+	if len(begins) != 1 || len(ends) != 1 || begins[0] > ends[0] {
+		return mcpTOMLBlock{}, malformed
+	}
+	begin, endIdx := begins[0], ends[0]
 
-// mcpTOMLSectionKeyName reports the server name a key-value line declares when
-// its table is the document root or [<mcp_key>] itself: at the root a dotted
-// `mcp_servers.<name>…` key, under the parent table any `<name>…` key.
-func mcpTOMLSectionKeyName(line string, section []string, mcpKey string) (string, bool, error) {
-	path, ok, err := mcpTOMLAssignmentPath(line)
-	if err != nil || !ok {
-		return "", false, err
+	// The separator blank line belongs to the block on both sides.
+	removeStart, removeEnd := lines[begin].start, lines[endIdx].end
+	if begin > 0 && strings.TrimSpace(lines[begin-1].text) == "" {
+		removeStart = lines[begin-1].start
 	}
-	if len(section) == 0 {
-		if path[0] != mcpKey {
-			return "", false, nil
-		}
-		if len(path) < 2 {
-			// `mcp_servers = { … }` declares the whole table inline: there is no
-			// safe merge left to do.
-			return "", false, fmt.Errorf("cannot merge the TOML target: the whole %s table is declared inline", mcpKey)
-		}
-		return path[1], true, nil
+	if endIdx+1 < len(lines) && strings.TrimSpace(lines[endIdx+1].text) == "" {
+		removeEnd = lines[endIdx+1].end
 	}
-	return path[0], true, nil
-}
 
-// mcpTOMLAssignmentPath parses the key path of a key-value line. ok is false for
-// a line that is not an assignment (a value row, a blank line or a comment).
-func mcpTOMLAssignmentPath(line string) ([]string, bool, error) {
-	trimmed := strings.TrimLeft(line, " \t")
-	if trimmed == "" || trimmed[0] == '#' || trimmed[0] == '[' || trimmed[0] == '{' {
-		return nil, false, nil
-	}
-	eq := -1
-	for i := 0; i < len(trimmed); i++ {
-		switch c := trimmed[i]; {
-		case c == '#':
-			return nil, false, nil
-		case c == '"' || c == '\'':
-			j := i + 1
-			for j < len(trimmed) {
-				if c == '"' && trimmed[j] == '\\' {
-					j += 2
-					continue
-				}
-				if trimmed[j] == c {
-					break
-				}
-				j++
-			}
-			if j >= len(trimmed) {
-				return nil, false, fmt.Errorf("cannot scan the TOML key line %q: unterminated key", line)
-			}
-			i = j
-		case c == '=':
-			eq = i
-		}
-		if eq >= 0 {
-			break
-		}
-	}
-	if eq < 0 {
-		return nil, false, nil
-	}
-	path, rest, err := mcpTOMLParseKeyPath(trimmed[:eq])
+	blockText := text[lines[begin].start:lines[endIdx].end]
+	parsed, err := toml.Parse([]byte(blockText))
 	if err != nil {
-		return nil, false, fmt.Errorf("cannot scan the TOML key line %q: %w", line, err)
+		return mcpTOMLBlock{}, fmt.Errorf("%s: refusing to rewrite Codex MCP config: the managed MCP block does not parse: %w", targetPath, err)
 	}
-	if strings.TrimSpace(rest) != "" {
-		return nil, false, fmt.Errorf("cannot scan the TOML key line %q: unexpected text", line)
-	}
-	return path, true, nil
+	names := mcpTOMLServerNames(parsed, mcpKey)
+	return mcpTOMLBlock{present: true, outside: text[:removeStart] + text[removeEnd:], names: names}, nil
 }
 
-// mcpTOMLQuoteRun counts the consecutive quote bytes starting at s[0].
-func mcpTOMLQuoteRun(s string, quote byte) int {
-	n := 0
-	for n < len(s) && s[n] == quote {
-		n++
+// mcpTOMLServerNames lists the servers a parsed document declares under
+// <mcp_key>, in document order.
+func mcpTOMLServerNames(doc *toml.Table, mcpKey string) []string {
+	servers, ok := doc.Table(mcpKey)
+	if !ok || servers == nil {
+		return nil
 	}
-	return n
+	return servers.Keys()
 }
 
-// mcpTOMLScanStrings advances the multi-line-string state across one line,
-// skipping comments and consuming single-line strings, so a `#` or a `[` inside
-// a value never confuses the header scan.
-func mcpTOMLScanStrings(line string, state mcpTOMLScanState) (mcpTOMLScanState, error) {
-	for i := 0; i < len(line); {
-		switch state {
-		case mcpTOMLScanBasicML, mcpTOMLScanLiteralML:
-			quote := byte('"')
-			if state == mcpTOMLScanLiteralML {
-				quote = '\''
-			} else if line[i] == '\\' {
-				i += 2 // an escaped character cannot close the string
-				continue
-			}
-			if !strings.HasPrefix(line[i:], strings.Repeat(string(quote), 3)) {
-				i++
-				continue
-			}
-			n := mcpTOMLQuoteRun(line[i:], quote)
-			if n > 5 {
-				return state, fmt.Errorf("cannot scan the TOML target: %d consecutive quotes", n)
-			}
-			i += n // up to two of them belong to the value
-			state = mcpTOMLScanNone
-		default:
-			switch line[i] {
-			case '#':
-				return mcpTOMLScanNone, nil
-			case '"', '\'':
-				quote := line[i]
-				if strings.HasPrefix(line[i:], strings.Repeat(string(quote), 3)) {
-					if quote == '"' {
-						state = mcpTOMLScanBasicML
-					} else {
-						state = mcpTOMLScanLiteralML
-					}
-					i += 3
-					continue
-				}
-				i++
-				closed := false
-				for i < len(line) {
-					if quote == '"' && line[i] == '\\' {
-						i += 2
-						continue
-					}
-					if line[i] == quote {
-						i++
-						closed = true
-						break
-					}
-					i++
-				}
-				if !closed {
-					return state, fmt.Errorf("cannot scan the TOML target: unterminated string")
-				}
-			default:
-				i++
-			}
-		}
-	}
-	return state, nil
-}
-
-// mcpTOMLParseHeaderLine decodes one table header line; ok is false for a line
-// that is not a header.
-func mcpTOMLParseHeaderLine(line, mcpKey string) (mcpTOMLHeader, bool, error) {
-	trimmed := strings.TrimSpace(line)
-	if !strings.HasPrefix(trimmed, "[") {
-		return mcpTOMLHeader{}, false, nil
-	}
-	body := trimmed[1:]
-	array := false
-	if strings.HasPrefix(body, "[") {
-		array = true
-		body = body[1:]
-	}
-	path, rest, err := mcpTOMLParseKeyPath(body)
-	if err != nil {
-		return mcpTOMLHeader{}, false, fmt.Errorf("cannot scan the TOML table header %q: %w", line, err)
-	}
-	closers := 1
-	if array {
-		closers = 2
-	}
-	for k := 0; k < closers; k++ {
-		if !strings.HasPrefix(rest, "]") {
-			return mcpTOMLHeader{}, false, fmt.Errorf("cannot scan the TOML table header %q: missing ]", line)
-		}
-		rest = rest[1:]
-	}
-	if rest = strings.TrimSpace(rest); rest != "" && !strings.HasPrefix(rest, "#") {
-		return mcpTOMLHeader{}, false, fmt.Errorf("cannot scan the TOML table header %q: trailing text", line)
-	}
-	if array && path[0] == mcpKey {
-		// ai-specs never writes [[<mcp_key>.<name>]]: merging it would need a
-		// decision about elements the manifest does not express.
-		return mcpTOMLHeader{}, false, fmt.Errorf("cannot merge the TOML array of tables %q", line)
-	}
-	return mcpTOMLHeader{path: path}, true, nil
-}
-
-// mcpTOMLParseKeyPath decodes a dotted key path from the start of s and returns
-// it with the remaining text (which starts at the closing bracket). A bare key
-// is taken verbatim; a literal (single-quoted) key verbatim; a basic
-// (double-quoted) key with its escapes decoded, so every spelling of a name is
-// the same key.
-func mcpTOMLParseKeyPath(s string) ([]string, string, error) {
-	var path []string
-	i := 0
-	for {
-		for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
-			i++
-		}
-		if i >= len(s) {
-			return nil, "", fmt.Errorf("empty key")
-		}
-		switch s[i] {
-		case '"', '\'':
-			quote := s[i]
-			j := i + 1
-			for j < len(s) {
-				if quote == '"' && s[j] == '\\' {
-					j += 2
-					continue
-				}
-				if s[j] == quote {
-					break
-				}
-				j++
-			}
-			if j >= len(s) {
-				return nil, "", fmt.Errorf("unterminated quoted key")
-			}
-			raw := s[i+1 : j]
-			name := raw
-			if quote == '"' {
-				decoded, err := mcpTOMLDecodeBasicKey(raw)
-				if err != nil {
-					return nil, "", err
-				}
-				name = decoded
-			}
-			if name == "" {
-				return nil, "", fmt.Errorf("empty quoted key")
-			}
-			path = append(path, name)
-			i = j + 1
-		default:
-			j := i
-			for j < len(s) && mcpTOMLBareKeyByte(s[j]) {
-				j++
-			}
-			if j == i {
-				return nil, "", fmt.Errorf("invalid bare key")
-			}
-			path = append(path, s[i:j])
-			i = j
-		}
-		for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
-			i++
-		}
-		if i < len(s) && s[i] == '.' {
-			i++
-			continue
-		}
-		return path, s[i:], nil
+// mcpTOMLAppendBlock appends the managed block after the preserved bytes, with
+// one blank separator line when there is content before it.
+func mcpTOMLAppendBlock(outside, block string) string {
+	switch {
+	case outside == "":
+		return block + "\n"
+	case strings.HasSuffix(outside, "\n"):
+		return outside + "\n" + block + "\n"
+	default:
+		return outside + "\n\n" + block + "\n"
 	}
 }
 
-func mcpTOMLBareKeyByte(b byte) bool {
-	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_' || b == '-'
-}
-
-// mcpTOMLDecodeBasicKey decodes the escapes of a TOML basic-string key
-// (\b \t \n \f \r \" \\ \uXXXX \UXXXXXXXX and the escaped newline
-// continuation). An unknown escape, a lone surrogate or an out-of-range code
-// point is refused: guessing would merge two different keys into one.
-func mcpTOMLDecodeBasicKey(raw string) (string, error) {
-	var sb strings.Builder
-	for i := 0; i < len(raw); i++ {
-		c := raw[i]
-		if c != '\\' {
-			sb.WriteByte(c)
-			continue
-		}
-		i++
-		if i >= len(raw) {
-			return "", fmt.Errorf("unterminated escape")
-		}
-		switch raw[i] {
-		case 'b':
-			sb.WriteByte('\b')
-		case 't':
-			sb.WriteByte('\t')
-		case 'n':
-			sb.WriteByte('\n')
-		case 'f':
-			sb.WriteByte('\f')
-		case 'r':
-			sb.WriteByte('\r')
-		case '"':
-			sb.WriteByte('"')
-		case '\\':
-			sb.WriteByte('\\')
-		case ' ', '\t', '\n', '\r':
-			// A line-ending backslash trims the following whitespace.
-			for i+1 < len(raw) && strings.IndexByte(" \t\r\n", raw[i+1]) >= 0 {
-				i++
-			}
-		case 'u', 'U':
-			width := 4
-			if raw[i] == 'U' {
-				width = 8
-			}
-			if i+width >= len(raw) {
-				return "", fmt.Errorf("truncated unicode escape")
-			}
-			// Accumulate wide enough to see an out-of-range \U code point
-			// instead of overflowing a signed rune and wrapping into U+FFFD.
-			var cp uint32
-			for j := 1; j <= width; j++ {
-				v, ok := mcpHexVal(raw[i+j])
-				if !ok {
-					return "", fmt.Errorf("invalid unicode escape")
-				}
-				cp = cp<<4 | uint32(v)
-			}
-			if cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
-				return "", fmt.Errorf("invalid unicode code point")
-			}
-			sb.WriteRune(rune(cp))
-			i += width
-		default:
-			return "", fmt.Errorf("unknown escape")
-		}
-	}
-	return sb.String(), nil
-}
-
-// mcpMergeIntoTOML merges per server (S5): every `[<mcp_key>.*]` block a recorded
-// server owns is rebuilt from the manifest, every other user table is kept
-// verbatim, and a same-named unrecorded block is left alone.
-func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[string]bool, ownedNames []string) (string, mcpMergePlan, error) {
-	var existingLines []string
-	var original *toml.Table
+// mcpMergeIntoTOML renders the managed Codex block: servers declared outside it
+// are the user's (collision → preserved), and everything outside the markers is
+// kept byte-for-byte. The outside content must parse with the project's TOML
+// parser so the server names it declares are read semantically, not by matching
+// text; when it does not, nothing is added or changed.
+func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj) (string, mcpMergePlan, error) {
+	text := ""
 	if mcpIsFile(targetPath) {
-		text, err := mcpReadTextFile(targetPath)
+		raw, err := mcpReadTextFile(targetPath)
 		if err != nil {
 			return "", mcpMergePlan{}, err
 		}
-		// Codex TOML is user config, so the project's real parser gates the
-		// merge: a target it cannot read is never touched (no backup and no
-		// regenerate — that recovery is the S4 JSON rule, not this one).
-		parsed, perr := toml.Parse([]byte(text))
-		if perr != nil {
-			return "", mcpMergePlan{}, fmt.Errorf("%s: refusing to rewrite Codex MCP config: %w", targetPath, perr)
-		}
-		original = parsed
-		existingLines = pySplitLines(text)
+		text = raw
 	}
 
-	doc, err := mcpTOMLScanDocument(existingLines, mcpKey)
+	block, err := mcpTOMLSplitBlock(text, targetPath, mcpKey)
 	if err != nil {
 		return "", mcpMergePlan{}, err
 	}
-	headerless := make(map[string]bool, len(doc.headerless))
-	for _, name := range doc.headerless {
-		headerless[name] = true
+	outsideTable, err := toml.Parse([]byte(block.outside))
+	if err != nil {
+		return "", mcpMergePlan{}, fmt.Errorf("%s: refusing to rewrite Codex MCP config: %w", targetPath, err)
 	}
 
-	// A server's block runs from its header to the next header, so a nested
-	// [<mcp_key>.<name>.<sub>] block stays with the server it belongs to.
 	present := newMCPObj()
-	for _, h := range doc.headers {
-		if h.path[0] == mcpKey && len(h.path) > 1 {
-			present.set(h.path[1], true)
-		}
-	}
-	for _, name := range doc.headerless {
+	for _, name := range mcpTOMLServerNames(outsideTable, mcpKey) {
 		present.set(name, true)
 	}
-	plan := mcpPlanMerge(desired, owned, ownedNames, present)
-
-	// A name declared without its own header (inline table or dotted key) has no
-	// block to rebuild: emitting one would redeclare it, so it is left exactly as
-	// the user wrote it and stays out of the ownership record.
-	managed := make([]string, 0, len(plan.managed))
-	for _, name := range plan.managed {
-		if !headerless[name] {
-			managed = append(managed, name)
-			continue
-		}
-		if desired.has(name) && !plan.preservedHas(name) {
+	plan := mcpMergePlan{}
+	for _, name := range present.keys {
+		if desired.has(name) {
 			plan.preserved = append(plan.preserved, name)
+		} else {
+			plan.unrecorded = append(plan.unrecorded, name)
 		}
 	}
-	plan.managed = managed
-
-	drop := make(map[int]bool, len(doc.headers))
-	for i, h := range doc.headers {
-		// A preserved user table is emitted exactly as it stands; only a
-		// recorded block is rebuilt from the manifest.
-		if h.path[0] != mcpKey || len(h.path) < 2 || !owned[h.path[1]] || headerless[h.path[1]] {
+	written := make(map[string]bool, desired.len())
+	for _, name := range desired.keys {
+		if present.has(name) {
 			continue
 		}
-		end := len(existingLines)
-		if i+1 < len(doc.headers) {
-			end = doc.headers[i+1].line
-		}
-		for ln := h.line; ln < end; ln++ {
-			drop[ln] = true
+		plan.managed = append(plan.managed, name)
+		written[name] = true
+	}
+	for _, name := range block.names {
+		if !written[name] {
+			plan.removed = append(plan.removed, name)
 		}
 	}
-	outLines := make([]string, 0, len(existingLines))
-	for ln, line := range existingLines {
-		if !drop[ln] {
-			outLines = append(outLines, line)
-		}
+	if !block.present && len(plan.managed) == 0 {
+		// Nothing to write and nothing to prune: never touch the file.
+		return text, plan, nil
 	}
 
-	for len(outLines) > 0 && pyStrip(outLines[len(outLines)-1]) == "" {
-		outLines = outLines[:len(outLines)-1]
+	if len(plan.managed) == 0 {
+		// The block is removed and the outside bytes stay exactly as they were.
+		return block.outside, plan, nil
 	}
-	if len(outLines) > 0 {
-		outLines = append(outLines, "")
+	rendered, err := mcpTOMLRenderBlock(mcpKey, desired, plan.managed)
+	if err != nil {
+		return "", plan, err
 	}
-
-	for _, name := range plan.managed {
-		cfg, ok := desired.vals[name].(*mcpObj)
-		if !ok {
-			cfg = newMCPObj()
-		}
-		outLines = append(outLines, "["+mcpKey+"."+name+"]")
-		for _, k := range cfg.keys {
-			val, err := mcpTOMLValue(cfg.vals[k])
-			if err != nil {
-				return "", plan, err
-			}
-			outLines = append(outLines, k+" = "+val)
-		}
-		outLines = append(outLines, "")
-	}
-
-	content := strings.TrimRightFunc(strings.Join(outLines, "\n"), pyIsSpace) + "\n"
+	content := mcpTOMLAppendBlock(block.outside, rendered)
 	if mcpHasLoneSurrogate(content) {
-		// RenderMCPFile refuses this atomically with the lone-surrogate message.
+		// RenderMCPFile refuses this atomically with its own message.
 		return content, plan, nil
 	}
-	if err := mcpTOMLVerifyRewrite(targetPath, original, content, mcpKey, plan, desired); err != nil {
-		return "", plan, err
+	if _, err := toml.Parse([]byte(content)); err != nil {
+		// Self-check: never write a document our own parser rejects.
+		return "", plan, fmt.Errorf("%s: refusing to rewrite Codex MCP config: merged document does not parse: %w", targetPath, err)
 	}
 	return content, plan, nil
 }
 
-// mcpTOMLVerifyRewrite is the semantic safety net of the Codex merge: the
-// scanner plans, this proves the plan did not touch user content. The rendered
-// document must parse, every top-level key other than <mcp_key> must be
-// unchanged, a server outside the managed set must be unchanged, a removed
-// managed server must be gone, and a written one must equal its desired value.
-// Any difference is refused (rc 1, target byte-identical) instead of guessing,
-// whatever scanner edge case produced it.
-func mcpTOMLVerifyRewrite(targetPath string, original *toml.Table, content, mcpKey string, plan mcpMergePlan, desired *mcpObj) error {
-	unmerged := fmt.Errorf("%s: refusing to rewrite Codex MCP config: could not merge without changing user content", targetPath)
-	merged, err := toml.Parse([]byte(content))
-	if err != nil {
-		return fmt.Errorf("%s: refusing to rewrite Codex MCP config: rendered document does not parse: %w", targetPath, err)
-	}
-	before, _ := mcpTOMLPlainValue(original).(map[string]any)
-	after, _ := mcpTOMLPlainValue(merged).(map[string]any)
-
-	for key, value := range before {
-		if key == mcpKey {
-			continue
-		}
-		if !reflect.DeepEqual(value, after[key]) {
-			return unmerged
-		}
-	}
-	for key := range after {
-		if key != mcpKey {
-			if _, ok := before[key]; !ok {
-				return unmerged
-			}
-		}
-	}
-
-	written := make(map[string]bool, len(plan.managed))
-	for _, name := range plan.managed {
-		written[name] = true
-	}
-	removed := make(map[string]bool, len(plan.removed))
-	for _, name := range plan.removed {
-		removed[name] = true
-	}
-	wasServers, _ := before[mcpKey].(map[string]any)
-	nowServers, _ := after[mcpKey].(map[string]any)
-	for name, was := range wasServers {
-		now, present := nowServers[name]
-		switch {
-		case removed[name]:
-			if present {
-				return unmerged
-			}
-		case written[name]:
-			// compared with its desired value below
-		default:
-			if !present || !reflect.DeepEqual(was, now) {
-				return unmerged
-			}
-		}
-	}
-	for name := range nowServers {
-		if _, ok := wasServers[name]; !ok && !written[name] {
-			return unmerged
-		}
-	}
-	for name := range written {
-		want, ok := mcpTOMLPlainValue(desired.vals[name]).(map[string]any)
+// mcpTOMLRenderBlock renders the marker block around one table per managed
+// server, in manifest order.
+func mcpTOMLRenderBlock(mcpKey string, desired *mcpObj, names []string) (string, error) {
+	var sb strings.Builder
+	sb.WriteString(mcpTOMLBlockBegin)
+	sb.WriteString("\n")
+	for _, name := range names {
+		cfg, ok := desired.vals[name].(*mcpObj)
 		if !ok {
-			return unmerged
+			cfg = newMCPObj()
 		}
-		got, present := nowServers[name]
-		if !present || !reflect.DeepEqual(want, got) {
-			return unmerged
+		sb.WriteString("[" + mcpKey + "." + name + "]\n")
+		for _, k := range cfg.keys {
+			val, err := mcpTOMLValue(cfg.vals[k])
+			if err != nil {
+				return "", err
+			}
+			sb.WriteString(k + " = " + val + "\n")
 		}
+		sb.WriteString("\n")
 	}
-	return nil
-}
-
-// mcpTOMLPlainValue turns a parsed or modeled value into a comparable plain form
-// (maps, slices and the ordered model's wide integers), so the safety net can
-// deep-compare a document with its rewrite.
-func mcpTOMLPlainValue(v any) any {
-	switch x := v.(type) {
-	case *toml.Table:
-		if x == nil {
-			return map[string]any{}
-		}
-		out := make(map[string]any, len(x.Keys()))
-		for _, k := range x.Keys() {
-			vv, _ := x.Get(k)
-			out[k] = mcpTOMLPlainValue(vv)
-		}
-		return out
-	case []*toml.Table:
-		out := make([]any, len(x))
-		for i, e := range x {
-			out[i] = mcpTOMLPlainValue(e)
-		}
-		return out
-	case []any:
-		out := make([]any, len(x))
-		for i, e := range x {
-			out[i] = mcpTOMLPlainValue(e)
-		}
-		return out
-	case *mcpObj:
-		if x == nil {
-			return map[string]any{}
-		}
-		out := make(map[string]any, x.len())
-		for _, k := range x.keys {
-			out[k] = mcpTOMLPlainValue(x.vals[k])
-		}
-		return out
-	case toml.BigInt:
-		return mcpBigInt(x)
-	default:
-		return v
-	}
+	sb.WriteString(mcpTOMLBlockEnd)
+	return sb.String(), nil
 }
 
 // RenderMCPOptions configures RenderMCPFile. RecipeMCPPath is the
@@ -1952,7 +1529,7 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 	var invalid []byte
 	var plan mcpMergePlan
 	if mcpPathSuffix(targetPath) == ".toml" {
-		content, plan, err = mcpMergeIntoTOML(targetPath, mcpKey, slimmed, owned, ownedNames)
+		content, plan, err = mcpMergeIntoTOML(targetPath, mcpKey, slimmed)
 	} else {
 		var existing *mcpObj
 		existing, invalid, err = loadJSONTarget(targetPath)

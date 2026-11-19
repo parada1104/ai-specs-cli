@@ -465,7 +465,6 @@ func TestMCPOwnershipCodexUnparseableKeyRefuses(t *testing.T) {
 	for _, tc := range []struct{ name, user string }{
 		{"undecodable key under the parent table", "[mcp_servers]\n\"bad\\qname\" = { command = \"user\" }\n"},
 		{"undecodable root key", "mcp_servers.\"bad\\qname\".command = \"user\"\n"},
-		{"whole table declared inline", "mcp_servers = { same = { command = \"user\" } }\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -493,12 +492,12 @@ func TestMCPOwnershipCodexUnparseableKeyRefuses(t *testing.T) {
 	}
 }
 
-// TestMCPOwnershipCodexSafetyNetRefusesMissedMerge pins the semantic safety net
-// for the Codex merge: whatever the scanner misreads, a rewrite that would
-// change user content or produce an unparsable document is refused with the
-// target byte-identical. Here an array row hides the root-level dotted server
-// declaration that the manifest also wants to manage.
-func TestMCPOwnershipCodexSafetyNetRefusesMissedMerge(t *testing.T) {
+// TestMCPOwnershipCodexArrayRowDoesNotHideServer pins the managed-block contract
+// for the case the old scanner misread: an array row that looks like a header
+// cannot change what ai-specs writes, because only the marker block is ours.
+// The root-level dotted server is user content outside the block, so it is
+// preserved (with the collision warning) and the file stays byte-identical.
+func TestMCPOwnershipCodexArrayRowDoesNotHideServer(t *testing.T) {
 	user := "user_choices = [\n  [\"same\"]\n]\nmcp_servers.same.command = \"user\"\n"
 	dir := t.TempDir()
 	target := filepath.Join(dir, ".codex", "config.toml")
@@ -512,18 +511,18 @@ func TestMCPOwnershipCodexSafetyNetRefusesMissedMerge(t *testing.T) {
 		t.Fatalf("the pinned fixture must be valid TOML: %v", err)
 	}
 
-	out, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifestSame, "codex", target, "mcp_servers", []string{"same"})
-	if rc != 1 {
-		t.Fatalf("rc=%d want 1 (stdout %q stderr %q)", rc, out, stderr)
+	_, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifestSame, "codex", target, "mcp_servers", nil)
+	if rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, stderr)
 	}
-	if lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n"); len(lines) != 1 || !strings.HasPrefix(lines[0], "error: ") {
-		t.Errorf("stderr is not exactly one error line: %q", stderr)
+	if len(res.Preserved) != 1 || res.Preserved[0] != "same" {
+		t.Errorf("preserved = %v, want [same]", res.Preserved)
 	}
-	if len(res.Managed) != 0 {
-		t.Errorf("managed = %v, want none refused", res.Managed)
+	if !strings.Contains(stderr, `preserved user MCP server "same"`) {
+		t.Errorf("no collision warning: %q", stderr)
 	}
 	if got := mcpReadTarget(t, target); got != user {
-		t.Errorf("refused rewrite modified the target: got %q want %q", got, user)
+		t.Errorf("user bytes changed:\n--- got ---\n%s\n--- want ---\n%s", got, user)
 	}
 }
 
