@@ -34,6 +34,7 @@ Reconcile a project's ai-specs/ with its root manifest:
   - vendor [[deps]] once in the root workspace
   - regenerate AGENTS.md auto-invoke table
   - fan out local derived artifacts to every resolved target
+  - remove retired recipe commands when ai-specs recorded their ownership
 
 Arguments:
   path      Project root (default: current directory)
@@ -275,16 +276,21 @@ func (r *runner) run(opts options) int {
 			return 1
 		}
 	}
-	// Plan both prunes for every target before any project writes, including
-	// the bundled refresh that normalizes the project lock.
-	enabled, hooks, inputErr := loadPruneInputs(root, r.home)
+	// Plan all prunes before project writes, including bundled refresh of the lock.
+	enabled, hooks, commands, inputErr := loadPruneInputs(root, r.home)
 	var applyRecipePrune func() error
+	var applyCommandPrune func(io.Writer) (map[string]bool, error)
 	applyRuntimePrunes := make([]func() error, len(paths))
 	// If the inputs are invalid, leave their diagnostics to materialization.
 	if inputErr == nil {
 		applyRecipePrune, err = planRecipeArtifactPrune(root, enabled, hooks)
 		if err != nil {
 			fmt.Fprintf(r.stderr, "ERROR: cannot prune recipe artifacts: %v\n", err)
+			return 1
+		}
+		applyCommandPrune, err = planCommandPrune(root, r.home, paths, commands)
+		if err != nil {
+			fmt.Fprintf(r.stderr, "ERROR: cannot prune recipe commands: %v\n", err)
 			return 1
 		}
 		for i, path := range paths {
@@ -424,6 +430,11 @@ func (r *runner) run(opts options) int {
 		fmt.Fprintf(r.stderr, "ERROR: cannot prune recipe artifacts: %v\n", err)
 		return 1
 	}
+	warned, err := applyCommandPrune(r.stderr)
+	if err != nil {
+		fmt.Fprintf(r.stderr, "ERROR: cannot prune recipe commands: %v\n", err)
+		return 1
+	}
 
 	// AGENTS.md: policy gate then render, both native since T3 of U2a. D3 is
 	// preserved, not fixed: the policy's failure status is ignored and the gate
@@ -447,6 +458,7 @@ func (r *runner) run(opts options) int {
 			target:         target,
 			selectAll:      true,
 			syncHookEvents: true,
+			commands:       commandSync{owners: commands, warned: warned},
 			recipeMCP:      recipeMcpTemp,
 			resolvedConfig: resolvedConfigTemp,
 			resolvedHooks:  resolvedHooksTemp,

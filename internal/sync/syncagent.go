@@ -37,6 +37,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/projectcache"
 	"ai-specs.dev/ai-specs/internal/skills"
 	"ai-specs.dev/ai-specs/internal/toml"
@@ -89,6 +90,7 @@ type agentOptions struct {
 	resolvedConfig     string
 	resolvedHooks      string
 	syncHookEvents     bool
+	commands           commandSync
 	adoptBrief         bool
 	selectAll          bool
 	selected           []string
@@ -325,6 +327,7 @@ type agentRun struct {
 	resolvedConfig string
 	resolvedHooks  string
 	syncHookEvents bool
+	commands       commandSync
 	adoptBrief     bool
 	verbose        bool
 	selectAll      bool
@@ -366,6 +369,7 @@ func buildAgentRun(r *runner, opts agentOptions, s agentStreams, nested bool) (*
 		resolvedConfig: opts.resolvedConfig,
 		resolvedHooks:  opts.resolvedHooks,
 		syncHookEvents: opts.syncHookEvents,
+		commands:       opts.commands,
 		adoptBrief:     opts.adoptBrief,
 		verbose:        opts.verbose,
 		selectAll:      opts.selectAll,
@@ -851,6 +855,7 @@ func (a *agentRun) syncCommands(cmdDir string, out, errW io.Writer) int {
 	}
 	copied := 0
 	managed := map[string]bool{}
+	owned := map[string]string{}
 	for _, src := range globMDFilesSh(a.commandsSource) {
 		name := filepath.Base(src)
 		targetFile := filepath.Join(dest, name)
@@ -878,6 +883,27 @@ func (a *agentRun) syncCommands(cmdDir string, out, errW io.Writer) int {
 		}
 		managed[name] = true
 		copied++
+		if a.commands.owners[name] != "" && !isRegularFilePath(filepath.Join(a.sourceRoot, "ai-specs", "commands", name)) {
+			hash, err := lock.Sha256OfFile(targetFile)
+			if err != nil {
+				fmt.Fprintln(errW, err)
+				return 1
+			}
+			owned[name] = hash
+		}
+	}
+	if len(owned) > 0 {
+		if err := applyLockRecord(filepath.Join(a.sourceRoot, bundledLockRel), func(lk *lock.Lock) {
+			kind := RecipeCommandKind
+			for name, hash := range owned {
+				rel, _ := filepath.Rel(a.sourceRoot, filepath.Join(dest, name))
+				recipe := a.commands.owners[name]
+				lock.SetManagedOverride(lk, rel, hash, &recipe, nil, &kind, nil)
+			}
+		}); err != nil {
+			fmt.Fprintln(errW, err)
+			return 1
+		}
 	}
 	for _, name := range globStarNames(dest) {
 		full := filepath.Join(dest, name)
@@ -885,7 +911,7 @@ func (a *agentRun) syncCommands(cmdDir string, out, errW io.Writer) int {
 		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
-		if !managed[name] {
+		if !managed[name] && !a.commands.warned[full] {
 			fmt.Fprintf(errW, "    ! preserved non-managed file %s/%s (move it to ai-specs/commands/ to manage it)\n", cmdDir, name)
 		}
 	}

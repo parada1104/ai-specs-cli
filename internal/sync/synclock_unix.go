@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ai-specs.dev/ai-specs/internal/projectcache"
+	"ai-specs.dev/worktree-gate/shared"
 )
 
 // These modes preserve existing cache permissions; polling bounds lock retry granularity.
@@ -21,6 +22,11 @@ const (
 
 // acquireSyncLock serializes sync processes sharing the same cache root.
 func acquireSyncLock(root, home string) (func(), error) {
+	// CacheRoot resolves symlinks; check the lexical path before opening the lock.
+	home = projectcache.AISpecsHome(home)
+	if err := shared.EnsureTemplateAncestorsReal(home, filepath.Join(home, "cache", "projects", projectcache.CacheKey(root), "sync.lock")); err != nil {
+		return nil, err
+	}
 	cacheRoot := projectcache.CacheRoot(root, home)
 	if err := os.MkdirAll(cacheRoot, syncLockDirMode); err != nil {
 		return nil, err

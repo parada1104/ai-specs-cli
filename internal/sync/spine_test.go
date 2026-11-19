@@ -29,21 +29,25 @@ import (
 
 // ── fixtures ──────────────────────────────────────────────────────────────
 
-// spineEnv pins the hermetic environment every end-to-end case runs under and
-// returns the CLI home (the repository root, where templates/ and the bundled
-// assets live) and a scratch directory outside the worktree.
+// spineEnv gives each case a writable CLI home outside the worktree.
 func spineEnv(t *testing.T) (home, scratch string) {
 	t.Helper()
-	home = gitignoreRepoRoot(t)
+	source := gitignoreRepoRoot(t)
 	scratch = t.TempDir()
-	for _, p := range []string{filepath.Join(scratch, "tmp"), filepath.Join(scratch, "home")} {
+	home = filepath.Join(scratch, "install")
+	for _, p := range []string{filepath.Join(scratch, "tmp"), filepath.Join(scratch, "home"), home} {
 		if err := os.MkdirAll(p, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", p, err)
 		}
 	}
+	for _, name := range []string{"templates", "bundled-skills", "bundled-commands", "catalog", "VERSION"} {
+		if err := os.Symlink(filepath.Join(source, name), filepath.Join(home, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	t.Setenv("AI_SPECS_GATE_OFFLINE", "1")
 	t.Setenv("AI_SPECS_NO_NETWORK", "1")
-	t.Setenv("AI_SPECS_VENDOR_FIXTURE_ROOT", filepath.Join(home, "tests", "fixtures", "kepano-obsidian-skills"))
+	t.Setenv("AI_SPECS_VENDOR_FIXTURE_ROOT", filepath.Join(source, "tests", "fixtures", "kepano-obsidian-skills"))
 	t.Setenv("TMPDIR", filepath.Join(scratch, "tmp"))
 	t.Setenv("HOME", filepath.Join(scratch, "home"))
 	t.Setenv("LC_ALL", "C")
