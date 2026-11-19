@@ -371,6 +371,15 @@ func TestMCPRenderDifferential(t *testing.T) {
 				t.Fatalf("frozen record stderr/dropped mismatch (traceback=%v)", tc.tracebackStderr)
 			}
 			goOut, goErr, goRC, goTarget := runMCPGo(t, tc)
+			// Accepted divergence (Robert, 2026-11-18): infinities are written as
+			// the valid JSON numbers 1e999/-1e999 instead of Python's bare
+			// Infinity, so the next sync does not treat its own output as invalid.
+			if goTarget != nil && (tc.name == "existing json numeric extremes round-trip" || tc.name == "recipe json nan json agent") {
+				raw, _ := base64.StdEncoding.DecodeString(*goTarget)
+				legacy := strings.ReplaceAll(strings.ReplaceAll(string(raw), "-1e999", "-Infinity"), "1e999", "Infinity")
+				b := base64.StdEncoding.EncodeToString([]byte(legacy))
+				goTarget = &b
+			}
 
 			switch tc.name {
 			case "invalid json becomes empty object", "json raw control char rejected", "target invalid utf8 json", "json nan infinity literals":

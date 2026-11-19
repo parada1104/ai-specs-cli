@@ -594,16 +594,18 @@ func mcpWriteJSONCompact(sb *strings.Builder, v any) {
 	}
 }
 
-// mcpJSONFloat mirrors json.dumps(float): float.__repr__ for finite values,
-// NaN / Infinity / -Infinity otherwise.
+// mcpJSONFloat mirrors json.dumps(float) for finite values. An infinity can
+// only come from an overflowing literal such as 1e400 (bare constants are
+// rejected on read), so it is written back as a valid JSON number that
+// re-parses to the same value instead of Python's bare Infinity.
 func mcpJSONFloat(f float64) string {
 	switch {
 	case math.IsNaN(f):
 		return "NaN"
 	case math.IsInf(f, 1):
-		return "Infinity"
+		return "1e999"
 	case math.IsInf(f, -1):
-		return "-Infinity"
+		return "-1e999"
 	}
 	return formatPyFloat(f)
 }

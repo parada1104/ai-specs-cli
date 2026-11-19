@@ -818,6 +818,9 @@ JSON targets. Go sync treats those literals as invalid JSON: before rewriting,
 it saves the exact original bytes to the first free `.bak` or `.bak.N`, warns
 once on stderr naming the target and backup, then regenerates as from `{}`.
 This applies to existing JSON write targets, not read-only inputs or Codex TOML.
+Valid overflowing numbers such as `1e400` remain valid input, and Go writes
+the resulting infinities as `1e999` / `-1e999` (legacy wrote bare `Infinity`),
+so a later sync never treats its own output as invalid.
 
 ## 11. Environment variables
 

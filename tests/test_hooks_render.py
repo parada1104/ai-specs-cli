@@ -129,6 +129,31 @@ class _HookFixtureMixin(unittest.TestCase):
 
 
 class HooksRenderTests(_HookFixtureMixin):
+    def test_valid_numeric_extremes_survive_two_syncs(self):
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("claude")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        manifest.write_text(manifest.read_text() + "\n[mcp.demo]\ncommand = 'echo'\n")
+
+        targets = [self.root / ".claude/settings.json", self.root / ".mcp.json"]
+        targets[0].parent.mkdir()
+        seed = (
+            '{"plus":1e400,"minus":-1e400,"zero":-0,"small":1e-400,'
+            '"big":123456789012345678901234567890}'
+        )
+        for target in targets:
+            target.write_text(seed)
+
+        for attempt in (1, 2):
+            with self.subTest(attempt=attempt):
+                self.assertEqual(self.sync().stderr, "")
+                for target in targets:
+                    self.assertFalse(list(target.parent.glob(target.name + ".bak*")))
+                    self.assertLessEqual(
+                        {"plus", "minus", "zero", "small", "big"},
+                        json.loads(target.read_text()).keys(),
+                    )
+
     def test_invalid_hook_and_mcp_json_backed_up_before_regeneration(self):
         self.seed_recipe(RECIPE_SHELL, "shell-gate")
         self.write_manifest("claude")
