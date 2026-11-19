@@ -849,9 +849,18 @@ only those:
   those markers: comments, CRLF line endings, ordering, formatting and servers
   declared in any TOML form survive exactly. The block is appended after one
   blank separator line when absent, and removed entirely (with that separator)
-  once no managed server remains, which restores the original bytes. Malformed
-  markers (begin without end, duplicates, end before begin, an unparsable block)
-  refuse the render: rc 1, one `error:` line, file byte-identical. The outside
+  once no managed server remains, which restores the original bytes. The markers
+  are only trusted when the split validates semantically: the whole file, the
+  outside bytes and the block must each parse, the block must hold nothing but
+  `[<mcp_key>.<name>]` tables, and the whole file must equal the outside document
+  plus the block's servers name by name. Malformed markers (begin without end,
+  duplicates, end before begin) and marker lines that do not delimit a real block
+  — an example inside a user multi-line string, a begin marker moved above a
+  user table — refuse the render: rc 1, one `error:` line, file byte-identical.
+  A managed server name that is not a bare TOML key is written quoted
+  (`[mcp_servers."dev.server"]`), and after rendering every written name must
+  exist at `<mcp_key>.<name>` in the parsed result or the render refuses, so a
+  dotted name can never nest into a user server. The outside
   content must parse with `internal/toml.Parse` before anything is written, so
   the user's servers are read semantically: a manifest server whose name already
   exists outside is preserved with the collision warning and no table is emitted

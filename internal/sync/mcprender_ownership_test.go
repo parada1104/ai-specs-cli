@@ -560,3 +560,83 @@ func TestMCPOwnershipCodexUnparsableTargetRefuses(t *testing.T) {
 		t.Errorf("a TOML target must not be backed up: stat err=%v", err)
 	}
 }
+
+// TestMCPOwnershipCodexUntrustedMarkersRefuse pins the split validation: marker
+// text that does not delimit a real block — an example inside a user multi-line
+// string, or a begin marker moved above a user table — is refused with the file
+// byte-identical instead of being treated as ours.
+func TestMCPOwnershipCodexUntrustedMarkersRefuse(t *testing.T) {
+	for _, tc := range []struct{ name, user string }{
+		{
+			name: "marker example inside a user string",
+			user: "developer_instructions = \"\"\"\nExample:\n" +
+				mcpTOMLBlockBegin + "\n[mcp_servers.same]\ncommand=\"example\"\n" +
+				mcpTOMLBlockEnd + "\nEnd example.\n\"\"\"\n",
+		},
+		{
+			name: "begin marker above a user table",
+			user: mcpTOMLBlockBegin + "\n[features]\nshell_tool = true\n\n" +
+				"[mcp_servers.same]\ncommand = \"managed\"\n\n" + mcpTOMLBlockEnd + "\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(dir, ".codex", "config.toml")
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, []byte(tc.user), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := toml.Parse([]byte(tc.user)); err != nil {
+				t.Fatalf("the pinned fixture must be valid TOML: %v", err)
+			}
+			out, stderr, rc, _ := mcpRenderOwned(t, dir, mcpOwnershipManifestSame, "codex", target, "mcp_servers", nil)
+			if rc != 1 {
+				t.Fatalf("rc=%d want 1 (stdout %q stderr %q)", rc, out, stderr)
+			}
+			if lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n"); len(lines) != 1 || !strings.HasPrefix(lines[0], "error: ") {
+				t.Errorf("stderr is not exactly one error line: %q", stderr)
+			}
+			if got := mcpReadTarget(t, target); got != tc.user {
+				t.Errorf("refused rewrite modified the target: got %q want %q", got, tc.user)
+			}
+		})
+	}
+}
+
+// TestMCPOwnershipCodexDottedNameIsOneQuotedKey pins that a manifest server name
+// which is not a bare TOML key is written as one quoted key: it must not nest
+// into a user server of the same first segment.
+func TestMCPOwnershipCodexDottedNameIsOneQuotedKey(t *testing.T) {
+	user := "[mcp_servers.dev]\ncommand = \"user\"\n"
+	dir := t.TempDir()
+	target := filepath.Join(dir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte(user), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "[project]\nname = 'own'\n\n[mcp.\"dev.server\"]\ncommand = 'owned'\n"
+	_, stderr, rc, res := mcpRenderOwned(t, dir, manifest, "codex", target, "mcp_servers", nil)
+	if rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, stderr)
+	}
+	if got := mcpManagedNames(res); len(got) != 1 || got[0] != "dev.server" {
+		t.Errorf("managed = %v, want [dev.server]", got)
+	}
+	parsed, err := toml.Parse([]byte(mcpReadTarget(t, target)))
+	if err != nil {
+		t.Fatalf("merged document does not parse: %v", err)
+	}
+	servers, _ := parsed.Table("mcp_servers")
+	dev, _ := servers.Table("dev")
+	if cmd, _ := dev.String("command"); cmd != "user" {
+		t.Errorf("user server changed: %q", cmd)
+	}
+	owned, _ := servers.Table("dev.server")
+	if cmd, _ := owned.String("command"); cmd != "owned" {
+		t.Errorf("dotted managed server is not one key at mcp_servers.dev.server: %v", servers.Keys())
+	}
+}

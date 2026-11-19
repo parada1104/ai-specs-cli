@@ -387,6 +387,72 @@ class HooksRenderTests(_HookFixtureMixin):
 
         self.assertEqual(target.read_bytes(), user)
 
+    def test_codex_marker_example_inside_user_string_is_never_removed(self):
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("codex")
+        target = self.root / ".codex/config.toml"
+        target.parent.mkdir()
+        original = (
+            b'developer_instructions = """\nExample:\n'
+            b'# managed-by: ai-specs (do not remove block): MCP servers\n'
+            b'[mcp_servers.same]\ncommand="example"\n'
+            b'# end managed-by: ai-specs: MCP servers\nEnd example.\n"""\n'
+        )
+        target.write_bytes(original)
+
+        result = invoke(self.root, "sync", cli_home=self.home)
+        self.assertIn(result.returncode, (0, 1), result.stderr)
+        self.assertEqual(target.read_bytes(), original)
+
+    def test_codex_moved_begin_marker_cannot_delete_user_table(self):
+        import tomllib
+
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("codex")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        base = manifest.read_text()
+        manifest.write_text(base + '\n[mcp.same]\ncommand = "managed"\n')
+        target = self.root / ".codex/config.toml"
+        target.parent.mkdir()
+        user = b"[features]\nshell_tool = true\n"
+        target.write_bytes(user)
+        self.sync()
+
+        marker = b"# managed-by: ai-specs (do not remove block): MCP servers\n"
+        moved = marker + user + target.read_bytes().split(marker, 1)[1]
+        target.write_bytes(moved)
+        manifest.write_text(base)
+
+        result = invoke(self.root, "sync", cli_home=self.home)
+        if result.returncode == 1:
+            self.assertEqual(target.read_bytes(), moved)
+        else:
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(tomllib.loads(target.read_text()), tomllib.loads(user.decode()))
+
+    def test_codex_dotted_manifest_name_cannot_modify_user_server(self):
+        import tomllib
+
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("codex")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        manifest.write_text(
+            manifest.read_text() + '\n[mcp."dev.server"]\ncommand = "owned"\n'
+        )
+        target = self.root / ".codex/config.toml"
+        target.parent.mkdir()
+        original = b'[mcp_servers.dev]\ncommand = "user"\n'
+        target.write_bytes(original)
+
+        result = invoke(self.root, "sync", cli_home=self.home)
+        if result.returncode == 1:
+            self.assertEqual(target.read_bytes(), original)
+        else:
+            self.assertEqual(result.returncode, 0, result.stderr)
+            servers = tomllib.loads(target.read_text())["mcp_servers"]
+            self.assertEqual(servers["dev"], {"command": "user"})
+            self.assertEqual(servers["dev.server"]["command"], "owned")
+
     def test_corrupt_mcp_target_is_backed_up_when_pruning_last_server(self):
         self.seed_recipe(RECIPE_SHELL, "shell-gate")
         self.write_manifest("claude")

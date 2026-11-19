@@ -680,7 +680,9 @@ func TestMCPRenderSurrogateFailureLeavesTargetIntact(t *testing.T) {
 	defer os.Chmod(target, 0o644)
 
 	out, rc, stderr := mcpRunRender(t, dir, "codex", target, "mcp_servers", recipe)
-	if rc != 1 || out != "" || !strings.Contains(stderr, "lone surrogate") {
+	// The name is rendered as a quoted key, and a lone surrogate is not a TOML
+	// scalar, so the render is refused before the target is opened.
+	if rc != 1 || out != "" || !strings.Contains(stderr, "refusing to rewrite Codex MCP config") {
 		t.Fatalf("rc=%d stdout=%q stderr=%q", rc, out, stderr)
 	}
 	if got, _ := os.ReadFile(target); string(got) != original {

@@ -1251,8 +1251,12 @@ type mcpTOMLBlock struct {
 }
 
 // mcpTOMLSplitBlock finds the managed block. Malformed markers (begin without
-// end, duplicates, end before begin, an unparsable block) are an error: the
-// caller refuses instead of guessing which markers are its own.
+// end, duplicates, end before begin) are an error, and so are markers that do
+// not delimit a real block: the split is only trusted when the whole file, the
+// outside bytes and the block all parse and the whole file is exactly the
+// outside document plus the block's servers. That check is what makes a marker
+// example inside a user string, or a marker moved above a user table, a refusal
+// instead of a silent deletion.
 func mcpTOMLSplitBlock(text, targetPath, mcpKey string) (mcpTOMLBlock, error) {
 	malformed := fmt.Errorf("%s: refusing to rewrite Codex MCP config: malformed %q / %q block markers", targetPath, mcpTOMLBlockBegin, mcpTOMLBlockEnd)
 	lines := mcpTOMLRawLines(text)
@@ -1283,12 +1287,140 @@ func mcpTOMLSplitBlock(text, targetPath, mcpKey string) (mcpTOMLBlock, error) {
 	}
 
 	blockText := text[lines[begin].start:lines[endIdx].end]
-	parsed, err := toml.Parse([]byte(blockText))
+	outsideText := text[:removeStart] + text[removeEnd:]
+	untrusted := fmt.Errorf("%s: refusing to rewrite Codex MCP config: the managed MCP markers do not delimit a block", targetPath)
+	whole, err := toml.Parse([]byte(text))
 	if err != nil {
-		return mcpTOMLBlock{}, fmt.Errorf("%s: refusing to rewrite Codex MCP config: the managed MCP block does not parse: %w", targetPath, err)
+		return mcpTOMLBlock{}, untrusted
 	}
-	names := mcpTOMLServerNames(parsed, mcpKey)
-	return mcpTOMLBlock{present: true, outside: text[:removeStart] + text[removeEnd:], names: names}, nil
+	outside, err := toml.Parse([]byte(outsideText))
+	if err != nil {
+		return mcpTOMLBlock{}, untrusted
+	}
+	block, err := toml.Parse([]byte(blockText))
+	if err != nil {
+		return mcpTOMLBlock{}, untrusted
+	}
+	if !mcpTOMLValidSplit(whole, outside, block, mcpKey) {
+		return mcpTOMLBlock{}, untrusted
+	}
+	return mcpTOMLBlock{present: true, outside: outsideText, names: mcpTOMLServerNames(block, mcpKey)}, nil
+}
+
+// mcpTOMLValidSplit accepts a split only when the block holds nothing but the
+// managed table and the whole file equals the outside document plus the block's
+// servers, name by name.
+func mcpTOMLValidSplit(whole, outside, block *toml.Table, mcpKey string) bool {
+	if keys := mcpTOMLKeys(block); len(keys) != 1 || keys[0] != mcpKey {
+		return false
+	}
+	for _, key := range mcpTOMLKeys(whole) {
+		if key == mcpKey {
+			continue
+		}
+		w, _ := whole.Get(key)
+		o, ok := mcpTOMLGet(outside, key)
+		if !ok || !mcpTOMLDeepEqual(w, o) {
+			return false
+		}
+	}
+	for _, key := range mcpTOMLKeys(outside) {
+		if key == mcpKey {
+			continue
+		}
+		if _, ok := whole.Get(key); !ok {
+			return false
+		}
+	}
+	wholeServers, _ := whole.Table(mcpKey)
+	outsideServers, _ := outside.Table(mcpKey)
+	blockServers, _ := block.Table(mcpKey)
+	for _, name := range mcpTOMLServerNames(whole, mcpKey) {
+		w, _ := wholeServers.Get(name)
+		if o, ok := mcpTOMLGet(outsideServers, name); ok {
+			if !mcpTOMLDeepEqual(w, o) {
+				return false
+			}
+			continue
+		}
+		b, ok := mcpTOMLGet(blockServers, name)
+		if !ok || !mcpTOMLDeepEqual(w, b) {
+			return false
+		}
+	}
+	for _, name := range mcpTOMLServerNames(outside, mcpKey) {
+		if _, ok := mcpTOMLGet(wholeServers, name); !ok {
+			return false
+		}
+	}
+	for _, name := range mcpTOMLServerNames(block, mcpKey) {
+		if _, shadowed := mcpTOMLGet(outsideServers, name); shadowed {
+			return false
+		}
+		if _, ok := mcpTOMLGet(wholeServers, name); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// mcpTOMLKeys / mcpTOMLGet are nil-tolerant table accessors: an absent table is
+// an empty one for the split comparison.
+func mcpTOMLKeys(t *toml.Table) []string {
+	if t == nil {
+		return nil
+	}
+	return t.Keys()
+}
+
+func mcpTOMLGet(t *toml.Table, key string) (any, bool) {
+	if t == nil {
+		return nil, false
+	}
+	return t.Get(key)
+}
+
+// mcpTOMLDeepEqual compares two parsed TOML values structurally.
+func mcpTOMLDeepEqual(a, b any) bool {
+	switch x := a.(type) {
+	case *toml.Table:
+		y, ok := b.(*toml.Table)
+		if !ok || len(mcpTOMLKeys(x)) != len(mcpTOMLKeys(y)) {
+			return false
+		}
+		for _, key := range mcpTOMLKeys(x) {
+			xv, _ := x.Get(key)
+			yv, ok := mcpTOMLGet(y, key)
+			if !ok || !mcpTOMLDeepEqual(xv, yv) {
+				return false
+			}
+		}
+		return true
+	case []*toml.Table:
+		y, ok := b.([]*toml.Table)
+		if !ok || len(x) != len(y) {
+			return false
+		}
+		for i := range x {
+			if !mcpTOMLDeepEqual(x[i], y[i]) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		y, ok := b.([]any)
+		if !ok || len(x) != len(y) {
+			return false
+		}
+		for i := range x {
+			if !mcpTOMLDeepEqual(x[i], y[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return a == b
+	}
 }
 
 // mcpTOMLServerNames lists the servers a parsed document declares under
@@ -1381,11 +1513,35 @@ func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj) (string, mcpMe
 		// RenderMCPFile refuses this atomically with its own message.
 		return content, plan, nil
 	}
-	if _, err := toml.Parse([]byte(content)); err != nil {
+	merged, err := toml.Parse([]byte(content))
+	if err != nil {
 		// Self-check: never write a document our own parser rejects.
 		return "", plan, fmt.Errorf("%s: refusing to rewrite Codex MCP config: merged document does not parse: %w", targetPath, err)
 	}
+	// Self-check: every name we meant to write must exist at <mcp_key>.<name>,
+	// not nested somewhere else (a dotted name emitted bare would hide it).
+	servers, _ := merged.Table(mcpKey)
+	for _, name := range plan.managed {
+		if _, ok := mcpTOMLGet(servers, name); !ok {
+			return "", plan, fmt.Errorf("%s: refusing to rewrite Codex MCP config: managed server %q is not at %s.%s after rendering", targetPath, name, mcpKey, name)
+		}
+	}
 	return content, plan, nil
+}
+
+// mcpTOMLKey renders one TOML key: bare when every byte is a bare-key byte,
+// otherwise a quoted basic string (the json.dumps escapes are valid TOML), so a
+// name like `dev.server` stays one key instead of becoming a nested table.
+func mcpTOMLKey(name string) string {
+	for i := 0; i < len(name); i++ {
+		if b := name[i]; !(b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_' || b == '-') {
+			return mcpJSONString(name)
+		}
+	}
+	if name == "" {
+		return mcpJSONString(name)
+	}
+	return name
 }
 
 // mcpTOMLRenderBlock renders the marker block around one table per managed
@@ -1399,7 +1555,7 @@ func mcpTOMLRenderBlock(mcpKey string, desired *mcpObj, names []string) (string,
 		if !ok {
 			cfg = newMCPObj()
 		}
-		sb.WriteString("[" + mcpKey + "." + name + "]\n")
+		sb.WriteString("[" + mcpTOMLKey(mcpKey) + "." + mcpTOMLKey(name) + "]\n")
 		for _, k := range cfg.keys {
 			val, err := mcpTOMLValue(cfg.vals[k])
 			if err != nil {
