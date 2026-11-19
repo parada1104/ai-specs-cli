@@ -247,7 +247,13 @@ func planHookShimPrune(projectRoot, root, dir, ext, header string, live map[stri
 	} else if !os.IsNotExist(err) {
 		return plan, err
 	}
-	prefix := filepath.ToSlash(dir) + "/"
+	// Records are keyed by project-relative paths, like the lock itself; the
+	// shim directory is relative to the fan-out target, so map it first.
+	relDir, relErr := filepath.Rel(projectRoot, path)
+	if relErr != nil || strings.HasPrefix(filepath.ToSlash(relDir), "../") {
+		return plan, nil
+	}
+	prefix := filepath.ToSlash(relDir) + "/"
 	for _, rel := range sortedKeys(records) {
 		if strings.HasPrefix(rel, prefix) && !present[rel] {
 			plan.stale = append(plan.stale, rel)

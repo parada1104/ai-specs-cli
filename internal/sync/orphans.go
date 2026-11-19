@@ -226,9 +226,14 @@ func CleanOrphans(in OrphanCleanupInput, remove func(path string) error) (shared
 				fmt.Fprintf(out, "  ✓ removed stale lock entries for recipe '%s'\n", rid)
 			}
 		}
-		// The orphaned dep trees are the same authority for the lock: a dep the
-		// manifest no longer declares loses its recorded hashes too.
-		for _, depID := range materializeSortedSet(materializeStringSet(slices.Concat(plan.OrphanedDeps, plan.OrphanedInprojectDeps))) {
+		// A dep the manifest no longer declares loses its recorded hashes. The
+		// expected set, not the orphan plan, is authoritative: a dep whose trees
+		// are already gone has no orphan entry left to derive the ID from.
+		expected := materializeStringSet(in.PlanInput.ExpectedDepIDs)
+		for _, depID := range slices.Sorted(maps.Keys(lk.Deps)) {
+			if expected[depID] {
+				continue
+			}
 			if lock.RemoveDepLockEntries(lk, depID) {
 				removedAny = true
 				fmt.Fprintf(out, "  ✓ removed stale lock entries for dep '%s'\n", depID)

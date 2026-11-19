@@ -165,3 +165,24 @@ func TestSyncDropsStaleManagedRecordOnlyWhenArtifactIsGone(t *testing.T) {
 		t.Errorf("artifact of a retired recipe was touched: %q, %v", got, err)
 	}
 }
+
+// T5.2: a dep record survives when both dep trees are already absent, so sync
+// must prune lock-only dep IDs the manifest does not declare.
+func TestSyncPrunesLockDepsWithoutVendoredTree(t *testing.T) {
+	home, _ := spineEnv(t)
+	project := spineProject(t, "[project]\nname = 'dep-lock-only'\n[brief]\nrender = false\n[agents]\nenabled = ['claude']\n")
+	lk := lock.NewLock()
+	lock.SetDepSkillHashes(lk, "gone", "gone", map[string]string{"skills/gone/SKILL.md": "hash"})
+	lockPath := filepath.Join(project, "ai-specs/.ai-specs.lock")
+	if err := lock.WriteLock(lockPath, lk); err != nil {
+		t.Fatal(err)
+	}
+	runSyncCase(t, home, project)
+	after, err := lock.LoadLock(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := after.Deps["gone"]; ok {
+		t.Errorf("lock-only undeclared dep kept its record: %v", after.Deps)
+	}
+}

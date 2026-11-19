@@ -945,10 +945,18 @@ and prunes three things legacy could not:
   and reported once with `  ! <paths>: generated hook shims not recorded as
   ai-specs-managed (kept; delete them if ai-specs did not write them)`. Records
   whose shim is already gone are dropped.
-- **`[deps.*]`** entries are pruned by the same orphan authority that removes
-  the vendored `.deps` trees: a dep the manifest no longer declares loses its
-  recorded hashes, printing `  ✓ removed stale lock entries for dep '<id>'`
-  (legacy only pruned them in `skills remove`).
+- Records are project-relative for every fan-out target, so a declared
+  subrepo's shim is `sub-a/.pi/extensions/<recipe>-<hook>.ts`. Only that
+  target's prune pass may read or drop it, and a record whose shim is absent is
+  dropped on that pass regardless of whether the recipe is still enabled —
+  otherwise a hand-authored file later placed at the recorded path would be
+  deleted by the next sync as if it were the missing generated shim.
+- **`[deps.*]`** entries are pruned by the same authority that removes the
+  vendored `.deps` trees, but the manifest's declared dep set — not the
+  filesystem orphan plan — decides: a dep the manifest no longer declares loses
+  its recorded hashes even when both dep trees are already gone, printing
+  `  ✓ removed stale lock entries for dep '<id>'` (legacy only pruned them in
+  `skills remove`).
 - **`[managed.*]`** entries naming a recipe the manifest no longer enables are
   dropped once their artifact is already gone (e.g. a retired template or doc
   target). A record whose artifact still exists is kept and the file is never

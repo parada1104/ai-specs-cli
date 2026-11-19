@@ -680,6 +680,33 @@ class HooksRenderTests(_HookFixtureMixin):
             self.assertNotIn(f"ai-specs:hooks:{RECIPE_SHELL}:", (self.root / config).read_text())
         self.assertNotIn(self.script_path, (self.root / "ai-specs/.ai-specs.lock").read_text())
 
+    def test_missing_subrepo_shim_loses_ownership_before_path_reuse(self):
+        import tomllib
+
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("pi")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        manifest.write_text(manifest.read_text().replace(
+            "[project]\n", '[project]\nsubrepos = ["sub-a"]\n', 1
+        ))
+        (self.root / "sub-a").mkdir()
+        self.sync()
+
+        rel = f"sub-a/.pi/extensions/{RECIPE_SHELL}-shell-gate.ts"
+        shim = self.root / rel
+        lock = self.root / "ai-specs/.ai-specs.lock"
+        self.assertIn(rel, tomllib.loads(lock.read_text())["hooks"])
+
+        shim.unlink()
+        manifest.write_text(manifest.read_text().split("[recipes.")[0])
+        self.sync()
+        self.assertNotIn(rel, tomllib.loads(lock.read_text()).get("hooks", {}))
+
+        user = b"// user-authored replacement, not a generated shim\n"
+        shim.write_bytes(user)
+        self.sync()
+        self.assertEqual(shim.read_bytes(), user)
+
     def test_edited_shim_is_pruned_by_its_ownership_record(self):
         self.seed_and_sync(RECIPE_SHELL, "shell-gate", "claude", "cursor",
                            "opencode", "pi", "omp")
