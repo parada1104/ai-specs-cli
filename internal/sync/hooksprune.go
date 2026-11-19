@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/schema"
 	"ai-specs.dev/worktree-gate/shared"
 )
@@ -66,7 +67,7 @@ func pruneFile(root, path string) (bool, error) {
 
 // Plan all runtimes, including ones not selected for this fan-out. Absence
 // of an agent alone is not a reason to remove its otherwise current wiring.
-func planRuntimeHookPrune(root string, hooks []any) (func() error, error) {
+func planRuntimeHookPrune(projectRoot, root string, hooks []any) (func() error, error) {
 	var apply []func() error
 	for _, target := range []struct{ agent, json, dir, ext, header string }{
 		{"claude", ".claude/settings.json", "", "", ""},
@@ -103,8 +104,8 @@ func planRuntimeHookPrune(root string, hooks []any) (func() error, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, file := range files {
-			apply = append(apply, func() error { return os.Remove(file) })
+		if len(files) > 0 {
+			apply = append(apply, func() error { return applyHookShimPrune(projectRoot, root, files) })
 		}
 	}
 	return func() error {
@@ -122,12 +123,20 @@ func planHookBucketPrune(root, rel string, ids map[string]string) (func() error,
 		return nil, nil
 	}
 	path := filepath.Join(root, rel)
-	if exists, err := pruneFile(root, path); err != nil || !exists {
+	if _, err := pruneFile(root, path); err != nil {
 		return nil, err
 	}
+	return func() error { return applyHookBucketPrune(root, path, ids) }, nil
+}
+
+func applyHookBucketPrune(root, path string, ids map[string]string) error {
+	if exists, err := pruneFile(root, path); err != nil || !exists {
+		return err
+	}
+	// Materialization may have replaced this JSON file since preflight.
 	doc, err := hooksLoadJSONFile(path)
 	if err != nil { // Invalid JSON recovery belongs to the renderer.
-		return nil, nil
+		return nil
 	}
 	hooks := hooksObjOrNew(doc, "hooks")
 	changed := false
@@ -145,12 +154,14 @@ func planHookBucketPrune(root, rel string, ids map[string]string) (func() error,
 		}
 	}
 	if changed {
-		return func() error { return hooksWriteJSONFile(path, doc) }, nil
+		return hooksWriteJSONFile(path, doc)
 	}
-	return nil, nil
+	return nil
 }
 
-func planHookShimPrune(root, dir, ext, header string, live map[string]string) ([]string, error) {
+type hookShimPrune struct{ path, hash string }
+
+func planHookShimPrune(root, dir, ext, header string, live map[string]string) ([]hookShimPrune, error) {
 	if dir == "" {
 		return nil, nil
 	}
@@ -165,7 +176,7 @@ func planHookShimPrune(root, dir, ext, header string, live map[string]string) ([
 	if err != nil {
 		return nil, err
 	}
-	var doomed []string
+	var doomed []hookShimPrune
 	for _, entry := range entries {
 		name := entry.Name()
 		if !entry.Type().IsRegular() || filepath.Ext(name) != ext {
@@ -191,9 +202,48 @@ func planHookShimPrune(root, dir, ext, header string, live map[string]string) ([
 			if exists, err := pruneFile(root, file); err != nil {
 				return nil, err
 			} else if exists {
-				doomed = append(doomed, file)
+				hash, err := lock.Sha256OfFile(file)
+				if err != nil {
+					return nil, err
+				}
+				doomed = append(doomed, hookShimPrune{file, hash})
 			}
 		}
 	}
 	return doomed, nil
+}
+
+func applyHookShimPrune(projectRoot, root string, doomed []hookShimPrune) error {
+	// Materialization records template ownership in the project root lock,
+	// including templates whose destinations are inside a fan-out target.
+	lk, err := lock.LoadLock(filepath.Join(projectRoot, bundledLockRel))
+	if err != nil {
+		return err
+	}
+	for _, shim := range doomed {
+		rel, err := filepath.Rel(projectRoot, shim.path)
+		if err != nil {
+			return err
+		}
+		if lk.Managed[filepath.ToSlash(rel)] != nil {
+			continue
+		}
+		exists, err := pruneFile(root, shim.path)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			continue
+		}
+		hash, err := lock.Sha256OfFile(shim.path)
+		if err != nil {
+			return err
+		}
+		if hash == shim.hash {
+			if err := os.Remove(shim.path); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

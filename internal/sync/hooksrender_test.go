@@ -232,6 +232,73 @@ func TestSyncPruneRefusalKeepsWiringAndLock(t *testing.T) {
 	}
 }
 
+func TestSyncPrunePreservesRuntimeFilesReplacedDuringMaterialization(t *testing.T) {
+	source, _ := spineEnv(t)
+	home := t.TempDir()
+	for _, name := range []string{"templates", "bundled-skills", "bundled-commands", "VERSION"} {
+		if err := os.Symlink(filepath.Join(source, name), filepath.Join(home, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const base = "[project]\nname = 'prune-replacement'\n[brief]\nrender = false\n[agents]\nenabled = ['claude', 'pi']\n"
+	project := spineProject(t, base+"[recipes.foo]\nenabled = true\n")
+	catalog := filepath.Join(home, "catalog", "recipes")
+	const hook = "[[provides.hooks]]\nid = '%s'\nevent = 'pre-tool-use'\nscript = 'hooks/%s.sh'\nmatcher = 'Bash'\n"
+	spineWrite(t, filepath.Join(catalog, "foo/recipe.toml"),
+		"[recipe]\nid = 'foo'\nname = 'Foo'\ndescription = 'Fixture'\nversion = '1.0.0'\n"+fmt.Sprintf(hook, "gate", "gate")+fmt.Sprintf(hook, "same", "same"), 0o644)
+	for _, name := range []string{"gate", "same"} {
+		spineWrite(t, filepath.Join(catalog, "foo/hooks", name+".sh"), "#!/bin/sh\nexit 0\n", 0o755)
+	}
+	sync := func() {
+		t.Helper()
+		var out, stderr bytes.Buffer
+		if rc := Run([]string{"sync", project}, home, strings.NewReader(""), &out, &stderr); rc != 0 || stderr.Len() != 0 || !strings.HasSuffix(out.String(), "\n✓ ai-specs sync complete\n") {
+			t.Fatalf("sync rc=%d, stderr=%q, stdout=%q", rc, stderr.String(), out.String())
+		}
+	}
+	sync()
+
+	// Even identical shim bytes must survive when the replacement recipe owns them.
+	const samePath = ".pi/extensions/foo-same.ts"
+	sameBytes, err := os.ReadFile(filepath.Join(project, samePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets := []struct{ path, content string }{
+		{".claude/settings.json", "{\"replacementKey\":\"keep me\"}\n"},
+		{".pi/extensions/foo-gate.ts", "// replacement extension, not a hook shim\n"},
+		{samePath, string(sameBytes)},
+	}
+	replacement := filepath.Join(catalog, "replacement")
+	body := "[recipe]\nid = 'replacement'\nname = 'Replacement'\ndescription = 'Fixture'\nversion = '1.0.0'\n"
+	for i, target := range targets {
+		if _, err := os.Stat(filepath.Join(project, target.path)); err != nil {
+			t.Fatalf("missing seed wiring %s: %v", target.path, err)
+		}
+		name := fmt.Sprintf("payload-%d", i)
+		spineWrite(t, filepath.Join(replacement, name), target.content, 0o644)
+		body += fmt.Sprintf("[[provides.templates]]\nsource = '%s'\ntarget = '%s'\ncondition = 'always'\n", name, target.path)
+	}
+	spineWrite(t, filepath.Join(replacement, "recipe.toml"), body, 0o644)
+	spineWrite(t, materializeManifestPath(project), base+"[recipes.replacement]\nenabled = true\n", 0o644)
+	sync()
+
+	lk, err := lock.LoadLock(filepath.Join(project, "ai-specs/.ai-specs.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range targets {
+		got, err := os.ReadFile(filepath.Join(project, target.path))
+		if err != nil || string(got) != target.content {
+			t.Errorf("%s: replacement lost, got %q (%v)", target.path, got, err)
+		}
+		record := lk.Managed[target.path]
+		if record["recipe"] != "replacement" || record["sha256"] != lock.Sha256Bytes(got) {
+			t.Errorf("%s: replacement file and lock disagree: %v", target.path, record)
+		}
+	}
+}
+
 // --- frozen oracle ----------------------------------------------------------
 
 // hooksGoldenCase is one frozen record of testdata/hooksrender_golden.json: the

@@ -288,7 +288,7 @@ func (r *runner) run(opts options) int {
 			return 1
 		}
 		for i, path := range paths {
-			applyRuntimePrunes[i], err = planRuntimeHookPrune(path, hooks)
+			applyRuntimePrunes[i], err = planRuntimeHookPrune(root, path, hooks)
 			if err != nil {
 				fmt.Fprintf(r.stderr, "ERROR: cannot prune runtime hooks: %v\n", err)
 				return 1
