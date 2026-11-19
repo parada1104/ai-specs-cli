@@ -61,7 +61,9 @@ func pruneRecipeArtifacts(root string, enabledIDs []string, hooks []any) error {
 			launchers[path] = true
 		}
 	}
-	changed := false
+	// Select and validate every record before deleting anything, so a refused
+	// path never leaves earlier files removed while the lock still lists them.
+	var doomed []string
 	for _, rel := range slices.Sorted(maps.Keys(lk.Managed)) {
 		record := lk.Managed[rel]
 		id, _ := record["recipe"].(string)
@@ -76,10 +78,15 @@ func pruneRecipeArtifacts(root string, enabledIDs []string, hooks []any) error {
 		if enabled[id] && (record["kind"] != "gate" || !strings.HasPrefix(suffix, "hooks/") || launchers[rel]) {
 			continue
 		}
-		path := filepath.Join(root, rel)
-		if err := shared.EnsureTemplateAncestorsReal(root, path); err != nil {
+		if err := shared.EnsureTemplateAncestorsReal(root, filepath.Join(root, rel)); err != nil {
 			return err
 		}
+		doomed = append(doomed, rel)
+	}
+	for _, rel := range doomed {
+		id, _ := lk.Managed[rel]["recipe"].(string)
+		dir := "ai-specs/recipes/" + id
+		path := filepath.Join(root, rel)
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
@@ -95,9 +102,8 @@ func pruneRecipeArtifacts(root string, enabledIDs []string, hooks []any) error {
 			}
 		}
 		delete(lk.Managed, rel)
-		changed = true
 	}
-	if changed {
+	if len(doomed) > 0 {
 		return lock.WriteLock(lockPath, lk)
 	}
 	return nil
