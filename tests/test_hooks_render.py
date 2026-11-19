@@ -344,6 +344,30 @@ class HooksRenderTests(_HookFixtureMixin):
         self.sync()
         self.assertEqual(target.read_bytes(), original)
 
+    def test_codex_array_row_does_not_hide_root_mcp_assignment(self):
+        import tomllib
+
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("codex")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        base = manifest.read_text()
+        manifest.write_text(base + '\n[mcp.same]\ncommand = "managed"\n')
+        self.sync()
+
+        target = self.root / ".codex/config.toml"
+        original = (
+            b'user_choices = [\n  ["same"]\n]\n'
+            b'mcp_servers.same.command = "user"\n'
+        )
+        expected = tomllib.loads(original.decode())
+        target.write_bytes(original)
+        manifest.write_text(base + '\n[mcp.same]\ncommand = "replacement"\n')
+
+        result = invoke(self.root, "sync", cli_home=self.home)
+        self.assertIn(result.returncode, (0, 1), result.stderr)
+        self.assertEqual(target.read_bytes(), original)
+        self.assertEqual(tomllib.loads(target.read_text()), expected)
+
     def test_corrupt_mcp_target_is_backed_up_when_pruning_last_server(self):
         self.seed_recipe(RECIPE_SHELL, "shell-gate")
         self.write_manifest("claude")

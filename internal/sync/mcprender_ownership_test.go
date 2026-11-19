@@ -492,3 +492,72 @@ func TestMCPOwnershipCodexUnparseableKeyRefuses(t *testing.T) {
 		})
 	}
 }
+
+// TestMCPOwnershipCodexSafetyNetRefusesMissedMerge pins the semantic safety net
+// for the Codex merge: whatever the scanner misreads, a rewrite that would
+// change user content or produce an unparsable document is refused with the
+// target byte-identical. Here an array row hides the root-level dotted server
+// declaration that the manifest also wants to manage.
+func TestMCPOwnershipCodexSafetyNetRefusesMissedMerge(t *testing.T) {
+	user := "user_choices = [\n  [\"same\"]\n]\nmcp_servers.same.command = \"user\"\n"
+	dir := t.TempDir()
+	target := filepath.Join(dir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte(user), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := toml.Parse([]byte(user)); err != nil {
+		t.Fatalf("the pinned fixture must be valid TOML: %v", err)
+	}
+
+	out, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifestSame, "codex", target, "mcp_servers", []string{"same"})
+	if rc != 1 {
+		t.Fatalf("rc=%d want 1 (stdout %q stderr %q)", rc, out, stderr)
+	}
+	if lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n"); len(lines) != 1 || !strings.HasPrefix(lines[0], "error: ") {
+		t.Errorf("stderr is not exactly one error line: %q", stderr)
+	}
+	if len(res.Managed) != 0 {
+		t.Errorf("managed = %v, want none refused", res.Managed)
+	}
+	if got := mcpReadTarget(t, target); got != user {
+		t.Errorf("refused rewrite modified the target: got %q want %q", got, user)
+	}
+}
+
+// TestMCPOwnershipCodexUnparsableTargetRefuses pins the pre-merge gate: a Codex
+// target the real parser cannot read is never touched (it is user config, not an
+// S4 JSON target, so there is no backup/regenerate).
+func TestMCPOwnershipCodexUnparsableTargetRefuses(t *testing.T) {
+	unparsable := "[mcp_servers.other]\ncommand = \"x\n"
+	dir := t.TempDir()
+	target := filepath.Join(dir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte(unparsable), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := toml.Parse([]byte(unparsable)); err == nil {
+		t.Fatal("the pinned fixture must not parse")
+	}
+
+	out, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifestSame, "codex", target, "mcp_servers", nil)
+	if rc != 1 {
+		t.Fatalf("rc=%d want 1 (stdout %q stderr %q)", rc, out, stderr)
+	}
+	if lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n"); len(lines) != 1 || !strings.HasPrefix(lines[0], "error: ") {
+		t.Errorf("stderr is not exactly one error line: %q", stderr)
+	}
+	if len(res.Managed) != 0 {
+		t.Errorf("managed = %v, want none", res.Managed)
+	}
+	if got := mcpReadTarget(t, target); got != unparsable {
+		t.Errorf("unparsable target modified: got %q want %q", got, unparsable)
+	}
+	if _, err := os.Stat(target + ".bak"); !os.IsNotExist(err) {
+		t.Errorf("a TOML target must not be backed up: stat err=%v", err)
+	}
+}

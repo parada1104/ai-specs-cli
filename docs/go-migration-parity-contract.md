@@ -869,6 +869,17 @@ only those:
   told about the servers ai-specs does not manage here", so it is not repeated.
   The marker survives while an unrecorded server or a preserved collision
   remains at that target, and is dropped once none do. Nothing is deleted for it;
+- the Codex merge is gated by the project's real TOML parser (`internal/toml`,
+  the same one every other path uses) so no scanner gap can corrupt a config:
+  a target that does not parse is never touched (rc 1, one `error:` line, no
+  backup — TOML is user config, so the S4 backup/regenerate recovery stays JSON
+  only), and the rendered document is re-parsed and compared semantically before
+  it is written — every top-level key other than `<mcp_key>` unchanged, every
+  server outside the managed set unchanged, every removed managed server gone and
+  every written one equal to its desired value. Any difference refuses the render
+  (`refusing to rewrite Codex MCP config: could not merge without changing user
+  content`) with the target byte-identical. This net also refuses the legacy
+  Codex output for an unencodable recipe value, which no TOML parser accepts;
 - a lock read failure stops the MCP step before touching the target, so nothing
   is deleted without the ownership record.
 

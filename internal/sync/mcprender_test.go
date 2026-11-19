@@ -272,6 +272,10 @@ type mcpRefCase struct {
 	// s5Stderr pins the Go stderr of a case whose S5 upgrade notice the frozen
 	// record cannot contain.
 	s5Stderr *string
+	// refusedPrefix pins a case the Codex safety net now refuses (legacy wrote a
+	// document that does not parse): rc 1, empty stdout, no target written, and a
+	// single error line starting with the prefix.
+	refusedPrefix *string
 }
 
 const mcpManifestRel = "ai-specs/ai-specs.toml"
@@ -425,6 +429,12 @@ func TestMCPRenderDifferential(t *testing.T) {
 				t.Fatalf("frozen record stderr/dropped mismatch (traceback=%v)", tc.tracebackStderr)
 			}
 			goOut, goErr, goRC, goTarget := runMCPGo(t, tc)
+			if tc.refusedPrefix != nil {
+				if goRC != 1 || goOut != "" || goTarget != nil || !strings.HasPrefix(goErr, *tc.refusedPrefix) {
+					t.Errorf("refused case: rc=%d stdout=%q stderr=%q target=%v", goRC, goOut, goErr, goTarget)
+				}
+				return
+			}
 			// Accepted divergence (S4, Robert 2026-11-18): a recipe MCP input
 			// carrying a bare NaN/Infinity is refused instead of written into the
 			// target, so ai-specs never poisons its own JSON/TOML output.
@@ -836,7 +846,10 @@ func mcpRenderCases() []mcpRefCase {
 		{name: "recipe lone surrogate codex toml", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
 			recipeRel: "recipe-mcp.json",
-			recipe:    mcpStr(`{"delta": {"command": "d", "env": {"K": "\ud800"}}}`)},
+			recipe:    mcpStr(`{"delta": {"command": "d", "env": {"K": "\ud800"}}}`),
+			// Legacy wrote `env = { K = "\ud800" }`, which no TOML parser accepts:
+			// the safety net refuses instead of writing an unreadable config.
+			refusedPrefix: mcpStr("error: <TEMP>/.codex/config.toml: refusing to rewrite Codex MCP config: rendered document does not parse: toml:")},
 
 		// --- F5: a lone surrogate that reaches the rendered content raw. JSON
 		// and TOML *values* escape it via json.dumps, but a raw TOML table name

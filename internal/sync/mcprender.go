@@ -16,6 +16,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -1607,11 +1608,20 @@ func mcpTOMLDecodeBasicKey(raw string) (string, error) {
 // verbatim, and a same-named unrecorded block is left alone.
 func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[string]bool, ownedNames []string) (string, mcpMergePlan, error) {
 	var existingLines []string
+	var original *toml.Table
 	if mcpIsFile(targetPath) {
 		text, err := mcpReadTextFile(targetPath)
 		if err != nil {
 			return "", mcpMergePlan{}, err
 		}
+		// Codex TOML is user config, so the project's real parser gates the
+		// merge: a target it cannot read is never touched (no backup and no
+		// regenerate — that recovery is the S4 JSON rule, not this one).
+		parsed, perr := toml.Parse([]byte(text))
+		if perr != nil {
+			return "", mcpMergePlan{}, fmt.Errorf("%s: refusing to rewrite Codex MCP config: %w", targetPath, perr)
+		}
+		original = parsed
 		existingLines = pySplitLines(text)
 	}
 
@@ -1697,7 +1707,133 @@ func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[stri
 		outLines = append(outLines, "")
 	}
 
-	return strings.TrimRightFunc(strings.Join(outLines, "\n"), pyIsSpace) + "\n", plan, nil
+	content := strings.TrimRightFunc(strings.Join(outLines, "\n"), pyIsSpace) + "\n"
+	if mcpHasLoneSurrogate(content) {
+		// RenderMCPFile refuses this atomically with the lone-surrogate message.
+		return content, plan, nil
+	}
+	if err := mcpTOMLVerifyRewrite(targetPath, original, content, mcpKey, plan, desired); err != nil {
+		return "", plan, err
+	}
+	return content, plan, nil
+}
+
+// mcpTOMLVerifyRewrite is the semantic safety net of the Codex merge: the
+// scanner plans, this proves the plan did not touch user content. The rendered
+// document must parse, every top-level key other than <mcp_key> must be
+// unchanged, a server outside the managed set must be unchanged, a removed
+// managed server must be gone, and a written one must equal its desired value.
+// Any difference is refused (rc 1, target byte-identical) instead of guessing,
+// whatever scanner edge case produced it.
+func mcpTOMLVerifyRewrite(targetPath string, original *toml.Table, content, mcpKey string, plan mcpMergePlan, desired *mcpObj) error {
+	unmerged := fmt.Errorf("%s: refusing to rewrite Codex MCP config: could not merge without changing user content", targetPath)
+	merged, err := toml.Parse([]byte(content))
+	if err != nil {
+		return fmt.Errorf("%s: refusing to rewrite Codex MCP config: rendered document does not parse: %w", targetPath, err)
+	}
+	before, _ := mcpTOMLPlainValue(original).(map[string]any)
+	after, _ := mcpTOMLPlainValue(merged).(map[string]any)
+
+	for key, value := range before {
+		if key == mcpKey {
+			continue
+		}
+		if !reflect.DeepEqual(value, after[key]) {
+			return unmerged
+		}
+	}
+	for key := range after {
+		if key != mcpKey {
+			if _, ok := before[key]; !ok {
+				return unmerged
+			}
+		}
+	}
+
+	written := make(map[string]bool, len(plan.managed))
+	for _, name := range plan.managed {
+		written[name] = true
+	}
+	removed := make(map[string]bool, len(plan.removed))
+	for _, name := range plan.removed {
+		removed[name] = true
+	}
+	wasServers, _ := before[mcpKey].(map[string]any)
+	nowServers, _ := after[mcpKey].(map[string]any)
+	for name, was := range wasServers {
+		now, present := nowServers[name]
+		switch {
+		case removed[name]:
+			if present {
+				return unmerged
+			}
+		case written[name]:
+			// compared with its desired value below
+		default:
+			if !present || !reflect.DeepEqual(was, now) {
+				return unmerged
+			}
+		}
+	}
+	for name := range nowServers {
+		if _, ok := wasServers[name]; !ok && !written[name] {
+			return unmerged
+		}
+	}
+	for name := range written {
+		want, ok := mcpTOMLPlainValue(desired.vals[name]).(map[string]any)
+		if !ok {
+			return unmerged
+		}
+		got, present := nowServers[name]
+		if !present || !reflect.DeepEqual(want, got) {
+			return unmerged
+		}
+	}
+	return nil
+}
+
+// mcpTOMLPlainValue turns a parsed or modeled value into a comparable plain form
+// (maps, slices and the ordered model's wide integers), so the safety net can
+// deep-compare a document with its rewrite.
+func mcpTOMLPlainValue(v any) any {
+	switch x := v.(type) {
+	case *toml.Table:
+		if x == nil {
+			return map[string]any{}
+		}
+		out := make(map[string]any, len(x.Keys()))
+		for _, k := range x.Keys() {
+			vv, _ := x.Get(k)
+			out[k] = mcpTOMLPlainValue(vv)
+		}
+		return out
+	case []*toml.Table:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = mcpTOMLPlainValue(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = mcpTOMLPlainValue(e)
+		}
+		return out
+	case *mcpObj:
+		if x == nil {
+			return map[string]any{}
+		}
+		out := make(map[string]any, x.len())
+		for _, k := range x.keys {
+			out[k] = mcpTOMLPlainValue(x.vals[k])
+		}
+		return out
+	case toml.BigInt:
+		return mcpBigInt(x)
+	default:
+		return v
+	}
 }
 
 // RenderMCPOptions configures RenderMCPFile. RecipeMCPPath is the
