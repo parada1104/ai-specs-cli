@@ -867,7 +867,11 @@ only those:
   `[mcp."<target>"]` record (a hand-moved end marker wrapping a user table, or a
   block with no record at all) refuses the render with one line naming the
   unowned server(s) and telling the user to move them outside the block, leaving
-  the file and the lock byte-identical. The outside
+  the file and the lock byte-identical. ai-specs writes no comment inside its
+  block other than the two markers, so a comment line between them (the parsed
+  comparison cannot see text) is user content the marker cut would delete: the
+  render refuses, names the comment and asks for it to be moved outside the
+  markers, leaving the file and the lock byte-identical. The outside
   content must parse with `internal/toml.Parse` before anything is written, so
   the user's servers are read semantically: a manifest server whose name already
   exists outside is preserved with the collision warning and no table is emitted

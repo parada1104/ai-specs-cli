@@ -705,3 +705,35 @@ func TestMCPOwnershipCodexNonBMPNameRoundTrips(t *testing.T) {
 		t.Errorf("non-BMP server not at mcp_servers.%s: %v\n%s", name, servers.Keys(), text)
 	}
 }
+
+// TestMCPOwnershipCodexBlockCommentRefuses pins that ai-specs writes no comments
+// inside its block: a comment line between the markers is user text the marker
+// cut would delete, so the render refuses with the file byte-identical.
+func TestMCPOwnershipCodexBlockCommentRefuses(t *testing.T) {
+	// The end marker sits between the user's comment and the user's table, so the
+	// comment is inside the markers while the table stays outside them.
+	block := mcpTOMLBlockBegin + "\n[mcp_servers.same]\ncommand = \"managed\"\n\n" +
+		"# User note for features: keep enabled on this machine.\n" +
+		mcpTOMLBlockEnd + "\n[features]\nshell_tool = true\n"
+	dir := t.TempDir()
+	target := filepath.Join(dir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte(block), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, rc, _ := mcpRenderOwned(t, dir, mcpOwnershipManifestNone, "codex", target, "mcp_servers", []string{"same"})
+	if rc != 1 {
+		t.Fatalf("rc=%d want 1 (stdout %q stderr %q)", rc, out, stderr)
+	}
+	if !strings.Contains(stderr, "comment") {
+		t.Errorf("refusal does not name the comment: %q", stderr)
+	}
+	if lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n"); len(lines) != 1 || !strings.HasPrefix(lines[0], "error: ") {
+		t.Errorf("stderr is not exactly one error line: %q", stderr)
+	}
+	if got := mcpReadTarget(t, target); got != block {
+		t.Errorf("refused rewrite modified the target: got %q want %q", got, block)
+	}
+}

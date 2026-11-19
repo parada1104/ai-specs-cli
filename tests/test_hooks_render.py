@@ -481,6 +481,30 @@ class HooksRenderTests(_HookFixtureMixin):
                 {"user_owned": {"command": "keep-user"}},
             )
 
+    def test_codex_moved_end_cannot_delete_user_comment(self):
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("codex")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        base = manifest.read_text()
+        manifest.write_text(base + '\n[mcp.same]\ncommand = "managed"\n')
+        self.sync()
+
+        target = self.root / ".codex/config.toml"
+        end = b"# end managed-by: ai-specs: MCP servers\n"
+        note = b"# User note for features: keep enabled on this machine.\n"
+        before = target.read_bytes() + b"\n" + note + b"[features]\nshell_tool = true\n"
+        target.write_bytes(before)
+        moved = before.replace(end, b"", 1).replace(note, note + end, 1)
+        target.write_bytes(moved)
+        manifest.write_text(base)
+
+        result = invoke(self.root, "sync", cli_home=self.home)
+        if result.returncode == 1:
+            self.assertEqual(target.read_bytes(), moved)
+        else:
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(note, target.read_bytes())
+
     def test_corrupt_mcp_target_is_backed_up_when_pruning_last_server(self):
         self.seed_recipe(RECIPE_SHELL, "shell-gate")
         self.write_manifest("claude")

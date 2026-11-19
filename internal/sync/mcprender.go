@@ -1277,6 +1277,15 @@ func mcpTOMLSplitBlock(text, targetPath, mcpKey string) (mcpTOMLBlock, error) {
 	}
 	begin, endIdx := begins[0], ends[0]
 
+	// ai-specs never writes a comment inside its block, so a comment line between
+	// the markers is user text the marker cut would delete: refuse rather than
+	// lose it (the parsed comparison cannot see comments).
+	for i := begin + 1; i < endIdx; i++ {
+		if comment := strings.TrimSpace(lines[i].text); strings.HasPrefix(comment, "#") {
+			return mcpTOMLBlock{}, fmt.Errorf("%s: refusing to rewrite Codex MCP config: the managed MCP block contains a comment ai-specs did not write (%q); move it outside the markers", targetPath, comment)
+		}
+	}
+
 	// The separator blank line belongs to the block on both sides.
 	removeStart, removeEnd := lines[begin].start, lines[endIdx].end
 	if begin > 0 && strings.TrimSpace(lines[begin-1].text) == "" {
