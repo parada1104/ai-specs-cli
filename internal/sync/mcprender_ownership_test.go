@@ -32,6 +32,13 @@ name = 'own'
 command = 'alpha-cmd'
 `
 
+const mcpOwnershipManifestSame = `[project]
+name = 'own'
+
+[mcp.same]
+command = 'manifest-cmd'
+`
+
 const mcpOwnershipManifestNone = `[project]
 name = 'own'
 `
@@ -286,5 +293,65 @@ func TestMCPOwnershipCodexEncodingErrorLeavesTargetIntact(t *testing.T) {
 	}
 	if _, err := os.Stat(target + ".bak"); !os.IsNotExist(err) {
 		t.Errorf("failed render created a backup: stat err=%v", err)
+	}
+}
+
+// TestMCPOwnershipUndecodableCodexKeyRefuses pins the refusal for a Codex server
+// key whose escapes cannot be decoded safely: guessing would merge two different
+// keys, so the render fails atomically and the target keeps its exact bytes.
+func TestMCPOwnershipUndecodableCodexKeyRefuses(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "[mcp_servers.\"bad\\qname\"]\ncommand = \"user-cmd\"\n"
+	if err := os.WriteFile(target, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	manifestPath := filepath.Join(dir, "ai-specs.toml")
+	if err := os.WriteFile(manifestPath, []byte(mcpOwnershipManifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errBuf bytes.Buffer
+	rc := RenderMCPFile(manifestPath, "codex", target, "mcp_servers", RenderMCPOptions{}, &out, &errBuf)
+	if rc != 1 {
+		t.Fatalf("rc=%d want 1 (stdout %q stderr %q)", rc, out.String(), errBuf.String())
+	}
+	if lines := strings.Split(strings.TrimSuffix(errBuf.String(), "\n"), "\n"); len(lines) != 1 || !strings.HasPrefix(lines[0], "error: ") {
+		t.Errorf("stderr is not exactly one error line: %q", errBuf.String())
+	}
+	if got := mcpReadTarget(t, target); got != original {
+		t.Errorf("undecodable key modified the target: got %q want %q", got, original)
+	}
+}
+
+// TestMCPOwnershipCodexQuotedKeysAreOneServer pins that every TOML spelling of a
+// name denotes the same server: a quoted key is matched (and preserved), never
+// duplicated into a second table.
+func TestMCPOwnershipCodexQuotedKeysAreOneServer(t *testing.T) {
+	for _, header := range []string{`"same"`, `"\u0073ame"`, `'same'`, `same`} {
+		t.Run(header, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(dir, ".codex", "config.toml")
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			original := "[mcp_servers." + header + "]\ncommand = \"user-cmd\"\n"
+			if err := os.WriteFile(target, []byte(original), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifestSame, "codex", target, "mcp_servers", nil)
+			if rc != 0 {
+				t.Fatalf("rc=%d stderr=%q", rc, stderr)
+			}
+			if len(res.Preserved) != 1 || res.Preserved[0] != "same" {
+				t.Errorf("preserved = %v, want [same]", res.Preserved)
+			}
+			if got := mcpReadTarget(t, target); got != original {
+				t.Errorf("preserved user table changed:\n--- got ---\n%s\n--- want ---\n%s", got, original)
+			}
+		})
 	}
 }

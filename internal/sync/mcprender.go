@@ -1204,35 +1204,128 @@ func mcpMergeIntoJSON(existing *mcpObj, mcpKey string, desired *mcpObj, owned ma
 }
 
 // mcpTOMLSectionName extracts the server name of a `[<mcp_key>.<name>]` header
-// line (including a nested `[<mcp_key>.<name>.<sub>]`); false for any other
-// line. A bare key ends at the first `.` or `]`; a quoted key (single or double
-// quotes, the two TOML string forms) ends at its closing quote, so it matches
-// the same server name the writer emits bare.
-func mcpTOMLSectionName(line, prefix string) (string, bool) {
+// line (including a nested `[<mcp_key>.<name>.<sub>]`); ok is false for any
+// other line. A bare key ends at the first `.` or `]`; a quoted key ends at its
+// closing quote and is normalized to the name it denotes — a literal
+// (single-quoted) key verbatim, a basic (double-quoted) key with its escapes
+// decoded — so every spelling of a name matches the same server, and the writer
+// never emits a duplicate table. A key that cannot be decoded safely is an
+// error: the caller refuses the whole render instead of guessing.
+func mcpTOMLSectionName(line, prefix string) (name string, ok bool, err error) {
 	if !strings.HasPrefix(line, prefix) {
-		return "", false
+		return "", false, nil
 	}
 	rest := strings.TrimSpace(line[len(prefix):])
 	if rest == "" {
-		return "", false
+		return "", false, nil
 	}
-	if quote := rest[0]; quote == '"' || quote == '\'' {
+	switch rest[0] {
+	case '\'':
+		end := strings.IndexByte(rest[1:], '\'')
+		if end < 0 {
+			return "", false, mcpTOMLKeyError(line)
+		}
+		if name = rest[1 : 1+end]; name == "" {
+			return "", false, mcpTOMLKeyError(line)
+		}
+		return name, true, nil
+	case '"':
+		end := -1
 		for i := 1; i < len(rest); i++ {
-			if quote == '"' && rest[i] == '\\' {
-				i++
+			if rest[i] == '\\' {
+				i++ // the escaped character cannot close the key
 				continue
 			}
-			if rest[i] == quote {
-				return rest[1:i], i > 1
+			if rest[i] == '"' {
+				end = i
+				break
 			}
 		}
-		return "", false
+		if end < 0 {
+			return "", false, mcpTOMLKeyError(line)
+		}
+		name, err = mcpTOMLDecodeBasicKey(rest[1:end])
+		if err != nil || name == "" {
+			return "", false, mcpTOMLKeyError(line)
+		}
+		return name, true, nil
 	}
 	if i := strings.IndexAny(rest, ".]"); i >= 0 {
 		rest = rest[:i]
 	}
 	rest = strings.TrimSpace(rest)
-	return rest, rest != ""
+	if rest == "" || strings.ContainsAny(rest, "\"'") {
+		return "", false, mcpTOMLKeyError(line)
+	}
+	return rest, true, nil
+}
+
+func mcpTOMLKeyError(line string) error {
+	return fmt.Errorf("cannot decode the TOML server key in %q", line)
+}
+
+// mcpTOMLDecodeBasicKey decodes the escapes of a TOML basic-string key
+// (\b \t \n \f \r \" \\ \uXXXX \UXXXXXXXX and the escaped newline
+// continuation). An unknown escape, a lone surrogate or an out-of-range code
+// point is refused: guessing would merge two different keys into one.
+func mcpTOMLDecodeBasicKey(raw string) (string, error) {
+	var sb strings.Builder
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if c != '\\' {
+			sb.WriteByte(c)
+			continue
+		}
+		i++
+		if i >= len(raw) {
+			return "", fmt.Errorf("unterminated escape")
+		}
+		switch raw[i] {
+		case 'b':
+			sb.WriteByte('\b')
+		case 't':
+			sb.WriteByte('\t')
+		case 'n':
+			sb.WriteByte('\n')
+		case 'f':
+			sb.WriteByte('\f')
+		case 'r':
+			sb.WriteByte('\r')
+		case '"':
+			sb.WriteByte('"')
+		case '\\':
+			sb.WriteByte('\\')
+		case ' ', '\t', '\n', '\r':
+			// A line-ending backslash trims the following whitespace.
+			for i+1 < len(raw) && strings.IndexByte(" \t\r\n", raw[i+1]) >= 0 {
+				i++
+			}
+		case 'u', 'U':
+			width := 4
+			if raw[i] == 'U' {
+				width = 8
+			}
+			if i+width >= len(raw) {
+				return "", fmt.Errorf("truncated unicode escape")
+			}
+			var r rune
+			for j := 1; j <= width; j++ {
+				v, ok := mcpHexVal(raw[i+j])
+				if !ok {
+					return "", fmt.Errorf("invalid unicode escape")
+				}
+				r = r<<4 | rune(v)
+			}
+			if mcpIsSurrogate(r) || r > 0x10FFFF {
+				return "", fmt.Errorf("invalid unicode code point")
+			}
+			sb.WriteRune(r)
+			i += width
+		default:
+			return "", fmt.Errorf("unknown escape")
+		}
+	}
+	return sb.String(), nil
 }
 
 // mcpMergeIntoTOML merges per server (S5): every `[<mcp_key>.*]` block a recorded
@@ -1252,7 +1345,11 @@ func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[stri
 	// [<mcp_key>.<name>.<sub>] block stays with the server it belongs to.
 	present := newMCPObj()
 	for _, line := range existingLines {
-		if name, ok := mcpTOMLSectionName(pyStrip(line), "["+mcpKey+"."); ok {
+		name, ok, err := mcpTOMLSectionName(pyStrip(line), "["+mcpKey+".")
+		if err != nil {
+			return "", mcpMergePlan{}, err
+		}
+		if ok {
 			present.set(name, true)
 		}
 	}
@@ -1263,7 +1360,10 @@ func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[stri
 	for _, line := range existingLines {
 		stripped := pyStrip(line)
 		if strings.HasPrefix(stripped, "[") {
-			name, isMCP := mcpTOMLSectionName(stripped, "["+mcpKey+".")
+			name, isMCP, err := mcpTOMLSectionName(stripped, "["+mcpKey+".")
+			if err != nil {
+				return "", plan, err
+			}
 			// A preserved user table is emitted exactly as it stands; only a
 			// recorded block is rebuilt from the manifest.
 			skip = isMCP && owned[name]

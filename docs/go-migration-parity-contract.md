@@ -842,7 +842,11 @@ only those:
   `    ! preserved user MCP server "<name>" in <target> (not recorded as
   ai-specs-managed)` (conservative choice: user-authored wins). A preserved
   Codex table is emitted byte-for-byte, and its header is matched whether the
-  key is bare, `'single'`-quoted or `"double"`-quoted;
+  key is bare, `'single'`-quoted (literal, verbatim) or `"double"`-quoted with
+  its basic-string escapes decoded (`"\\u0073ame"` is the server `same`), so no
+  spelling can produce a duplicate `[mcp_servers.<name>]` table. A key whose
+  escapes cannot be decoded safely refuses the render instead (rc 1, one
+  `error:` line, target byte-identical), since guessing would merge two keys;
 - removals print `    ✓ removed managed MCP server "<name>" from <target>`;
 - a target with recorded servers is regenerated through the same recovery path
   even when the manifest declares none left, so a corrupt target is still
@@ -850,8 +854,10 @@ only those:
 - a target that holds servers ai-specs never recorded and has no lock entry yet
   (the upgrade case) gets ONE notice per target — `    ! <target>: MCP servers
   not recorded as ai-specs-managed: <names> (remove them if ai-specs generated
-  them)` — and a bare `[mcp."<target>"]` marker entry so it is not repeated.
-  Nothing is deleted for it;
+  them)` — and a bare `[mcp."<target>"]` marker entry meaning "the user has been
+  told about the servers ai-specs does not manage here", so it is not repeated.
+  The marker survives while an unrecorded server or a preserved collision
+  remains at that target, and is dropped once none do. Nothing is deleted for it;
 - a lock read failure stops the MCP step before touching the target, so nothing
   is deleted without the ownership record.
 

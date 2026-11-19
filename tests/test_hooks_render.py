@@ -267,7 +267,7 @@ class HooksRenderTests(_HookFixtureMixin):
         target = self.root / ".codex/config.toml"
         target.parent.mkdir()
 
-        for header in ("same", "'same'"):
+        for header in ("same", "'same'", '"same"', r'"\u0073ame"'):
             with self.subTest(header=header):
                 target.write_text(
                     f'[mcp_servers.{header}]\ncommand = "user-command"\n'
@@ -332,6 +332,22 @@ class HooksRenderTests(_HookFixtureMixin):
         # The notice is recorded once and never repeated.
         self.assertEqual(self.sync().stderr, "")
         self.assertEqual(target.read_bytes(), original)
+
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        base = manifest.read_text()
+        manifest.write_text(base + "\n[mcp.legacy]\ncommand = 'replacement'\n")
+        self.assertIn(
+            'preserved user MCP server "legacy"', self.sync().stderr
+        )
+        self.assertEqual(target.read_bytes(), original)
+
+        manifest.write_text(base)
+        self.assertEqual(self.sync().stderr, "")
+        self.assertEqual(target.read_bytes(), original)
+        self.assertIn(
+            '[mcp.".mcp.json"]\n',
+            (self.root / "ai-specs/.ai-specs.lock").read_text(),
+        )
 
     def test_removed_recipe_prunes_all_wiring(self):
         self.seed_and_sync(RECIPE_SHELL, "shell-gate", "claude", "cursor",
