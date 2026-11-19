@@ -277,7 +277,7 @@ func (r *runner) run(opts options) int {
 	// Project-tree containment preflight (T6d): a symlinked .gitignore, env rc
 	// file, env example, AGENTS.md or target ai-specs/ mirror is refused before
 	// the first step writes anything, so a refusal is write-free.
-	if rc := projectTreePreflight(root, paths, r.stderr); rc != 0 {
+	if rc := projectTreePreflight(root, r.home, paths, r.stderr); rc != 0 {
 		return rc
 	}
 

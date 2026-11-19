@@ -44,6 +44,51 @@ type OrphanCleanupInput struct {
 	Roots     shared.OrphanApplyRoots
 	LockPath  string
 	Output    io.Writer
+	// ProjectRoot and CLIHome are the containment roots for the orphan roots:
+	// the in-project tree follows the project rule, the CLI cache the strict
+	// home rule (T6e).
+	ProjectRoot string
+	CLIHome     string
+}
+
+// containOrphanRoots refuses BEFORE any delete when an orphan root is
+// redirected through a symlink (T6e): deleting `<root>/<name>` through a link
+// would remove an outside tree. The in-project root stays inside the project;
+// the CLI-cache roots refuse any symlink below the home.
+func containOrphanRoots(in OrphanCleanupInput) error {
+	if in.Roots.InprojectDeps != "" && in.ProjectRoot != "" {
+		if err := projectWriteGuard(in.ProjectRoot, in.Roots.InprojectDeps, true); err != nil {
+			return err
+		}
+		for _, name := range in.PlanInput.InprojectDeps {
+			if err := projectWriteGuard(in.ProjectRoot, filepath.Join(in.Roots.InprojectDeps, name), true); err != nil {
+				return err
+			}
+		}
+	}
+	if in.CLIHome == "" {
+		return nil
+	}
+	for _, scope := range []struct {
+		root  string
+		names []string
+	}{
+		{in.Roots.RecipeSkills, in.PlanInput.RecipeSkills},
+		{in.Roots.DepsSkills, in.PlanInput.DepsSkills},
+	} {
+		if scope.root == "" {
+			continue
+		}
+		if err := homeWriteGuard(in.CLIHome, scope.root, true); err != nil {
+			return err
+		}
+		for _, name := range scope.names {
+			if err := homeWriteGuard(in.CLIHome, filepath.Join(scope.root, name), true); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // planRecipeArtifactPrune uses managed ownership, not the skill-hash recipes table.
@@ -128,6 +173,11 @@ func applyRecipeArtifactPrune(root, lockPath string, doomed, stale []string, rec
 			continue
 		}
 		path := filepath.Join(root, rel)
+		// Deleting a managed artifact must stay inside the project (T6e): a
+		// symlinked ancestor below ai-specs/ must not redirect the removal.
+		if err := projectWriteGuard(root, path, false); err != nil {
+			return err
+		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
@@ -196,6 +246,16 @@ func CleanOrphans(in OrphanCleanupInput, remove func(path string) error) (shared
 			Removed:   []shared.OrphanApplyEntry{},
 			Remaining: []shared.OrphanApplyEntry{},
 			Error:     fmt.Sprintf("load lock %s: %v", in.LockPath, err),
+		}, err
+	}
+
+	// Nothing is deleted until every root (and candidate) is contained.
+	if err := containOrphanRoots(in); err != nil {
+		return shared.OrphanApplyOutcome{
+			Status:    shared.StatusPreApplyFailed,
+			Removed:   []shared.OrphanApplyEntry{},
+			Remaining: []shared.OrphanApplyEntry{},
+			Error:     err.Error(),
 		}, err
 	}
 

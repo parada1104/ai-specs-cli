@@ -42,19 +42,37 @@ func homeWriteGuard(root, path string, followLeaf bool) error {
 // scaffolding files the env step manages, the ai-specs/.gitignore, the brief,
 // and every fan-out target's ai-specs/ mirror. Paths come from the existing
 // helpers so the names live in one place.
-func projectTreePreflight(root string, targets []string, errW io.Writer) int {
-	paths := []string{
-		filepath.Join(root, "ai-specs", ".gitignore"),
-		filepath.Join(root, ".gitignore"),
-		harnessEnvExamplePath(root),
-		RootEnvRcPath(root),
-		filepath.Join(root, "AGENTS.md"),
+func projectTreePreflight(root, home string, targets []string, errW io.Writer) int {
+	// Project-tree destinations follow the project rule; the CLI cache roots the
+	// strict home rule (ai-specs owns them outright).
+	type rootCheck struct {
+		guard func(root, path string, followLeaf bool) error
+		root  string
+		path  string
 	}
+	var checks []rootCheck
+	add := func(guard func(string, string, bool) error, root, path string) {
+		checks = append(checks, rootCheck{guard: guard, root: root, path: path})
+	}
+	add(projectWriteGuard, root, filepath.Join(root, "ai-specs", ".gitignore"))
+	add(projectWriteGuard, root, filepath.Join(root, ".gitignore"))
+	add(projectWriteGuard, root, harnessEnvExamplePath(root))
+	add(projectWriteGuard, root, RootEnvRcPath(root))
+	add(projectWriteGuard, root, filepath.Join(root, "AGENTS.md"))
+	// The orphan cleanup deletes `<root>/<name>` under these trees, so a
+	// redirected root must refuse before the materialize step runs (T6e).
+	add(projectWriteGuard, root, filepath.Join(root, "ai-specs", ".deps"))
 	for _, target := range targets {
-		paths = append(paths, filepath.Join(target, "ai-specs"))
+		add(projectWriteGuard, root, filepath.Join(target, "ai-specs"))
 	}
-	for _, path := range paths {
-		if err := projectWriteGuard(root, path, true); err != nil {
+	homeReal := projectcache.AISpecsHome(home)
+	// CacheRoot RESOLVES the project-key directory, so build the lexical path:
+	// a symlink there is exactly what must refuse.
+	cacheKey := filepath.Join(homeReal, "cache", "projects", projectcache.CacheKey(root))
+	add(homeWriteGuard, homeReal, filepath.Join(cacheKey, ".deps"))
+	add(homeWriteGuard, homeReal, filepath.Join(cacheKey, ".recipe"))
+	for _, c := range checks {
+		if err := c.guard(c.root, c.path, true); err != nil {
 			fmt.Fprintf(errW, "    ✗ %s\n", err)
 			return 1
 		}

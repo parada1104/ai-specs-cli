@@ -363,6 +363,23 @@ old-launcher sync warning is added here.
   - A refused generated hook shim now fails the run (rc 1) instead of leaving
     the shell's `if python3 ...; then echo ✓; fi` swallow in place: reporting
     success after a write that did not happen is worse than the deviation.
+- **Orphan and leftover cleanup containment (T6e).** Orphan cleanup deletes
+  `<root>/<name>` under three roots, so the ROOT and each candidate are
+  contained before anything is deleted: the in-project `ai-specs/.deps` root
+  follows the project rule, the CLI-cache `.deps` and `.recipe` roots the strict
+  home rule (`internal/sync/orphans.go` `containOrphanRoots`, called by
+  `CleanOrphans` before the shared apply). A redirected root fails the run
+  (rc 1) and deletes nothing, and the same roots are part of the sync spine's
+  project-tree preflight so the refusal happens before the materialize step
+  writes anything. `CacheRoot` RESOLVES the per-project cache-key directory, so
+  the containment check uses the LEXICAL key path — a symlink there refuses
+  (this also covers the standalone `sync-agent` route that used to write into
+  the link target inside the home). The best-effort leftover sweeps
+  (`internal/projectcache` `RemoveBundledSkillLeftovers`,
+  `RemoveRecipeCommandLeftovers`, `RemoveLegacyOrigin`, `MergeCommands`) contain
+  each tree they delete the same way (a symlink LEAF stays the primitive's own
+  shutil-shaped refusal, so the pinned messages are unchanged), and the
+  recipe-artifact prune contains each managed artifact path before removing it.
 
 ---
 

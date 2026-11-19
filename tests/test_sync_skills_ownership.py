@@ -429,6 +429,72 @@ class SyncSkillsOwnershipTests(unittest.TestCase):
         self.assertIn("it resolves outside the project root", result.stderr)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
 
+    # ── T6e: orphan cleanup never follows a symlinked root ─────────────
+
+    def test_orphan_cleanup_does_not_follow_outside_deps_root(self):
+        shutil.rmtree(self.skills)
+        outside = self.base / "outside-deps"
+        retired = outside / "retired"
+        retired.mkdir(parents=True)
+        secret = retired / "secret"
+        original = b"user data\r\n"
+        secret.write_bytes(original)
+        (self.project / "ai-specs/.deps").symlink_to(outside)
+
+        result = self.sync()
+
+        self.assertTrue(secret.is_file(), "orphan cleanup deleted an outside file")
+        self.assertEqual(secret.read_bytes(), original)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+
+    def _orphan_cache_case(self, cache_child: str) -> None:
+        from _blackbox import cache_project_dir
+
+        # The setUp skills fixture would refuse before the orphan step; drop it
+        # so the orphan cleanup is what decides the run.
+        shutil.rmtree(self.project / ".claude")
+        outside = self.base / ("outside-" + cache_child.strip("."))
+        retired = outside / "retired"
+        retired.mkdir(parents=True)
+        secret = retired / "secret"
+        original = b"user data\r\n"
+        secret.write_bytes(original)
+        cache = cache_project_dir(self.project, self.home)
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / cache_child).symlink_to(outside)
+
+        result = self.sync()
+        shutil.rmtree(cache, ignore_errors=True)
+
+        self.assertTrue(secret.is_file(), f"orphan cleanup deleted an outside file via {cache_child}")
+        self.assertEqual(secret.read_bytes(), original)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+
+    def test_orphan_cleanup_does_not_follow_outside_cache_deps_root(self):
+        self._orphan_cache_case(".deps")
+
+    def test_orphan_cleanup_does_not_follow_outside_cache_recipe_root(self):
+        self._orphan_cache_case(".recipe")
+
+    def test_leftover_cleanup_does_not_follow_outside_skills_root(self) -> None:
+        # Same class as the orphan roots: the bundled-leftover sweep deletes
+        # trees under ai-specs/skills, so a symlinked root must not redirect it.
+        shutil.rmtree(self.project / ".claude")
+        outside = self.base / "outside-skills"
+        shutil.copytree(
+            Path(__file__).resolve().parents[1] / "bundled-skills" / "harness-lifecycle",
+            outside / "harness-lifecycle",
+        )
+        user = outside / "harness-lifecycle" / "SKILL.md"
+        original = user.read_bytes()
+        shutil.rmtree(self.project / "ai-specs" / "skills")
+        (self.project / "ai-specs" / "skills").symlink_to(outside)
+
+        self.sync()
+
+        self.assertTrue(user.is_file(), "leftover cleanup deleted an outside file")
+        self.assertEqual(user.read_bytes(), original)
+
 
 if __name__ == "__main__":
     unittest.main()

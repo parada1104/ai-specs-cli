@@ -196,6 +196,11 @@ func EnsureCache(projectRoot, cliHome string) (string, error) {
 	// writing outside the CLI home. The root is the RESOLVED home CacheRoot used,
 	// because callers may pass an empty home and let the env decide.
 	home := AISpecsHome(cliHome)
+	// CacheRoot RESOLVES the project-key directory, so the resolved `cache`
+	// hides a symlink there; guard the lexical path instead (T6e follow-up).
+	if err := ContainWrite(home, filepath.Join(home, "cache", "projects", CacheKey(root)), true, true, false); err != nil {
+		return "", fmt.Errorf("cache not writable at %s: %s", cache, err)
+	}
 	if err := ContainWrite(home, cache, true, true, false); err != nil {
 		return "", fmt.Errorf("cache not writable at %s: %s", cache, err)
 	}
@@ -387,6 +392,24 @@ func warn(w io.Writer, msg string) {
 // guard so a symlink-to-directory is never silently unlinked) and refuses a
 // non-directory (a regular file raises NotADirectoryError). os.RemoveAll would
 // remove either silently.
+// ResolveWriteTargetOr is ResolveWriteTarget for a root that may not exist yet,
+// falling back to the lexical path.
+func ResolveWriteTargetOr(path string) string {
+	if resolved, err := ResolveWriteTarget(path); err == nil {
+		return resolved
+	}
+	return ResolvePath(path)
+}
+
+// containLeftover refuses a leftover-cleanup target whose resolved location
+// leaves the project: these cleanups delete trees under `<project>/ai-specs/`,
+// so an ancestor symlink there must never redirect the deletion outside (T6e).
+func containLeftover(aiSpecs, path string) error {
+	// followLeaf=false: a symlink LEAF is RemoveTreePy's own refusal (its
+	// shutil message is parity-pinned); only a redirected PARENT refuses here.
+	return ContainWrite(filepath.Dir(aiSpecs), path, false, false, false)
+}
+
 func RemoveTreePy(path string) error {
 	info, err := os.Lstat(path)
 	if err == nil {
@@ -520,6 +543,10 @@ func RemoveBundledSkillLeftovers(aiSpecs, cliHome string, lockSkills map[string]
 			warn(stderr, fmt.Sprintf(
 				"keeping customized ai-specs/skills/%s/ "+
 					"(differs from CLI-bundled source and lock; resolve manually)", name))
+			continue
+		}
+		if err := containLeftover(filepath.Dir(child), child); err != nil {
+			warn(stderr, fmt.Sprintf("kept leftover ai-specs/skills/%s/: %s", name, err))
 			continue
 		}
 		if err := RemoveTreePy(child); err != nil {
@@ -849,6 +876,8 @@ func RemoveLegacyOrigin(projectRoot, cliHome string, stdout, stderr io.Writer) {
 			warn(stderr, "skipping removal of ai-specs/.recipe/ \u2014 "+
 				"one or more override migrations failed or could not be verified as complete; "+
 				"verify the affected destinations before removing the legacy copy")
+		} else if err := containLeftover(filepath.Dir(legacyRecipe), legacyRecipe); err != nil {
+			warn(stderr, fmt.Sprintf("kept leftover ai-specs/.recipe/: %s", err))
 		} else if err := RemoveTreePy(legacyRecipe); err != nil {
 			warn(stderr, fmt.Sprintf("failed to remove leftover ai-specs/.recipe/: %s", err))
 		} else {
@@ -862,6 +891,10 @@ func RemoveLegacyOrigin(projectRoot, cliHome string, stdout, stderr io.Writer) {
 	} {
 		path := filepath.Join(aiSpecs, item.rel)
 		if !exists(path) {
+			continue
+		}
+		if err := containLeftover(filepath.Dir(path), path); err != nil {
+			warn(stderr, fmt.Sprintf("kept leftover ai-specs/%s/: %s", item.label, err))
 			continue
 		}
 		if err := RemoveTreePy(path); err != nil {
@@ -900,6 +933,17 @@ func RemoveLegacyOrigin(projectRoot, cliHome string, stdout, stderr io.Writer) {
 // recipe-managed -> local hand-authored. Returns the file count in dest.
 func MergeCommands(projectRoot, destDir, cliHome string, stdout, stderr io.Writer) (int, error) {
 	if exists(destDir) {
+		// The merge dest is either the ai-specs-owned cache (strict: any
+		// symlink refuses, home possibly resolved from the environment) or a
+		// project path (project rule). Pick by where it lives.
+		home := AISpecsHome(cliHome)
+		if home != "" && pathContained(ResolveWriteTargetOr(home), ResolveWriteTargetOr(destDir)) {
+			if err := ContainWrite(home, destDir, true, true, false); err != nil {
+				return 0, err
+			}
+		} else if err := ContainWrite(projectRoot, destDir, true, false, false); err != nil {
+			return 0, err
+		}
 		if err := RemoveTreePy(destDir); err != nil {
 			return 0, err
 		}
