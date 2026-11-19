@@ -72,6 +72,45 @@ func TestSyncPrunesRecipeCommands(t *testing.T) {
 	}
 }
 
+func TestSyncRecipeCommandPruneDistinguishesLegacyAndEditedManaged(t *testing.T) {
+	for _, legacy := range []bool{true, false} {
+		name := "edited-generated"
+		if legacy {
+			name = "untracked-identical"
+		}
+		t.Run(name, func(t *testing.T) {
+			root, _, base, run := commandPruneFixture(t)
+			path := filepath.Join(root, ".claude/commands/demo.md")
+			if legacy {
+				spineWrite(t, path, "# generated\n", 0o644)
+			}
+			if rc, _, stderr := run(); rc != 0 {
+				t.Fatalf("seed sync rc=%d: %s", rc, stderr)
+			}
+			if !legacy {
+				spineWrite(t, path, "# generated\n\nLocal edit.\n", 0o644)
+			}
+			spineWrite(t, materializeManifestPath(root), base, 0o644)
+			rc, _, stderr := run()
+			if rc != 0 {
+				t.Fatalf("retirement sync rc=%d: %s", rc, stderr)
+			}
+			if legacy {
+				got, err := os.ReadFile(path)
+				if err != nil || string(got) != "# generated\n" {
+					t.Fatalf("untracked legacy command changed: %q, %v", got, err)
+				}
+				want := "warning: .claude/commands/demo.md looks like a stale ai-specs command but has no ownership record; delete it if you did not write it\n"
+				if stderr != want {
+					t.Errorf("stderr=%q, want %q", stderr, want)
+				}
+			} else if _, err := os.Lstat(path); !os.IsNotExist(err) {
+				t.Errorf("edited managed command survived retirement: %v", err)
+			}
+		})
+	}
+}
+
 func TestSyncRecipeCommandPruneRefusal(t *testing.T) {
 	root, home, base, run := commandPruneFixture(t)
 	if rc, _, errW := run(); rc != 0 {

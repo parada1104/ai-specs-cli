@@ -853,13 +853,24 @@ func (a *agentRun) syncCommands(cmdDir string, out, errW io.Writer) int {
 		printChildErr(errW, "mkdir", err)
 		return 1
 	}
+	lockPath := filepath.Join(a.sourceRoot, bundledLockRel)
+	var previous map[string]map[string]any
+	if len(a.commands.owners) > 0 {
+		lk, err := lock.LoadLock(lockPath)
+		if err != nil {
+			fmt.Fprintln(errW, err)
+			return 1
+		}
+		previous = lk.Managed
+	}
 	copied := 0
 	managed := map[string]bool{}
 	owned := map[string]string{}
 	for _, src := range globMDFilesSh(a.commandsSource) {
 		name := filepath.Base(src)
 		targetFile := filepath.Join(dest, name)
-		if info, err := os.Lstat(targetFile); err == nil {
+		info, statErr := os.Lstat(targetFile)
+		if statErr == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
 				// Never write through a symlink occupying a managed name;
 				// `rm -f ... || return $?` aborts with rm's own shape.
@@ -883,7 +894,10 @@ func (a *agentRun) syncCommands(cmdDir string, out, errW io.Writer) int {
 		}
 		managed[name] = true
 		copied++
-		if a.commands.owners[name] != "" && !isRegularFilePath(filepath.Join(a.sourceRoot, "ai-specs", "commands", name)) {
+		rel, _ := filepath.Rel(a.sourceRoot, targetFile)
+		record, recipe := previous[rel], a.commands.owners[name]
+		// Copying over an untracked destination does not make it ours to delete.
+		if recipe != "" && (os.IsNotExist(statErr) || record["kind"] == RecipeCommandKind && record["recipe"] == recipe) && !isRegularFilePath(filepath.Join(a.sourceRoot, "ai-specs", "commands", name)) {
 			hash, err := lock.Sha256OfFile(targetFile)
 			if err != nil {
 				fmt.Fprintln(errW, err)
@@ -893,7 +907,7 @@ func (a *agentRun) syncCommands(cmdDir string, out, errW io.Writer) int {
 		}
 	}
 	if len(owned) > 0 {
-		if err := applyLockRecord(filepath.Join(a.sourceRoot, bundledLockRel), func(lk *lock.Lock) {
+		if err := applyLockRecord(lockPath, func(lk *lock.Lock) {
 			kind := RecipeCommandKind
 			for name, hash := range owned {
 				rel, _ := filepath.Rel(a.sourceRoot, filepath.Join(dest, name))

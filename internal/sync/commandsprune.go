@@ -145,10 +145,15 @@ func planCommandPrune(root, home string, paths []string, live map[string]string)
 			if err != nil {
 				return nil, err
 			}
-			if info != nil && item.info != nil && os.SameFile(info, item.info) && hash == item.hash && (item.rel == "" || hash == item.record["sha256"]) {
+			if info != nil {
+				// Compare with preflight, not the lock hash: prior edits don't revoke ownership.
+				if item.info == nil || !os.SameFile(info, item.info) || hash != item.hash {
+					if item.rel == "" {
+						return nil, fmt.Errorf("cache command changed after preflight: %s", item.path)
+					}
+					continue // Keep the file and its ownership record for the next sync.
+				}
 				remove = append(remove, item.path)
-			} else if item.rel == "" && info != nil {
-				return nil, fmt.Errorf("cache command changed after preflight: %s", item.path)
 			}
 			if item.rel != "" {
 				delete(fresh.Managed, item.rel)
