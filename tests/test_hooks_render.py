@@ -586,6 +586,25 @@ class HooksRenderTests(_HookFixtureMixin):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(note, target.read_bytes())
 
+        import hashlib
+        import tomllib
+
+        # The refusal above proved the annotation survived. Now the user
+        # explicitly removes the block and asks sync to rebuild it.
+        target.write_bytes(b"")
+        manifest.write_text(base + '\n[mcp.same]\ncommand = "recovered"\n')
+        self.sync()
+
+        rendered = target.read_bytes()
+        self.assertEqual(
+            tomllib.loads(rendered.decode())["mcp_servers"]["same"]["command"],
+            "recovered",
+        )
+        self.assertEqual(
+            tomllib.loads(lock.read_text())["mcp-block"][".codex/config.toml"]["sha256"],
+            hashlib.sha256(rendered).hexdigest(),
+        )
+
     def test_corrupt_mcp_target_is_backed_up_when_pruning_last_server(self):
         self.seed_recipe(RECIPE_SHELL, "shell-gate")
         self.write_manifest("claude")
