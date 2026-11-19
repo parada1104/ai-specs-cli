@@ -1331,31 +1331,31 @@
     },
     {
      "id": "obsidian-markdown",
-     "path": "skills/obsidian-markdown",
+     "path": "plugins/obsidian/skills/obsidian-markdown",
      "source": "dep",
      "url": "https://github.com/kepano/obsidian-skills.git"
     },
     {
      "id": "obsidian-bases",
-     "path": "skills/obsidian-bases",
+     "path": "plugins/obsidian/skills/obsidian-bases",
      "source": "dep",
      "url": "https://github.com/kepano/obsidian-skills.git"
     },
     {
      "id": "json-canvas",
-     "path": "skills/json-canvas",
+     "path": "plugins/obsidian/skills/json-canvas",
      "source": "dep",
      "url": "https://github.com/kepano/obsidian-skills.git"
     },
     {
      "id": "obsidian-cli",
-     "path": "skills/obsidian-cli",
+     "path": "plugins/obsidian/skills/obsidian-cli",
      "source": "dep",
      "url": "https://github.com/kepano/obsidian-skills.git"
     },
     {
      "id": "defuddle",
-     "path": "skills/defuddle",
+     "path": "plugins/obsidian/skills/defuddle",
      "source": "dep",
      "url": "https://github.com/kepano/obsidian-skills.git"
     }

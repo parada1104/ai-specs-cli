@@ -18,11 +18,11 @@ monorepo `path`:
 
 | id | path |
 |----|------|
-| `obsidian-markdown` | `skills/obsidian-markdown` |
-| `obsidian-bases` | `skills/obsidian-bases` |
-| `json-canvas` | `skills/json-canvas` |
-| `obsidian-cli` | `skills/obsidian-cli` |
-| `defuddle` | `skills/defuddle` |
+| `obsidian-markdown` | `plugins/obsidian/skills/obsidian-markdown` |
+| `obsidian-bases` | `plugins/obsidian/skills/obsidian-bases` |
+| `json-canvas` | `plugins/obsidian/skills/json-canvas` |
+| `obsidian-cli` | `plugins/obsidian/skills/obsidian-cli` |
+| `defuddle` | `plugins/obsidian/skills/defuddle` |
 
 Enabling the recipe and running sync SHALL vendor these skills through the
 standard recipe-dep materialization path (project recipe cache `.deps/`),

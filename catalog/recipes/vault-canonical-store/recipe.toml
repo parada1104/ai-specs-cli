@@ -43,11 +43,11 @@ help_text = "Folder name under vault_scope for session handoffs / summaries."
 skills = [
   { id = "vault-context", source = "bundled" },
   # kepano/obsidian-skills — Obsidian-native stack for LLM wiki / second-brain notes
-  { id = "obsidian-markdown", source = "dep", url = "https://github.com/kepano/obsidian-skills.git", path = "skills/obsidian-markdown" },
-  { id = "obsidian-bases", source = "dep", url = "https://github.com/kepano/obsidian-skills.git", path = "skills/obsidian-bases" },
-  { id = "json-canvas", source = "dep", url = "https://github.com/kepano/obsidian-skills.git", path = "skills/json-canvas" },
-  { id = "obsidian-cli", source = "dep", url = "https://github.com/kepano/obsidian-skills.git", path = "skills/obsidian-cli" },
-  { id = "defuddle", source = "dep", url = "https://github.com/kepano/obsidian-skills.git", path = "skills/defuddle" },
+  { id = "obsidian-markdown", source = "dep", url = "https://github.com/kepano/obsidian-skills.git", path = "plugins/obsidian/skills/obsidian-markdown" },
+  { id = "obsidian-bases", source = "dep", url = "https://github.com/kepano/obsidian-skills.git", path = "plugins/obsidian/skills/obsidian-bases" },
+  { id = "json-canvas", source = "dep", url = "https://github.com/kepano/obsidian-skills.git", path = "plugins/obsidian/skills/json-canvas" },
+  { id = "obsidian-cli", source = "dep", url = "https://github.com/kepano/obsidian-skills.git", path = "plugins/obsidian/skills/obsidian-cli" },
+  { id = "defuddle", source = "dep", url = "https://github.com/kepano/obsidian-skills.git", path = "plugins/obsidian/skills/defuddle" },
 ]
 
 [[provides.brief.context_sources]]
