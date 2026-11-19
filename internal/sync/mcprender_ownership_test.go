@@ -153,17 +153,17 @@ func TestMCPOwnershipResyncIsIdempotent(t *testing.T) {
 		t.Run(a.agent, func(t *testing.T) {
 			dir := t.TempDir()
 			target := mcpSeedTarget(t, dir, a)
-			_, _, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifest, a.agent, target, a.key, nil)
+			_, _, rc, first := mcpRenderOwned(t, dir, mcpOwnershipManifest, a.agent, target, a.key, nil)
 			if rc != 0 {
 				t.Fatalf("first render rc=%d", rc)
 			}
-			first := mcpReadTarget(t, target)
-			_, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifest, a.agent, target, a.key, mcpManagedNames(res))
+			firstBytes := mcpReadTarget(t, target)
+			_, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifest, a.agent, target, a.key, mcpManagedNames(first), first.BlockSHA)
 			if rc != 0 || stderr != "" {
 				t.Fatalf("second render rc=%d stderr=%q", rc, stderr)
 			}
-			if got := mcpReadTarget(t, target); got != first {
-				t.Errorf("re-sync is not idempotent\n--- first ---\n%s\n--- second ---\n%s", first, got)
+			if got := mcpReadTarget(t, target); got != firstBytes {
+				t.Errorf("re-sync is not idempotent\n--- first ---\n%s\n--- second ---\n%s", firstBytes, got)
 			} else if !strings.Contains(got, a.marker) {
 				t.Errorf("re-sync dropped the user server %q:\n%s", a.marker, got)
 			}
@@ -179,13 +179,13 @@ func TestMCPOwnershipRemovesOnlyManagedServers(t *testing.T) {
 		t.Run(a.agent+"/manifest removal", func(t *testing.T) {
 			dir := t.TempDir()
 			target := mcpSeedTarget(t, dir, a)
-			_, _, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifest, a.agent, target, a.key, nil)
+			_, _, rc, first := mcpRenderOwned(t, dir, mcpOwnershipManifest, a.agent, target, a.key, nil)
 			if rc != 0 {
 				t.Fatalf("first render rc=%d", rc)
 			}
 			// alpha stays in the manifest: it must be updated in place, not
 			// duplicated, while beta disappears and the user server survives.
-			_, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifestAlphaOnly, a.agent, target, a.key, mcpManagedNames(res))
+			_, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifestAlphaOnly, a.agent, target, a.key, mcpManagedNames(first), first.BlockSHA)
 			if rc != 0 || stderr != "" {
 				t.Fatalf("second render rc=%d stderr=%q", rc, stderr)
 			}
@@ -207,11 +207,11 @@ func TestMCPOwnershipRemovesOnlyManagedServers(t *testing.T) {
 		t.Run(a.agent+"/zero servers", func(t *testing.T) {
 			dir := t.TempDir()
 			target := mcpSeedTarget(t, dir, a)
-			_, _, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifest, a.agent, target, a.key, nil)
+			_, _, rc, first := mcpRenderOwned(t, dir, mcpOwnershipManifest, a.agent, target, a.key, nil)
 			if rc != 0 {
 				t.Fatalf("first render rc=%d", rc)
 			}
-			out, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifestNone, a.agent, target, a.key, mcpManagedNames(res))
+			out, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifestNone, a.agent, target, a.key, mcpManagedNames(first), first.BlockSHA)
 			if rc != 0 || stderr != "" {
 				t.Fatalf("prune render rc=%d stderr=%q out=%q", rc, stderr, out)
 			}
@@ -657,8 +657,10 @@ func TestMCPOwnershipCodexBlockRequiresOwnershipRecord(t *testing.T) {
 	if err := os.WriteFile(target, []byte(block), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// `same` is recorded, `user_owned` is not.
-	out, stderr, rc, _ := mcpRenderOwned(t, dir, mcpOwnershipManifestNone, "codex", target, "mcp_servers", []string{"same"})
+	// `same` is recorded, `user_owned` is not. The fixture's own hash is passed so
+	// the hash guard accepts the block and the ownership guard is what refuses.
+	blockSHA := mcpTOMLSHA256(block)
+	out, stderr, rc, _ := mcpRenderOwned(t, dir, mcpOwnershipManifestNone, "codex", target, "mcp_servers", []string{"same"}, blockSHA)
 	if rc != 1 {
 		t.Fatalf("rc=%d want 1 (stdout %q stderr %q)", rc, out, stderr)
 	}
@@ -673,7 +675,7 @@ func TestMCPOwnershipCodexBlockRequiresOwnershipRecord(t *testing.T) {
 	}
 
 	// A block with no record at all is refused the same way.
-	if _, stderr, rc, _ := mcpRenderOwned(t, dir, mcpOwnershipManifestNone, "codex", target, "mcp_servers", nil); rc != 1 || !strings.Contains(stderr, "not recorded") {
+	if _, stderr, rc, _ := mcpRenderOwned(t, dir, mcpOwnershipManifestNone, "codex", target, "mcp_servers", nil, blockSHA); rc != 1 || !strings.Contains(stderr, "not recorded") {
 		t.Errorf("no-record block: rc=%d stderr=%q", rc, stderr)
 	}
 }

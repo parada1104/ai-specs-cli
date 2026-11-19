@@ -1499,10 +1499,15 @@ func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[stri
 	// The block is ours only as long as it is byte-identical to what ai-specs
 	// wrote: any change (an inline comment on a generated line, an edited value,
 	// an added table, a moved marker) is a user edit this render must not
-	// overwrite. A block recorded before the hash existed is adopted once, after
-	// the split and ownership checks below.
-	if block.present && blockSHA != "" && block.sha != blockSHA {
-		return "", mcpMergePlan{}, fmt.Errorf("%s: refusing to rewrite Codex MCP config: the managed MCP block was edited by hand; move user content outside the markers or restore the block (e.g. by deleting it)", targetPath)
+	// overwrite. A block without a recorded hash has no such proof at all, so it
+	// is refused too rather than adopted.
+	if block.present {
+		if blockSHA == "" {
+			return "", mcpMergePlan{}, fmt.Errorf("%s: refusing to rewrite Codex MCP config: the managed MCP block has no recorded hash; delete the block (ai-specs regenerates it) or move user content outside the markers", targetPath)
+		}
+		if block.sha != blockSHA {
+			return "", mcpMergePlan{}, fmt.Errorf("%s: refusing to rewrite Codex MCP config: the managed MCP block was edited by hand; move user content outside the markers or restore the block (e.g. by deleting it)", targetPath)
+		}
 	}
 
 	// A block is ours only around servers the lock records: a hand-moved marker

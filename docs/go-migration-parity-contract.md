@@ -881,8 +881,12 @@ only those:
   one `error:` line saying the block was edited and to move user content outside
   the markers or restore the block (e.g. by deleting it), with the file and the
   MCP record byte-identical. A matching hash proceeds normally (update or prune).
-  A block written before the hash existed is adopted once, after the split and
-  ownership checks, so upgrades keep working. This tightens an earlier behavior:
+  There is no adoption path: a block present with no recorded hash has no proof
+  it is ours, so it refuses with its own line ("the managed MCP block has no
+  recorded hash; delete the block (ai-specs regenerates it) or move user content
+  outside the markers"), file and MCP record byte-identical — the managed-block
+  format never shipped in a release, so no real project holds a hashless block.
+  This tightens an earlier behavior:
   a manual edit to a managed value inside the block used to be overwritten on
   the next sync and now refuses, under "if in doubt, don't touch". The outside
   content must parse with `internal/toml.Parse` before anything is written, so

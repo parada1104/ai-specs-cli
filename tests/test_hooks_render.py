@@ -548,6 +548,44 @@ class HooksRenderTests(_HookFixtureMixin):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(note, target.read_bytes())
 
+    def test_codex_hashless_managed_block_does_not_lose_inline_comment(self):
+        import re
+
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("codex")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        base = manifest.read_text()
+        manifest.write_text(base + '\n[mcp.same]\ncommand = "managed"\n')
+        self.sync()
+
+        target = self.root / ".codex/config.toml"
+        lock = self.root / "ai-specs/.ai-specs.lock"
+        note = b"# An inline note from the user: retain this."
+        annotated = target.read_bytes().replace(
+            b"[mcp_servers.same]\n", b"[mcp_servers.same] " + note + b"\n", 1
+        )
+        self.assertIn(note, annotated)
+        hashless, count = re.subn(
+            rb'^\[mcp-block\."\.codex/config\.toml"\]\n'
+            rb'sha256 = "[0-9a-f]{64}"\n\n?',
+            b"", lock.read_bytes(), flags=re.M,
+        )
+        self.assertEqual(count, 1)
+        lock.write_bytes(hashless)
+        target.write_bytes(annotated)
+        manifest.write_text(base)
+
+        result = invoke(self.root, "sync", cli_home=self.home)
+        if result.returncode == 1:
+            self.assertEqual(target.read_bytes(), annotated)
+            # The AGENTS.md brief baseline is restamped for the changed manifest,
+            # so compare the MCP ownership record this refusal must leave alone.
+            self.assertEqual(mcp_record_bytes(lock.read_bytes()),
+                             mcp_record_bytes(hashless))
+        else:
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(note, target.read_bytes())
+
     def test_corrupt_mcp_target_is_backed_up_when_pruning_last_server(self):
         self.seed_recipe(RECIPE_SHELL, "shell-gate")
         self.write_manifest("claude")
