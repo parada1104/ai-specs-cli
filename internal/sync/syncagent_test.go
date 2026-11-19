@@ -1609,3 +1609,58 @@ func TestRunBodyRefusesRealSkillsPath(t *testing.T) {
 		}
 	})
 }
+
+// symlinkedAncestorLine is the one-line refusal for an agent destination whose
+// ancestor below the project root is a symlink (the shared guard's message).
+func symlinkedAncestorLine(ancestor string) string {
+	return "    ✗ ancestor path is a symlink: " + ancestor +
+		" — replace it with a real directory so ai-specs can write inside the project\n"
+}
+
+// TestPreflightAgentPathsRefusesSymlinkedAgentParent: one check shared by
+// `sync` and `sync-agent` refuses an agent destination reached through a
+// symlinked ancestor, before anything is written through it or outside the
+// project.
+func TestPreflightAgentPathsRefusesSymlinkedAgentParent(t *testing.T) {
+	project := t.TempDir()
+	outside := t.TempDir()
+	mustSymlink(t, outside, filepath.Join(project, ".claude"))
+
+	var errOut bytes.Buffer
+	if rc := preflightAgentPaths(project, []string{"claude", "pi"}, &errOut); rc != 1 {
+		t.Fatalf("rc = %d, want 1; stderr=%q", rc, errOut.String())
+	}
+	if want := symlinkedAncestorLine(filepath.Join(project, ".claude")); errOut.String() != want {
+		t.Errorf("stderr = %q, want %q", errOut.String(), want)
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil || len(entries) != 0 {
+		t.Errorf("wrote outside the project: %v (%v)", entries, err)
+	}
+	if entries, err := os.ReadDir(project); err != nil || len(entries) != 1 {
+		t.Errorf("project gained entries: %v (%v)", entries, err)
+	}
+}
+
+// TestRunBodyRefusesSymlinkedAgentParent: a nested or direct run keeps its own
+// refusal, so an entry point that bypasses the early preflight is still safe.
+func TestRunBodyRefusesSymlinkedAgentParent(t *testing.T) {
+	run := newAgentRun(t, t.TempDir())
+	outside := t.TempDir()
+	if err := os.RemoveAll(filepath.Join(run.targetPath, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+	mustSymlink(t, outside, filepath.Join(run.targetPath, ".claude"))
+
+	var out, errOut bytes.Buffer
+	run.out, run.errW = &out, &errOut
+	if rc := run.runBody(); rc != 1 {
+		t.Fatalf("rc = %d, want 1; stdout=%q stderr=%q", rc, out.String(), errOut.String())
+	}
+	if want := symlinkedAncestorLine(filepath.Join(run.targetPath, ".claude")); errOut.String() != want {
+		t.Errorf("stderr = %q, want %q", errOut.String(), want)
+	}
+	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+		t.Errorf("wrote outside the project: %v (%v)", entries, err)
+	}
+}

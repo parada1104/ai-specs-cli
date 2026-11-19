@@ -263,6 +263,17 @@ func (r *runner) run(opts options) int {
 	fmt.Fprintln(r.stdout, "  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs")
 	fmt.Fprintln(r.stdout, "")
 
+	// Agent-path ownership preflight (S1, parity contract §4) for EVERY fan-out
+	// target and selected agent, before the first write of any step: the child
+	// runs repeat this check, but they run after the gitignore/env/lock steps,
+	// so a refusal there would already have changed the project (T6 follow-up).
+	fanoutAgents := selectedAgentsFor(tomlPath, agentOptions{selectAll: true})
+	for _, path := range paths {
+		if rc := preflightAgentPaths(path, fanoutAgents, r.stderr); rc != 0 {
+			return 1
+		}
+	}
+
 	// Strangler flags a-c: GO_SYNC_STEP_GITIGNORE and GO_SYNC_STEP_GITIGNORE_ROOT
 	// selected the native Go gitignore renderers, GO_SYNC_STEP_AGENTS_RENDER the
 	// native brief-render-policy + agents-render pair. All of them are native

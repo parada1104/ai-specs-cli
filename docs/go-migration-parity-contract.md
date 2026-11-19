@@ -279,6 +279,18 @@ old-launcher sync warning is added here.
   `    ✗ refuse to overwrite non-symlink: <path> — move or delete it so ai-specs can create the symlink`
   — and exit 1; the directory and its contents are untouched. A symlink there
   (correct, stale or dangling) keeps the relink behavior.
+- An agent destination reached through a **symlinked ancestor** directory below
+  the project root (`.claude/skills` while `.claude` → somewhere else,
+  `.pi/mcp.json` while `.pi` is a link, …) is a hard error too: writing through
+  it would land outside the project. The refusal is the shared guard's line —
+  `    ✗ ancestor path is a symlink: <ancestor> — replace it with a real directory so ai-specs can write inside the project`
+  — and exit 1, nothing written inside or outside the project. `sync` and
+  `sync-agent` run the SAME preflight over every fan-out target and every
+  selected agent's destinations (`instructions_path`, `skills_dir`,
+  `mcp_config_path`, `commands_dir`, `runtime_hooks_target`) as their first
+  action, before the lock, `.gitignore`, `.envrc`, `AGENTS.md`, materialize or
+  dep-prune steps, so a refusal leaves the project byte-identical. The per-run
+  body repeats the check for nested and direct child runs.
 
 ---
 

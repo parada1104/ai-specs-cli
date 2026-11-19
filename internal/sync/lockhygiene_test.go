@@ -203,3 +203,41 @@ func TestSyncDropsHookRecordOfUnvisitedTargetWhenShimIsGone(t *testing.T) {
 		t.Errorf("absent shim of an unvisited target kept its record:\n%s", text)
 	}
 }
+
+// T6.3 (S1): a refusal must precede the materialize fallback, which prunes
+// lock deps. `sync-agent --omp` on a project whose `.omp/skills` is a real
+// directory refuses with the lock (and its undeclared [deps.*] record) byte-
+// identical.
+func TestSyncAgentRefusalDoesNotPruneLockDeps(t *testing.T) {
+	home, _ := spineEnv(t)
+	project := spineProject(t, "[project]\nname = 'refusal-order'\n[brief]\nrender = false\n[agents]\nenabled = ['omp']\n")
+	spineWrite(t, filepath.Join(project, ".omp/skills/mine/SKILL.md"), "# mine\n", 0o644)
+	lk := lock.NewLock()
+	lock.SetDepSkillHashes(lk, "gone", "gone", map[string]string{"skills/gone/SKILL.md": "hash"})
+	lockPath := filepath.Join(project, "ai-specs/.ai-specs.lock")
+	if err := lock.WriteLock(lockPath, lk); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	if rc := RunAgent([]string{"sync-agent", project, "--omp"}, home, strings.NewReader(""), &out, &errOut); rc != 1 {
+		t.Fatalf("rc = %d, want 1; stdout=%q stderr=%q", rc, out.String(), errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "✗ refuse to overwrite non-symlink: "+filepath.Join(project, ".omp/skills")) {
+		t.Errorf("stderr = %q, want the skills refusal", errOut.String())
+	}
+	after, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Errorf("lock changed despite the refusal:\nbefore=%q\nafter=%q", before, after)
+	}
+	if got, err := os.ReadFile(filepath.Join(project, ".omp/skills/mine/SKILL.md")); err != nil || string(got) != "# mine\n" {
+		t.Errorf("user skill changed: %q (%v)", got, err)
+	}
+}

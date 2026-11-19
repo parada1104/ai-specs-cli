@@ -44,6 +44,12 @@ class SyncSkillsOwnershipTests(unittest.TestCase):
         self.user_skill.write_text("# mine\n", encoding="utf-8")
 
     def sync(self) -> subprocess.CompletedProcess:
+        return self.run_cli("sync", str(self.project))
+
+    def sync_agent(self, *args: str) -> subprocess.CompletedProcess:
+        return self.run_cli("sync-agent", *args, str(self.project))
+
+    def run_cli(self, *args: str) -> subprocess.CompletedProcess:
         env = {
             "PATH": os.environ.get("PATH", ""),
             "HOME": str(self.base / "home"),
@@ -58,7 +64,7 @@ class SyncSkillsOwnershipTests(unittest.TestCase):
         for name in ("home", "tmp"):
             (self.base / name).mkdir(exist_ok=True)
         return subprocess.run(
-            [str(CLI), "sync", str(self.project)],
+            [str(CLI), *args],
             cwd=ROOT,
             env=env,
             text=True,
@@ -79,6 +85,46 @@ class SyncSkillsOwnershipTests(unittest.TestCase):
         self.assertFalse(self.skills.is_symlink())
         self.assertFalse((self.project / ".claude" / "commands").exists())
         self.assertFalse((self.project / "CLAUDE.md").exists())
+
+    def test_full_sync_skills_refusal_leaves_project_unchanged(self) -> None:
+        from _blackbox import snapshot
+
+        before = snapshot(self.project)
+        proc = self.sync()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(snapshot(self.project), before)
+
+    def test_standalone_sync_agent_refuses_symlinked_agent_parent(self) -> None:
+        from _blackbox import snapshot
+
+        # A user-managed `.claude` symlink to a directory outside the project:
+        # writing through it would land outside the project. Both entry points
+        # share one check, so both refuse and neither writes anything.
+        outside = self.base / "outside"
+        outside.mkdir()
+        shutil.rmtree(self.project / ".claude")
+        (self.project / ".claude").symlink_to(outside)
+        # The standalone body requires the root AGENTS.md before its agent loop.
+        (self.project / "AGENTS.md").write_text("# brief\n", encoding="utf-8")
+        outside_before = snapshot(outside)
+
+        proc = self.sync_agent("--claude")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn(
+            f"    ✗ ancestor path is a symlink: {self.project / '.claude'}",
+            proc.stderr,
+        )
+        self.assertEqual(snapshot(outside), outside_before, "sync-agent wrote outside the project")
+
+        before_sync = snapshot(self.project)
+        proc = self.sync()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn(
+            f"    ✗ ancestor path is a symlink: {self.project / '.claude'}",
+            proc.stderr,
+        )
+        self.assertEqual(snapshot(self.project), before_sync, "full sync wrote before refusing")
+        self.assertEqual(snapshot(outside), outside_before, "full sync wrote outside the project")
 
 
 if __name__ == "__main__":

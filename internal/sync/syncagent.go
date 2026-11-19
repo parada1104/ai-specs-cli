@@ -37,6 +37,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	shared "ai-specs.dev/worktree-gate/shared"
+
 	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/projectcache"
 	"ai-specs.dev/ai-specs/internal/skills"
@@ -174,6 +176,15 @@ func RunAgent(args []string, home string, stdin io.Reader, stdout, stderr io.Wri
 		}
 	}
 
+	// Agent-path preflight before ANY write of this run: runAgentSingle's
+	// materialize fallback prunes lock deps and can write the lock, so the
+	// refusal must come first (S1, T6 follow-up).
+	if targets := selectedAgentsFor(filepath.Join(absSource, "ai-specs", "ai-specs.toml"), opts); len(targets) > 0 {
+		if rc := preflightAgentPaths(absTarget, targets, stderr); rc != 0 {
+			return 1
+		}
+	}
+
 	child := agentOptions{
 		sourceRoot:     absSource,
 		target:         absTarget,
@@ -250,6 +261,16 @@ func (r *runner) runAgentStandaloneFanout(root string, opts agentOptions, p plan
 	fmt.Fprintf(s.out, "  targets:     %s\n", strings.Join(paths, " "))
 	fmt.Fprintln(s.out, "  mode:        public root fan-out (declared-only)")
 	fmt.Fprintln(s.out, "")
+
+	// Agent-path preflight for every target, before the first write of any of
+	// them (the children repeat it; they would run after this target's own
+	// writes otherwise).
+	fanoutAgents := selectedAgentsFor(filepath.Join(root, "ai-specs", "ai-specs.toml"), opts)
+	for _, resolvedTarget := range paths {
+		if rc := preflightAgentPaths(resolvedTarget, fanoutAgents, s.errW); rc != 0 {
+			return 1
+		}
+	}
 
 	// Resolved-config for subrepo AGENTS.md enrichment: deliberately
 	// copy-free/hook-free/lock-free (--resolved-config-only), merged onto the
@@ -549,12 +570,13 @@ func (a *agentRun) runBody() int {
 		targets = a.enabledAgents
 	}
 
-	// Skills ownership preflight (S1, parity contract §4): a real directory or
-	// file where an agent's skills symlink belongs is a hard error, never
-	// removed. Checked for every agent of this run BEFORE any target write, so
-	// a refusal leaves the whole run unmodified instead of syncing some agents
-	// and then stopping.
-	if rc := a.preflightSkillsPaths(targets); rc != 0 {
+	// Agent-path preflight (S1, parity contract §4): a real directory or file
+	// where an agent's skills symlink belongs is a hard error, never removed,
+	// and no agent destination may be reached through a symlinked ancestor.
+	// Checked for every agent of this run BEFORE any target write, so a nested
+	// or direct run is safe even when the early entry-point preflight is
+	// bypassed (sync spine child runs).
+	if rc := preflightAgentPaths(a.targetPath, targets, a.errW); rc != 0 {
 		return rc
 	}
 
@@ -768,27 +790,57 @@ func (a *agentRun) ensureTargetWorkspace(out, errW io.Writer) int {
 	return 0
 }
 
-// preflightSkillsPaths refuses the run when a selected agent's skills path is
-// occupied by anything that is not a symlink. Nothing in that path is touched,
-// and no target write of this run has happened yet (S1).
-func (a *agentRun) preflightSkillsPaths(targets []string) int {
+// agentPathFields are the platform rows that name a destination sync writes for
+// an agent, relative to the run's target.
+var agentPathFields = []string{
+	"instructions_path", "skills_dir", "mcp_config_path", "commands_dir", "runtime_hooks_target",
+}
+
+// preflightAgentPaths is the ONE ownership check `sync` and `sync-agent` share
+// before their first write (S1, parity contract §4): a real directory or file
+// where an agent's skills symlink belongs is a hard error (never removed), and
+// no agent destination may be reached through a symlinked ancestor below the
+// project root — otherwise the write would land outside the project. A symlink
+// at the skills path itself is legal (correct, stale or dangling: it is
+// relinked), so only ANCESTORS are refused.
+func preflightAgentPaths(targetPath string, targets []string, errW io.Writer) int {
 	for _, agent := range targets {
 		if _, ok := platformGet(agent, "native"); !ok {
 			continue // counted by the per-agent loop
 		}
-		skillsDir, _ := platformGet(agent, "skills_dir")
-		if skillsDir == "" {
-			continue
+		for _, field := range agentPathFields {
+			rel, _ := platformGet(agent, field)
+			if rel == "" {
+				continue
+			}
+			path := filepath.Join(targetPath, rel)
+			if field == "skills_dir" {
+				if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink == 0 {
+					fmt.Fprintf(errW, "    ✗ refuse to overwrite non-symlink: %s — move or delete it so ai-specs can create the symlink\n", path)
+					return 1
+				}
+			}
+			if err := shared.EnsureTemplateAncestorsReal(targetPath, path); err != nil {
+				fmt.Fprintf(errW, "    ✗ %s — replace it with a real directory so ai-specs can write inside the project\n", err)
+				return 1
+			}
 		}
-		path := filepath.Join(a.targetPath, skillsDir)
-		info, err := os.Lstat(path)
-		if err != nil || info.Mode()&os.ModeSymlink != 0 {
-			continue // absent, or a symlink (correct, stale or dangling)
-		}
-		fmt.Fprintf(a.errW, "    ✗ refuse to overwrite non-symlink: %s — move or delete it so ai-specs can create the symlink\n", path)
-		return 1
 	}
 	return 0
+}
+
+// selectedAgentsFor resolves the agents a preflight must cover before the run
+// body exists: the explicit selectors, else [agents].enabled. A manifest it
+// cannot read yields nil so the unchanged later step reports that failure.
+func selectedAgentsFor(tomlPath string, opts agentOptions) []string {
+	if !opts.selectAll && len(opts.selected) > 0 {
+		return opts.selected
+	}
+	enabled, rc := readEnabledAgents(tomlPath, io.Discard)
+	if rc != 0 {
+		return nil
+	}
+	return enabled
 }
 
 // syncOneAgent is lib/sync-agent.sh:448-542.
