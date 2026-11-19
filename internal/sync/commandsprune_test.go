@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/projectcache"
 )
 
@@ -134,5 +135,42 @@ func TestSyncRecipeCommandPruneRefusal(t *testing.T) {
 	}
 	if rc, out, errW := run(); rc != 1 || errW != fmt.Sprintf("ERROR: cannot prune recipe commands: destination is a directory: %s\n", leaf) || strings.Contains(out, "  syncing ") {
 		t.Errorf("refusal rc=%d, stderr=%q; stdout=%s", rc, errW, out)
+	}
+}
+
+func TestSyncCommandPrunePreservesReplacementTemplateOwnership(t *testing.T) {
+	root, home, base, run := commandPruneFixture(t)
+	sync := func() {
+		t.Helper()
+		if rc, _, stderr := run(); rc != 0 {
+			t.Fatalf("sync rc=%d: %s", rc, stderr)
+		}
+	}
+	sync()
+
+	const rel = ".claude/commands/demo.md"
+	const payload = "# Replacement command\n"
+	recipe := filepath.Join(home, "catalog/recipes/replacement")
+	spineWrite(t, filepath.Join(recipe, "recipe.toml"),
+		"[recipe]\nid='replacement'\nname='Replacement'\ndescription='Fixture'\nversion='1.0.0'\n"+
+			"[[provides.templates]]\nsource='new.md'\ntarget='"+rel+"'\ncondition='always'\n", 0o644)
+	spineWrite(t, filepath.Join(recipe, "new.md"), payload, 0o644)
+
+	for _, manifest := range []string{base + "[recipes.replacement]\nenabled=true\n", base} {
+		spineWrite(t, materializeManifestPath(root), manifest, 0o644)
+		sync()
+		data, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil || string(data) != payload {
+			t.Fatalf("replacement lost: %q (%v)", data, err)
+		}
+		lk, err := lock.LoadLock(filepath.Join(root, bundledLockRel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		record := lk.Managed[rel]
+		if record["recipe"] != "replacement" || record["kind"] != "template" ||
+			record["sha256"] != lock.Sha256Bytes(data) {
+			t.Fatalf("replacement ownership disagrees with file: %v", record)
+		}
 	}
 }
