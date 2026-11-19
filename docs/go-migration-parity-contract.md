@@ -811,6 +811,14 @@ original `doctor._tracker_ledger_in_play`: a tracker witness whose state is
 relevant, so `doctor` does not grade a ledger there. A configured or declared
 tracker, or a witness in any other state, still counts.
 
+### Non-finite literals in sync JSON targets — TOLERANT (accepted divergence, Robert, 2026-11-18)
+
+Legacy Python accepted bare `NaN`, `Infinity`, and `-Infinity` in hook and MCP
+JSON targets. Go sync treats those literals as invalid JSON: before rewriting,
+it saves the exact original bytes to the first free `.bak` or `.bak.N`, warns
+once on stderr naming the target and backup, then regenerates as from `{}`.
+This applies to existing JSON write targets, not read-only inputs or Codex TOML.
+
 ## 11. Environment variables
 
 | Var | Effect |

@@ -79,6 +79,7 @@ func testJSONTargetRecovery(t *testing.T, rel, valid, stdout string, run func(*t
 		{"backups occupied", "{\n // keep this comment\n}\n", ".bak.2"},
 		{"invalid UTF-8", "{\"user\":\"\xff\"}", ".bak"},
 		{"empty", "", ".bak"},
+		{"non-JSON numeric constants", "{\"nan\":NaN,\"positive\":Infinity,\"negative\":-Infinity}\n", ".bak"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()

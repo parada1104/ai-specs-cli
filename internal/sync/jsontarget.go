@@ -25,13 +25,35 @@ func loadJSONTarget(path string) (*mcpObj, []byte, error) {
 		return nil, nil, err
 	}
 	parsed, err := mcpParseJSONOrdered(data)
-	if err != nil {
+	// The ordered parser tolerates NaN/Infinity (legacy Python json); agents
+	// reject them, so a writable target holding one is invalid JSON.
+	if err != nil || hasBareNonFiniteConstant(data) {
 		return newMCPObj(), data, nil
 	}
 	if obj, ok := parsed.(*mcpObj); ok {
 		return obj, nil, nil
 	}
 	return newMCPObj(), nil, nil
+}
+
+// hasBareNonFiniteConstant reports a NaN/Infinity token outside strings. It is
+// called only on input the ordered parser accepted, so such a token can only be
+// one of those constants; overflowing numbers like 1e400 stay valid JSON.
+func hasBareNonFiniteConstant(data []byte) bool {
+	inString, escaped := false, false
+	for _, c := range data {
+		switch {
+		case inString && escaped:
+			escaped = false
+		case inString && c == '\\':
+			escaped = true
+		case c == '"':
+			inString = !inString
+		case !inString && (c == 'N' || c == 'I'):
+			return true
+		}
+	}
+	return false
 }
 
 func backupInvalidJSON(path string, data []byte, stderr io.Writer) error {

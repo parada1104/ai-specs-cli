@@ -827,6 +827,33 @@ func TestHooksRenderDifferential(t *testing.T) {
 			case "claude existing settings invalid json", "claude settings invalid utf8":
 				repaired = ".claude/settings.json"
 				ref = frozenHooksRecord(t, golden, "claude existing settings invalid json")
+			case "claude existing settings duplicate keys", "claude existing settings surrogate and bigint":
+				repaired = ".claude/settings.json"
+				t.Run("valid JSON keeps merge behavior", func(t *testing.T) {
+					finite := strings.NewReplacer(": NaN", ": null", ": Infinity", ": null", ": -Infinity", ": null")
+					valid := tc
+					// The legacy fixture's name says duplicate keys, but its input has none.
+					input := strings.Replace(tc.files[repaired], `"z": 1`, `"z": 0, "z": 1`, 1)
+					valid.files = map[string]string{repaired: finite.Replace(input)}
+					wantTree := maps.Clone(ref.Tree)
+					legacy, err := base64.StdEncoding.DecodeString(wantTree[repaired])
+					if err != nil {
+						t.Fatal(err)
+					}
+					wantTree[repaired] = base64.StdEncoding.EncodeToString([]byte(finite.Replace(string(legacy))))
+					out, stderr, rc, tree, modes := runHooksGo(t, valid)
+					if rc != ref.RC || out != ref.Stdout || stderr != *ref.Stderr {
+						t.Errorf("rc=%d stdout=%q stderr=%q; want rc=%d stdout=%q stderr=%q", rc, out, stderr, ref.RC, ref.Stdout, *ref.Stderr)
+					}
+					if !hooksTreeEqual(tree, wantTree) || !hooksModesEqual(modes, ref.Modes) {
+						t.Errorf("valid target merge differs:\n%s\nmodes=%v, want %v", hooksTreeDiff(tree, wantTree), modes, ref.Modes)
+					}
+				})
+				body, err := base64.StdEncoding.DecodeString(goTree[repaired])
+				if err != nil || !json.Valid(body) {
+					t.Errorf("regenerated target is not valid JSON: %q (%v)", body, err)
+				}
+				ref = frozenHooksRecord(t, golden, "claude existing settings invalid json")
 			case "cursor hooks.json invalid json", "cursor wrapper written then hooks json invalid utf8":
 				repaired = ".cursor/hooks.json"
 				ref = frozenHooksRecord(t, golden, "cursor hooks.json invalid json")
