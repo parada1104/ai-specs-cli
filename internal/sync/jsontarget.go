@@ -36,9 +36,9 @@ func loadJSONTarget(path string) (*mcpObj, []byte, error) {
 	return newMCPObj(), nil, nil
 }
 
-// hasBareNonFiniteConstant reports a NaN/Infinity token outside strings. It is
-// called only on input the ordered parser accepted, so such a token can only be
-// one of those constants; overflowing numbers like 1e400 stay valid JSON.
+// hasBareNonFiniteConstant reports a NaN/Infinity token outside strings. Valid
+// JSON has no letter outside a string, so such a token can only be one of those
+// constants; overflowing numbers like 1e400 stay valid JSON.
 func hasBareNonFiniteConstant(data []byte) bool {
 	inString, escaped := false, false
 	for _, c := range data {

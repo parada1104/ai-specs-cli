@@ -820,7 +820,11 @@ once on stderr naming the target and backup, then regenerates as from `{}`.
 This applies to existing JSON write targets, not read-only inputs or Codex TOML.
 Valid overflowing numbers such as `1e400` remain valid input, and Go writes
 the resulting infinities as `1e999` / `-1e999` (legacy wrote bare `Infinity`),
-so a later sync never treats its own output as invalid.
+so a later sync never treats its own output as invalid. The same rule applies to
+recipe MCP input: a recipe `--recipe-mcp` document carrying bare `NaN` or
+`Infinity` fails with one `error:` line naming that file and leaves the target
+untouched, where legacy wrote the bare constants into the target (and `nan` /
+`inf` for Codex TOML).
 
 ## 11. Environment variables
 

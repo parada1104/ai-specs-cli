@@ -129,6 +129,43 @@ class _HookFixtureMixin(unittest.TestCase):
 
 
 class HooksRenderTests(_HookFixtureMixin):
+    def test_recipe_mcp_nan_does_not_remove_user_fields_on_resync(self):
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("claude")
+        (self.root / "AGENTS.md").write_text("# S4 probe\n")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        # MCP is rendered only when the manifest declares servers; without this
+        # table sync-agent skips MCP entirely and the recipe never reaches it.
+        manifest.write_text(manifest.read_text() + "\n[mcp.demo]\ncommand = 'echo'\n")
+        recipe = self.base / "recipe-mcp.json"
+        recipe.write_text('{"delta":{"command":"echo","env":{"K":NaN}}}\n')
+        target = self.root / ".mcp.json"
+        original = '{"manual":{"setting":"keep me"}}\n'
+        target.write_text(original)
+
+        def reject_constant(name):
+            raise ValueError(f"bare {name} is not JSON")
+
+        for attempt in (1, 2):
+            with self.subTest(attempt=attempt):
+                result = invoke(
+                    self.root, "sync-agent", "--claude",
+                    "--source-root", str(self.root), "--target", str(self.root),
+                    "--recipe-mcp", str(recipe), cli_home=self.home,
+                    append_root=False,
+                )
+                # Invalid recipe input is refused with one line naming the file.
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(
+                    result.stderr,
+                    f"error: {recipe}: invalid JSON: non-finite constant "
+                    "NaN/Infinity\n",
+                )
+                text = target.read_text()
+                json.loads(text, parse_constant=reject_constant)
+                self.assertEqual(text, original)
+                self.assertFalse(list(target.parent.glob(".mcp.json.bak*")))
+
     def test_valid_numeric_extremes_survive_two_syncs(self):
         self.seed_recipe(RECIPE_SHELL, "shell-gate")
         self.write_manifest("claude")

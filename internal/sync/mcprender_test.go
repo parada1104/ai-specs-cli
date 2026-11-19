@@ -257,6 +257,10 @@ type mcpRefCase struct {
 	// goErrNotContains guards a misattributed message (F3: a read error must
 	// not be reported as "not found").
 	goErrNotContains string
+	// acceptedDivergence is the expected Go stderr for a case the port
+	// deliberately no longer reproduces (rc 1, no stdout, target untouched).
+	// The frozen record still captures Python's behavior.
+	acceptedDivergence *string
 }
 
 const mcpManifestRel = "ai-specs/ai-specs.toml"
@@ -371,10 +375,20 @@ func TestMCPRenderDifferential(t *testing.T) {
 				t.Fatalf("frozen record stderr/dropped mismatch (traceback=%v)", tc.tracebackStderr)
 			}
 			goOut, goErr, goRC, goTarget := runMCPGo(t, tc)
+			// Accepted divergence (S4, Robert 2026-11-18): a recipe MCP input
+			// carrying a bare NaN/Infinity is refused instead of written into the
+			// target, so ai-specs never poisons its own JSON/TOML output.
+			if tc.acceptedDivergence != nil {
+				if goRC != 1 || goOut != "" || goErr != *tc.acceptedDivergence || goTarget != nil {
+					t.Errorf("accepted divergence: rc=%d stdout=%q stderr=%q target=%v",
+						goRC, goOut, goErr, goTarget)
+				}
+				return
+			}
 			// Accepted divergence (Robert, 2026-11-18): infinities are written as
 			// the valid JSON numbers 1e999/-1e999 instead of Python's bare
 			// Infinity, so the next sync does not treat its own output as invalid.
-			if goTarget != nil && (tc.name == "existing json numeric extremes round-trip" || tc.name == "recipe json nan json agent") {
+			if goTarget != nil && tc.name == "existing json numeric extremes round-trip" {
 				raw, _ := base64.StdEncoding.DecodeString(*goTarget)
 				legacy := strings.ReplaceAll(strings.ReplaceAll(string(raw), "-1e999", "-Infinity"), "1e999", "Infinity")
 				b := base64.StdEncoding.EncodeToString([]byte(legacy))
@@ -745,11 +759,15 @@ func mcpRenderCases() []mcpRefCase {
 		{name: "recipe json nan json agent", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".mcp.json", agent: "claude", mcpKey: "mcpServers",
 			recipeRel: "recipe-mcp.json",
-			recipe:    mcpStr(`{"delta": {"command": "d", "env": {"K": NaN, "I": Infinity, "J": -Infinity}}}`)},
+			recipe:    mcpStr(`{"delta": {"command": "d", "env": {"K": NaN, "I": Infinity, "J": -Infinity}}}`),
+			// Python writes the bare constants into the target.
+			acceptedDivergence: mcpStr("error: <TEMP>/recipe-mcp.json: invalid JSON: non-finite constant NaN/Infinity\n")},
 		{name: "recipe json nan codex toml", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
 			recipeRel: "recipe-mcp.json",
-			recipe:    mcpStr(`{"delta": {"command": "d", "env": {"K": NaN, "I": Infinity, "J": -Infinity}}}`)},
+			recipe:    mcpStr(`{"delta": {"command": "d", "env": {"K": NaN, "I": Infinity, "J": -Infinity}}}`),
+			// Python writes nan/inf/-inf into the TOML env table.
+			acceptedDivergence: mcpStr("error: <TEMP>/recipe-mcp.json: invalid JSON: non-finite constant NaN/Infinity\n")},
 		{name: "recipe lone surrogate codex toml", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
 			recipeRel: "recipe-mcp.json",

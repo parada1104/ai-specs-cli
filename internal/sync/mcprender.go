@@ -837,9 +837,17 @@ func mcpLoadServers(root *toml.Table, recipeMCPPath string) (*mcpObj, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A bare NaN/Infinity is not JSON. Writing it would poison the target with a
+	// document the next sync has to back up and regenerate, so the recipe's MCP
+	// contribution is refused and the target left untouched.
+	// Checked only on input the parser accepted, so otherwise-invalid recipe
+	// JSON keeps being ignored as before.
 	// Invalid JSON (json.JSONDecodeError) and non-object JSON are silently
 	// ignored; a read error is not. A depth overflow (RecursionError) is fatal.
 	if parsed, perr := mcpParseJSONOrdered([]byte(text)); perr == nil {
+		if hasBareNonFiniteConstant([]byte(text)) {
+			return nil, fmt.Errorf("%s: invalid JSON: non-finite constant NaN/Infinity", recipeMCPPath)
+		}
 		if rm, ok := parsed.(*mcpObj); ok {
 			mcp = mcpMergeObjs(mcp, rm)
 		}
