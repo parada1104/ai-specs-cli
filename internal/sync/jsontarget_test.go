@@ -53,13 +53,22 @@ func TestMCPJSONTargetRecovery(t *testing.T) {
 			user := fmt.Sprintf(`{"user":42,%q:{"old":{"command":"old"}}}`, agent.key)
 			testJSONTargetRecovery(t, agent.path, user, "  ✓ "+agent.name+" → %s (3 server(s))\n", func(t *testing.T, root, path string) (string, int, string) {
 				return mcpRunRender(t, root, agent.name, path, agent.key, "")
-			}, func(t *testing.T, doc map[string]json.RawMessage, _ bool) {
+			}, func(t *testing.T, doc map[string]json.RawMessage, preserved bool) {
 				var servers map[string]map[string]json.RawMessage
 				if err := json.Unmarshal(doc[agent.key], &servers); err != nil {
 					t.Fatal(err)
 				}
+				// S5: a readable target keeps the unrecorded user server; a
+				// regenerated one has nothing left to preserve.
+				want := 3
+				if preserved {
+					want = 4
+					if got := string(servers["old"]["command"]); got != `"old"` {
+						t.Errorf("user server not preserved: %q", got)
+					}
+				}
 				var command bytes.Buffer
-				if err := json.Compact(&command, servers["alpha"]["command"]); len(servers) != 3 || err != nil || command.String() != agent.command {
+				if err := json.Compact(&command, servers["alpha"]["command"]); len(servers) != want || err != nil || command.String() != agent.command {
 					t.Errorf("servers not regenerated as expected: %s", doc[agent.key])
 				}
 				if agent.name == "opencode" && string(doc["$schema"]) != `"https://opencode.ai/config.json"` {

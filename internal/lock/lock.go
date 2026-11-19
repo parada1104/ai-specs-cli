@@ -62,6 +62,10 @@ type Lock struct {
 	// Managed entries are verbatim maps kept only when sha256 is a
 	// non-blank string (stripped).
 	Managed map[string]map[string]any
+	// MCP is the per-target MCP server ownership record (S5): the project
+	// relative config path → server name → hash of the rendered entry. Only a
+	// recorded server may be replaced or removed by sync.
+	MCP map[string]map[string]any
 }
 
 // NewLock returns a Lock with all six maps initialized empty (the shape
@@ -74,6 +78,7 @@ func NewLock() *Lock {
 		Deps:    map[string]map[string]map[string]any{},
 		Agents:  map[string]map[string]any{},
 		Managed: map[string]map[string]any{},
+		MCP:     map[string]map[string]any{},
 	}
 }
 
@@ -172,6 +177,7 @@ func LoadLock(lockPath string) (*Lock, error) {
 	// skills and agents: verbatim dicts ({k: dict(v)} parity).
 	copyVerbatimDicts(root, "skills", lock.Skills)
 	copyVerbatimDicts(root, "agents", lock.Agents)
+	copyVerbatimDicts(root, "mcp", lock.MCP)
 
 	// recipes and deps: _load_skill_groups normalization.
 	lock.Recipes = loadSkillGroups(root, "recipes")
@@ -562,6 +568,21 @@ func refuseControlChars(lockPath string, lock *Lock) error {
 			appendCheck("agents hash", s)
 		}
 	}
+	for _, target := range sortedKeys(lock.MCP) {
+		files := lock.MCP[target]
+		if len(files) == 0 {
+			continue
+		}
+		appendCheck("mcp target", target)
+		for _, name := range sortedKeys(files) {
+			appendCheck("mcp server", name)
+			s, err := pyStrValue(files[name])
+			if err != nil {
+				return err
+			}
+			appendCheck("mcp hash", s)
+		}
+	}
 	depIDs := make([]string, 0, len(lock.Deps))
 	for depID := range lock.Deps {
 		depIDs = append(depIDs, depID)
@@ -714,7 +735,33 @@ func renderLock(lock *Lock) (string, error) {
 		lines = append(lines, "")
 	}
 
+	for _, target := range sortedKeys(lock.MCP) {
+		files := lock.MCP[target]
+		if len(files) == 0 {
+			continue
+		}
+		lines = append(lines, "[mcp."+TOMLString(target)+"]")
+		for _, name := range sortedKeys(files) {
+			s, err := pyStrValue(files[name])
+			if err != nil {
+				return "", err
+			}
+			lines = append(lines, TOMLString(name)+" = "+TOMLString(s))
+		}
+		lines = append(lines, "")
+	}
+
 	return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n", nil
+}
+
+// sortedKeys returns a map's keys in byte order.
+func sortedKeys[M ~map[string]V, V any](m M) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // WriteLock is the write side of _write_lock_python: the control-character

@@ -806,18 +806,13 @@ func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 		}
 	}
 
-	// MCP: rendered only when the manifest declares servers; otherwise a
-	// compact-surviving notice.
+	// MCP: rendered per server (S5) whenever the manifest declares servers; with
+	// none left, the recorded managed servers are still pruned.
 	mcpPath, _ := platformGet(agent, "mcp_config_path")
 	mcpKey, _ := platformGet(agent, "mcp_key")
 	if mcpPath != "" && mcpKey != "" {
-		if a.mcpCount > 0 {
-			opts := RenderMCPOptions{RecipeMCPPath: a.recipeMCP}
-			if rc := RenderMCPFile(a.tomlPath, agent, filepath.Join(a.targetPath, mcpPath), mcpKey, opts, out, errW); rc != 0 {
-				return rc
-			}
-		} else {
-			fmt.Fprintln(out, "    ℹ mcp skipped (no [mcp.*] in manifest)")
+		if rc := a.syncMCP(agent, mcpPath, mcpKey, out, errW); rc != 0 {
+			return rc
 		}
 	}
 
@@ -838,6 +833,63 @@ func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 		}
 	}
 	return 0
+}
+
+// syncMCP renders one agent's MCP config with the lock's per-target server
+// ownership (S5), then records what ai-specs now manages there. Without a
+// readable ownership record nothing recorded is removed, so a lock failure
+// stops before touching the target.
+func (a *agentRun) syncMCP(agent, mcpPath, mcpKey string, out, errW io.Writer) int {
+	target := filepath.Join(a.targetPath, mcpPath)
+	lockPath := filepath.Join(a.sourceRoot, bundledLockRel)
+	rel, relErr := filepath.Rel(a.sourceRoot, target)
+	rel = filepath.ToSlash(rel)
+	var owned []string
+	var record map[string]any
+	if relErr == nil {
+		lk, err := lock.LoadLock(lockPath)
+		if err != nil {
+			fmt.Fprintln(errW, err)
+			return 1
+		}
+		record = lk.MCP[rel]
+		for name := range record {
+			owned = append(owned, name)
+		}
+	}
+	if a.mcpCount == 0 && len(owned) == 0 {
+		fmt.Fprintln(out, "    ℹ mcp skipped (no [mcp.*] in manifest)")
+		return 0
+	}
+	res := MCPResult{}
+	opts := RenderMCPOptions{RecipeMCPPath: a.recipeMCP, Owned: owned, Result: &res}
+	if rc := RenderMCPFile(a.tomlPath, agent, target, mcpKey, opts, out, errW); rc != 0 {
+		return rc
+	}
+	if relErr != nil || mcpOwnershipEqual(record, res.Managed) {
+		return 0
+	}
+	if err := applyLockRecord(lockPath, func(lk *lock.Lock) {
+		lock.SetMCPOwnership(lk, rel, res.Managed)
+	}); err != nil {
+		fmt.Fprintln(errW, err)
+		return 1
+	}
+	return 0
+}
+
+// mcpOwnershipEqual reports whether a lock record already holds exactly the
+// managed servers and rendered hashes, so an unchanged sync writes no lock.
+func mcpOwnershipEqual(record map[string]any, managed map[string]string) bool {
+	if len(record) != len(managed) {
+		return false
+	}
+	for name, hash := range managed {
+		if s, ok := record[name].(string); !ok || s != hash {
+			return false
+		}
+	}
+	return true
 }
 
 // syncCommands is the commands fan-out with the D3' semantics: managed names

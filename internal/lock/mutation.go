@@ -40,6 +40,24 @@ func SetBriefBaseline(lock *Lock, path, sha256 string) {
 	SetManagedOverride(lock, path, sha256, nil, nil, strPtr("runtime-brief"), strPtr("never-force"))
 }
 
+// SetMCPOwnership replaces the MCP server ownership record for one target. An
+// empty record drops the entry so a target with nothing left managed leaves no
+// trace in the lock.
+func SetMCPOwnership(lock *Lock, target string, servers map[string]string) {
+	if lock.MCP == nil {
+		lock.MCP = map[string]map[string]any{}
+	}
+	if len(servers) == 0 {
+		delete(lock.MCP, target)
+		return
+	}
+	entry := make(map[string]any, len(servers))
+	for name, hash := range servers {
+		entry[name] = hash
+	}
+	lock.MCP[target] = entry
+}
+
 // SetRecipeSkillHashes is set_recipe_skill_hashes: recipes.setdefault(
 // recipe_id, {})[skill_name] = dict(hashes). The hashes map is copied.
 func SetRecipeSkillHashes(lock *Lock, recipeID, skillName string, hashes map[string]string) {

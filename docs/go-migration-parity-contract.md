@@ -826,6 +826,37 @@ recipe MCP input: a recipe `--recipe-mcp` document carrying bare `NaN` or
 untouched, where legacy wrote the bare constants into the target (and `nan` /
 `inf` for Codex TOML).
 
+### MCP config merge is per server — BEHAVIOUR CHANGE (Robert, 2026-11-18, S5)
+
+Legacy replaced the whole `mcpServers` / `mcp` key (and rebuilt every
+`[mcp_servers.*]` block of Codex TOML), so a user-added server was destroyed on
+every sync. Go records the server names it manages per target in the lock's
+`[mcp."<target>"]` section (name → sha256 of the rendered entry) and touches
+only those:
+
+- a recorded server is updated in place, and removed from every agent target
+  when the manifest stops declaring it — including when zero servers remain
+  (legacy skipped the render entirely at zero, leaving the stale entries);
+- a server the lock does not record is never overwritten or deleted; a
+  same-named entry that was never recorded as ours is kept and reported with
+  `    ! preserved user MCP server "<name>" in <target> (not recorded as
+  ai-specs-managed)` (conservative choice: user-authored wins);
+- removals print `    ✓ removed managed MCP server "<name>" from <target>`;
+- a lock read failure stops the MCP step before touching the target, so nothing
+  is deleted without the ownership record.
+
+Accepted corpus divergence: `mcp-per-agent` (the seeded `stale` server survives
+in `.mcp.json`, `opencode.json` and `.codex/config.toml`) and
+`sync-agent-recipe-mcp-matrix` (step 3's zero-server invocation prunes the
+`only` server recorded by step 2 instead of printing the skip notice), plus the
+new `[mcp.*]` lock section in fixtures that render an MCP target. The frozen
+goldens still capture the legacy behavior; they were not regenerated.
+
+Also accepted: a failed render never truncates the target. Legacy's
+`write_text()` opened and truncated the target before the encode error, so a
+Codex TOML with a server name that cannot be UTF-8 encoded was left empty; Go
+refuses before opening and leaves the file byte-identical.
+
 ## 11. Environment variables
 
 | Var | Effect |

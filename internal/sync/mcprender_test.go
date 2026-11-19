@@ -261,6 +261,14 @@ type mcpRefCase struct {
 	// deliberately no longer reproduces (rc 1, no stdout, target untouched).
 	// The frozen record still captures Python's behavior.
 	acceptedDivergence *string
+	// s5Keeps lists user-authored fragments the accepted S5 divergence must
+	// leave in the target instead of the frozen record's whole-key
+	// replacement; the fragments are checked instead of target byte equality.
+	s5Keeps []string
+	// s5Target / s5NoTarget pin the target S5 requires when the frozen record
+	// captures Python truncating (or creating) it on a failed render.
+	s5Target   *string
+	s5NoTarget bool
 }
 
 const mcpManifestRel = "ai-specs/ai-specs.toml"
@@ -359,6 +367,45 @@ func runMCPGo(t *testing.T, tc mcpRefCase) (string, string, int, *string) {
 	return norm(out.String()), norm(errBuf.String()), rc, targetB64
 }
 
+// s5TargetDiffers reports whether the case pins an accepted S5 divergence in the
+// written target instead of Python's frozen bytes.
+func (tc mcpRefCase) s5TargetDiffers() bool {
+	return tc.s5Keeps != nil || tc.s5Target != nil || tc.s5NoTarget
+}
+
+// checkS5Target asserts the accepted S5 outcome: user-authored fragments the
+// whole-key replacement used to destroy are still in the target, or (for a
+// failed render) the target is exactly what it was, never truncated.
+func checkS5Target(tc mcpRefCase, got *string) error {
+	if tc.s5NoTarget {
+		if got != nil {
+			return fmt.Errorf("target must not be written, got %q", *got)
+		}
+		return nil
+	}
+	if tc.s5Target != nil {
+		want := base64.StdEncoding.EncodeToString([]byte(*tc.s5Target))
+		if got == nil || *got != want {
+			return fmt.Errorf("target must stay byte-identical: got %s want %s", derefString(got), want)
+		}
+	}
+	if len(tc.s5Keeps) > 0 {
+		if got == nil {
+			return fmt.Errorf("no target was written")
+		}
+		raw, err := base64.StdEncoding.DecodeString(*got)
+		if err != nil {
+			return err
+		}
+		for _, fragment := range tc.s5Keeps {
+			if !strings.Contains(string(raw), fragment) {
+				return fmt.Errorf("user-authored %q was not preserved:\n%s", fragment, raw)
+			}
+		}
+	}
+	return nil
+}
+
 // TestMCPRenderDifferential requires byte equality of the written file bytes,
 // stdout, stderr and exit code across the Go port and the frozen records captured
 // from the REAL mcp-render.py (PR2-B S11).
@@ -409,9 +456,14 @@ func TestMCPRenderDifferential(t *testing.T) {
 			if goRC != ref.RC {
 				t.Errorf("rc: go=%d frozen=%d", goRC, ref.RC)
 			}
-			if !govPtrEqual(goTarget, ref.TargetB64) {
+			if !govPtrEqual(goTarget, ref.TargetB64) && !tc.s5TargetDiffers() {
 				t.Errorf("target bytes differ\n  go:     %s\n  frozen: %s",
 					derefString(goTarget), derefString(ref.TargetB64))
+			}
+			if tc.s5TargetDiffers() {
+				if err := checkS5Target(tc, goTarget); err != nil {
+					t.Errorf("accepted S5 divergence: %v", err)
+				}
 			}
 			if tc.tracebackStderr {
 				// Only the exception-type marker is frozen here; Python's stderr
@@ -536,11 +588,11 @@ func TestMCPRenderJSONDepthLimit(t *testing.T) {
 	}
 }
 
-// TestMCPRenderSurrogateWriteReportsOpenError pins the F5 write path: Python's
-// write_text() opens (and truncates) the target BEFORE encoding, so a failing
-// open is reported first (PermissionError), not the surrogate encode error.
-// Non-root only: mode bits are not enforced for root.
-func TestMCPRenderSurrogateWriteReportsOpenError(t *testing.T) {
+// TestMCPRenderSurrogateFailureLeavesTargetIntact pins the accepted S5
+// divergence from F5: Python's write_text() opens (and truncates) the target
+// before it fails to encode, so a failed render used to destroy the user's
+// file. The port refuses before touching it, so the bytes stay as they were.
+func TestMCPRenderSurrogateFailureLeavesTargetIntact(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("a read-only file is not enforced as root")
 	}
@@ -560,7 +612,7 @@ func TestMCPRenderSurrogateWriteReportsOpenError(t *testing.T) {
 	defer os.Chmod(target, 0o644)
 
 	out, rc, stderr := mcpRunRender(t, dir, "codex", target, "mcp_servers", recipe)
-	if rc != 1 || out != "" || !strings.Contains(stderr, "permission denied") || strings.Contains(stderr, "lone surrogate") {
+	if rc != 1 || out != "" || !strings.Contains(stderr, "lone surrogate") {
 		t.Fatalf("rc=%d stdout=%q stderr=%q", rc, out, stderr)
 	}
 	if got, _ := os.ReadFile(target); string(got) != original {
@@ -592,7 +644,8 @@ func mcpRenderCases() []mcpRefCase {
 			name:      "existing json preserves keys order duplicates and unicode",
 			manifest:  mcpStr(mcpBaseManifest),
 			targetRel: ".mcp.json", agent: "claude", mcpKey: "mcpServers",
-			target: mcpStr(`{"emoji": "🚀", "café": "naïve", "dup": 1, "z": 2, "dup": 3, "pi": 3.14, "n": 7, "whole": 2.0, "exp": 1e3, "neg": -0, "mcpServers": {"keep": {"command": "x"}}}`),
+			target:  mcpStr(`{"emoji": "🚀", "café": "naïve", "dup": 1, "z": 2, "dup": 3, "pi": 3.14, "n": 7, "whole": 2.0, "exp": 1e3, "neg": -0, "mcpServers": {"keep": {"command": "x"}}}`),
+			s5Keeps: []string{`"keep"`},
 		},
 		{
 			name:      "existing json numeric extremes round-trip",
@@ -662,13 +715,15 @@ func mcpRenderCases() []mcpRefCase {
 			name:      "codex strips prior blocks and keeps user tables",
 			manifest:  mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
-			target: mcpStr("# user comment\n\n[user_table]\nx = 1\n\n[mcp_servers.old]\ncommand = \"old\"\n\n[mcp_servers.old.env]\nA = \"1\"\n\n[after]\ny = 2\n\n\n"),
+			target:  mcpStr("# user comment\n\n[user_table]\nx = 1\n\n[mcp_servers.old]\ncommand = \"old\"\n\n[mcp_servers.old.env]\nA = \"1\"\n\n[after]\ny = 2\n\n\n"),
+			s5Keeps: []string{"[mcp_servers.old]", "[mcp_servers.old.env]"},
 		},
 		{
 			name:      "codex CRLF lines",
 			manifest:  mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
-			target: mcpStr("[user_table]\r\nx = 1\r\n\r\n[mcp_servers.old]\r\ncommand = \"old\"\r\n"),
+			target:  mcpStr("[user_table]\r\nx = 1\r\n\r\n[mcp_servers.old]\r\ncommand = \"old\"\r\n"),
+			s5Keeps: []string{"[mcp_servers.old]"},
 		},
 
 		// --- env-ref regex quirks (Python `$` before trailing newline; optional
@@ -784,18 +839,21 @@ func mcpRenderCases() []mcpRefCase {
 			target:          mcpStr("[user]\nx = 1\n"),
 			recipeRel:       "recipe-mcp.json",
 			recipe:          mcpStr(`{"\ud800": {"command": "d"}}`),
-			tracebackStderr: true, pythonExc: "UnicodeEncodeError"},
+			tracebackStderr: true, pythonExc: "UnicodeEncodeError",
+			s5Target: mcpStr("[user]\nx = 1\n")},
 		{name: "surrogate server name codex toml creates empty target", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
 			recipeRel:       "recipe-mcp.json",
 			recipe:          mcpStr(`{"\ud800": {"command": "d"}}`),
-			tracebackStderr: true, pythonExc: "UnicodeEncodeError"},
+			tracebackStderr: true, pythonExc: "UnicodeEncodeError",
+			s5NoTarget: true},
 		{name: "surrogate env key codex toml truncates existing target", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
 			target:          mcpStr("[user]\nx = 1\n"),
 			recipeRel:       "recipe-mcp.json",
 			recipe:          mcpStr(`{"delta": {"command": "d", "env": {"\ud800": "v"}}}`),
-			tracebackStderr: true, pythonExc: "UnicodeEncodeError"},
+			tracebackStderr: true, pythonExc: "UnicodeEncodeError",
+			s5Target: mcpStr("[user]\nx = 1\n")},
 		{name: "surrogate server name json escaped is unaffected", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".mcp.json", agent: "claude", mcpKey: "mcpServers",
 			recipeRel: "recipe-mcp.json",

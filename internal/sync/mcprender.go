@@ -17,11 +17,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/toml"
 )
 
@@ -52,6 +54,26 @@ func (o *mcpObj) get(k string) (any, bool) {
 }
 
 func (o *mcpObj) len() int { return len(o.keys) }
+
+func (o *mcpObj) has(k string) bool {
+	_, ok := o.vals[k]
+	return ok
+}
+
+// del removes k, keeping the remaining keys in order.
+func (o *mcpObj) del(k string) bool {
+	if _, ok := o.vals[k]; !ok {
+		return false
+	}
+	delete(o.vals, k)
+	for i, key := range o.keys {
+		if key == k {
+			o.keys = append(o.keys[:i], o.keys[i+1:]...)
+			break
+		}
+	}
+	return true
+}
 
 func mcpShallowCopy(o *mcpObj) *mcpObj {
 	out := &mcpObj{keys: append([]string(nil), o.keys...), vals: make(map[string]any, len(o.vals))}
@@ -1103,10 +1125,37 @@ func mcpSlimConfigForWrite(cfg *mcpObj) *mcpObj {
 // Target-file merge (JSON + TOML) and entry point
 // ---------------------------------------------------------------------------
 
-// mcpMergeIntoJSON mirrors merge_into_json: preserve other top-level keys (and
-// their order) from the existing file, force $schema first for opencode, then
-// replace our mcp key.
-func mcpMergeIntoJSON(existing *mcpObj, mcpKey string, servers *mcpObj, agent string) (string, error) {
+// mcpMergePlan is the per-server ownership decision for one target: the
+// manifest servers to (re)write, the recorded servers to drop because the
+// manifest no longer declares them, and the servers kept as user-authored
+// because a same-named entry was never recorded as ai-specs-managed.
+type mcpMergePlan struct {
+	managed   []string
+	removed   []string
+	preserved []string
+}
+
+func mcpPlanMerge(desired *mcpObj, owned map[string]bool, ownedNames []string, current *mcpObj) mcpMergePlan {
+	plan := mcpMergePlan{}
+	for _, name := range ownedNames {
+		if !desired.has(name) && current.has(name) {
+			plan.removed = append(plan.removed, name)
+		}
+	}
+	for _, name := range desired.keys {
+		if current.has(name) && !owned[name] {
+			plan.preserved = append(plan.preserved, name)
+			continue
+		}
+		plan.managed = append(plan.managed, name)
+	}
+	return plan
+}
+
+// mcpMergeIntoJSON merges per server (S5): foreign top-level keys keep their
+// order, a recorded server is replaced or dropped, an unrecorded one is left to
+// the user, and the manifest servers are appended after the existing ones.
+func mcpMergeIntoJSON(existing *mcpObj, mcpKey string, desired *mcpObj, owned map[string]bool, ownedNames []string, agent string) (string, mcpMergePlan, error) {
 	if agent == "opencode" {
 		var schema any = "https://opencode.ai/config.json"
 		if v, ok := existing.get("$schema"); ok {
@@ -1123,42 +1172,82 @@ func mcpMergeIntoJSON(existing *mcpObj, mcpKey string, servers *mcpObj, agent st
 		existing = rebuilt
 	}
 
-	existing.set(mcpKey, servers)
+	current, _ := existing.get(mcpKey)
+	servers, ok := current.(*mcpObj)
+	if !ok {
+		servers = newMCPObj()
+	}
+	plan := mcpPlanMerge(desired, owned, ownedNames, servers)
+	merged := mcpShallowCopy(servers)
+	for _, name := range ownedNames {
+		if !desired.has(name) {
+			merged.del(name)
+		}
+	}
+	for _, name := range plan.managed {
+		merged.set(name, desired.vals[name])
+	}
+	existing.set(mcpKey, merged)
+
 	document, err := mcpJSONDumpsIndent2(existing)
 	if err != nil {
-		return "", err
+		return "", plan, err
 	}
-	return document + "\n", nil
+	return document + "\n", plan, nil
 }
 
-// mcpMergeIntoTOML mirrors merge_into_toml: strip prior [<mcp_key>.*] blocks,
-// trim trailing blanks, append one table per server.
-func mcpMergeIntoTOML(targetPath, mcpKey string, servers *mcpObj) (string, error) {
+// mcpTOMLSectionName extracts the server name of a `[<mcp_key>.<name>]` header
+// line (including a quoted name and a nested `[<mcp_key>.<name>.<sub>]`); false
+// for any other line.
+func mcpTOMLSectionName(line, prefix string) (string, bool) {
+	if !strings.HasPrefix(line, prefix) {
+		return "", false
+	}
+	rest := line[len(prefix):]
+	if i := strings.IndexAny(rest, ".]"); i >= 0 {
+		rest = rest[:i]
+	}
+	rest = strings.TrimSpace(rest)
+	if len(rest) >= 2 && rest[0] == '"' && rest[len(rest)-1] == '"' {
+		rest = rest[1 : len(rest)-1]
+	}
+	return rest, rest != ""
+}
+
+// mcpMergeIntoTOML merges per server (S5): every `[<mcp_key>.*]` block a recorded
+// server owns is rebuilt from the manifest, every other user table is kept
+// verbatim, and a same-named unrecorded block is left alone.
+func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[string]bool, ownedNames []string) (string, mcpMergePlan, error) {
 	var existingLines []string
 	if mcpIsFile(targetPath) {
 		text, err := mcpReadTextFile(targetPath)
 		if err != nil {
-			return "", err
+			return "", mcpMergePlan{}, err
 		}
 		existingLines = pySplitLines(text)
 	}
 
+	// A block runs from its header to the next header, so a nested
+	// [<mcp_key>.<name>.<sub>] block stays with the server it belongs to.
+	present := newMCPObj()
+	for _, line := range existingLines {
+		if name, ok := mcpTOMLSectionName(pyStrip(line), "["+mcpKey+"."); ok {
+			present.set(name, true)
+		}
+	}
+	plan := mcpPlanMerge(desired, owned, ownedNames, present)
+
 	outLines := []string{}
 	skip := false
-	sectionPrefix := "[" + mcpKey + "."
 	for _, line := range existingLines {
 		stripped := pyStrip(line)
-		if strings.HasPrefix(stripped, sectionPrefix) {
-			skip = true
-			continue
+		if strings.HasPrefix(stripped, "[") {
+			name, isMCP := mcpTOMLSectionName(stripped, "["+mcpKey+".")
+			skip = isMCP && (owned[name] || plan.preservedHas(name))
 		}
-		if skip && strings.HasPrefix(stripped, "[") && !strings.HasPrefix(stripped, sectionPrefix) {
-			skip = false
+		if !skip {
+			outLines = append(outLines, line)
 		}
-		if skip {
-			continue
-		}
-		outLines = append(outLines, line)
 	}
 
 	for len(outLines) > 0 && pyStrip(outLines[len(outLines)-1]) == "" {
@@ -1168,8 +1257,8 @@ func mcpMergeIntoTOML(targetPath, mcpKey string, servers *mcpObj) (string, error
 		outLines = append(outLines, "")
 	}
 
-	for _, name := range servers.keys {
-		cfg, ok := servers.vals[name].(*mcpObj)
+	for _, name := range plan.managed {
+		cfg, ok := desired.vals[name].(*mcpObj)
 		if !ok {
 			cfg = newMCPObj()
 		}
@@ -1177,22 +1266,58 @@ func mcpMergeIntoTOML(targetPath, mcpKey string, servers *mcpObj) (string, error
 		for _, k := range cfg.keys {
 			val, err := mcpTOMLValue(cfg.vals[k])
 			if err != nil {
-				return "", err
+				return "", plan, err
 			}
 			outLines = append(outLines, k+" = "+val)
 		}
 		outLines = append(outLines, "")
 	}
 
-	return strings.TrimRightFunc(strings.Join(outLines, "\n"), pyIsSpace) + "\n", nil
+	return strings.TrimRightFunc(strings.Join(outLines, "\n"), pyIsSpace) + "\n", plan, nil
+}
+
+func (p mcpMergePlan) preservedHas(name string) bool {
+	for _, n := range p.preserved {
+		if n == name {
+			return true
+		}
+	}
+	return false
 }
 
 // RenderMCPOptions configures RenderMCPFile. RecipeMCPPath is the
 // --recipe-mcp argument ("" = flag absent); a non-empty path that is not a
-// file is ignored, exactly like load_mcp's is_file guard.
+// file is ignored, exactly like load_mcp's is_file guard. Owned is the lock's
+// per-target server-name record (S5) and Result receives the outcome.
 type RenderMCPOptions struct {
 	RecipeMCPPath string
 	DryRun        bool
+	Owned         []string
+	Result        *MCPResult
+}
+
+// MCPResult is one target render's ownership outcome: the server names
+// ai-specs now manages at that target with the sha256 of their rendered entry,
+// plus what it removed and what it left to the user (a name collision).
+type MCPResult struct {
+	Managed   map[string]string
+	Removed   []string
+	Preserved []string
+	Wrote     bool
+}
+
+// mcpServerHashes is the lock witness for the servers ai-specs owns at one
+// target: the sha256 of each rendered entry (canonical JSON dump).
+func mcpServerHashes(servers *mcpObj, names []string) map[string]string {
+	out := make(map[string]string, len(names))
+	for _, name := range names {
+		doc, err := mcpJSONDumpsIndent2(servers.vals[name])
+		if err != nil {
+			continue
+		}
+		out[name] = lock.Sha256Bytes([]byte(doc))
+	}
+	return out
 }
 
 // mcpPathSuffix mirrors pathlib.PurePath.suffix: the extension from the last
@@ -1245,7 +1370,7 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 		fmt.Fprintf(stderr, "error: %s\n", err)
 		return 1
 	}
-	if servers.len() == 0 {
+	if servers.len() == 0 && len(opts.Owned) == 0 {
 		fmt.Fprintf(stderr, "info: no [mcp.*] entries \u2014 skipping %s\n", agent)
 		return 0
 	}
@@ -1260,20 +1385,43 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 		}
 	}
 
+	owned := make(map[string]bool, len(opts.Owned))
+	ownedNames := append([]string(nil), opts.Owned...)
+	sort.Strings(ownedNames)
+	for _, name := range ownedNames {
+		owned[name] = true
+	}
+
 	var content string
 	var invalid []byte
+	var plan mcpMergePlan
 	if mcpPathSuffix(targetPath) == ".toml" {
-		content, err = mcpMergeIntoTOML(targetPath, mcpKey, slimmed)
+		content, plan, err = mcpMergeIntoTOML(targetPath, mcpKey, slimmed, owned, ownedNames)
 	} else {
 		var existing *mcpObj
 		existing, invalid, err = loadJSONTarget(targetPath)
 		if err == nil {
-			content, err = mcpMergeIntoJSON(existing, mcpKey, slimmed, agent)
+			content, plan, err = mcpMergeIntoJSON(existing, mcpKey, slimmed, owned, ownedNames, agent)
 		}
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %s\n", err)
 		return 1
+	}
+	if opts.Result != nil {
+		opts.Result.Managed = mcpServerHashes(slimmed, plan.managed)
+		opts.Result.Removed = plan.removed
+		opts.Result.Preserved = plan.preserved
+	}
+	for _, name := range plan.preserved {
+		fmt.Fprintf(stderr, "    ! preserved user MCP server %q in %s (not recorded as ai-specs-managed)\n", name, targetPath)
+	}
+	if len(plan.managed) == 0 && len(plan.removed) == 0 {
+		// Nothing to add, update or drop: an untouched user file stays untouched.
+		if servers.len() == 0 {
+			fmt.Fprintf(stderr, "info: no [mcp.*] entries \u2014 skipping %s\n", agent)
+		}
+		return 0
 	}
 
 	if !opts.DryRun {
@@ -1286,23 +1434,9 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 	}
 
 	if mcpHasLoneSurrogate(content) {
-		// mcp-render.py lets the rendered text reach write_text()/print(), which
-		// re-encode it and raise UnicodeEncodeError on a lone surrogate. Only a
-		// raw TOML key leaks one here (JSON and TOML *values* go through
-		// json.dumps, which escapes it). write_text() opens the target before it
-		// encodes, so the file is left created/truncated empty; reproduce that
-		// side effect and fail like the uncaught exception (rc 1).
-		if !opts.DryRun {
-			// write_text() opens (and truncates) the target before it encodes;
-			// if that open fails (e.g. PermissionError) Python reports it, not
-			// the encode error, so surface the open error here.
-			f, ferr := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
-			if ferr != nil {
-				fmt.Fprintf(stderr, "error: %s\n", ferr)
-				return 1
-			}
-			_ = f.Close()
-		}
+		// Python's write_text() truncates the target before it fails to encode
+		// the text; S5 requires the target to stay byte-identical on error, so
+		// the render refuses before touching it.
 		fmt.Fprintf(stderr, "error: %s: rendered content is not UTF-8 encodable (lone surrogate)\n", targetPath)
 		return 1
 	}
@@ -1321,6 +1455,14 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 		fmt.Fprintf(stderr, "error: %s\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "  \u2713 %s \u2192 %s (%d server(s))\n", agent, targetPath, slimmed.len())
+	if opts.Result != nil {
+		opts.Result.Wrote = true
+	}
+	for _, name := range plan.removed {
+		fmt.Fprintf(stdout, "    \u2713 removed managed MCP server %q from %s\n", name, targetPath)
+	}
+	if len(plan.managed) > 0 {
+		fmt.Fprintf(stdout, "  \u2713 %s \u2192 %s (%d server(s))\n", agent, targetPath, len(plan.managed))
+	}
 	return 0
 }

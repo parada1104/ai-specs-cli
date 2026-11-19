@@ -935,3 +935,38 @@ func TestLegacyLockSectionsAreDroppedOnRewrite(t *testing.T) {
 		t.Errorf("meta lost:\n%s", text)
 	}
 }
+
+// The MCP server ownership record (S5) round-trips through the lock writer and
+// drops a target entry once nothing is managed there any more.
+func TestMCPOwnershipRecordRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".ai-specs.lock")
+	lk := NewLock()
+	SetMCPOwnership(lk, ".mcp.json", map[string]string{"beta": "hash-b", "alpha": "hash-a"})
+	SetMCPOwnership(lk, ".codex/config.toml", map[string]string{"gamma": "hash-g"})
+	if err := WriteLock(path, lk); err != nil {
+		t.Fatalf("WriteLock: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	want := "[mcp.\".codex/config.toml\"]\n\"gamma\" = \"hash-g\"\n\n" +
+		"[mcp.\".mcp.json\"]\n\"alpha\" = \"hash-a\"\n\"beta\" = \"hash-b\""
+	if !strings.Contains(text, want) {
+		t.Fatalf("mcp record not emitted in sorted order:\n%s", text)
+	}
+
+	loaded, err := LoadLock(path)
+	if err != nil {
+		t.Fatalf("LoadLock: %v", err)
+	}
+	if loaded.MCP[".mcp.json"]["alpha"] != "hash-a" || loaded.MCP[".codex/config.toml"]["gamma"] != "hash-g" {
+		t.Fatalf("mcp record not loaded: %v", loaded.MCP)
+	}
+
+	SetMCPOwnership(loaded, ".codex/config.toml", nil)
+	if _, ok := loaded.MCP[".codex/config.toml"]; ok {
+		t.Fatal("an empty record must drop the target entry")
+	}
+}

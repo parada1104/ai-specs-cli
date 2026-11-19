@@ -226,6 +226,32 @@ class HooksRenderTests(_HookFixtureMixin):
         self.assertEqual((self.root / (hook + ".bak")).read_bytes(), original)
         self.assertEqual((self.root / (hook + ".bak.1")).read_bytes(), edited)
 
+    def test_mcp_merge_keeps_user_servers_and_prunes_managed_ones(self):
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("claude")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        manifest.write_text(manifest.read_text() + "\n[mcp.demo]\ncommand = 'echo'\n")
+        target = self.root / ".mcp.json"
+        target.write_text('{"mcpServers": {"mine": {"command": "user-cmd"}}}\n')
+
+        self.assertEqual(self.sync().stderr, "")
+        self.assertEqual(json.loads(target.read_text())["mcpServers"], {
+            "mine": {"command": "user-cmd"},
+            "demo": {"command": "echo", "args": [], "env": {}},
+        })
+        first = target.read_text()
+        self.assertEqual(self.sync().stderr, "")
+        self.assertEqual(target.read_text(), first)
+
+        # Removing the manifest server deletes only the managed entry, and it
+        # is deleted even though no [mcp.*] server remains.
+        manifest.write_text(manifest.read_text().replace(
+            "\n[mcp.demo]\ncommand = 'echo'\n", ""))
+        self.assertEqual(self.sync().stderr, "")
+        self.assertEqual(json.loads(target.read_text())["mcpServers"],
+                         {"mine": {"command": "user-cmd"}})
+        self.assertNotIn("[mcp.", (self.root / "ai-specs/.ai-specs.lock").read_text())
+
     def test_removed_recipe_prunes_all_wiring(self):
         self.seed_and_sync(RECIPE_SHELL, "shell-gate", "claude", "cursor",
                            "opencode", "pi", "omp")
