@@ -180,7 +180,7 @@ func RunAgent(args []string, home string, stdin io.Reader, stdout, stderr io.Wri
 	// materialize fallback prunes lock deps and can write the lock, so the
 	// refusal must come first (S1, T6 follow-up).
 	if targets := selectedAgentsFor(filepath.Join(absSource, "ai-specs", "ai-specs.toml"), opts); len(targets) > 0 {
-		if rc := preflightAgentPaths(absTarget, targets, stderr); rc != 0 {
+		if rc := preflightAgentPaths(absSource, absTarget, targets, stderr); rc != 0 {
 			return 1
 		}
 	}
@@ -267,7 +267,7 @@ func (r *runner) runAgentStandaloneFanout(root string, opts agentOptions, p plan
 	// writes otherwise).
 	fanoutAgents := selectedAgentsFor(filepath.Join(root, "ai-specs", "ai-specs.toml"), opts)
 	for _, resolvedTarget := range paths {
-		if rc := preflightAgentPaths(resolvedTarget, fanoutAgents, s.errW); rc != 0 {
+		if rc := preflightAgentPaths(root, resolvedTarget, fanoutAgents, s.errW); rc != 0 {
 			return 1
 		}
 	}
@@ -576,7 +576,7 @@ func (a *agentRun) runBody() int {
 	// Checked for every agent of this run BEFORE any target write, so a nested
 	// or direct run is safe even when the early entry-point preflight is
 	// bypassed (sync spine child runs).
-	if rc := preflightAgentPaths(a.targetPath, targets, a.errW); rc != 0 {
+	if rc := preflightAgentPaths(a.sourceRoot, a.targetPath, targets, a.errW); rc != 0 {
 		return rc
 	}
 
@@ -796,6 +796,44 @@ var agentPathFields = []string{
 	"instructions_path", "skills_dir", "mcp_config_path", "commands_dir", "runtime_hooks_target",
 }
 
+// symlinkedAncestorOutside reports the first symlinked ancestor of dest below
+// targetPath that does not fully resolve inside root (the MAIN project root, so
+// a declared subrepo's links to root-owned directories are allowed) or inside
+// targetPath itself (an external declared target). A link that cannot be
+// resolved (dangling, loop) counts as outside: if in doubt, refuse. T6b.
+func symlinkedAncestorOutside(root, targetPath, dest string) (string, bool) {
+	rel, err := filepath.Rel(targetPath, dest)
+	if err != nil {
+		return dest, false
+	}
+	dir := filepath.Dir(rel)
+	if dir == "." {
+		return "", false
+	}
+	cur := targetPath
+	for _, part := range strings.Split(dir, string(filepath.Separator)) {
+		if part == "." || part == "" {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		info, statErr := os.Lstat(cur)
+		if statErr != nil || info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		resolved, rerr := filepath.EvalSymlinks(cur)
+		if rerr != nil {
+			return cur, true
+		}
+		// Compare against the RESOLVED roots: the platform's temp/home paths are
+		// themselves reached through symlinks (/var → /private/var).
+		if !shared.TemplatePathContained(projectcache.ResolvePath(root), resolved) &&
+			!shared.TemplatePathContained(projectcache.ResolvePath(targetPath), resolved) {
+			return cur, true
+		}
+	}
+	return "", false
+}
+
 // preflightAgentPaths is the ONE ownership check `sync` and `sync-agent` share
 // before their first write (S1, parity contract §4): a real directory or file
 // where an agent's skills symlink belongs is a hard error (never removed), and
@@ -803,7 +841,7 @@ var agentPathFields = []string{
 // project root — otherwise the write would land outside the project. A symlink
 // at the skills path itself is legal (correct, stale or dangling: it is
 // relinked), so only ANCESTORS are refused.
-func preflightAgentPaths(targetPath string, targets []string, errW io.Writer) int {
+func preflightAgentPaths(root, targetPath string, targets []string, errW io.Writer) int {
 	for _, agent := range targets {
 		if _, ok := platformGet(agent, "native"); !ok {
 			continue // counted by the per-agent loop
@@ -820,8 +858,8 @@ func preflightAgentPaths(targetPath string, targets []string, errW io.Writer) in
 					return 1
 				}
 			}
-			if err := shared.EnsureTemplateAncestorsReal(targetPath, path); err != nil {
-				fmt.Fprintf(errW, "    ✗ %s — replace it with a real directory so ai-specs can write inside the project\n", err)
+			if ancestor, bad := symlinkedAncestorOutside(root, targetPath, path); bad {
+				fmt.Fprintf(errW, "    ✗ ancestor path is a symlink: %s — replace it with a real directory so ai-specs can write inside the project\n", ancestor)
 				return 1
 			}
 		}

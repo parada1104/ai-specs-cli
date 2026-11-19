@@ -269,7 +269,7 @@ func (r *runner) run(opts options) int {
 	// so a refusal there would already have changed the project (T6 follow-up).
 	fanoutAgents := selectedAgentsFor(tomlPath, agentOptions{selectAll: true})
 	for _, path := range paths {
-		if rc := preflightAgentPaths(path, fanoutAgents, r.stderr); rc != 0 {
+		if rc := preflightAgentPaths(root, path, fanoutAgents, r.stderr); rc != 0 {
 			return 1
 		}
 	}

@@ -43,6 +43,11 @@ class SyncSkillsOwnershipTests(unittest.TestCase):
         self.user_skill.parent.mkdir(parents=True)
         self.user_skill.write_text("# mine\n", encoding="utf-8")
 
+    def link_agent_parent(self, target: str) -> None:
+        """Replace the real `.claude` dir with a symlink to `target`."""
+        shutil.rmtree(self.project / ".claude")
+        (self.project / ".claude").symlink_to(target)
+
     def sync(self) -> subprocess.CompletedProcess:
         return self.run_cli("sync", str(self.project))
 
@@ -102,8 +107,7 @@ class SyncSkillsOwnershipTests(unittest.TestCase):
         # share one check, so both refuse and neither writes anything.
         outside = self.base / "outside"
         outside.mkdir()
-        shutil.rmtree(self.project / ".claude")
-        (self.project / ".claude").symlink_to(outside)
+        self.link_agent_parent(str(outside))
         # The standalone body requires the root AGENTS.md before its agent loop.
         (self.project / "AGENTS.md").write_text("# brief\n", encoding="utf-8")
         outside_before = snapshot(outside)
@@ -125,6 +129,86 @@ class SyncSkillsOwnershipTests(unittest.TestCase):
         )
         self.assertEqual(snapshot(self.project), before_sync, "full sync wrote before refusing")
         self.assertEqual(snapshot(outside), outside_before, "full sync wrote outside the project")
+
+    # ── T6b: inside-root symlinked agent parent is allowed ───────────────
+
+    def test_symlinked_agent_parent_inside_root_syncs_normally(self) -> None:
+        # `.claude -> ./config/claude` stays inside the project root: the sync
+        # writes through it, landing inside the project.
+        inside = self.project / "config" / "claude"
+        inside.mkdir(parents=True)
+        self.link_agent_parent("./config/claude")
+
+        proc = self.sync()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertTrue((inside / "skills").is_symlink(), "skills link not created inside the project")
+        self.assertTrue((inside / "commands").is_dir(), "commands dir not created inside the project")
+        self.assertTrue((self.project / "CLAUDE.md").is_symlink())
+
+        # The standalone entry point runs the same check and also allows it.
+        proc = self.sync_agent("--claude")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertTrue((inside / "skills").is_symlink())
+
+    def test_chained_symlinked_agent_parent_ending_outside_is_refused(self) -> None:
+        from _blackbox import snapshot
+
+        outside = self.base / "outside"
+        outside.mkdir()
+        chained = self.project / "config" / "claude"
+        chained.parent.mkdir(parents=True)
+        chained.symlink_to(outside)
+        self.link_agent_parent("./config/claude")
+        outside_before = snapshot(outside)
+
+        proc = self.sync()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("    ✗ ancestor path is a symlink: ", proc.stderr)
+        self.assertEqual(snapshot(outside), outside_before, "wrote outside the project")
+
+    def test_dangling_symlinked_agent_parent_is_refused(self) -> None:
+        self.link_agent_parent("./nowhere")
+
+        proc = self.sync()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("    ✗ ancestor path is a symlink: ", proc.stderr)
+        self.assertFalse((self.project / "nowhere").exists())
+        self.assertFalse((self.project / "CLAUDE.md").exists())
+
+    def test_inside_root_link_syncs_and_prunes_retired_hook(self) -> None:
+        # A retired claude hook is pruned INSIDE the linked directory: the hook
+        # prune plan follows the same inside-root rule as the agent preflight.
+        inside = self.project / "config" / "claude"
+        inside.mkdir(parents=True)
+        settings = inside / "settings.json"
+        settings.write_text(
+            '{"hooks": {"PreToolUse": [{"_ai_specs_managed": "ai-specs:hooks:hookdemo:gone"}]}}',
+            encoding="utf-8",
+        )
+        self.link_agent_parent("./config/claude")
+
+        proc = self.sync()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("ai-specs:hooks:hookdemo:gone", settings.read_text(encoding="utf-8"))
+        self.assertTrue((inside / "skills").is_symlink())
+
+    def test_outside_root_link_with_recorded_hook_refuses_before_writes(self) -> None:
+        from _blackbox import snapshot
+
+        outside = self.base / "outside"
+        outside.mkdir()
+        (outside / "settings.json").write_text(
+            '{"hooks": {"PreToolUse": [{"_ai_specs_managed": "ai-specs:hooks:hookdemo:gone"}]}}',
+            encoding="utf-8",
+        )
+        self.link_agent_parent(str(outside))
+        outside_before = snapshot(outside)
+
+        proc = self.sync()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("    ✗ ancestor path is a symlink: ", proc.stderr)
+        self.assertIn("ai-specs:hooks:hookdemo:gone", (outside / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(snapshot(outside), outside_before, "pruned something outside the project")
 
 
 if __name__ == "__main__":

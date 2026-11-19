@@ -49,11 +49,30 @@ func loadPruneInputs(root, home string) ([]string, []any, map[string]string, err
 }
 
 // pruneFile accepts an absent leaf, but never follows a symlink or treats a
-// directory (even an empty one) as an owned file.
+// directory (even an empty one) as an owned file. The ancestor guard keeps the
+// strict rule: this primitive is shared with the command/template guards.
 func pruneFile(root, path string) (bool, error) {
 	if err := shared.EnsureTemplateAncestorsReal(root, path); err != nil {
 		return false, err
 	}
+	return pruneFileLeaf(path)
+}
+
+// pruneHookFile is pruneFile for the runtime-hook plan: the ancestor guard uses
+// the project's inside-root rule (T6b) — a symlinked ancestor that fully
+// resolves inside the main project root is allowed, since a deletion through it
+// still stays inside the project; outside, chained-outside and dangling links
+// are still refused. One rule, one helper: symlinkedAncestorOutside.
+func pruneHookFile(projectRoot, root, path string) (bool, error) {
+	if ancestor, bad := symlinkedAncestorOutside(projectRoot, root, path); bad {
+		return false, fmt.Errorf("%w: %s", shared.ErrAncestorSymlink, ancestor)
+	}
+	return pruneFileLeaf(path)
+}
+
+// pruneFileLeaf is the leaf half of pruneFile: absent, symlink, directory and
+// non-regular-file outcomes.
+func pruneFileLeaf(path string) (bool, error) {
 	info, err := os.Lstat(path)
 	switch {
 	case os.IsNotExist(err):
@@ -111,7 +130,7 @@ func planRuntimeHookPrune(projectRoot, root string, hooks []any) (func(io.Writer
 			base, _ := hooksShimBasename(h)
 			ids[id], shims[base+target.ext] = native, hookShimLive{owner: id, event: event}
 		}
-		write, err := planHookBucketPrune(root, target.json, ids)
+		write, err := planHookBucketPrune(projectRoot, root, target.json, ids)
 		if err != nil {
 			return nil, err
 		}
@@ -141,19 +160,19 @@ func planRuntimeHookPrune(projectRoot, root string, hooks []any) (func(io.Writer
 	}, nil
 }
 
-func planHookBucketPrune(root, rel string, ids map[string]string) (func(io.Writer) error, error) {
+func planHookBucketPrune(projectRoot, root, rel string, ids map[string]string) (func(io.Writer) error, error) {
 	if rel == "" {
 		return nil, nil
 	}
 	path := filepath.Join(root, rel)
-	if _, err := pruneFile(root, path); err != nil {
+	if _, err := pruneHookFile(projectRoot, root, path); err != nil {
 		return nil, err
 	}
-	return func(stderr io.Writer) error { return applyHookBucketPrune(root, path, ids, stderr) }, nil
+	return func(stderr io.Writer) error { return applyHookBucketPrune(projectRoot, root, path, ids, stderr) }, nil
 }
 
-func applyHookBucketPrune(root, path string, ids map[string]string, stderr io.Writer) error {
-	if exists, err := pruneFile(root, path); err != nil || !exists {
+func applyHookBucketPrune(projectRoot, root, path string, ids map[string]string, stderr io.Writer) error {
+	if exists, err := pruneHookFile(projectRoot, root, path); err != nil || !exists {
 		return err
 	}
 	// Materialization may have replaced this JSON file since preflight.
@@ -209,8 +228,8 @@ func planHookShimPrune(projectRoot, root, dir, ext, header string, live map[stri
 		return plan, nil
 	}
 	path := filepath.Join(root, dir)
-	if err := shared.EnsureTemplateAncestorsReal(root, filepath.Join(path, "shim")); err != nil {
-		return plan, err
+	if ancestor, bad := symlinkedAncestorOutside(projectRoot, root, filepath.Join(path, "shim")); bad {
+		return plan, fmt.Errorf("%w: %s", shared.ErrAncestorSymlink, ancestor)
 	}
 	entries, err := os.ReadDir(path)
 	if err == nil {
@@ -233,7 +252,7 @@ func planHookShimPrune(projectRoot, root, dir, ext, header string, live map[stri
 			case hasRecord && isLive:
 				continue // another live hook now writes this path; never delete it
 			case hasRecord:
-				if exists, err := pruneFile(root, file); err != nil {
+				if exists, err := pruneHookFile(projectRoot, root, file); err != nil {
 					return plan, err
 				} else if exists {
 					plan.doomed = append(plan.doomed, hookShimPrune{file, recorded})
@@ -333,7 +352,7 @@ func applyHookShimPrune(projectRoot, root string, plan hookShimPlan) error {
 		if lk.Managed[rel] != nil || lk.Hooks[rel] != shim.owner {
 			continue // The destination was repurposed since preflight.
 		}
-		exists, err := pruneFile(root, shim.path)
+		exists, err := pruneHookFile(projectRoot, root, shim.path)
 		if err != nil {
 			return err
 		}

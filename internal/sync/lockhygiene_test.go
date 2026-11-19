@@ -241,3 +241,85 @@ func TestSyncAgentRefusalDoesNotPruneLockDeps(t *testing.T) {
 		t.Errorf("user skill changed: %q (%v)", got, err)
 	}
 }
+
+// T6b (S1): the hook PRUNE plan follows the same inside-root rule as the agent
+// preflight — a symlinked agent parent that fully resolves inside the project
+// root is allowed and the retired wiring inside it is still pruned; a link that
+// resolves outside is refused before any write.
+func TestHookPruneFollowsInsideRootLinkRule(t *testing.T) {
+	t.Run("retired claude wiring pruned inside the link", func(t *testing.T) {
+		home, _ := spineEnv(t)
+		project := spineProject(t, "[project]\nname = 'link-claude'\n[brief]\nrender = false\n[agents]\nenabled = ['claude']\n")
+		inside := filepath.Join(project, "config", "claude")
+		spineWrite(t, filepath.Join(inside, "settings.json"),
+			`{"hooks": {"PreToolUse": [{"_ai_specs_managed": "ai-specs:hooks:hookdemo:gone", "matcher": "x"}]}}`, 0o644)
+		mustSymlink(t, inside, filepath.Join(project, ".claude"))
+
+		if stderr := runSyncCase(t, home, project); stderr != "" {
+			t.Fatalf("sync stderr = %q", stderr)
+		}
+		settings, err := os.ReadFile(filepath.Join(inside, "settings.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(settings), "ai-specs:hooks:hookdemo:gone") {
+			t.Errorf("retired hook wiring survived inside the link: %s", settings)
+		}
+		if _, err := os.Lstat(filepath.Join(inside, "skills")); err != nil {
+			t.Errorf("skills link not created inside the linked dir: %v", err)
+		}
+	})
+
+	t.Run("retired cursor shim pruned inside the link", func(t *testing.T) {
+		home, _ := spineEnv(t)
+		project := spineProject(t, "[project]\nname = 'link-cursor'\n[brief]\nrender = false\n[agents]\nenabled = ['cursor']\n")
+		inside := filepath.Join(project, "config", "cursor")
+		spineWrite(t, filepath.Join(inside, "hooks", "hookdemo-gone.sh"), "old shim\n", 0o644)
+		mustSymlink(t, inside, filepath.Join(project, ".cursor"))
+		lk := lock.NewLock()
+		lock.SetHookShim(lk, ".cursor/hooks/hookdemo-gone.sh", "ai-specs:hooks:hookdemo:gone")
+		lockPath := filepath.Join(project, "ai-specs/.ai-specs.lock")
+		if err := lock.WriteLock(lockPath, lk); err != nil {
+			t.Fatal(err)
+		}
+
+		if stderr := runSyncCase(t, home, project); stderr != "" {
+			t.Fatalf("sync stderr = %q", stderr)
+		}
+		if _, err := os.Lstat(filepath.Join(inside, "hooks", "hookdemo-gone.sh")); !os.IsNotExist(err) {
+			t.Errorf("retired shim survived inside the link (err=%v)", err)
+		}
+		after, err := lock.LoadLock(lockPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := after.Hooks[".cursor/hooks/hookdemo-gone.sh"]; ok {
+			t.Errorf("shim record survived: %v", after.Hooks)
+		}
+	})
+
+	t.Run("outside link still refuses before any write", func(t *testing.T) {
+		home, _ := spineEnv(t)
+		project := spineProject(t, "[project]\nname = 'link-outside'\n[brief]\nrender = false\n[agents]\nenabled = ['claude']\n")
+		outside := t.TempDir()
+		settings := filepath.Join(outside, "settings.json")
+		spineWrite(t, settings, `{"hooks": {"PreToolUse": [{"_ai_specs_managed": "ai-specs:hooks:hookdemo:gone"}]}}`, 0o644)
+		before, err := os.ReadFile(settings)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustSymlink(t, outside, filepath.Join(project, ".claude"))
+
+		var out, errOut bytes.Buffer
+		if rc := Run([]string{"sync", project}, home, strings.NewReader(""), &out, &errOut); rc != 1 {
+			t.Fatalf("rc = %d, want 1; stderr=%q", rc, errOut.String())
+		}
+		if !strings.Contains(errOut.String(), "ancestor path is a symlink: ") || !strings.Contains(errOut.String(), "/.claude —") {
+			t.Errorf("stderr = %q, want the ancestor refusal", errOut.String())
+		}
+		after, err := os.ReadFile(settings)
+		if err != nil || !bytes.Equal(before, after) {
+			t.Errorf("outside settings changed: %q (%v)", after, err)
+		}
+	})
+}

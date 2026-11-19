@@ -1627,7 +1627,7 @@ func TestPreflightAgentPathsRefusesSymlinkedAgentParent(t *testing.T) {
 	mustSymlink(t, outside, filepath.Join(project, ".claude"))
 
 	var errOut bytes.Buffer
-	if rc := preflightAgentPaths(project, []string{"claude", "pi"}, &errOut); rc != 1 {
+	if rc := preflightAgentPaths(project, project, []string{"claude", "pi"}, &errOut); rc != 1 {
 		t.Fatalf("rc = %d, want 1; stderr=%q", rc, errOut.String())
 	}
 	if want := symlinkedAncestorLine(filepath.Join(project, ".claude")); errOut.String() != want {
@@ -1663,4 +1663,87 @@ func TestRunBodyRefusesSymlinkedAgentParent(t *testing.T) {
 	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
 		t.Errorf("wrote outside the project: %v (%v)", entries, err)
 	}
+}
+
+// TestAgentAncestorRefusalAllowsInsideProjectLinks (T6b): a symlinked agent
+// parent is allowed when it fully resolves inside the main project root; a link
+// that resolves outside, a chained link ending outside, and a dangling link are
+// still refused.
+func TestAgentAncestorRefusalAllowsInsideProjectLinks(t *testing.T) {
+	build := func(t *testing.T) (root, target string) {
+		project := t.TempDir()
+		return project, project
+	}
+
+	t.Run("inside root is allowed", func(t *testing.T) {
+		root, target := build(t)
+		inside := filepath.Join(root, "config", "claude")
+		if err := os.MkdirAll(inside, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustSymlink(t, inside, filepath.Join(target, ".claude"))
+		if ancestor, bad := symlinkedAncestorOutside(root, target, filepath.Join(target, ".claude", "commands")); bad {
+			t.Errorf("inside link refused at %s", ancestor)
+		}
+	})
+
+	t.Run("relative link inside is allowed", func(t *testing.T) {
+		root, target := build(t)
+		if err := os.MkdirAll(filepath.Join(root, "config", "claude"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustSymlink(t, "./config/claude", filepath.Join(target, ".claude"))
+		if ancestor, bad := symlinkedAncestorOutside(root, target, filepath.Join(target, ".claude", "skills")); bad {
+			t.Errorf("relative inside link refused at %s", ancestor)
+		}
+	})
+
+	t.Run("outside root is refused", func(t *testing.T) {
+		root, target := build(t)
+		outside := t.TempDir()
+		mustSymlink(t, outside, filepath.Join(target, ".claude"))
+		ancestor, bad := symlinkedAncestorOutside(root, target, filepath.Join(target, ".claude", "commands"))
+		if !bad {
+			t.Fatal("outside link was allowed")
+		}
+		if ancestor != filepath.Join(target, ".claude") {
+			t.Errorf("ancestor = %q, want %q", ancestor, filepath.Join(target, ".claude"))
+		}
+	})
+
+	t.Run("chained link ending outside is refused", func(t *testing.T) {
+		root, target := build(t)
+		outside := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "config"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustSymlink(t, outside, filepath.Join(root, "config", "claude"))
+		mustSymlink(t, "./config/claude", filepath.Join(target, ".claude"))
+		if _, bad := symlinkedAncestorOutside(root, target, filepath.Join(target, ".claude", "commands")); !bad {
+			t.Fatal("chained outside link was allowed")
+		}
+	})
+
+	t.Run("dangling link is refused", func(t *testing.T) {
+		root, target := build(t)
+		mustSymlink(t, "./nowhere", filepath.Join(target, ".claude"))
+		if _, bad := symlinkedAncestorOutside(root, target, filepath.Join(target, ".claude", "commands")); !bad {
+			t.Fatal("dangling link was allowed")
+		}
+	})
+
+	t.Run("subrepo target inside root allows link inside root", func(t *testing.T) {
+		root := t.TempDir()
+		target := filepath.Join(root, "sub-a")
+		if err := os.MkdirAll(filepath.Join(root, "config", "claude"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustSymlink(t, filepath.Join(root, "config", "claude"), filepath.Join(target, ".claude"))
+		if ancestor, bad := symlinkedAncestorOutside(root, target, filepath.Join(target, ".claude", "commands")); bad {
+			t.Errorf("link resolving inside the main root refused at %s", ancestor)
+		}
+	})
 }

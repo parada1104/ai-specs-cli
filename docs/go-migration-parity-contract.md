@@ -279,17 +279,37 @@ old-launcher sync warning is added here.
   `    ✗ refuse to overwrite non-symlink: <path> — move or delete it so ai-specs can create the symlink`
   — and exit 1; the directory and its contents are untouched. A symlink there
   (correct, stale or dangling) keeps the relink behavior.
-- An agent destination reached through a **symlinked ancestor** directory below
-  the project root (`.claude/skills` while `.claude` → somewhere else,
-  `.pi/mcp.json` while `.pi` is a link, …) is a hard error too: writing through
-  it would land outside the project. The refusal is the shared guard's line —
+- An agent destination reached through a **symlinked ancestor** directory
+  (`.claude/skills` while `.claude` → somewhere else, `.pi/mcp.json` while
+  `.pi` is a link, …) is judged by where that link LANDS (T6b): allowed when it
+  fully resolves **inside the main project root** (the root that contains the
+  declared subrepos), so `.claude -> ./config/claude` syncs normally and every
+  write lands inside the project; refused — with exit 1 and nothing written
+  inside or outside — when it resolves outside that root, when a chained link
+  ends outside it, or when it cannot be resolved (dangling or looping). The
+  refusal is the shared guard's line —
   `    ✗ ancestor path is a symlink: <ancestor> — replace it with a real directory so ai-specs can write inside the project`
-  — and exit 1, nothing written inside or outside the project. `sync` and
-  `sync-agent` run the SAME preflight over every fan-out target and every
-  selected agent's destinations (`instructions_path`, `skills_dir`,
-  `mcp_config_path`, `commands_dir`, `runtime_hooks_target`) as their first
-  action, before the lock, `.gitignore`, `.envrc`, `AGENTS.md`, materialize or
-  dep-prune steps, so a refusal leaves the project byte-identical. The per-run
+  — and the comparison uses the resolved root (the platform's `/var` →
+  `/private/var` style links must not decide it). `sync` and `sync-agent` run
+  the SAME preflight over every fan-out target and every selected agent's
+  destinations (`instructions_path`, `skills_dir`, `mcp_config_path`,
+  `commands_dir`, `runtime_hooks_target`) as their first action, before the
+  lock, `.gitignore`, `.envrc`, `AGENTS.md`, materialize or dep-prune steps, so
+  a refusal leaves the project byte-identical. The inside-root rule is ONE
+  helper (`internal/sync/syncagent.go` `symlinkedAncestorOutside`) shared by
+  the agent-destination preflight AND the runtime-hook prune plan
+  (`internal/sync/hooksprune.go` `pruneHookFile`): a deletion through an
+  inside-root link still stays inside the project, so `planHookShimPrune`, the
+  claude/cursor hook-wiring bucket prune and the recorded-shim apply all accept
+  it while still refusing outside, chained-outside and dangling links. The
+  remaining guards keep the STRICT rule (any symlinked ancestor refuses,
+  `shared.EnsureTemplateAncestorsReal`): the shared `pruneFile` still used by
+  command pruning (`internal/sync/commandsprune.go`) and recipe-artifact orphans
+  (`internal/sync/orphans.go`), recipe/template artifacts
+  (`catalog/recipes/worktree-flow/gate/shared/templateactuator.go`) and the sync
+  lock in the CLI home (`internal/sync/synclock_unix.go`). Those were not
+  relaxed because the inside-root full-sync case never reaches them (the linked
+  agent dirs hold no command cache, recipe artifact or sync lock). The per-run
   body repeats the check for nested and direct child runs.
 
 ---
