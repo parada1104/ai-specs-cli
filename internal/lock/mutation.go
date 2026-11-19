@@ -72,6 +72,19 @@ func SetMCPBlockHash(lock *Lock, target, sha string) {
 	lock.MCPBlock[target] = sha
 }
 
+// SetHookShim records that the generated hook shim at path belongs to owner
+// (the hook's managed id); an empty owner drops the record.
+func SetHookShim(lock *Lock, path, owner string) {
+	if lock.Hooks == nil {
+		lock.Hooks = map[string]string{}
+	}
+	if owner == "" {
+		delete(lock.Hooks, path)
+		return
+	}
+	lock.Hooks[path] = owner
+}
+
 // SetRecipeSkillHashes is set_recipe_skill_hashes: recipes.setdefault(
 // recipe_id, {})[skill_name] = dict(hashes). The hashes map is copied.
 func SetRecipeSkillHashes(lock *Lock, recipeID, skillName string, hashes map[string]string) {

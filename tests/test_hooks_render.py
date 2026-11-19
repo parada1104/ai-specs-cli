@@ -680,6 +680,30 @@ class HooksRenderTests(_HookFixtureMixin):
             self.assertNotIn(f"ai-specs:hooks:{RECIPE_SHELL}:", (self.root / config).read_text())
         self.assertNotIn(self.script_path, (self.root / "ai-specs/.ai-specs.lock").read_text())
 
+    def test_edited_shim_is_pruned_by_its_ownership_record(self):
+        self.seed_and_sync(RECIPE_SHELL, "shell-gate", "claude", "cursor",
+                           "opencode", "pi", "omp")
+        shims = [self.root / f"{directory}/{self.shim_base}.{extension}"
+                 for directory, extension in ((".cursor/hooks", "sh"),
+                     (".opencode/plugin", "ts"), (".pi/extensions", "ts"),
+                     (".omp/extensions", "ts"))]
+        import tomllib
+
+        lock = self.root / "ai-specs/.ai-specs.lock"
+        recorded = tomllib.loads(lock.read_text())["hooks"]
+        owner = f"ai-specs:hooks:{RECIPE_SHELL}:shell-gate"
+        for shim in shims:
+            self.assertEqual(recorded[shim.relative_to(self.root).as_posix()], owner)
+        # Edit every shim and strip its generated marker: the ownership record,
+        # not the marker, is what licenses the prune.
+        for shim in shims:
+            shim.write_text("// locally edited, marker stripped\n")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        manifest.write_text(manifest.read_text().split("[recipes.")[0])
+        self.sync()
+        self.assertEqual([str(p.relative_to(self.root)) for p in shims if p.exists()], [])
+        self.assertNotIn("[hooks]", lock.read_text())
+
     def test_claude_pretooluse_managed_block(self):
         self.seed_and_sync(RECIPE_SHELL, "shell-gate", "claude")
         settings = json.loads((self.root / ".claude" / "settings.json").read_text())

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 
 	"ai-specs.dev/ai-specs/internal/lock"
@@ -71,7 +72,14 @@ func pruneFile(root, path string) (bool, error) {
 // Plan all runtimes, including ones not selected for this fan-out. Absence
 // of an agent alone is not a reason to remove its otherwise current wiring.
 func planRuntimeHookPrune(projectRoot, root string, hooks []any) (func(io.Writer) error, error) {
+	records := map[string]string{}
+	if lk, err := lock.LoadLock(filepath.Join(projectRoot, bundledLockRel)); err != nil {
+		return nil, err
+	} else if lk != nil {
+		records = lk.Hooks
+	}
 	var apply []func(io.Writer) error
+	var legacy []string
 	for _, target := range []struct{ agent, json, dir, ext, header string }{
 		{"claude", ".claude/settings.json", "", "", ""},
 		{"cursor", ".cursor/hooks.json", ".cursor/hooks", ".sh", hooksCursorHeader},
@@ -79,7 +87,7 @@ func planRuntimeHookPrune(projectRoot, root string, hooks []any) (func(io.Writer
 		{"pi", "", ".pi/extensions", ".ts", hooksTSHeader},
 		{"omp", "", ".omp/extensions", ".ts", hooksTSHeader},
 	} {
-		ids, shims := map[string]string{}, map[string]string{}
+		ids, shims := map[string]string{}, map[string]hookShimLive{}
 		for _, raw := range hooks {
 			h, _ := raw.(*mcpObj)
 			event, _ := hooksGet(h, "event").(string)
@@ -94,7 +102,7 @@ func planRuntimeHookPrune(projectRoot, root string, hooks []any) (func(io.Writer
 			}
 			id, _ := hooksManagedID(h)
 			base, _ := hooksShimBasename(h)
-			ids[id], shims[base+target.ext] = native, event
+			ids[id], shims[base+target.ext] = native, hookShimLive{owner: id, event: event}
 		}
 		write, err := planHookBucketPrune(root, target.json, ids)
 		if err != nil {
@@ -103,15 +111,20 @@ func planRuntimeHookPrune(projectRoot, root string, hooks []any) (func(io.Writer
 		if write != nil {
 			apply = append(apply, write)
 		}
-		files, err := planHookShimPrune(root, target.dir, target.ext, target.header, shims)
+		plan, err := planHookShimPrune(projectRoot, root, target.dir, target.ext, target.header, shims, records)
 		if err != nil {
 			return nil, err
 		}
-		if len(files) > 0 {
-			apply = append(apply, func(io.Writer) error { return applyHookShimPrune(projectRoot, root, files) })
+		legacy = append(legacy, plan.legacy...)
+		if len(plan.doomed) > 0 || len(plan.stale) > 0 {
+			planned := plan
+			apply = append(apply, func(io.Writer) error { return applyHookShimPrune(projectRoot, root, planned) })
 		}
 	}
 	return func(stderr io.Writer) error {
+		if len(legacy) > 0 {
+			fmt.Fprintf(stderr, "  ! %s: generated hook shims not recorded as ai-specs-managed (kept; delete them if ai-specs did not write them)\n", strings.Join(legacy, ", "))
+		}
 		for _, op := range apply {
 			if err := op(stderr); err != nil {
 				return err
@@ -165,91 +178,146 @@ func applyHookBucketPrune(root, path string, ids map[string]string, stderr io.Wr
 	return nil
 }
 
-type hookShimPrune struct{ path, hash string }
+// hookShimLive is the wiring a hook still declares for one agent: the managed
+// id that owns the shim and the abstract event it is wired for.
+type hookShimLive struct{ owner, event string }
 
-func planHookShimPrune(root, dir, ext, header string, live map[string]string) ([]hookShimPrune, error) {
+// hookShimPlan is the preflight of one agent's shim directory.
+type hookShimPlan struct {
+	// doomed shims are recorded as owned by a hook that no longer produces
+	// them; they are deleted even when edited or stripped of the marker.
+	doomed []hookShimPrune
+	// stale records point at shims that are already gone.
+	stale []string
+	// legacy shims look generated but have no ownership record: kept, warned.
+	legacy []string
+}
+
+type hookShimPrune struct{ path, owner string }
+
+// planHookShimPrune decides by the lock's ownership record, never by the
+// generated marker alone: a recorded path whose owner is gone is pruned, an
+// unrecorded one is kept with one notice.
+func planHookShimPrune(projectRoot, root, dir, ext, header string, live map[string]hookShimLive, records map[string]string) (hookShimPlan, error) {
+	var plan hookShimPlan
 	if dir == "" {
-		return nil, nil
+		return plan, nil
 	}
 	path := filepath.Join(root, dir)
 	if err := shared.EnsureTemplateAncestorsReal(root, filepath.Join(path, "shim")); err != nil {
-		return nil, err
+		return plan, err
 	}
 	entries, err := os.ReadDir(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var doomed []hookShimPrune
-	for _, entry := range entries {
-		name := entry.Name()
-		if !entry.Type().IsRegular() || filepath.Ext(name) != ext {
-			continue
-		}
-		if event := live[name]; event != "" && ext == ".sh" {
-			continue // A Cursor wrapper does not embed the native event.
-		}
-		file := filepath.Join(path, name)
-		f, err := os.Open(file)
-		if err != nil {
-			return nil, err
-		}
-		prefix, err := io.ReadAll(io.LimitReader(f, 512))
-		_ = f.Close()
-		if err != nil {
-			return nil, err
-		}
-		if !strings.HasPrefix(string(prefix), header) {
-			continue // A matching basename alone does not establish ownership.
-		}
-		if event := live[name]; event == "" || !strings.Contains(string(prefix), " (event "+event+").\n") {
-			if exists, err := pruneFile(root, file); err != nil {
-				return nil, err
-			} else if exists {
-				hash, err := lock.Sha256OfFile(file)
-				if err != nil {
-					return nil, err
+	present := map[string]bool{}
+	if err == nil {
+		for _, entry := range entries {
+			name := entry.Name()
+			if !entry.Type().IsRegular() || filepath.Ext(name) != ext {
+				continue
+			}
+			file := filepath.Join(path, name)
+			rel, relErr := filepath.Rel(projectRoot, file)
+			if relErr != nil {
+				continue
+			}
+			rel = filepath.ToSlash(rel)
+			present[rel] = true
+			wiring, isLive := live[name]
+			recorded, hasRecord := records[rel]
+			switch {
+			case hasRecord && recorded == wiring.owner:
+				continue // current wiring; the renderer refreshes the event
+			case hasRecord && isLive:
+				continue // another live hook now writes this path; never delete it
+			case hasRecord:
+				if exists, err := pruneFile(root, file); err != nil {
+					return plan, err
+				} else if exists {
+					plan.doomed = append(plan.doomed, hookShimPrune{file, recorded})
 				}
-				doomed = append(doomed, hookShimPrune{file, hash})
+			case isLive:
+				continue
+			default:
+				// The marker alone proves generation, not ownership.
+				if prefix, err := readFilePrefix(file, 512); err == nil && strings.HasPrefix(prefix, header) {
+					plan.legacy = append(plan.legacy, rel)
+				}
 			}
 		}
+	} else if !os.IsNotExist(err) {
+		return plan, err
 	}
-	return doomed, nil
+	prefix := filepath.ToSlash(dir) + "/"
+	for _, rel := range sortedKeys(records) {
+		if strings.HasPrefix(rel, prefix) && !present[rel] {
+			plan.stale = append(plan.stale, rel)
+		}
+	}
+	return plan, nil
 }
 
-func applyHookShimPrune(projectRoot, root string, doomed []hookShimPrune) error {
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func readFilePrefix(path string, limit int64) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	prefix, err := io.ReadAll(io.LimitReader(f, limit))
+	return string(prefix), err
+}
+
+func applyHookShimPrune(projectRoot, root string, plan hookShimPlan) error {
 	// Materialization records template ownership in the project root lock,
 	// including templates whose destinations are inside a fan-out target.
-	lk, err := lock.LoadLock(filepath.Join(projectRoot, bundledLockRel))
+	lockPath := filepath.Join(projectRoot, bundledLockRel)
+	lk, err := lock.LoadLock(lockPath)
 	if err != nil {
 		return err
 	}
-	for _, shim := range doomed {
+	changed := false
+	for _, rel := range plan.stale {
+		if lk.Hooks[rel] == "" {
+			continue
+		}
+		file := filepath.Join(projectRoot, filepath.FromSlash(rel))
+		if _, err := os.Lstat(file); !os.IsNotExist(err) {
+			continue
+		}
+		delete(lk.Hooks, rel)
+		changed = true
+	}
+	for _, shim := range plan.doomed {
 		rel, err := filepath.Rel(projectRoot, shim.path)
 		if err != nil {
 			return err
 		}
-		if lk.Managed[filepath.ToSlash(rel)] != nil {
-			continue
+		rel = filepath.ToSlash(rel)
+		if lk.Managed[rel] != nil || lk.Hooks[rel] != shim.owner {
+			continue // The destination was repurposed since preflight.
 		}
 		exists, err := pruneFile(root, shim.path)
 		if err != nil {
 			return err
 		}
-		if !exists {
-			continue
-		}
-		hash, err := lock.Sha256OfFile(shim.path)
-		if err != nil {
-			return err
-		}
-		if hash == shim.hash {
+		if exists {
 			if err := os.Remove(shim.path); err != nil {
 				return err
 			}
 		}
+		delete(lk.Hooks, rel)
+		changed = true
+	}
+	if changed {
+		return lock.WriteLock(lockPath, lk)
 	}
 	return nil
 }

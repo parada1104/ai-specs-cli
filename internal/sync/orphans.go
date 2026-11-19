@@ -76,21 +76,44 @@ func planRecipeArtifactPrune(root string, enabledIDs []string, hooks []any) (fun
 		}
 		return dir
 	}
-	var doomed []string
+	var doomed, stale []string
 	for _, rel := range slices.Sorted(maps.Keys(lk.Managed)) {
-		if recipeDir(rel, lk.Managed[rel]) == "" {
+		record := lk.Managed[rel]
+		if recipeDir(rel, record) != "" {
+			if _, err := pruneFile(root, filepath.Join(root, rel)); err != nil {
+				return nil, err
+			}
+			doomed = append(doomed, rel)
 			continue
 		}
-		if _, err := pruneFile(root, filepath.Join(root, rel)); err != nil {
-			return nil, err
+		// A retired recipe's template/doc target is gone: drop the record, but
+		// never delete a file this unit cannot prove ai-specs wrote.
+		if recipeRetired(record, enabled) && managedTargetAbsent(root, rel) {
+			stale = append(stale, rel)
 		}
-		doomed = append(doomed, rel)
 	}
-	return func() error { return applyRecipeArtifactPrune(root, lockPath, doomed, recipeDir) }, nil
+	return func() error { return applyRecipeArtifactPrune(root, lockPath, doomed, stale, recipeDir, enabled) }, nil
 }
 
-func applyRecipeArtifactPrune(root, lockPath string, doomed []string, recipeDir func(string, map[string]any) string) error {
-	if len(doomed) == 0 {
+// recipeRetired reports whether the record names a recipe the manifest no
+// longer enables (records without an owning recipe always survive).
+func recipeRetired(record map[string]any, enabled map[string]bool) bool {
+	id, _ := record["recipe"].(string)
+	return id != "" && !enabled[id]
+}
+
+// managedTargetAbsent proves the artifact is already gone without traversing
+// a path the record cannot own.
+func managedTargetAbsent(root, rel string) bool {
+	if !fs.ValidPath(rel) || strings.Contains(rel, `\`) {
+		return false
+	}
+	_, err := os.Lstat(filepath.Join(root, rel))
+	return os.IsNotExist(err)
+}
+
+func applyRecipeArtifactPrune(root, lockPath string, doomed, stale []string, recipeDir func(string, map[string]any) string, enabled map[string]bool) error {
+	if len(doomed) == 0 && len(stale) == 0 {
 		return nil
 	}
 	// Keep records materialization added or repurposed since preflight.
@@ -118,6 +141,14 @@ func applyRecipeArtifactPrune(root, lockPath string, doomed []string, recipeDir 
 			if err != nil && !os.IsNotExist(err) {
 				return err
 			}
+		}
+		delete(lk.Managed, rel)
+		changed = true
+	}
+	for _, rel := range stale {
+		record := lk.Managed[rel]
+		if !recipeRetired(record, enabled) || !managedTargetAbsent(root, rel) {
+			continue
 		}
 		delete(lk.Managed, rel)
 		changed = true
@@ -193,6 +224,14 @@ func CleanOrphans(in OrphanCleanupInput, remove func(path string) error) (shared
 			if lock.RemoveRecipeLockEntries(lk, rid) {
 				removedAny = true
 				fmt.Fprintf(out, "  ✓ removed stale lock entries for recipe '%s'\n", rid)
+			}
+		}
+		// The orphaned dep trees are the same authority for the lock: a dep the
+		// manifest no longer declares loses its recorded hashes too.
+		for _, depID := range materializeSortedSet(materializeStringSet(slices.Concat(plan.OrphanedDeps, plan.OrphanedInprojectDeps))) {
+			if lock.RemoveDepLockEntries(lk, depID) {
+				removedAny = true
+				fmt.Fprintf(out, "  ✓ removed stale lock entries for dep '%s'\n", depID)
 			}
 		}
 		if removedAny {

@@ -828,11 +828,47 @@ func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 	// swallowed by the shell's `if python3 ...; then echo ✓; fi`: no notice,
 	// no failure.
 	if hooksTarget, _ := platformGet(agent, "runtime_hooks_target"); hooksTarget != "" && a.resolvedHooks != "" && isRegularFilePath(a.resolvedHooks) {
-		if renderHooks(a.resolvedHooks, agent, a.targetPath, errW, a.syncHookEvents) == 0 {
+		shims := map[string]string{}
+		if renderHooksRecording(a.resolvedHooks, agent, a.targetPath, errW, a.syncHookEvents, shims) == 0 {
+			if err := a.recordHookShims(shims); err != nil {
+				fmt.Fprintln(errW, err)
+				return 1
+			}
 			fmt.Fprintf(out, "    ✓ runtime hooks %s\n", hooksTarget)
 		}
 	}
 	return 0
+}
+
+// recordHookShims keeps the lock's shim ownership record in step with what this
+// agent just wrote (S3): the record is what licenses deleting a shim later, even
+// after an edit.
+func (a *agentRun) recordHookShims(shims map[string]string) error {
+	if len(shims) == 0 {
+		return nil
+	}
+	lockPath := filepath.Join(a.sourceRoot, bundledLockRel)
+	lk, err := lock.LoadLock(lockPath)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for path, owner := range shims {
+		rel, err := filepath.Rel(a.sourceRoot, path)
+		if err != nil {
+			continue
+		}
+		rel = filepath.ToSlash(rel)
+		if lk.Hooks[rel] == owner {
+			continue
+		}
+		lock.SetHookShim(lk, rel, owner)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return lock.WriteLock(lockPath, lk)
 }
 
 // syncMCP renders one agent's MCP config with the lock's per-target server

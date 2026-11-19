@@ -990,3 +990,41 @@ func TestMCPOwnershipRecordRoundTrip(t *testing.T) {
 		t.Fatalf("notice marker not loaded: %v", reloaded.MCP)
 	}
 }
+
+func TestHookShimOwnershipRecordRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".ai-specs.lock")
+	lk := NewLock()
+	SetHookShim(lk, ".pi/extensions/hookdemo-main.ts", "ai-specs:hooks:hookdemo:main")
+	SetHookShim(lk, ".cursor/hooks/alpha-gate.sh", "ai-specs:hooks:alpha:gate")
+	if err := WriteLock(path, lk); err != nil {
+		t.Fatalf("WriteLock: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[hooks]\n\".cursor/hooks/alpha-gate.sh\" = \"ai-specs:hooks:alpha:gate\"\n" +
+		"\".pi/extensions/hookdemo-main.ts\" = \"ai-specs:hooks:hookdemo:main\""
+	if !strings.Contains(string(raw), want) {
+		t.Fatalf("hook shim records not emitted in sorted order:\n%s", raw)
+	}
+
+	loaded, err := LoadLock(path)
+	if err != nil {
+		t.Fatalf("LoadLock: %v", err)
+	}
+	if loaded.Hooks[".pi/extensions/hookdemo-main.ts"] != "ai-specs:hooks:hookdemo:main" {
+		t.Fatalf("hook shim record not loaded: %v", loaded.Hooks)
+	}
+
+	SetHookShim(loaded, ".pi/extensions/hookdemo-main.ts", "")
+	if _, ok := loaded.Hooks[".pi/extensions/hookdemo-main.ts"]; ok {
+		t.Fatal("an empty owner must drop the record")
+	}
+	if err := WriteLock(path, loaded); err != nil {
+		t.Fatalf("WriteLock: %v", err)
+	}
+	if raw, err := os.ReadFile(path); err != nil || strings.Contains(string(raw), "hookdemo-main") {
+		t.Fatalf("dropped record still emitted: %s (%v)", raw, err)
+	}
+}

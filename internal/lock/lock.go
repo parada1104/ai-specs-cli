@@ -70,9 +70,13 @@ type Lock struct {
 	// wrote for a target (project relative config path → hex). Any difference
 	// means the user edited ai-specs' block, which sync refuses to rewrite.
 	MCPBlock map[string]string
+	// Hooks is the generated hook-shim ownership record (S3): project relative
+	// shim path → the hook id that produced it. Only a recorded path may be
+	// pruned by sync, even after the user edited it.
+	Hooks map[string]string
 }
 
-// NewLock returns a Lock with all six maps initialized empty (the shape
+// NewLock returns a Lock with every map initialized empty (the shape
 // load_lock returns for a missing file).
 func NewLock() *Lock {
 	return &Lock{
@@ -84,6 +88,7 @@ func NewLock() *Lock {
 		Managed:  map[string]map[string]any{},
 		MCP:      map[string]map[string]any{},
 		MCPBlock: map[string]string{},
+		Hooks:    map[string]string{},
 	}
 }
 
@@ -192,6 +197,15 @@ func LoadLock(lockPath string) (*Lock, error) {
 			if sha, ok := entry.String("sha256"); ok {
 				if trimmed := strings.TrimSpace(sha); trimmed != "" {
 					lock.MCPBlock[target] = trimmed
+				}
+			}
+		}
+	}
+	if hooks, ok := root.Table("hooks"); ok {
+		for _, path := range hooks.Keys() {
+			if owner, ok := hooks.String(path); ok {
+				if trimmed := strings.TrimSpace(owner); trimmed != "" {
+					lock.Hooks[path] = trimmed
 				}
 			}
 		}
@@ -602,6 +616,10 @@ func refuseControlChars(lockPath string, lock *Lock) error {
 		appendCheck("mcp block target", target)
 		appendCheck("mcp block sha256", lock.MCPBlock[target])
 	}
+	for _, path := range sortedKeys(lock.Hooks) {
+		appendCheck("hook shim path", path)
+		appendCheck("hook shim owner", lock.Hooks[path])
+	}
 	depIDs := make([]string, 0, len(lock.Deps))
 	for depID := range lock.Deps {
 		depIDs = append(depIDs, depID)
@@ -697,6 +715,14 @@ func renderLock(lock *Lock) (string, error) {
 	for _, target := range sortedKeys(lock.MCPBlock) {
 		lines = append(lines, "[mcp-block."+TOMLString(target)+"]")
 		lines = append(lines, "sha256 = "+TOMLString(lock.MCPBlock[target]))
+		lines = append(lines, "")
+	}
+
+	if len(lock.Hooks) > 0 {
+		lines = append(lines, "[hooks]")
+		for _, path := range sortedKeys(lock.Hooks) {
+			lines = append(lines, TOMLString(path)+" = "+TOMLString(lock.Hooks[path]))
+		}
 		lines = append(lines, "")
 	}
 
