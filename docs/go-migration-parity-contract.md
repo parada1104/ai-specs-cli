@@ -852,7 +852,12 @@ only those:
   undecodable key (unknown escape, an out-of-range `\U` escape, a lone
   surrogate), a trailing-junk header or an array of MCP tables — refuses the
   render instead (rc 1, one `error:` line, target byte-identical), since
-  guessing would merge two keys or destroy a value;
+  guessing would merge two keys or destroy a value. A server declared without
+  its own table header — an inline table or a dotted key under
+  `[<mcp_key>]`, or a root-level dotted `mcp_servers.<name>…` key — counts as a
+  present user server: a manifest server with that name is preserved (with the
+  collision warning) and no table is emitted for it, so a document is never made
+  to redeclare a key; declaring the whole `mcp_servers` table inline is refused;
 - removals print `    ✓ removed managed MCP server "<name>" from <target>`;
 - a target with recorded servers is regenerated through the same recovery path
   even when the manifest declares none left, so a corrupt target is still

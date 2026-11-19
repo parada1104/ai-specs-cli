@@ -1159,6 +1159,15 @@ func mcpPlanMerge(desired *mcpObj, owned map[string]bool, ownedNames []string, c
 	return plan
 }
 
+func (p mcpMergePlan) preservedHas(name string) bool {
+	for _, n := range p.preserved {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
 // mcpMergeIntoJSON merges per server (S5): foreign top-level keys keep their
 // order, a recorded server is replaced or dropped, an unrecorded one is left to
 // the user, and the manifest servers are appended after the existing ones.
@@ -1219,36 +1228,129 @@ const (
 	mcpTOMLScanLiteralML
 )
 
-// mcpTOMLScanHeaders lists every table header of a TOML document. The scan is
-// line- and state-aware because a `[mcp_servers.x]` line inside a multi-line
-// value or a comment is user text, not a table: mistaking it for one used to
-// rewrite the value away. A document the scanner cannot read unambiguously
-// (unterminated string, unparsable key, an array of MCP tables) is an error, so
+// mcpTOMLDoc is what the header scan understood of a TOML document: its table
+// headers, and the server names declared without a header of their own.
+type mcpTOMLDoc struct {
+	headers []mcpTOMLHeader
+	// headerless are servers declared by an inline table or a dotted key instead
+	// of their own [<mcp_key>.<name>] header. They are present user servers: they
+	// count for collision and presence decisions but are never rewritten.
+	headerless []string
+}
+
+// mcpTOMLScanDocument scans a TOML document for table headers and for servers
+// declared without one. The scan is line- and state-aware because a
+// `[mcp_servers.x]` line inside a multi-line value or a comment is user text,
+// not a table: mistaking it for one used to rewrite the value away. A document
+// the scanner cannot read unambiguously (unterminated string, unparsable key,
+// an array of MCP tables, the whole MCP table declared inline) is an error, so
 // the caller refuses instead of guessing.
-func mcpTOMLScanHeaders(lines []string, mcpKey string) ([]mcpTOMLHeader, error) {
-	var headers []mcpTOMLHeader
+func mcpTOMLScanDocument(lines []string, mcpKey string) (mcpTOMLDoc, error) {
+	var doc mcpTOMLDoc
 	state := mcpTOMLScanNone
+	var section []string
 	for i, line := range lines {
 		if state == mcpTOMLScanNone {
-			h, ok, err := mcpTOMLParseHeaderLine(line, mcpKey)
-			if err != nil {
-				return nil, err
-			}
-			if ok {
-				h.line = i
-				headers = append(headers, h)
+			if strings.HasPrefix(strings.TrimSpace(line), "[") {
+				h, ok, err := mcpTOMLParseHeaderLine(line, mcpKey)
+				if err != nil {
+					return doc, err
+				}
+				if ok {
+					h.line = i
+					doc.headers = append(doc.headers, h)
+					section = h.path
+				}
+			} else if len(section) == 0 || (len(section) == 1 && section[0] == mcpKey) {
+				name, ok, err := mcpTOMLSectionKeyName(line, section, mcpKey)
+				if err != nil {
+					return doc, err
+				}
+				if ok {
+					doc.headerless = append(doc.headerless, name)
+				}
 			}
 		}
 		next, err := mcpTOMLScanStrings(line, state)
 		if err != nil {
-			return nil, err
+			return doc, err
 		}
 		state = next
 	}
 	if state != mcpTOMLScanNone {
-		return nil, fmt.Errorf("cannot scan the TOML target: unterminated multi-line string")
+		return doc, fmt.Errorf("cannot scan the TOML target: unterminated multi-line string")
 	}
-	return headers, nil
+	return doc, nil
+}
+
+// mcpTOMLSectionKeyName reports the server name a key-value line declares when
+// its table is the document root or [<mcp_key>] itself: at the root a dotted
+// `mcp_servers.<name>…` key, under the parent table any `<name>…` key.
+func mcpTOMLSectionKeyName(line string, section []string, mcpKey string) (string, bool, error) {
+	path, ok, err := mcpTOMLAssignmentPath(line)
+	if err != nil || !ok {
+		return "", false, err
+	}
+	if len(section) == 0 {
+		if path[0] != mcpKey {
+			return "", false, nil
+		}
+		if len(path) < 2 {
+			// `mcp_servers = { … }` declares the whole table inline: there is no
+			// safe merge left to do.
+			return "", false, fmt.Errorf("cannot merge the TOML target: the whole %s table is declared inline", mcpKey)
+		}
+		return path[1], true, nil
+	}
+	return path[0], true, nil
+}
+
+// mcpTOMLAssignmentPath parses the key path of a key-value line. ok is false for
+// a line that is not an assignment (a value row, a blank line or a comment).
+func mcpTOMLAssignmentPath(line string) ([]string, bool, error) {
+	trimmed := strings.TrimLeft(line, " \t")
+	if trimmed == "" || trimmed[0] == '#' || trimmed[0] == '[' || trimmed[0] == '{' {
+		return nil, false, nil
+	}
+	eq := -1
+	for i := 0; i < len(trimmed); i++ {
+		switch c := trimmed[i]; {
+		case c == '#':
+			return nil, false, nil
+		case c == '"' || c == '\'':
+			j := i + 1
+			for j < len(trimmed) {
+				if c == '"' && trimmed[j] == '\\' {
+					j += 2
+					continue
+				}
+				if trimmed[j] == c {
+					break
+				}
+				j++
+			}
+			if j >= len(trimmed) {
+				return nil, false, fmt.Errorf("cannot scan the TOML key line %q: unterminated key", line)
+			}
+			i = j
+		case c == '=':
+			eq = i
+		}
+		if eq >= 0 {
+			break
+		}
+	}
+	if eq < 0 {
+		return nil, false, nil
+	}
+	path, rest, err := mcpTOMLParseKeyPath(trimmed[:eq])
+	if err != nil {
+		return nil, false, fmt.Errorf("cannot scan the TOML key line %q: %w", line, err)
+	}
+	if strings.TrimSpace(rest) != "" {
+		return nil, false, fmt.Errorf("cannot scan the TOML key line %q: unexpected text", line)
+	}
+	return path, true, nil
 }
 
 // mcpTOMLQuoteRun counts the consecutive quote bytes starting at s[0].
@@ -1513,31 +1615,53 @@ func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[stri
 		existingLines = pySplitLines(text)
 	}
 
-	headers, err := mcpTOMLScanHeaders(existingLines, mcpKey)
+	doc, err := mcpTOMLScanDocument(existingLines, mcpKey)
 	if err != nil {
 		return "", mcpMergePlan{}, err
+	}
+	headerless := make(map[string]bool, len(doc.headerless))
+	for _, name := range doc.headerless {
+		headerless[name] = true
 	}
 
 	// A server's block runs from its header to the next header, so a nested
 	// [<mcp_key>.<name>.<sub>] block stays with the server it belongs to.
 	present := newMCPObj()
-	for _, h := range headers {
+	for _, h := range doc.headers {
 		if h.path[0] == mcpKey && len(h.path) > 1 {
 			present.set(h.path[1], true)
 		}
 	}
+	for _, name := range doc.headerless {
+		present.set(name, true)
+	}
 	plan := mcpPlanMerge(desired, owned, ownedNames, present)
 
-	drop := make(map[int]bool, len(headers))
-	for i, h := range headers {
+	// A name declared without its own header (inline table or dotted key) has no
+	// block to rebuild: emitting one would redeclare it, so it is left exactly as
+	// the user wrote it and stays out of the ownership record.
+	managed := make([]string, 0, len(plan.managed))
+	for _, name := range plan.managed {
+		if !headerless[name] {
+			managed = append(managed, name)
+			continue
+		}
+		if desired.has(name) && !plan.preservedHas(name) {
+			plan.preserved = append(plan.preserved, name)
+		}
+	}
+	plan.managed = managed
+
+	drop := make(map[int]bool, len(doc.headers))
+	for i, h := range doc.headers {
 		// A preserved user table is emitted exactly as it stands; only a
 		// recorded block is rebuilt from the manifest.
-		if h.path[0] != mcpKey || len(h.path) < 2 || !owned[h.path[1]] {
+		if h.path[0] != mcpKey || len(h.path) < 2 || !owned[h.path[1]] || headerless[h.path[1]] {
 			continue
 		}
 		end := len(existingLines)
-		if i+1 < len(headers) {
-			end = headers[i+1].line
+		if i+1 < len(doc.headers) {
+			end = doc.headers[i+1].line
 		}
 		for ln := h.line; ln < end; ln++ {
 			drop[ln] = true

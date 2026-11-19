@@ -314,6 +314,36 @@ class HooksRenderTests(_HookFixtureMixin):
         self.assertEqual(target.read_bytes(), user)
         self.assertEqual(tomllib.loads(target.read_text()), tomllib.loads(user.decode()))
 
+    def test_codex_mcp_inline_server_is_not_duplicated(self):
+        import tomllib
+
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("codex")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        base = manifest.read_text()
+        manifest.write_text(
+            base + '\n[mcp.same]\ncommand = "manifest"\n'
+            + '[mcp.other]\ncommand = "managed"\n'
+        )
+        target = self.root / ".codex/config.toml"
+        target.parent.mkdir()
+        original = b'[mcp_servers]\nsame = { command = "user" }\n'
+        target.write_bytes(original)
+
+        result = self.sync()
+        self.assertEqual(
+            result.stderr,
+            '    ! preserved user MCP server "same" in '
+            '<TEMP>/.codex/config.toml (not recorded as ai-specs-managed)\n',
+        )
+        servers = tomllib.loads(target.read_text())["mcp_servers"]
+        self.assertEqual(servers["same"], {"command": "user"})
+        self.assertEqual(servers["other"]["command"], "managed")
+
+        manifest.write_text(base)
+        self.sync()
+        self.assertEqual(target.read_bytes(), original)
+
     def test_corrupt_mcp_target_is_backed_up_when_pruning_last_server(self):
         self.seed_recipe(RECIPE_SHELL, "shell-gate")
         self.write_manifest("claude")

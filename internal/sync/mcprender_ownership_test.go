@@ -401,3 +401,94 @@ func TestMCPOwnershipCodexQuotedKeysAreOneServer(t *testing.T) {
 		})
 	}
 }
+
+// TestMCPOwnershipCodexHeaderlessServerIsPreserved pins the "if in doubt, don't
+// touch" rule for a user server declared without its own table header — an
+// inline table or a dotted key under [<mcp_key>], or a root-level dotted key:
+// it counts as a present user server, so a manifest server with the same name is
+// preserved and no table is emitted that would redeclare it.
+func TestMCPOwnershipCodexHeaderlessServerIsPreserved(t *testing.T) {
+	for _, tc := range []struct{ name, path, user, want string }{
+		{
+			name: "inline table under the parent table",
+			path: ".codex/config.toml",
+			user: "[mcp_servers]\nsame = { command = \"user\" }\n",
+			want: "[mcp_servers]\nsame = { command = \"user\" }\n",
+		},
+		{
+			name: "dotted key under the parent table",
+			path: ".codex/config.toml",
+			user: "[mcp_servers]\nsame.command = \"user\"\n",
+			want: "[mcp_servers]\nsame.command = \"user\"\n",
+		},
+		{
+			name: "root-level dotted key",
+			path: ".codex/config.toml",
+			user: "mcp_servers.same.command = \"user\"\n",
+			want: "mcp_servers.same.command = \"user\"\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(dir, filepath.FromSlash(tc.path))
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, []byte(tc.user), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := toml.Parse([]byte(tc.user)); err != nil {
+				t.Fatalf("the pinned fixture must be valid TOML: %v", err)
+			}
+
+			_, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifestSame, "codex", target, "mcp_servers", nil)
+			if rc != 0 {
+				t.Fatalf("rc=%d stderr=%q", rc, stderr)
+			}
+			if len(res.Preserved) != 1 || res.Preserved[0] != "same" {
+				t.Errorf("preserved = %v, want [same]", res.Preserved)
+			}
+			if got := mcpReadTarget(t, target); got != tc.want {
+				t.Errorf("headerless user server rewritten:\n--- got ---\n%s\n--- want ---\n%s", got, tc.want)
+			}
+			if _, err := toml.Parse([]byte(mcpReadTarget(t, target))); err != nil {
+				t.Errorf("the merged document is not valid TOML: %v", err)
+			}
+		})
+	}
+}
+
+// TestMCPOwnershipCodexUnparseableKeyRefuses pins the refusal for a key line the
+// scanner cannot read: the render fails atomically and the target keeps its
+// exact bytes.
+func TestMCPOwnershipCodexUnparseableKeyRefuses(t *testing.T) {
+	for _, tc := range []struct{ name, user string }{
+		{"undecodable key under the parent table", "[mcp_servers]\n\"bad\\qname\" = { command = \"user\" }\n"},
+		{"undecodable root key", "mcp_servers.\"bad\\qname\".command = \"user\"\n"},
+		{"whole table declared inline", "mcp_servers = { same = { command = \"user\" } }\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(dir, ".codex", "config.toml")
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, []byte(tc.user), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifestSame, "codex", target, "mcp_servers", nil)
+			if rc != 1 {
+				t.Fatalf("rc=%d want 1 (stdout %q stderr %q)", rc, out, stderr)
+			}
+			if lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n"); len(lines) != 1 || !strings.HasPrefix(lines[0], "error: ") {
+				t.Errorf("stderr is not exactly one error line: %q", stderr)
+			}
+			if len(res.Managed) != 0 {
+				t.Errorf("managed = %v, want none", res.Managed)
+			}
+			if got := mcpReadTarget(t, target); got != tc.user {
+				t.Errorf("failed render modified the target: got %q want %q", got, tc.user)
+			}
+		})
+	}
+}
