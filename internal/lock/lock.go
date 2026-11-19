@@ -569,14 +569,11 @@ func refuseControlChars(lockPath string, lock *Lock) error {
 		}
 	}
 	for _, target := range sortedKeys(lock.MCP) {
-		files := lock.MCP[target]
-		if len(files) == 0 {
-			continue
-		}
 		appendCheck("mcp target", target)
-		for _, name := range sortedKeys(files) {
+		entry := lock.MCP[target]
+		for _, name := range sortedKeys(entry) {
 			appendCheck("mcp server", name)
-			s, err := pyStrValue(files[name])
+			s, err := pyStrValue(entry[name])
 			if err != nil {
 				return err
 			}
@@ -737,9 +734,8 @@ func renderLock(lock *Lock) (string, error) {
 
 	for _, target := range sortedKeys(lock.MCP) {
 		files := lock.MCP[target]
-		if len(files) == 0 {
-			continue
-		}
+		// An empty record is the "looked, nothing managed" marker the upgrade
+		// notice leaves behind, so the section is emitted even with no servers.
 		lines = append(lines, "[mcp."+TOMLString(target)+"]")
 		for _, name := range sortedKeys(files) {
 			s, err := pyStrValue(files[name])

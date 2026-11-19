@@ -7,6 +7,7 @@ package sync
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -62,8 +63,8 @@ var mcpOwnershipAgents = []mcpOwnershipAgent{
 }
 
 // mcpRenderOwned runs one render with the recorded ownership and returns the
-// stdout, stderr, rc and ownership outcome. owned nil models "nothing recorded
-// as ours yet"; a non-nil empty slice models "record says we own nothing".
+// stdout, stderr, rc and ownership outcome. owned nil models "no record entry
+// yet" (so the upgrade notice applies); a non-nil slice models a record.
 func mcpRenderOwned(t *testing.T, dir, manifest, agent, target, key string, owned []string) (string, string, int, MCPResult) {
 	t.Helper()
 	manifestPath := filepath.Join(dir, "ai-specs.toml")
@@ -73,10 +74,17 @@ func mcpRenderOwned(t *testing.T, dir, manifest, agent, target, key string, owne
 	var out, errBuf bytes.Buffer
 	res := MCPResult{}
 	rc := RenderMCPFile(manifestPath, agent, target, key, RenderMCPOptions{
-		Owned:  owned,
-		Result: &res,
+		Owned:    owned,
+		Recorded: owned != nil,
+		Result:   &res,
 	}, &out, &errBuf)
 	return out.String(), errBuf.String(), rc, res
+}
+
+// mcpNotice is the one upgrade-notice line for target listing servers.
+func mcpNotice(target, servers string) string {
+	return fmt.Sprintf("    ! %s: MCP servers not recorded as ai-specs-managed: %s (remove them if ai-specs generated them)\n",
+		target, servers)
 }
 
 // mcpSeedTarget writes the target file, creating its parent directory.
@@ -115,7 +123,7 @@ func TestMCPOwnershipKeepsUserServersAcrossAgents(t *testing.T) {
 		t.Run(a.agent, func(t *testing.T) {
 			dir := t.TempDir()
 			target := mcpSeedTarget(t, dir, a)
-			if _, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifest, a.agent, target, a.key, nil); rc != 0 || stderr != "" {
+			if _, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifest, a.agent, target, a.key, nil); rc != 0 || stderr != mcpNotice(target, "mine") {
 				t.Fatalf("rc=%d stderr=%q", rc, stderr)
 			} else if got, want := mcpManagedNames(res), []string{"alpha", "beta"}; strings.Join(got, ",") != strings.Join(want, ",") {
 				t.Fatalf("managed = %v, want %v", got, want)
@@ -221,6 +229,9 @@ func TestMCPOwnershipCollisionKeepsUserServer(t *testing.T) {
 	_, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifest, "claude", target, "mcpServers", nil)
 	if rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, stderr)
+	}
+	if !strings.HasPrefix(stderr, "    ! preserved user MCP server \"alpha\"") {
+		t.Fatalf("stderr = %q", stderr)
 	}
 	text := mcpReadTarget(t, target)
 	if !strings.Contains(text, "user-authored") {

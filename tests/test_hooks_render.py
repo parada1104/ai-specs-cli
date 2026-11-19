@@ -234,7 +234,12 @@ class HooksRenderTests(_HookFixtureMixin):
         target = self.root / ".mcp.json"
         target.write_text('{"mcpServers": {"mine": {"command": "user-cmd"}}}\n')
 
-        self.assertEqual(self.sync().stderr, "")
+        # The first sync finds a server it never recorded: one upgrade notice.
+        self.assertEqual(
+            self.sync().stderr,
+            "    ! <TEMP>/.mcp.json: MCP servers not recorded as "
+            "ai-specs-managed: mine (remove them if ai-specs generated them)\n",
+        )
         self.assertEqual(json.loads(target.read_text())["mcpServers"], {
             "mine": {"command": "user-cmd"},
             "demo": {"command": "echo", "args": [], "env": {}},
@@ -250,7 +255,83 @@ class HooksRenderTests(_HookFixtureMixin):
         self.assertEqual(self.sync().stderr, "")
         self.assertEqual(json.loads(target.read_text())["mcpServers"],
                          {"mine": {"command": "user-cmd"}})
+        self.assertNotIn('"demo"', (self.root / "ai-specs/.ai-specs.lock").read_text())
+
+    def test_codex_mcp_collision_survives_writes_and_prune(self):
+        import tomllib
+
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("codex")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        base = manifest.read_text()
+        target = self.root / ".codex/config.toml"
+        target.parent.mkdir()
+
+        for header in ("same", "'same'"):
+            with self.subTest(header=header):
+                target.write_text(
+                    f'[mcp_servers.{header}]\ncommand = "user-command"\n'
+                )
+                manifest.write_text(
+                    base + '\n[mcp.same]\ncommand = "manifest-command"\n'
+                    + '[mcp.new]\ncommand = "new-command"\n'
+                )
+                result = self.sync()
+                self.assertEqual(
+                    result.stderr,
+                    '    ! preserved user MCP server "same" in '
+                    '<TEMP>/.codex/config.toml (not recorded as ai-specs-managed)\n',
+                )
+                servers = tomllib.loads(target.read_text())["mcp_servers"]
+                self.assertEqual(servers["same"]["command"], "user-command")
+                self.assertEqual(servers["new"]["command"], "new-command")
+                manifest.write_text(base)
+                self.sync()
+                self.assertEqual(
+                    tomllib.loads(target.read_text())["mcp_servers"],
+                    {"same": {"command": "user-command"}},
+                )
+
+    def test_corrupt_mcp_target_is_backed_up_when_pruning_last_server(self):
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("claude")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        base = manifest.read_text()
+        manifest.write_text(base + "\n[mcp.demo]\ncommand = 'echo'\n")
+        self.sync()
+
+        target = self.root / ".mcp.json"
+        corrupt = b'{"mcpServers":{"demo":{"command":"echo"}},}\r\n'
+        target.write_bytes(corrupt)
+        manifest.write_text(base)
+        result = self.sync()
+
+        self.assertIn(
+            "warning: invalid JSON in <TEMP>/.mcp.json; "
+            "backed up to <TEMP>/.mcp.json.bak\n",
+            result.stderr,
+        )
+        self.assertEqual((self.root / ".mcp.json.bak").read_bytes(), corrupt)
+        self.assertNotIn("demo", json.loads(target.read_text()).get("mcpServers", {}))
         self.assertNotIn("[mcp.", (self.root / "ai-specs/.ai-specs.lock").read_text())
+
+    def test_warns_about_unrecorded_mcp_on_upgrade_after_manifest_removal(self):
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("claude")
+        target = self.root / ".mcp.json"
+        # Old generated output has no per-target ownership record.
+        original = b'{"mcpServers":{"legacy":{"command":"echo","args":[],"env":{}}}}\n'
+        target.write_bytes(original)
+
+        result = self.sync()
+        self.assertRegex(
+            result.stderr, r'(?im)^.*(?:unrecorded|not recorded|ownership).*$'
+        )
+        self.assertEqual(target.read_bytes(), original)
+
+        # The notice is recorded once and never repeated.
+        self.assertEqual(self.sync().stderr, "")
+        self.assertEqual(target.read_bytes(), original)
 
     def test_removed_recipe_prunes_all_wiring(self):
         self.seed_and_sync(RECIPE_SHELL, "shell-gate", "claude", "cursor",

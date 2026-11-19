@@ -840,8 +840,18 @@ only those:
 - a server the lock does not record is never overwritten or deleted; a
   same-named entry that was never recorded as ours is kept and reported with
   `    ! preserved user MCP server "<name>" in <target> (not recorded as
-  ai-specs-managed)` (conservative choice: user-authored wins);
+  ai-specs-managed)` (conservative choice: user-authored wins). A preserved
+  Codex table is emitted byte-for-byte, and its header is matched whether the
+  key is bare, `'single'`-quoted or `"double"`-quoted;
 - removals print `    ✓ removed managed MCP server "<name>" from <target>`;
+- a target with recorded servers is regenerated through the same recovery path
+  even when the manifest declares none left, so a corrupt target is still
+  backed up and rewritten instead of keeping a stale managed server;
+- a target that holds servers ai-specs never recorded and has no lock entry yet
+  (the upgrade case) gets ONE notice per target — `    ! <target>: MCP servers
+  not recorded as ai-specs-managed: <names> (remove them if ai-specs generated
+  them)` — and a bare `[mcp."<target>"]` marker entry so it is not repeated.
+  Nothing is deleted for it;
 - a lock read failure stops the MCP step before touching the target, so nothing
   is deleted without the ownership record.
 

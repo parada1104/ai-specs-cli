@@ -941,8 +941,8 @@ func TestLegacyLockSectionsAreDroppedOnRewrite(t *testing.T) {
 func TestMCPOwnershipRecordRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".ai-specs.lock")
 	lk := NewLock()
-	SetMCPOwnership(lk, ".mcp.json", map[string]string{"beta": "hash-b", "alpha": "hash-a"})
-	SetMCPOwnership(lk, ".codex/config.toml", map[string]string{"gamma": "hash-g"})
+	SetMCPOwnership(lk, ".mcp.json", map[string]string{"beta": "hash-b", "alpha": "hash-a"}, false)
+	SetMCPOwnership(lk, ".codex/config.toml", map[string]string{"gamma": "hash-g"}, false)
 	if err := WriteLock(path, lk); err != nil {
 		t.Fatalf("WriteLock: %v", err)
 	}
@@ -965,8 +965,28 @@ func TestMCPOwnershipRecordRoundTrip(t *testing.T) {
 		t.Fatalf("mcp record not loaded: %v", loaded.MCP)
 	}
 
-	SetMCPOwnership(loaded, ".codex/config.toml", nil)
+	SetMCPOwnership(loaded, ".codex/config.toml", nil, false)
 	if _, ok := loaded.MCP[".codex/config.toml"]; ok {
 		t.Fatal("an empty record must drop the target entry")
+	}
+
+	// An empty record with the notice marker round-trips as a bare section.
+	SetMCPOwnership(loaded, ".pi/mcp.json", nil, true)
+	if err := WriteLock(path, loaded); err != nil {
+		t.Fatalf("WriteLock: %v", err)
+	}
+	raw, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "[mcp.\".pi/mcp.json\"]") {
+		t.Fatalf("notice marker not emitted:\n%s", raw)
+	}
+	reloaded, err := LoadLock(path)
+	if err != nil {
+		t.Fatalf("LoadLock: %v", err)
+	}
+	if entry, ok := reloaded.MCP[".pi/mcp.json"]; !ok || len(entry) != 0 {
+		t.Fatalf("notice marker not loaded: %v", reloaded.MCP)
 	}
 }

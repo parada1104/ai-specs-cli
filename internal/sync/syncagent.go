@@ -846,31 +846,40 @@ func (a *agentRun) syncMCP(agent, mcpPath, mcpKey string, out, errW io.Writer) i
 	rel = filepath.ToSlash(rel)
 	var owned []string
 	var record map[string]any
+	recorded := false
 	if relErr == nil {
 		lk, err := lock.LoadLock(lockPath)
 		if err != nil {
 			fmt.Fprintln(errW, err)
 			return 1
 		}
-		record = lk.MCP[rel]
+		record, recorded = lk.MCP[rel]
 		for name := range record {
 			owned = append(owned, name)
 		}
 	}
-	if a.mcpCount == 0 && len(owned) == 0 {
+	// Nothing declared, nothing recorded and no target to inspect: the legacy
+	// notice, and the record is left untouched (a marker entry survives).
+	if a.mcpCount == 0 && len(owned) == 0 && (recorded || !mcpIsFile(target)) {
 		fmt.Fprintln(out, "    ℹ mcp skipped (no [mcp.*] in manifest)")
 		return 0
 	}
 	res := MCPResult{}
-	opts := RenderMCPOptions{RecipeMCPPath: a.recipeMCP, Owned: owned, Result: &res}
+	opts := RenderMCPOptions{RecipeMCPPath: a.recipeMCP, Owned: owned, Recorded: recorded, Result: &res}
 	if rc := RenderMCPFile(a.tomlPath, agent, target, mcpKey, opts, out, errW); rc != 0 {
 		return rc
 	}
-	if relErr != nil || mcpOwnershipEqual(record, res.Managed) {
+	if a.mcpCount == 0 && len(owned) == 0 && !res.Noticed && !res.Wrote && len(res.Preserved) == 0 {
+		fmt.Fprintln(out, "    ℹ mcp skipped (no [mcp.*] in manifest)")
+	}
+	// A target that still holds servers ai-specs never recorded keeps the
+	// "looked, nothing managed" marker so the upgrade notice is not repeated.
+	notice := res.Noticed || (recorded && len(record) == 0 && len(res.Unrecorded) > 0)
+	if relErr != nil || mcpOwnershipEqual(record, recorded, res.Managed, notice) {
 		return 0
 	}
 	if err := applyLockRecord(lockPath, func(lk *lock.Lock) {
-		lock.SetMCPOwnership(lk, rel, res.Managed)
+		lock.SetMCPOwnership(lk, rel, res.Managed, notice)
 	}); err != nil {
 		fmt.Fprintln(errW, err)
 		return 1
@@ -878,10 +887,15 @@ func (a *agentRun) syncMCP(agent, mcpPath, mcpKey string, out, errW io.Writer) i
 	return 0
 }
 
-// mcpOwnershipEqual reports whether a lock record already holds exactly the
-// managed servers and rendered hashes, so an unchanged sync writes no lock.
-func mcpOwnershipEqual(record map[string]any, managed map[string]string) bool {
-	if len(record) != len(managed) {
+// mcpOwnershipEqual reports whether the lock already holds exactly the record a
+// render implies — the managed servers with their rendered hashes, or the bare
+// upgrade-notice marker — so an unchanged sync writes no lock.
+func mcpOwnershipEqual(record map[string]any, recorded bool, managed map[string]string, notice bool) bool {
+	if len(managed) == 0 {
+		// An empty record is either absent (nothing to remember) or the marker.
+		return recorded == notice
+	}
+	if !recorded || len(record) != len(managed) {
 		return false
 	}
 	for name, hash := range managed {

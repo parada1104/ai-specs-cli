@@ -41,13 +41,14 @@ func SetBriefBaseline(lock *Lock, path, sha256 string) {
 }
 
 // SetMCPOwnership replaces the MCP server ownership record for one target. An
-// empty record drops the entry so a target with nothing left managed leaves no
-// trace in the lock.
-func SetMCPOwnership(lock *Lock, target string, servers map[string]string) {
+// empty record keeps a marker entry only when notice is set (the target still
+// holds servers ai-specs never recorded, so the upgrade notice is not repeated);
+// otherwise the target leaves no trace in the lock.
+func SetMCPOwnership(lock *Lock, target string, servers map[string]string, notice bool) {
 	if lock.MCP == nil {
 		lock.MCP = map[string]map[string]any{}
 	}
-	if len(servers) == 0 {
+	if len(servers) == 0 && !notice {
 		delete(lock.MCP, target)
 		return
 	}

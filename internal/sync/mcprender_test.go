@@ -269,6 +269,9 @@ type mcpRefCase struct {
 	// captures Python truncating (or creating) it on a failed render.
 	s5Target   *string
 	s5NoTarget bool
+	// s5Stderr pins the Go stderr of a case whose S5 upgrade notice the frozen
+	// record cannot contain.
+	s5Stderr *string
 }
 
 const mcpManifestRel = "ai-specs/ai-specs.toml"
@@ -480,8 +483,12 @@ func TestMCPRenderDifferential(t *testing.T) {
 				}
 				return
 			}
-			if goErr != *ref.Stderr {
-				t.Errorf("stderr differs\n--- go ---\n%q\n--- frozen ---\n%q", goErr, *ref.Stderr)
+			wantErr := *ref.Stderr
+			if tc.s5Stderr != nil {
+				wantErr = *tc.s5Stderr
+			}
+			if goErr != wantErr {
+				t.Errorf("stderr differs\n--- go ---\n%q\n--- want ---\n%q", goErr, wantErr)
 			}
 		})
 	}
@@ -644,8 +651,9 @@ func mcpRenderCases() []mcpRefCase {
 			name:      "existing json preserves keys order duplicates and unicode",
 			manifest:  mcpStr(mcpBaseManifest),
 			targetRel: ".mcp.json", agent: "claude", mcpKey: "mcpServers",
-			target:  mcpStr(`{"emoji": "🚀", "café": "naïve", "dup": 1, "z": 2, "dup": 3, "pi": 3.14, "n": 7, "whole": 2.0, "exp": 1e3, "neg": -0, "mcpServers": {"keep": {"command": "x"}}}`),
-			s5Keeps: []string{`"keep"`},
+			target:   mcpStr(`{"emoji": "🚀", "café": "naïve", "dup": 1, "z": 2, "dup": 3, "pi": 3.14, "n": 7, "whole": 2.0, "exp": 1e3, "neg": -0, "mcpServers": {"keep": {"command": "x"}}}`),
+			s5Keeps:  []string{`"keep"`},
+			s5Stderr: mcpStr("    ! <TEMP>/.mcp.json: MCP servers not recorded as ai-specs-managed: keep (remove them if ai-specs generated them)\n"),
 		},
 		{
 			name:      "existing json numeric extremes round-trip",
@@ -715,15 +723,17 @@ func mcpRenderCases() []mcpRefCase {
 			name:      "codex strips prior blocks and keeps user tables",
 			manifest:  mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
-			target:  mcpStr("# user comment\n\n[user_table]\nx = 1\n\n[mcp_servers.old]\ncommand = \"old\"\n\n[mcp_servers.old.env]\nA = \"1\"\n\n[after]\ny = 2\n\n\n"),
-			s5Keeps: []string{"[mcp_servers.old]", "[mcp_servers.old.env]"},
+			target:   mcpStr("# user comment\n\n[user_table]\nx = 1\n\n[mcp_servers.old]\ncommand = \"old\"\n\n[mcp_servers.old.env]\nA = \"1\"\n\n[after]\ny = 2\n\n\n"),
+			s5Keeps:  []string{"[mcp_servers.old]", "[mcp_servers.old.env]"},
+			s5Stderr: mcpStr("    ! <TEMP>/.codex/config.toml: MCP servers not recorded as ai-specs-managed: old (remove them if ai-specs generated them)\n"),
 		},
 		{
 			name:      "codex CRLF lines",
 			manifest:  mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
-			target:  mcpStr("[user_table]\r\nx = 1\r\n\r\n[mcp_servers.old]\r\ncommand = \"old\"\r\n"),
-			s5Keeps: []string{"[mcp_servers.old]"},
+			target:   mcpStr("[user_table]\r\nx = 1\r\n\r\n[mcp_servers.old]\r\ncommand = \"old\"\r\n"),
+			s5Keeps:  []string{"[mcp_servers.old]"},
+			s5Stderr: mcpStr("    ! <TEMP>/.codex/config.toml: MCP servers not recorded as ai-specs-managed: old (remove them if ai-specs generated them)\n"),
 		},
 
 		// --- env-ref regex quirks (Python `$` before trailing newline; optional

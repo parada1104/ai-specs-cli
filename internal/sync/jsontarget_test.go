@@ -17,7 +17,7 @@ func TestHooksJSONTargetRecovery(t *testing.T) {
 	} {
 		t.Run(agent.name, func(t *testing.T) {
 			user := fmt.Sprintf(`{"user":42,"hooks":{%q:[{"command":"user hook"}]}}`, agent.event)
-			testJSONTargetRecovery(t, agent.path, user, "", func(t *testing.T, root, _ string) (string, int, string) {
+			testJSONTargetRecovery(t, agent.path, user, "", false, func(t *testing.T, root, _ string) (string, int, string) {
 				input := filepath.Join(root, "resolved.json")
 				spineWrite(t, input, `{"hooks":[{"recipe":"demo","id":"check","event":"pre-tool-use","matcher":"Bash","script_path":"hooks/check.sh"}]}`, 0o644)
 				var out, stderr bytes.Buffer
@@ -51,7 +51,7 @@ func TestMCPJSONTargetRecovery(t *testing.T) {
 	} {
 		t.Run(agent.name, func(t *testing.T) {
 			user := fmt.Sprintf(`{"user":42,%q:{"old":{"command":"old"}}}`, agent.key)
-			testJSONTargetRecovery(t, agent.path, user, "  ✓ "+agent.name+" → %s (3 server(s))\n", func(t *testing.T, root, path string) (string, int, string) {
+			testJSONTargetRecovery(t, agent.path, user, "  ✓ "+agent.name+" → %s (3 server(s))\n", true, func(t *testing.T, root, path string) (string, int, string) {
 				return mcpRunRender(t, root, agent.name, path, agent.key, "")
 			}, func(t *testing.T, doc map[string]json.RawMessage, preserved bool) {
 				var servers map[string]map[string]json.RawMessage
@@ -79,7 +79,9 @@ func TestMCPJSONTargetRecovery(t *testing.T) {
 	}
 }
 
-func testJSONTargetRecovery(t *testing.T, rel, valid, stdout string, run func(*testing.T, string, string) (string, int, string), check func(*testing.T, map[string]json.RawMessage, bool)) {
+// mcpNotice, when true, is the S5 upgrade notice the readable target must
+// report for the server ai-specs never recorded (the MCP renderer only).
+func testJSONTargetRecovery(t *testing.T, rel, valid, stdout string, mcpNotice bool, run func(*testing.T, string, string) (string, int, string), check func(*testing.T, map[string]json.RawMessage, bool)) {
 	t.Helper()
 	for _, tc := range []struct{ name, original, backup string }{
 		{"missing", "", ""},
@@ -104,6 +106,10 @@ func testJSONTargetRecovery(t *testing.T, rel, valid, stdout string, run func(*t
 				}
 			}
 			wantErr, wantOut := "", stdout
+			if tc.name == "valid" && mcpNotice {
+				wantErr = fmt.Sprintf("    ! %s: MCP servers not recorded as "+
+					"ai-specs-managed: old (remove them if ai-specs generated them)\n", target)
+			}
 			if tc.backup != "" {
 				wantErr = fmt.Sprintf("warning: invalid JSON in %s; backed up to %s\n", target, target+tc.backup)
 				wantBackups[target+tc.backup] = tc.original

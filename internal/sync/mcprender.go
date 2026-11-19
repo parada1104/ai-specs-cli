@@ -1127,12 +1127,14 @@ func mcpSlimConfigForWrite(cfg *mcpObj) *mcpObj {
 
 // mcpMergePlan is the per-server ownership decision for one target: the
 // manifest servers to (re)write, the recorded servers to drop because the
-// manifest no longer declares them, and the servers kept as user-authored
-// because a same-named entry was never recorded as ai-specs-managed.
+// manifest no longer declares them, the servers kept as user-authored because a
+// same-named entry was never recorded as ai-specs-managed, and the servers that
+// are neither (the upgrade notice's legacy leftovers).
 type mcpMergePlan struct {
-	managed   []string
-	removed   []string
-	preserved []string
+	managed    []string
+	removed    []string
+	preserved  []string
+	unrecorded []string
 }
 
 func mcpPlanMerge(desired *mcpObj, owned map[string]bool, ownedNames []string, current *mcpObj) mcpMergePlan {
@@ -1148,6 +1150,11 @@ func mcpPlanMerge(desired *mcpObj, owned map[string]bool, ownedNames []string, c
 			continue
 		}
 		plan.managed = append(plan.managed, name)
+	}
+	for _, name := range current.keys {
+		if !owned[name] && !desired.has(name) {
+			plan.unrecorded = append(plan.unrecorded, name)
+		}
 	}
 	return plan
 }
@@ -1197,20 +1204,34 @@ func mcpMergeIntoJSON(existing *mcpObj, mcpKey string, desired *mcpObj, owned ma
 }
 
 // mcpTOMLSectionName extracts the server name of a `[<mcp_key>.<name>]` header
-// line (including a quoted name and a nested `[<mcp_key>.<name>.<sub>]`); false
-// for any other line.
+// line (including a nested `[<mcp_key>.<name>.<sub>]`); false for any other
+// line. A bare key ends at the first `.` or `]`; a quoted key (single or double
+// quotes, the two TOML string forms) ends at its closing quote, so it matches
+// the same server name the writer emits bare.
 func mcpTOMLSectionName(line, prefix string) (string, bool) {
 	if !strings.HasPrefix(line, prefix) {
 		return "", false
 	}
-	rest := line[len(prefix):]
+	rest := strings.TrimSpace(line[len(prefix):])
+	if rest == "" {
+		return "", false
+	}
+	if quote := rest[0]; quote == '"' || quote == '\'' {
+		for i := 1; i < len(rest); i++ {
+			if quote == '"' && rest[i] == '\\' {
+				i++
+				continue
+			}
+			if rest[i] == quote {
+				return rest[1:i], i > 1
+			}
+		}
+		return "", false
+	}
 	if i := strings.IndexAny(rest, ".]"); i >= 0 {
 		rest = rest[:i]
 	}
 	rest = strings.TrimSpace(rest)
-	if len(rest) >= 2 && rest[0] == '"' && rest[len(rest)-1] == '"' {
-		rest = rest[1 : len(rest)-1]
-	}
 	return rest, rest != ""
 }
 
@@ -1243,7 +1264,9 @@ func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[stri
 		stripped := pyStrip(line)
 		if strings.HasPrefix(stripped, "[") {
 			name, isMCP := mcpTOMLSectionName(stripped, "["+mcpKey+".")
-			skip = isMCP && (owned[name] || plan.preservedHas(name))
+			// A preserved user table is emitted exactly as it stands; only a
+			// recorded block is rebuilt from the manifest.
+			skip = isMCP && owned[name]
 		}
 		if !skip {
 			outLines = append(outLines, line)
@@ -1276,34 +1299,30 @@ func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[stri
 	return strings.TrimRightFunc(strings.Join(outLines, "\n"), pyIsSpace) + "\n", plan, nil
 }
 
-func (p mcpMergePlan) preservedHas(name string) bool {
-	for _, n := range p.preserved {
-		if n == name {
-			return true
-		}
-	}
-	return false
-}
-
 // RenderMCPOptions configures RenderMCPFile. RecipeMCPPath is the
 // --recipe-mcp argument ("" = flag absent); a non-empty path that is not a
 // file is ignored, exactly like load_mcp's is_file guard. Owned is the lock's
-// per-target server-name record (S5) and Result receives the outcome.
+// per-target server-name record (S5), Recorded says the lock has a record entry
+// for the target, and Result receives the outcome.
 type RenderMCPOptions struct {
 	RecipeMCPPath string
 	DryRun        bool
 	Owned         []string
+	Recorded      bool
 	Result        *MCPResult
 }
 
 // MCPResult is one target render's ownership outcome: the server names
 // ai-specs now manages at that target with the sha256 of their rendered entry,
-// plus what it removed and what it left to the user (a name collision).
+// plus what it removed, what it left to the user (a name collision), and the
+// servers it found but never recorded (the upgrade notice).
 type MCPResult struct {
-	Managed   map[string]string
-	Removed   []string
-	Preserved []string
-	Wrote     bool
+	Managed    map[string]string
+	Removed    []string
+	Preserved  []string
+	Unrecorded []string
+	Noticed    bool
+	Wrote      bool
 }
 
 // mcpServerHashes is the lock witness for the servers ai-specs owns at one
@@ -1370,7 +1389,7 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 		fmt.Fprintf(stderr, "error: %s\n", err)
 		return 1
 	}
-	if servers.len() == 0 && len(opts.Owned) == 0 {
+	if servers.len() == 0 && len(opts.Owned) == 0 && !mcpIsFile(targetPath) {
 		fmt.Fprintf(stderr, "info: no [mcp.*] entries \u2014 skipping %s\n", agent)
 		return 0
 	}
@@ -1412,15 +1431,25 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 		opts.Result.Managed = mcpServerHashes(slimmed, plan.managed)
 		opts.Result.Removed = plan.removed
 		opts.Result.Preserved = plan.preserved
+		opts.Result.Unrecorded = plan.unrecorded
 	}
 	for _, name := range plan.preserved {
 		fmt.Fprintf(stderr, "    ! preserved user MCP server %q in %s (not recorded as ai-specs-managed)\n", name, targetPath)
 	}
-	if len(plan.managed) == 0 && len(plan.removed) == 0 {
-		// Nothing to add, update or drop: an untouched user file stays untouched.
-		if servers.len() == 0 {
-			fmt.Fprintf(stderr, "info: no [mcp.*] entries \u2014 skipping %s\n", agent)
+	// Upgrade notice: a target with servers ai-specs never recorded, before the
+	// lock knows about the target at all. One line per target, never a delete.
+	if !opts.Recorded && len(plan.unrecorded) > 0 {
+		fmt.Fprintf(stderr, "    ! %s: MCP servers not recorded as ai-specs-managed: %s (remove them if ai-specs generated them)\n",
+			targetPath, strings.Join(plan.unrecorded, ", "))
+		if opts.Result != nil {
+			opts.Result.Noticed = true
 		}
+	}
+	// A corrupt target is regenerated only when ai-specs owns something there.
+	regenerate := invalid != nil && len(ownedNames) > 0
+	if len(plan.managed) == 0 && len(plan.removed) == 0 && !regenerate {
+		// Nothing to add, update or drop: an untouched user file stays untouched.
+		// The caller owns the "no [mcp.*] entries" line for an existing target.
 		return 0
 	}
 
