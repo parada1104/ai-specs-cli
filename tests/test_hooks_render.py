@@ -20,14 +20,12 @@ generated source text.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
-
-import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _blackbox import invoke, isolated_home, populate_catalog  # noqa: E402
@@ -704,6 +702,42 @@ class HooksRenderTests(_HookFixtureMixin):
 
         user = b"// user-authored replacement, not a generated shim\n"
         shim.write_bytes(user)
+        self.sync()
+        self.assertEqual(shim.read_bytes(), user)
+
+    def test_omitted_subrepo_shim_record_cannot_redeem_a_handwritten_file(self):
+        import tomllib
+
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("pi")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        with_subrepo = manifest.read_text().replace(
+            "[project]\n", '[project]\nsubrepos = ["sub-a"]\n', 1
+        )
+        manifest.write_text(with_subrepo)
+        (self.root / "sub-a").mkdir()
+        self.sync()
+
+        rel = f"sub-a/.pi/extensions/{RECIPE_SHELL}-shell-gate.ts"
+        shim = self.root / rel
+        lock = self.root / "ai-specs/.ai-specs.lock"
+        self.assertIn(rel, tomllib.loads(lock.read_text())["hooks"])
+
+        # The subrepo leaves the manifest, so no sync visits it any more: its
+        # ownership record must still lose whatever authority the shim no
+        # longer backs.
+        manifest.write_text(with_subrepo.split("[recipes.")[0].replace(
+            'subrepos = ["sub-a"]\n', ''
+        ))
+        shim.unlink()
+        self.sync()
+        self.assertNotIn(rel, tomllib.loads(lock.read_text()).get("hooks", {}))
+
+        # Re-adding the subrepo (recipe still disabled) must not delete a
+        # hand-authored file that now sits at the recorded path.
+        user = b"// user-authored replacement, not a generated shim\n"
+        shim.write_bytes(user)
+        manifest.write_text(with_subrepo.split("[recipes.")[0])
         self.sync()
         self.assertEqual(shim.read_bytes(), user)
 

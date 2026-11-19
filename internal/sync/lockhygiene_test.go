@@ -186,3 +186,20 @@ func TestSyncPrunesLockDepsWithoutVendoredTree(t *testing.T) {
 		t.Errorf("lock-only undeclared dep kept its record: %v", after.Deps)
 	}
 }
+
+// T5.1: a shim record whose path is absent loses its authority even when the
+// target it named is no longer part of the manifest, so no sync visits it.
+func TestSyncDropsHookRecordOfUnvisitedTargetWhenShimIsGone(t *testing.T) {
+	home, _ := spineEnv(t)
+	project := spineProject(t, "[project]\nname = 'shim-sweep'\n[brief]\nrender = false\n[agents]\nenabled = ['pi']\n")
+	lk := lock.NewLock()
+	lock.SetHookShim(lk, "gone/.pi/extensions/hookdemo-main.ts", "ai-specs:hooks:hookdemo:main")
+	lockPath := filepath.Join(project, "ai-specs/.ai-specs.lock")
+	if err := lock.WriteLock(lockPath, lk); err != nil {
+		t.Fatal(err)
+	}
+	runSyncCase(t, home, project)
+	if text := readLockText(t, project); strings.Contains(text, "hookdemo-main") {
+		t.Errorf("absent shim of an unvisited target kept its record:\n%s", text)
+	}
+}

@@ -946,11 +946,16 @@ and prunes three things legacy could not:
   ai-specs-managed (kept; delete them if ai-specs did not write them)`. Records
   whose shim is already gone are dropped.
 - Records are project-relative for every fan-out target, so a declared
-  subrepo's shim is `sub-a/.pi/extensions/<recipe>-<hook>.ts`. Only that
-  target's prune pass may read or drop it, and a record whose shim is absent is
-  dropped on that pass regardless of whether the recipe is still enabled —
-  otherwise a hand-authored file later placed at the recorded path would be
-  deleted by the next sync as if it were the missing generated shim.
+  subrepo's shim is `sub-a/.pi/extensions/<recipe>-<hook>.ts`, and deletion
+  authority exists only inside a target this sync visits: a recorded path with
+  a dead owner and an existing generated shim.
+- **Every sync drops any `[hooks]` record whose shim is absent**, regardless of
+  which target is visited or whether that target is still declared (an omitted
+  subrepo, a removed agent). Dropping a record only removes deletion authority,
+  which is the safe direction — otherwise the record of an unvisited target
+  would outlive its shim and a hand-authored file later placed at that path
+  would be deleted by the next sync that visits the target as if it were the
+  missing generated shim.
 - **`[deps.*]`** entries are pruned by the same authority that removes the
   vendored `.deps` trees, but the manifest's declared dep set — not the
   filesystem orphan plan — decides: a dep the manifest no longer declares loses

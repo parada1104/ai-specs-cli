@@ -3,6 +3,7 @@ package sync
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -80,6 +81,12 @@ func planRuntimeHookPrune(projectRoot, root string, hooks []any) (func(io.Writer
 	}
 	var apply []func(io.Writer) error
 	var legacy []string
+	// Dropping a record only removes deletion authority, so every record whose
+	// shim is gone loses it — even for a target this sync never visits (an
+	// omitted subrepo, a removed agent).
+	apply = append(apply, func(io.Writer) error {
+		return applyHookShimRecordSweep(projectRoot, absentHookShims(projectRoot, records))
+	})
 	for _, target := range []struct{ agent, json, dir, ext, header string }{
 		{"claude", ".claude/settings.json", "", "", ""},
 		{"cursor", ".cursor/hooks.json", ".cursor/hooks", ".sh", hooksCursorHeader},
@@ -116,7 +123,7 @@ func planRuntimeHookPrune(projectRoot, root string, hooks []any) (func(io.Writer
 			return nil, err
 		}
 		legacy = append(legacy, plan.legacy...)
-		if len(plan.doomed) > 0 || len(plan.stale) > 0 {
+		if len(plan.doomed) > 0 {
 			planned := plan
 			apply = append(apply, func(io.Writer) error { return applyHookShimPrune(projectRoot, root, planned) })
 		}
@@ -187,8 +194,6 @@ type hookShimPlan struct {
 	// doomed shims are recorded as owned by a hook that no longer produces
 	// them; they are deleted even when edited or stripped of the marker.
 	doomed []hookShimPrune
-	// stale records point at shims that are already gone.
-	stale []string
 	// legacy shims look generated but have no ownership record: kept, warned.
 	legacy []string
 }
@@ -208,7 +213,6 @@ func planHookShimPrune(projectRoot, root, dir, ext, header string, live map[stri
 		return plan, err
 	}
 	entries, err := os.ReadDir(path)
-	present := map[string]bool{}
 	if err == nil {
 		for _, entry := range entries {
 			name := entry.Name()
@@ -221,7 +225,6 @@ func planHookShimPrune(projectRoot, root, dir, ext, header string, live map[stri
 				continue
 			}
 			rel = filepath.ToSlash(rel)
-			present[rel] = true
 			wiring, isLive := live[name]
 			recorded, hasRecord := records[rel]
 			switch {
@@ -247,19 +250,50 @@ func planHookShimPrune(projectRoot, root, dir, ext, header string, live map[stri
 	} else if !os.IsNotExist(err) {
 		return plan, err
 	}
-	// Records are keyed by project-relative paths, like the lock itself; the
-	// shim directory is relative to the fan-out target, so map it first.
-	relDir, relErr := filepath.Rel(projectRoot, path)
-	if relErr != nil || strings.HasPrefix(filepath.ToSlash(relDir), "../") {
-		return plan, nil
-	}
-	prefix := filepath.ToSlash(relDir) + "/"
+	return plan, nil
+}
+
+// absentHookShims lists the records whose shim no longer exists, keyed from the
+// project root so a target's location relative to the lock never matters.
+func absentHookShims(projectRoot string, records map[string]string) []string {
+	var absent []string
 	for _, rel := range sortedKeys(records) {
-		if strings.HasPrefix(rel, prefix) && !present[rel] {
-			plan.stale = append(plan.stale, rel)
+		if !fs.ValidPath(rel) || strings.Contains(rel, `\`) {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(projectRoot, filepath.FromSlash(rel))); os.IsNotExist(err) {
+			absent = append(absent, rel)
 		}
 	}
-	return plan, nil
+	return absent
+}
+
+// applyHookShimRecordSweep drops records whose shim is still absent; a shim
+// that reappeared since preflight keeps its record.
+func applyHookShimRecordSweep(projectRoot string, absent []string) error {
+	if len(absent) == 0 {
+		return nil
+	}
+	lockPath := filepath.Join(projectRoot, bundledLockRel)
+	lk, err := lock.LoadLock(lockPath)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for _, rel := range absent {
+		if lk.Hooks[rel] == "" {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(projectRoot, filepath.FromSlash(rel))); !os.IsNotExist(err) {
+			continue
+		}
+		delete(lk.Hooks, rel)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return lock.WriteLock(lockPath, lk)
 }
 
 func sortedKeys(m map[string]string) []string {
@@ -290,17 +324,6 @@ func applyHookShimPrune(projectRoot, root string, plan hookShimPlan) error {
 		return err
 	}
 	changed := false
-	for _, rel := range plan.stale {
-		if lk.Hooks[rel] == "" {
-			continue
-		}
-		file := filepath.Join(projectRoot, filepath.FromSlash(rel))
-		if _, err := os.Lstat(file); !os.IsNotExist(err) {
-			continue
-		}
-		delete(lk.Hooks, rel)
-		changed = true
-	}
 	for _, shim := range plan.doomed {
 		rel, err := filepath.Rel(projectRoot, shim.path)
 		if err != nil {
