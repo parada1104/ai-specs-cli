@@ -147,7 +147,7 @@ func MaterializeRecipes(req MaterializeRequest) (MaterializeResult, error) {
 	if len(enabled) == 0 {
 		projectcache.RemoveRecipeCommandLeftovers(req.ProjectRoot, cliHome, nil, nil, stdout, stderr)
 		planInput, roots := materializeOrphanInputs(req.ProjectRoot, cliHome, []string{}, materializeSortedSet(expectedDepIDs))
-		if _, err := cleanOrphansNative(planInput, roots, req.ProjectRoot, stdout); err != nil {
+		if _, err := cleanOrphansNative(planInput, roots, req.ProjectRoot, cliHome, stdout); err != nil {
 			return result, materializeFatal(stderr, err.Error())
 		}
 		binding := ResolveBindings(BindingRequest{
@@ -258,7 +258,7 @@ func MaterializeRecipes(req MaterializeRequest) (MaterializeResult, error) {
 	}
 
 	planInput, roots := materializeOrphanInputs(req.ProjectRoot, cliHome, enabledIDs, materializeSortedSet(expectedDepIDs))
-	if _, err := cleanOrphansNative(planInput, roots, req.ProjectRoot, stdout); err != nil {
+	if _, err := cleanOrphansNative(planInput, roots, req.ProjectRoot, cliHome, stdout); err != nil {
 		return result, materializeFatal(stderr, err.Error())
 	}
 	projectcache.RemoveRecipeCommandLeftovers(req.ProjectRoot, cliHome, nil, commandSources, stdout, stderr)
@@ -418,13 +418,15 @@ func warnReconcileStampFailure(stderr io.Writer, catalogDir, recipeID string, er
 // cleanOrphansNative runs the shared orphan plan/apply through the root
 // CleanOrphans boundary, which owns the lock read, the success lines and the
 // stale-lock prune. The lock path is the project lock.
-func cleanOrphansNative(planInput shared.OrphanPlanInput, roots shared.OrphanApplyRoots, projectRoot string, stdout io.Writer) (shared.OrphanApplyOutcome, error) {
+func cleanOrphansNative(planInput shared.OrphanPlanInput, roots shared.OrphanApplyRoots, projectRoot, cliHome string, stdout io.Writer) (shared.OrphanApplyOutcome, error) {
 	lockPath := filepath.Join(projectRoot, "ai-specs", ".ai-specs.lock")
 	return CleanOrphans(OrphanCleanupInput{
-		PlanInput: planInput,
-		Roots:     roots,
-		LockPath:  lockPath,
-		Output:    stdout,
+		PlanInput:   planInput,
+		Roots:       roots,
+		LockPath:    lockPath,
+		Output:      stdout,
+		ProjectRoot: projectRoot,
+		CLIHome:     cliHome,
 	}, os.RemoveAll)
 }
 

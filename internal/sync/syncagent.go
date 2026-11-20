@@ -37,6 +37,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	shared "ai-specs.dev/worktree-gate/shared"
+
+	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/projectcache"
 	"ai-specs.dev/ai-specs/internal/skills"
 	"ai-specs.dev/ai-specs/internal/toml"
@@ -88,6 +91,8 @@ type agentOptions struct {
 	recipeMCP          string
 	resolvedConfig     string
 	resolvedHooks      string
+	syncHookEvents     bool
+	commands           commandSync
 	adoptBrief         bool
 	selectAll          bool
 	selected           []string
@@ -171,6 +176,15 @@ func RunAgent(args []string, home string, stdin io.Reader, stdout, stderr io.Wri
 		}
 	}
 
+	// Agent-path preflight before ANY write of this run: runAgentSingle's
+	// materialize fallback prunes lock deps and can write the lock, so the
+	// refusal must come first (S1, T6 follow-up).
+	if targets := selectedAgentsFor(filepath.Join(absSource, "ai-specs", "ai-specs.toml"), opts); len(targets) > 0 {
+		if rc := preflightAgentPaths(absSource, absTarget, targets, stderr); rc != 0 {
+			return 1
+		}
+	}
+
 	child := agentOptions{
 		sourceRoot:     absSource,
 		target:         absTarget,
@@ -248,6 +262,16 @@ func (r *runner) runAgentStandaloneFanout(root string, opts agentOptions, p plan
 	fmt.Fprintln(s.out, "  mode:        public root fan-out (declared-only)")
 	fmt.Fprintln(s.out, "")
 
+	// Agent-path preflight for every target, before the first write of any of
+	// them (the children repeat it; they would run after this target's own
+	// writes otherwise).
+	fanoutAgents := selectedAgentsFor(filepath.Join(root, "ai-specs", "ai-specs.toml"), opts)
+	for _, resolvedTarget := range paths {
+		if rc := preflightAgentPaths(root, resolvedTarget, fanoutAgents, s.errW); rc != 0 {
+			return 1
+		}
+	}
+
 	// Resolved-config for subrepo AGENTS.md enrichment: deliberately
 	// copy-free/hook-free/lock-free (--resolved-config-only), merged onto the
 	// script's stdout by the shell's `2>&1` (one fd, kernel write order).
@@ -323,6 +347,8 @@ type agentRun struct {
 	recipeMCP      string
 	resolvedConfig string
 	resolvedHooks  string
+	syncHookEvents bool
+	commands       commandSync
 	adoptBrief     bool
 	verbose        bool
 	selectAll      bool
@@ -363,6 +389,8 @@ func buildAgentRun(r *runner, opts agentOptions, s agentStreams, nested bool) (*
 		recipeMCP:      opts.recipeMCP,
 		resolvedConfig: opts.resolvedConfig,
 		resolvedHooks:  opts.resolvedHooks,
+		syncHookEvents: opts.syncHookEvents,
+		commands:       opts.commands,
 		adoptBrief:     opts.adoptBrief,
 		verbose:        opts.verbose,
 		selectAll:      opts.selectAll,
@@ -542,6 +570,16 @@ func (a *agentRun) runBody() int {
 		targets = a.enabledAgents
 	}
 
+	// Agent-path preflight (S1, parity contract §4): a real directory or file
+	// where an agent's skills symlink belongs is a hard error, never removed,
+	// and no agent destination may be reached through a symlinked ancestor.
+	// Checked for every agent of this run BEFORE any target write, so a nested
+	// or direct run is safe even when the early entry-point preflight is
+	// bypassed (sync spine child runs).
+	if rc := preflightAgentPaths(a.sourceRoot, a.targetPath, targets, a.errW); rc != 0 {
+		return rc
+	}
+
 	// D24 (lib/sync-agent.sh:403-410): ensure the target workspace BEFORE
 	// reporting success, so a subrepo still receives its artifacts and a root
 	// workspace missing AGENTS.md fails instead of exiting 0.
@@ -704,6 +742,12 @@ func (a *agentRun) ensureTargetWorkspace(out, errW io.Writer) int {
 	}
 
 	targetAiSpecs := filepath.Join(a.targetPath, "ai-specs")
+	// Containment before the first write of the mirror (T6d): `sub-ai-specs`
+	// may be a symlink; the mirror must never land outside the target.
+	if err := projectWriteGuard(a.targetPath, targetAiSpecs, true); err != nil {
+		fmt.Fprintf(errW, "    ✗ %s\n", err)
+		return 1
+	}
 	// `mkdir -p "$TARGET_AI_SPECS"` runs bare at top level (set -e): the
 	// mkdir binary prints its coreutils shape — an occupied leaf is File
 	// exists — and the script dies rc 1 (measured RED probe P4).
@@ -718,10 +762,10 @@ func (a *agentRun) ensureTargetWorkspace(out, errW io.Writer) int {
 	}); rc != 0 {
 		return rc
 	}
-	if rc := mirrorDirectory(a.resolvedSkillsDir, filepath.Join(targetAiSpecs, "skills"), errW); rc != 0 {
+	if rc := mirrorDirectory(a.targetPath, a.resolvedSkillsDir, filepath.Join(targetAiSpecs, "skills"), errW); rc != 0 {
 		return rc
 	}
-	if rc := mirrorDirectory(a.mergedCommandsDir, filepath.Join(targetAiSpecs, "commands"), errW); rc != 0 {
+	if rc := mirrorDirectory(a.targetPath, a.mergedCommandsDir, filepath.Join(targetAiSpecs, "commands"), errW); rc != 0 {
 		return rc
 	}
 
@@ -752,6 +796,112 @@ func (a *agentRun) ensureTargetWorkspace(out, errW io.Writer) int {
 	return 0
 }
 
+// agentPathFields are the platform rows that name a destination sync writes for
+// an agent, relative to the run's target.
+var agentPathFields = []string{
+	"instructions_path", "skills_dir", "mcp_config_path", "commands_dir", "runtime_hooks_target",
+}
+
+// symlinkedAncestorOutside reports the first symlinked ancestor of dest below
+// targetPath that does not fully resolve inside root (the MAIN project root, so
+// a declared subrepo's links to root-owned directories are allowed) or inside
+// targetPath itself (an external declared target). A link that cannot be
+// resolved (dangling, loop) counts as outside: if in doubt, refuse. T6b.
+func symlinkedAncestorOutside(root, targetPath, dest string) (string, bool) {
+	rel, err := filepath.Rel(targetPath, dest)
+	if err != nil {
+		return dest, false
+	}
+	dir := filepath.Dir(rel)
+	if dir == "." {
+		return "", false
+	}
+	cur := targetPath
+	for _, part := range strings.Split(dir, string(filepath.Separator)) {
+		if part == "." || part == "" {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		info, statErr := os.Lstat(cur)
+		if statErr != nil || info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		resolved, rerr := filepath.EvalSymlinks(cur)
+		if rerr != nil {
+			return cur, true
+		}
+		// Compare against the RESOLVED roots: the platform's temp/home paths are
+		// themselves reached through symlinks (/var → /private/var).
+		rootReal := projectcache.ResolvePath(root)
+		if !shared.TemplatePathContained(rootReal, resolved) &&
+			!shared.TemplatePathContained(projectcache.ResolvePath(targetPath), resolved) {
+			return cur, true
+		}
+		// Inside the root is not enough: an agent parent may not resolve into the
+		// reconciled project tree or the repository (T6c follow-up).
+		for _, tree := range protectedTrees {
+			if shared.TemplatePathContained(filepath.Join(rootReal, tree), resolved) {
+				return cur, true
+			}
+		}
+	}
+	return "", false
+}
+
+// preflightAgentPaths is the ONE ownership check `sync` and `sync-agent` share
+// before their first write (S1, parity contract §4): a real directory or file
+// where an agent's skills symlink belongs is a hard error (never removed), and
+// no agent destination may be reached through a symlinked ancestor below the
+// project root — otherwise the write would land outside the project. A symlink
+// at the skills path itself is legal (correct, stale or dangling: it is
+// relinked), so only ANCESTORS are refused.
+func preflightAgentPaths(root, targetPath string, targets []string, errW io.Writer) int {
+	for _, agent := range targets {
+		if _, ok := platformGet(agent, "native"); !ok {
+			continue // counted by the per-agent loop
+		}
+		for _, field := range agentPathFields {
+			rel, _ := platformGet(agent, field)
+			if rel == "" {
+				continue
+			}
+			path := filepath.Join(targetPath, rel)
+			if field == "skills_dir" {
+				if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink == 0 {
+					fmt.Fprintf(errW, "    ✗ refuse to overwrite non-symlink: %s — move or delete it so ai-specs can create the symlink\n", path)
+					return 1
+				}
+			}
+			if ancestor, bad := symlinkedAncestorOutside(root, targetPath, path); bad {
+				fmt.Fprintf(errW, "    ✗ ancestor path is a symlink: %s — replace it with a real directory so ai-specs can write inside the project\n", ancestor)
+				return 1
+			}
+			// The listed destination is not the whole story: the write follows
+			// its leaf or a generated child. Guard the resolved location too.
+			followLeaf := field != "skills_dir" && field != "instructions_path"
+			if err := agentWriteGuard(root, path, followLeaf); err != nil {
+				fmt.Fprintf(errW, "    ✗ %s\n", err)
+				return 1
+			}
+		}
+	}
+	return 0
+}
+
+// selectedAgentsFor resolves the agents a preflight must cover before the run
+// body exists: the explicit selectors, else [agents].enabled. A manifest it
+// cannot read yields nil so the unchanged later step reports that failure.
+func selectedAgentsFor(tomlPath string, opts agentOptions) []string {
+	if !opts.selectAll && len(opts.selected) > 0 {
+		return opts.selected
+	}
+	enabled, rc := readEnabledAgents(tomlPath, io.Discard)
+	if rc != 0 {
+		return nil
+	}
+	return enabled
+}
+
 // syncOneAgent is lib/sync-agent.sh:448-542.
 func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 	if _, ok := platformGet(agent, "native"); !ok {
@@ -773,7 +923,7 @@ func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 
 	// Instructions: a RELATIVE symlink to the target AGENTS.md.
 	if instr, _ := platformGet(agent, "instructions_path"); instr != "" {
-		if rc, refused := makeRelativeSymlinkWithRefusal(filepath.Join(a.targetPath, "AGENTS.md"), filepath.Join(a.targetPath, instr), out, errW); rc != 0 {
+		if rc, refused := makeRelativeSymlinkWithRefusal(a.sourceRoot, filepath.Join(a.targetPath, "AGENTS.md"), filepath.Join(a.targetPath, instr), out, errW); rc != 0 {
 			if refused {
 				fmt.Fprintln(errW, "    → move or delete the file above, then re-run sync")
 				a.blockedInstructions = append(a.blockedInstructions, agent)
@@ -783,34 +933,24 @@ func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 		}
 	}
 
-	// Skills: an ABSOLUTE symlink to the cache-backed resolved skills; a real
-	// directory from a legacy install is replaced (lib/sync-agent.sh:476-481).
+	// Skills: an ABSOLUTE symlink to the cache-backed resolved skills. A real
+	// directory or file here is refused (never overwritten, parity contract
+	// §4), already caught by the preflight; only a symlink reaches this point,
+	// where writeSymlinkWithRefusal relinks a stale or dangling one in place.
 	if skillsDir, _ := platformGet(agent, "skills_dir"); skillsDir != "" {
 		skillsLink := filepath.Join(a.targetPath, skillsDir)
-		if _, err := os.Stat(skillsLink); err == nil {
-			if info, lerr := os.Lstat(skillsLink); lerr == nil && info.Mode()&os.ModeSymlink == 0 {
-				if rc := removeTree(skillsLink, errW); rc != 0 {
-					return rc
-				}
-			}
-		}
-		if rc := makeSkillsSymlink(a.skillsSource, skillsLink, out, errW); rc != 0 {
+		if rc := makeSkillsSymlink(a.sourceRoot, a.skillsSource, skillsLink, out, errW); rc != 0 {
 			return rc
 		}
 	}
 
-	// MCP: rendered only when the manifest declares servers; otherwise a
-	// compact-surviving notice.
+	// MCP: rendered per server (S5) whenever the manifest declares servers; with
+	// none left, the recorded managed servers are still pruned.
 	mcpPath, _ := platformGet(agent, "mcp_config_path")
 	mcpKey, _ := platformGet(agent, "mcp_key")
 	if mcpPath != "" && mcpKey != "" {
-		if a.mcpCount > 0 {
-			opts := RenderMCPOptions{RecipeMCPPath: a.recipeMCP}
-			if rc := RenderMCPFile(a.tomlPath, agent, filepath.Join(a.targetPath, mcpPath), mcpKey, opts, out, errW); rc != 0 {
-				return rc
-			}
-		} else {
-			fmt.Fprintln(out, "    ℹ mcp skipped (no [mcp.*] in manifest)")
+		if rc := a.syncMCP(agent, mcpPath, mcpKey, out, errW); rc != 0 {
+			return rc
 		}
 	}
 
@@ -822,15 +962,130 @@ func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 	}
 
 	// Runtime hooks: only when --resolved-hooks was passed AND the file
-	// exists (D22: standalone runs render no hooks). A render failure is
-	// swallowed by the shell's `if python3 ...; then echo ✓; fi`: no notice,
-	// no failure.
+	// exists (D22: standalone runs render no hooks). A render failure used to be
+	// swallowed by the shell's `if python3 ...; then echo ✓; fi`; a REFUSAL now
+	// fails the run (T6d): silently exiting 0 would report success after a write
+	// did not happen.
 	if hooksTarget, _ := platformGet(agent, "runtime_hooks_target"); hooksTarget != "" && a.resolvedHooks != "" && isRegularFilePath(a.resolvedHooks) {
-		if RenderHooks(a.resolvedHooks, agent, a.targetPath, out, errW) == 0 {
-			fmt.Fprintf(out, "    ✓ runtime hooks %s\n", hooksTarget)
+		shims := map[string]string{}
+		if rc := renderHooksRecording(a.resolvedHooks, agent, a.targetPath, a.sourceRoot, errW, a.syncHookEvents, shims); rc != 0 {
+			return rc
 		}
+		if err := a.recordHookShims(shims); err != nil {
+			fmt.Fprintln(errW, err)
+			return 1
+		}
+		fmt.Fprintf(out, "    ✓ runtime hooks %s\n", hooksTarget)
 	}
 	return 0
+}
+
+// recordHookShims keeps the lock's shim ownership record in step with what this
+// agent just wrote (S3): the record is what licenses deleting a shim later, even
+// after an edit.
+func (a *agentRun) recordHookShims(shims map[string]string) error {
+	if len(shims) == 0 {
+		return nil
+	}
+	lockPath := filepath.Join(a.sourceRoot, bundledLockRel)
+	lk, err := lock.LoadLock(lockPath)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for path, owner := range shims {
+		rel, err := filepath.Rel(a.sourceRoot, path)
+		if err != nil {
+			continue
+		}
+		rel = filepath.ToSlash(rel)
+		if lk.Hooks[rel] == owner {
+			continue
+		}
+		lock.SetHookShim(lk, rel, owner)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return lock.WriteLock(lockPath, lk)
+}
+
+// syncMCP renders one agent's MCP config with the lock's per-target server
+// ownership (S5), then records what ai-specs now manages there. Without a
+// readable ownership record nothing recorded is removed, so a lock failure
+// stops before touching the target.
+func (a *agentRun) syncMCP(agent, mcpPath, mcpKey string, out, errW io.Writer) int {
+	target := filepath.Join(a.targetPath, mcpPath)
+	lockPath := filepath.Join(a.sourceRoot, bundledLockRel)
+	rel, relErr := filepath.Rel(a.sourceRoot, target)
+	rel = filepath.ToSlash(rel)
+	var owned []string
+	var record map[string]any
+	recorded := false
+	blockSHA := ""
+	if relErr == nil {
+		lk, err := lock.LoadLock(lockPath)
+		if err != nil {
+			fmt.Fprintln(errW, err)
+			return 1
+		}
+		record, recorded = lk.MCP[rel]
+		blockSHA = lk.MCPBlock[rel]
+		for name := range record {
+			owned = append(owned, name)
+		}
+	}
+	// Nothing declared, nothing recorded and no target to inspect: the legacy
+	// notice, and the record is left untouched (a marker entry survives).
+	if a.mcpCount == 0 && len(owned) == 0 && (recorded || !mcpIsFile(target)) {
+		fmt.Fprintln(out, "    ℹ mcp skipped (no [mcp.*] in manifest)")
+		return 0
+	}
+	res := MCPResult{}
+	opts := RenderMCPOptions{RecipeMCPPath: a.recipeMCP, Owned: owned, Recorded: recorded, BlockSHA: blockSHA, Result: &res}
+	if rc := RenderMCPFile(a.tomlPath, agent, target, mcpKey, opts, out, errW); rc != 0 {
+		return rc
+	}
+	if a.mcpCount == 0 && len(owned) == 0 && !res.Noticed && !res.Wrote && len(res.Preserved) == 0 {
+		fmt.Fprintln(out, "    ℹ mcp skipped (no [mcp.*] in manifest)")
+	}
+	// The marker means "the user has been told about the servers ai-specs does
+	// not manage here", so it survives as long as such a server remains —
+	// unrecorded or preserved in a name collision.
+	userServers := len(res.Unrecorded) > 0 || len(res.Preserved) > 0
+	notice := res.Noticed || (recorded && userServers)
+	if relErr != nil || (mcpOwnershipEqual(record, recorded, res.Managed, notice) && blockSHA == res.BlockSHA) {
+		return 0
+	}
+	if err := applyLockRecord(lockPath, func(lk *lock.Lock) {
+		lock.SetMCPOwnership(lk, rel, res.Managed, notice)
+		lock.SetMCPBlockHash(lk, rel, res.BlockSHA)
+	}); err != nil {
+		fmt.Fprintln(errW, err)
+		return 1
+	}
+	return 0
+}
+
+// mcpOwnershipEqual reports whether the lock already holds exactly the record a
+// render implies — the managed servers with their rendered hashes, or the bare
+// upgrade-notice marker — so an unchanged sync writes no lock.
+func mcpOwnershipEqual(record map[string]any, recorded bool, managed map[string]string, notice bool) bool {
+	if len(managed) == 0 {
+		// An empty record is either absent (nothing to remember) or the marker;
+		// a record that still names removed servers is always rewritten.
+		return len(record) == 0 && recorded == notice
+	}
+	if !recorded || len(record) != len(managed) {
+		return false
+	}
+	for name, hash := range managed {
+		if s, ok := record[name].(string); !ok || s != hash {
+			return false
+		}
+	}
+	return true
 }
 
 // syncCommands is the commands fan-out with the D3' semantics: managed names
@@ -839,6 +1094,12 @@ func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 // warning (lib/sync-agent.sh:497-531).
 func (a *agentRun) syncCommands(cmdDir string, out, errW io.Writer) int {
 	dest := filepath.Join(a.targetPath, cmdDir)
+	// Writes go INTO the commands dir, so the dir's own leaf is followed: a
+	// `commands` symlink that resolves outside the project refuses here (T6c).
+	if err := agentWriteGuard(a.sourceRoot, dest, true); err != nil {
+		fmt.Fprintf(errW, "    ✗ %s\n", err)
+		return 1
+	}
 	// `mkdir -p "$dest" || return $?`: the mkdir binary prints the
 	// coreutils-shaped error (an intermediate occupied component is Not a
 	// directory) and the failure DOES abort the agent step with mkdir's rc.
@@ -846,12 +1107,30 @@ func (a *agentRun) syncCommands(cmdDir string, out, errW io.Writer) int {
 		printChildErr(errW, "mkdir", err)
 		return 1
 	}
+	lockPath := filepath.Join(a.sourceRoot, bundledLockRel)
+	var previous map[string]map[string]any
+	if len(a.commands.owners) > 0 {
+		lk, err := lock.LoadLock(lockPath)
+		if err != nil {
+			fmt.Fprintln(errW, err)
+			return 1
+		}
+		previous = lk.Managed
+	}
 	copied := 0
 	managed := map[string]bool{}
+	owned := map[string]string{}
 	for _, src := range globMDFilesSh(a.commandsSource) {
 		name := filepath.Base(src)
 		targetFile := filepath.Join(dest, name)
-		if info, err := os.Lstat(targetFile); err == nil {
+		// The managed name's leaf is replaced (unlinked first), so only its
+		// parent chain has to stay inside the project.
+		if err := agentWriteGuard(a.sourceRoot, targetFile, false); err != nil {
+			fmt.Fprintf(errW, "    ✗ %s\n", err)
+			return 1
+		}
+		info, statErr := os.Lstat(targetFile)
+		if statErr == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
 				// Never write through a symlink occupying a managed name;
 				// `rm -f ... || return $?` aborts with rm's own shape.
@@ -875,6 +1154,30 @@ func (a *agentRun) syncCommands(cmdDir string, out, errW io.Writer) int {
 		}
 		managed[name] = true
 		copied++
+		rel, _ := filepath.Rel(a.sourceRoot, targetFile)
+		record, recipe := previous[rel], a.commands.owners[name]
+		// Copying over an untracked destination does not make it ours to delete.
+		if recipe != "" && (os.IsNotExist(statErr) || record["kind"] == RecipeCommandKind && record["recipe"] == recipe) && !isRegularFilePath(filepath.Join(a.sourceRoot, "ai-specs", "commands", name)) {
+			hash, err := lock.Sha256OfFile(targetFile)
+			if err != nil {
+				fmt.Fprintln(errW, err)
+				return 1
+			}
+			owned[name] = hash
+		}
+	}
+	if len(owned) > 0 {
+		if err := applyLockRecord(lockPath, func(lk *lock.Lock) {
+			kind := RecipeCommandKind
+			for name, hash := range owned {
+				rel, _ := filepath.Rel(a.sourceRoot, filepath.Join(dest, name))
+				recipe := a.commands.owners[name]
+				lock.SetManagedOverride(lk, rel, hash, &recipe, nil, &kind, nil)
+			}
+		}); err != nil {
+			fmt.Fprintln(errW, err)
+			return 1
+		}
 	}
 	for _, name := range globStarNames(dest) {
 		full := filepath.Join(dest, name)
@@ -882,7 +1185,7 @@ func (a *agentRun) syncCommands(cmdDir string, out, errW io.Writer) int {
 		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
-		if !managed[name] {
+		if !managed[name] && !a.commands.warned[full] {
 			fmt.Fprintf(errW, "    ! preserved non-managed file %s/%s (move it to ai-specs/commands/ to manage it)\n", cmdDir, name)
 		}
 	}
@@ -1099,8 +1402,12 @@ func argValue(args []string, i *int) (string, bool) {
 
 // makeSkillsSymlink links with an ABSOLUTE realpath target: cache-backed
 // resolved skills live out of tree.
-func makeSkillsSymlink(targetAbs, linkPath string, out, errW io.Writer) int {
+func makeSkillsSymlink(projectRoot, targetAbs, linkPath string, out, errW io.Writer) int {
 	linkDir := filepath.Dir(linkPath)
+	if err := agentWriteGuard(projectRoot, linkPath, false); err != nil {
+		fmt.Fprintf(errW, "    ✗ %s\n", err)
+		return 1
+	}
 	if err := mkdirPMirror(linkDir); err != nil {
 		// `mkdir -p "$link_dir"` has no `|| return` in the oracle: the failure
 		// prints coreutils-shaped stderr and the helper CONTINUES (errexit is
@@ -1113,12 +1420,19 @@ func makeSkillsSymlink(targetAbs, linkPath string, out, errW io.Writer) int {
 }
 
 // makeRelativeSymlinkWithRefusal links relative to the link's directory and reports hard refusal on non-symlink occupancy.
-func makeRelativeSymlinkWithRefusal(targetAbs, linkPath string, out, errW io.Writer) (int, bool) {
+func makeRelativeSymlinkWithRefusal(projectRoot, targetAbs, linkPath string, out, errW io.Writer) (int, bool) {
 	linkDir := filepath.Dir(linkPath)
+	if err := agentWriteGuard(projectRoot, linkPath, false); err != nil {
+		fmt.Fprintf(errW, "    ✗ %s\n", err)
+		return 1, false
+	}
 	if err := mkdirPMirror(linkDir); err != nil {
 		printChildErr(errW, "mkdir", err)
 	}
-	rel, err := filepath.Rel(linkDir, targetAbs)
+	// The link lives at the link directory's RESOLVED location (`.omp` may be a
+	// symlink), so the relative target is computed between RESOLVED paths or it
+	// dangles (and /var → /private/var must not leak into the link text).
+	rel, err := filepath.Rel(projectcache.ResolvePath(linkDir), projectcache.ResolvePath(targetAbs))
 	if err != nil {
 		fmt.Fprintf(errW, "error: %s\n", err)
 		return 1, false
@@ -1215,7 +1529,13 @@ func mkdirPMirror(path string) error {
 // mirrorDirectory is mirror_directory (lib/sync-agent.sh:298-308). Its bare
 // `mkdir -p`/`rm -rf`/`cp -R` run at top level (set -e): failures print the
 // coreutils shape and die rc 1.
-func mirrorDirectory(src, dest string, errW io.Writer) int {
+func mirrorDirectory(root, src, dest string, errW io.Writer) int {
+	// The mirror REPLACES dest (rm -rf + mkdir + cp -R), so a leaf link is
+	// replaced unsafe-free; only the ancestors must stay inside the root (T6d).
+	if err := projectWriteGuard(root, dest, false); err != nil {
+		fmt.Fprintf(errW, "    ✗ %s\n", err)
+		return 1
+	}
 	if rc := removeTree(dest, errW); rc != 0 {
 		return rc
 	}

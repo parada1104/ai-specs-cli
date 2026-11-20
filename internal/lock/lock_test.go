@@ -935,3 +935,96 @@ func TestLegacyLockSectionsAreDroppedOnRewrite(t *testing.T) {
 		t.Errorf("meta lost:\n%s", text)
 	}
 }
+
+// The MCP server ownership record (S5) round-trips through the lock writer and
+// drops a target entry once nothing is managed there any more.
+func TestMCPOwnershipRecordRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".ai-specs.lock")
+	lk := NewLock()
+	SetMCPOwnership(lk, ".mcp.json", map[string]string{"beta": "hash-b", "alpha": "hash-a"}, false)
+	SetMCPOwnership(lk, ".codex/config.toml", map[string]string{"gamma": "hash-g"}, false)
+	if err := WriteLock(path, lk); err != nil {
+		t.Fatalf("WriteLock: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	want := "[mcp.\".codex/config.toml\"]\n\"gamma\" = \"hash-g\"\n\n" +
+		"[mcp.\".mcp.json\"]\n\"alpha\" = \"hash-a\"\n\"beta\" = \"hash-b\""
+	if !strings.Contains(text, want) {
+		t.Fatalf("mcp record not emitted in sorted order:\n%s", text)
+	}
+
+	loaded, err := LoadLock(path)
+	if err != nil {
+		t.Fatalf("LoadLock: %v", err)
+	}
+	if loaded.MCP[".mcp.json"]["alpha"] != "hash-a" || loaded.MCP[".codex/config.toml"]["gamma"] != "hash-g" {
+		t.Fatalf("mcp record not loaded: %v", loaded.MCP)
+	}
+
+	SetMCPOwnership(loaded, ".codex/config.toml", nil, false)
+	if _, ok := loaded.MCP[".codex/config.toml"]; ok {
+		t.Fatal("an empty record must drop the target entry")
+	}
+
+	// An empty record with the notice marker round-trips as a bare section.
+	SetMCPOwnership(loaded, ".pi/mcp.json", nil, true)
+	if err := WriteLock(path, loaded); err != nil {
+		t.Fatalf("WriteLock: %v", err)
+	}
+	raw, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "[mcp.\".pi/mcp.json\"]") {
+		t.Fatalf("notice marker not emitted:\n%s", raw)
+	}
+	reloaded, err := LoadLock(path)
+	if err != nil {
+		t.Fatalf("LoadLock: %v", err)
+	}
+	if entry, ok := reloaded.MCP[".pi/mcp.json"]; !ok || len(entry) != 0 {
+		t.Fatalf("notice marker not loaded: %v", reloaded.MCP)
+	}
+}
+
+func TestHookShimOwnershipRecordRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".ai-specs.lock")
+	lk := NewLock()
+	SetHookShim(lk, ".pi/extensions/hookdemo-main.ts", "ai-specs:hooks:hookdemo:main")
+	SetHookShim(lk, ".cursor/hooks/alpha-gate.sh", "ai-specs:hooks:alpha:gate")
+	if err := WriteLock(path, lk); err != nil {
+		t.Fatalf("WriteLock: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[hooks]\n\".cursor/hooks/alpha-gate.sh\" = \"ai-specs:hooks:alpha:gate\"\n" +
+		"\".pi/extensions/hookdemo-main.ts\" = \"ai-specs:hooks:hookdemo:main\""
+	if !strings.Contains(string(raw), want) {
+		t.Fatalf("hook shim records not emitted in sorted order:\n%s", raw)
+	}
+
+	loaded, err := LoadLock(path)
+	if err != nil {
+		t.Fatalf("LoadLock: %v", err)
+	}
+	if loaded.Hooks[".pi/extensions/hookdemo-main.ts"] != "ai-specs:hooks:hookdemo:main" {
+		t.Fatalf("hook shim record not loaded: %v", loaded.Hooks)
+	}
+
+	SetHookShim(loaded, ".pi/extensions/hookdemo-main.ts", "")
+	if _, ok := loaded.Hooks[".pi/extensions/hookdemo-main.ts"]; ok {
+		t.Fatal("an empty owner must drop the record")
+	}
+	if err := WriteLock(path, loaded); err != nil {
+		t.Fatalf("WriteLock: %v", err)
+	}
+	if raw, err := os.ReadFile(path); err != nil || strings.Contains(string(raw), "hookdemo-main") {
+		t.Fatalf("dropped record still emitted: %s (%v)", raw, err)
+	}
+}

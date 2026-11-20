@@ -271,6 +271,137 @@ old-launcher sync warning is added here.
 - Skills dirs (`.claude/skills`, `.cursor/skills`, …) → **absolute** symlink.
 - A real file where a symlink belongs is a **hard error**, never overwritten:
   `    ✗ refuse to overwrite non-symlink: <path>`.
+- A **real directory** at a skills path (`.claude/skills`, `.pi/skills`, …) is
+  the same hard error, never removed. Since T6 of `sync-ownership`, the legacy
+  `rm -rf` of a real skills dir is gone: `sync`/`sync-agent` refuses it in
+  preflight, before any target write of that run, with one line naming the path
+  and its resolution —
+  `    ✗ refuse to overwrite non-symlink: <path> — move or delete it so ai-specs can create the symlink`
+  — and exit 1; the directory and its contents are untouched. A symlink there
+  (correct, stale or dangling) keeps the relink behavior.
+- An agent destination reached through a **symlinked ancestor** directory
+  (`.claude/skills` while `.claude` → somewhere else, `.pi/mcp.json` while
+  `.pi` is a link, …) is judged by where that link LANDS (T6b): allowed when it
+  fully resolves **inside the main project root** (the root that contains the
+  declared subrepos), so `.claude -> ./config/claude` syncs normally and every
+  write lands inside the project; refused — with exit 1 and nothing written
+  inside or outside — when it resolves outside that root, when a chained link
+  ends outside it, or when it cannot be resolved (dangling or looping). The
+  refusal is the shared guard's line —
+  `    ✗ ancestor path is a symlink: <ancestor> — replace it with a real directory so ai-specs can write inside the project`
+  — and the comparison uses the resolved root (the platform's `/var` →
+  `/private/var` style links must not decide it). `sync` and `sync-agent` run
+  the SAME preflight over every fan-out target and every selected agent's
+  destinations (`instructions_path`, `skills_dir`, `mcp_config_path`,
+  `commands_dir`, `runtime_hooks_target`) as their first action, before the
+  lock, `.gitignore`, `.envrc`, `AGENTS.md`, materialize or dep-prune steps, so
+  a refusal leaves the project byte-identical. The inside-root rule is ONE
+  helper (`internal/sync/syncagent.go` `symlinkedAncestorOutside`) shared by
+  the agent-destination preflight AND the runtime-hook prune plan
+  (`internal/sync/hooksprune.go` `pruneHookFile`): a deletion through an
+  inside-root link still stays inside the project, so `planHookShimPrune`, the
+  claude/cursor hook-wiring bucket prune and the recorded-shim apply all accept
+  it while still refusing outside, chained-outside and dangling links. The
+  remaining guards keep the STRICT rule (any symlinked ancestor refuses,
+  `shared.EnsureTemplateAncestorsReal`): the shared `pruneFile` still used by
+  command pruning (`internal/sync/commandsprune.go`) and recipe-artifact orphans
+  (`internal/sync/orphans.go`), recipe/template artifacts
+  (`catalog/recipes/worktree-flow/gate/shared/templateactuator.go`) and the sync
+  lock in the CLI home (`internal/sync/synclock_unix.go`). Those were not
+  relaxed because the inside-root full-sync case never reaches them (the linked
+  agent dirs hold no command cache, recipe artifact or sync lock). The per-run
+  body repeats the check for nested and direct child runs.
+- **Write containment (T6c).** A listed destination is not the whole write path:
+  the leaf itself (`.pi/mcp.json`), a generated child
+  (`.pi/extensions/<shim>.ts`) or a generated subdirectory
+  (`commands/`, `hooks/`, `plugin/`) can be its own symlink. One guard,
+  `agentWriteGuard` (`internal/sync/agentwrite.go`), resolves where a write
+  would ACTUALLY land — following an existing leaf symlink and every ancestor,
+  with `resolveWriteTarget` re-joining a not-yet-existing tail onto the deepest
+  existing ancestor and treating a dangling/looping link as an error — and
+  refuses when that location is outside the resolved main project root or
+  inside the protected `ai-specs/` / `.git/` trees. Every agent-destination
+  write and create routes through it: the MCP JSON/TOML renderer
+  (`internal/sync/mcprender.go` target + `.bak`), the hook settings/shim
+  writers (`internal/sync/hooksrender.go` `hooksWriteJSONFile`/`hooksWriteText`,
+  all five renderers, including the prune rewrite), the invalid-JSON backup
+  (`internal/sync/jsontarget.go`), the command copies and their directory
+  (`internal/sync/syncagent.go` `syncCommands`), and the agent skills /
+  instruction links (`makeSkillsSymlink` / `makeRelativeSymlinkWithRefusal`
+  guard the parent because those writes REPLACE the leaf link, never write
+  through it). The preflight runs the same guard over the five listed
+  destinations, so the common cases refuse before any write. An agent parent
+  that resolves inside the root but into `ai-specs/` or `.git/` is refused
+  (case-insensitive spellings are a follow-up). Deliberately NOT routed: the
+  target's own `ai-specs/**` mirror (`mirrorDirectory`), AGENTS.md rendering,
+  `.gitignore`/`.envrc` scaffolding, vendored/bundled caches, recipe artifacts
+  and the mktemp capture files — none of them is an agent destination, and the
+  `ai-specs/` refusal would reject the first two by design.
+- **Project-tree, cache and brief containment (T6d).** The same mechanism
+  (`internal/projectcache` `ContainWrite`/`ResolveWriteTarget`, used through
+  `projectWriteGuard` / `homeWriteGuard` in `internal/sync`) now covers the
+  sites the agent preflight cannot see:
+  - project tree — the subrepo `ai-specs/` mirror and its `skills/`+`commands/`
+    tree (`internal/sync/syncagent.go` `ensureTargetWorkspace`,
+    `mirrorDirectory`, including the `rm -rf` that precedes the copy), the
+    ai-specs and root `.gitignore` renders (`internal/sync/gitignore.go`), the
+    env scaffolding files and their `.bak` (`internal/sync/envscaffold.go`),
+    and the brief render (`internal/sync/agentsrender.go`, which now refuses
+    BEFORE creating a dangling outside target). `sync` also runs a
+    project-tree preflight over those destinations plus every fan-out target's
+    `ai-specs/` mirror before its first step, so a refusal is write-free.
+    Unlike an agent destination, `ai-specs/` is a legitimate target here; only
+    the resolved-root containment applies.
+  - CLI home — the per-project cache and its `meta.toml`
+    (`internal/projectcache` `EnsureCache`), the `sync.lock`
+    (`internal/sync/synclock_unix.go`), the `.deps` vendoring tree
+    (`internal/sync/vendorskills.go`, project-owned variant included) and the
+    `.bundled` caches (`internal/sync/refreshbundled.go`). These paths are
+    ai-specs-owned, so the strict rule applies: ANY symlink below the home —
+    a dangling leaf included — refuses instead of being created or written
+    through.
+  - A refused generated hook shim now fails the run (rc 1) instead of leaving
+    the shell's `if python3 ...; then echo ✓; fi` swallow in place: reporting
+    success after a write that did not happen is worse than the deviation.
+- **Orphan and leftover cleanup containment (T6e).** Orphan cleanup deletes
+  `<root>/<name>` under three roots, so the ROOT and each candidate are
+  contained before anything is deleted: the in-project `ai-specs/.deps` root
+  follows the project rule, the CLI-cache `.deps` and `.recipe` roots the strict
+  home rule (`internal/sync/orphans.go` `containOrphanRoots`, called by
+  `CleanOrphans` before the shared apply). A redirected root fails the run
+  (rc 1) and deletes nothing, and the same roots are part of the sync spine's
+  project-tree preflight so the refusal happens before the materialize step
+  writes anything. `CacheRoot` RESOLVES the per-project cache-key directory, so
+  the containment check uses the LEXICAL key path — a symlink there refuses
+  (this also covers the standalone `sync-agent` route that used to write into
+  the link target inside the home). The best-effort leftover sweeps
+  (`internal/projectcache` `RemoveBundledSkillLeftovers`,
+  `RemoveRecipeCommandLeftovers`, `RemoveLegacyOrigin`, `MergeCommands`) contain
+  each tree they delete the same way (a symlink LEAF stays the primitive's own
+  shutil-shaped refusal, so the pinned messages are unchanged), and the
+  recipe-artifact prune contains each managed artifact path before removing it.
+- **Leftover, migration and legacy-cleanup containment (T6f).** The
+  bundled-command and recipe-command leftover removal, the legacy override
+  migration, and the legacy `premerge_guardian.py` / empty `bin/` removal go
+  through one project-rule handle (`internal/projectcache` `ProjectTree`), so a
+  symlinked `commands/`, `recipes/<id>/` or `bin/` that resolves outside the
+  project never has an outside file deleted or written. The sync spine's
+  project-tree preflight also covers `ai-specs/.deps`, each target's
+  `ai-specs/` managed dirs and every `ai-specs/recipes/<id>` DIRECTORY, so the
+  refusal (rc 1) happens before the first write. That preflight — read-only,
+  like the agent-destination one — runs BEFORE the sync lock, which itself
+  creates the CLI-home cache directory and `sync.lock`: a refusal therefore
+  writes nothing at all, not even the cache, while every actual write and
+  delete stays under the lock and is contained again at its own site (ordering
+  chosen because the checks only resolve paths; serializing them would buy
+  nothing and would make the refusal impossible to keep write-free). A
+  symlinked recipe DIRECTORY resolving outside is still refused; a file link
+  under `ai-specs/recipes/` (e.g. a hand-made `recipes/README.md`) is not a
+  managed recipe dir, so it never blocks a sync. Removal failures keep their
+  two distinct diagnostics: a containment refusal says `  ! kept leftover
+  ai-specs/commands/<name>: …` (nothing was attempted) and an ordinary unlink
+  error keeps the frozen `  ! failed to remove leftover
+  ai-specs/commands/<name>: <error>`.
 
 ---
 
@@ -810,6 +941,170 @@ original `doctor._tracker_ledger_in_play`: a tracker witness whose state is
 `unbound` (written by `sync` when no tracker exists) no longer makes the ledger
 relevant, so `doctor` does not grade a ledger there. A configured or declared
 tracker, or a witness in any other state, still counts.
+
+### Non-finite literals in sync JSON targets — TOLERANT (accepted divergence, Robert, 2026-11-18)
+
+Legacy Python accepted bare `NaN`, `Infinity`, and `-Infinity` in hook and MCP
+JSON targets. Go sync treats those literals as invalid JSON: before rewriting,
+it saves the exact original bytes to the first free `.bak` or `.bak.N`, warns
+once on stderr naming the target and backup, then regenerates as from `{}`.
+This applies to existing JSON write targets, not read-only inputs or Codex TOML.
+Valid overflowing numbers such as `1e400` remain valid input, and Go writes
+the resulting infinities as `1e999` / `-1e999` (legacy wrote bare `Infinity`),
+so a later sync never treats its own output as invalid. The same rule applies to
+recipe MCP input: a recipe `--recipe-mcp` document carrying bare `NaN` or
+`Infinity` fails with one `error:` line naming that file and leaves the target
+untouched, where legacy wrote the bare constants into the target (and `nan` /
+`inf` for Codex TOML).
+
+### MCP config merge is per server — BEHAVIOUR CHANGE (Robert, 2026-11-18, S5)
+
+Legacy replaced the whole `mcpServers` / `mcp` key (and rebuilt every
+`[mcp_servers.*]` block of Codex TOML), so a user-added server was destroyed on
+every sync. Go records the server names it manages per target in the lock's
+`[mcp."<target>"]` section (name → sha256 of the rendered entry) and touches
+only those:
+
+- a recorded server is updated in place, and removed from every agent target
+  when the manifest stops declaring it — including when zero servers remain
+  (legacy skipped the render entirely at zero, leaving the stale entries);
+- a server the lock does not record is never overwritten or deleted; a
+  same-named entry that was never recorded as ours is kept and reported with
+  `    ! preserved user MCP server "<name>" in <target> (not recorded as
+  ai-specs-managed)` (conservative choice: user-authored wins);
+- **Codex TOML is written inside one managed block** (`.codex/config.toml` only;
+  the JSON agents merge per server above). ai-specs emits
+  `# managed-by: ai-specs (do not remove block): MCP servers` /
+  `# end managed-by: ai-specs: MCP servers` — the same managed-block shape as
+  the `.envrc` block — around its own tables and never rewrites a byte outside
+  those markers: comments, CRLF line endings, ordering, formatting and servers
+  declared in any TOML form survive exactly. The block is appended after one
+  blank separator line when absent, and removed entirely (with that separator)
+  once no managed server remains, which restores the original bytes. The markers
+  are only trusted when the split validates semantically: the whole file, the
+  outside bytes and the block must each parse, the block must hold nothing but
+  `[<mcp_key>.<name>]` tables, and the whole file must equal the outside document
+  plus the block's servers name by name. Malformed markers (begin without end,
+  duplicates, end before begin) and marker lines that do not delimit a real block
+  — an example inside a user multi-line string, a begin marker moved above a
+  user table — refuse the render: rc 1, one `error:` line, file byte-identical.
+  A managed server name that is not a bare TOML key is written quoted
+  (`[mcp_servers."dev.server"]`, with `\UXXXXXXXX` above U+FFFF so a non-BMP
+  name round-trips instead of becoming an invalid UTF-16 surrogate pair), and
+  after rendering every written name must exist at `<mcp_key>.<name>` in the
+  parsed result or the render refuses, so a dotted name can never nest into a
+  user server. Beyond proving the reconstruction, the block is ours only around
+  servers the lock records: any server inside the markers that is not in the
+  `[mcp."<target>"]` record (a hand-moved end marker wrapping a user table, or a
+  block with no record at all) refuses the render with one line naming the
+  unowned server(s) and telling the user to move them outside the block, leaving
+  the file and the lock byte-identical. ai-specs writes no comment inside its
+  block other than the two markers, so a comment line between them (the parsed
+  comparison cannot see text) is user content the marker cut would delete: the
+  render refuses, names the comment and asks for it to be moved outside the
+  markers, leaving the file and the lock byte-identical. The definitive guard is
+  the **block hash**: the lock records `[mcp-block."<target>"]` with the sha256
+  of the exact bytes ai-specs last wrote for the block (from the begin marker
+  line through the end marker line, end-of-line included — the same span the
+  marker cut removes). On every sync, a block whose current bytes differ from
+  that hash was edited by hand — an inline comment on a generated line, an
+  edited value, an added table, a moved marker — and refuses atomically: rc 1,
+  one `error:` line saying the block was edited and to move user content outside
+  the markers or restore the block (e.g. by deleting it), with the file and the
+  MCP record byte-identical. A matching hash proceeds normally (update or prune).
+  There is no adoption path: a block present with no recorded hash has no proof
+  it is ours, so it refuses with its own line ("the managed MCP block has no
+  recorded hash; delete the block (ai-specs regenerates it) or move user content
+  outside the markers"), file and MCP record byte-identical — the managed-block
+  format never shipped in a release, so no real project holds a hashless block.
+  This tightens an earlier behavior:
+  a manual edit to a managed value inside the block used to be overwritten on
+  the next sync and now refuses, under "if in doubt, don't touch". The outside
+  content must parse with `internal/toml.Parse` before anything is written, so
+  the user's servers are read semantically: a manifest server whose name already
+  exists outside is preserved with the collision warning and no table is emitted
+  for it, so a document is never made to redeclare a key, and when the outside
+  does not parse nothing is added or changed. A final self-check re-parses the
+  merged document and refuses rather than write TOML our own parser rejects.
+  Accepted limitation: because user bytes are never rewritten, an outside
+  document that `internal/toml` accepts but a stricter TOML implementation
+  rejects is preserved as written — nothing is lost, the file is left exactly as
+  the user wrote it;
+- removals print `    ✓ removed managed MCP server "<name>" from <target>`;
+- a JSON target with recorded servers is regenerated through the same recovery
+  path even when the manifest declares none left, so a corrupt JSON target is
+  still backed up and rewritten instead of keeping a stale managed server
+  (Codex TOML has no such recovery: it is refused, never rewritten);
+- a target that holds servers ai-specs never recorded and has no lock entry yet
+  (the upgrade case) gets ONE notice per target — `    ! <target>: MCP servers
+  not recorded as ai-specs-managed: <names> (remove them if ai-specs generated
+  them)` — and a bare `[mcp."<target>"]` marker entry meaning "the user has been
+  told about the servers ai-specs does not manage here", so it is not repeated.
+  The marker survives while an unrecorded server or a preserved collision
+  remains at that target, and is dropped once none do. Nothing is deleted for it;
+- a lock read failure stops the MCP step before touching the target, so nothing
+  is deleted without the ownership record.
+
+Accepted corpus divergence: every Codex TOML target now carries the managed
+markers (and a plain rewrite therefore differs by construction), `mcp-per-agent`
+(the seeded `stale` server survives in `.mcp.json`, `opencode.json` and
+`.codex/config.toml`) and
+`sync-agent-recipe-mcp-matrix` (step 3's zero-server invocation prunes the
+`only` server recorded by step 2 instead of printing the skip notice), plus the
+new `[mcp.*]` lock section in fixtures that render an MCP target. The frozen
+goldens still capture the legacy behavior; they were not regenerated.
+
+Also accepted: a failed render never truncates the target. Legacy's
+`write_text()` opened and truncated the target before the encode error, so a
+Codex TOML with a server name that cannot be UTF-8 encoded was left empty; Go
+refuses before opening and leaves the file byte-identical.
+
+### Lock hygiene: shim, dep and retired-target records — BEHAVIOUR CHANGE (Robert, 2026-11-19, S3)
+
+"Borrar siempre lo gestionado" needs an ownership record, so sync now records
+and prunes three things legacy could not:
+
+- **Generated hook shims** are recorded in the lock's `[hooks]` section
+  (project-relative shim path → the owning hook's managed id,
+  `ai-specs:hooks:<recipe>:<id>`) when `sync`/`sync-agent` writes them. Pruning
+  keys on that record instead of the `GENERATED by ai-specs` marker alone: a
+  recorded shim whose hook a recipe no longer declares is deleted **even when
+  the user edited it or stripped the marker**, because the lock — not the file
+  content — is the ownership proof. A path the lock assigns to a hook that is
+  still live (or that a template claimed during materialization) is never
+  deleted, and a shim that merely looks generated but has no record is **kept**
+  and reported once with `  ! <paths>: generated hook shims not recorded as
+  ai-specs-managed (kept; delete them if ai-specs did not write them)`. Records
+  whose shim is already gone are dropped.
+- Records are project-relative for every fan-out target, so a declared
+  subrepo's shim is `sub-a/.pi/extensions/<recipe>-<hook>.ts`, and deletion
+  authority exists only inside a target this sync visits: a recorded path with
+  a dead owner and an existing generated shim.
+- **Every sync drops any `[hooks]` record whose shim is absent**, regardless of
+  which target is visited or whether that target is still declared (an omitted
+  subrepo, a removed agent). Dropping a record only removes deletion authority,
+  which is the safe direction — otherwise the record of an unvisited target
+  would outlive its shim and a hand-authored file later placed at that path
+  would be deleted by the next sync that visits the target as if it were the
+  missing generated shim.
+- **`[deps.*]`** entries are pruned by the same authority that removes the
+  vendored `.deps` trees, but the manifest's declared dep set — not the
+  filesystem orphan plan — decides: a dep the manifest no longer declares loses
+  its recorded hashes even when both dep trees are already gone, printing
+  `  ✓ removed stale lock entries for dep '<id>'` (legacy only pruned them in
+  `skills remove`).
+- **`[managed.*]`** entries naming a recipe the manifest no longer enables are
+  dropped once their artifact is already gone (e.g. a retired template or doc
+  target). A record whose artifact still exists is kept and the file is never
+  deleted by this rule, so nothing unproven is removed; entries with no owning
+  recipe (e.g. the runtime brief) always survive.
+
+Accepted corpus divergence: the lock bytes of fixtures that render hook shims
+or orphan a dep now gain `[hooks]` records and lose stale `[deps.*]`/
+`[managed.*]` entries (`hooks-five-runtimes`, `sync-agent-recipe-mcp-matrix`,
+`orphan-cleanup`, `all-recipes-enabled`, `cache-layout`, `doctor-healthy`,
+`mcp-per-agent`). The failing fixture set is unchanged — the same seven of 35 in
+each gate mode — and no golden was regenerated.
 
 ## 11. Environment variables
 

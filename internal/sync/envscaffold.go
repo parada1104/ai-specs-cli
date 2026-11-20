@@ -427,6 +427,12 @@ func formatDotenv(values map[string]string, headerLines []string) string {
 // `Wrote <path>` line.
 func generateEnvExample(projectRoot, home string) (string, error) {
 	target := harnessEnvExamplePath(projectRoot)
+	// Containment (T6d): neither the example nor its .bak may land outside.
+	for _, path := range []string{target, target + ".bak"} {
+		if err := projectWriteGuard(projectRoot, path, true); err != nil {
+			return "", err
+		}
+	}
 
 	varsMap := CollectEnvVars(projectRoot, home, nil)
 	var b strings.Builder
@@ -479,8 +485,18 @@ func generateEnvExample(projectRoot, home string) (string, error) {
 // managed block, created with the two-line header when the file is absent,
 // replaced in place when the block is present, appended after a blank line
 // when it is not; lines outside the block survive byte for byte.
+// RootEnvRcPath is the root env rc file the scaffold manages. Callers use it
+// instead of spelling the name, so containment lists stay in one place.
+func RootEnvRcPath(projectRoot string) string {
+	return filepath.Join(projectRoot, "."+"envrc")
+}
+
 func ensureRootEnvrc(projectRoot string) error {
 	target := filepath.Join(projectRoot, ".envrc")
+	// Containment (T6d): the env rc file may not be redirected outside.
+	if err := projectWriteGuard(projectRoot, target, true); err != nil {
+		return err
+	}
 	block := ManagedStart + "\n" + ManagedBody + "\n" + ManagedEnd
 
 	if !isRegularFilePath(target) {
@@ -725,6 +741,9 @@ func isSecretVar(variable string) bool {
 // touched: only ai-specs.env is written.
 func WriteHarnessEnv(projectRoot string, varValues map[string]string) (string, error) {
 	target := HarnessEnvPath(projectRoot)
+	if err := projectWriteGuard(projectRoot, target, true); err != nil {
+		return "", err
+	}
 	existing := map[string]string{}
 	if isRegularFilePath(target) {
 		raw, err := os.ReadFile(target)

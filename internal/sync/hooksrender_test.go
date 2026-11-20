@@ -6,12 +6,310 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/ai-specs/internal/lock"
+	"ai-specs.dev/ai-specs/internal/projectcache"
 )
+
+func TestSyncPrunesRuntimeHooks(t *testing.T) {
+	const enabled = "[recipes.hookdemo]\nenabled = true\n"
+	const pre = "pre-tool-use"
+	for _, tc := range []struct{ name, manifest, event string }{
+		{"disabled", "[recipes.hookdemo]\nenabled = false\n", pre},
+		{"removed", "", pre}, {"dropped", enabled, ""}, {"event changed", enabled, "stop"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, _ := spineEnv(t)
+			isolated := t.TempDir()
+			for _, name := range []string{"templates", "bundled-skills", "bundled-commands", "VERSION"} {
+				if err := os.Symlink(filepath.Join(home, name), filepath.Join(isolated, name)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			const agents = "[project]\nname = 'hooks'\n[brief]\nrender = false\n[agents]\nenabled = ['claude', 'cursor', 'opencode', 'pi', 'omp']\n"
+			const dir = "ai-specs/recipes/hookdemo/"
+			const launcher = dir + "hooks/main.sh"
+			const override = dir + "overrides/user.txt"
+			project := spineProject(t, agents+enabled)
+			recipe := filepath.Join(isolated, "catalog/recipes/hookdemo")
+			writeRecipe := func(event string) {
+				body := "[recipe]\nid = 'hookdemo'\nname = 'Demo'\ndescription = 'Fixture'\nversion = '1.0.0'\n"
+				for _, item := range [][2]string{{"keeper", "pre-tool-use"}, {"main", event}} {
+					if item[1] != "" {
+						body += fmt.Sprintf("[[provides.hooks]]\nid = '%s'\nevent = '%s'\nscript = 'hooks/%s.sh'\nmatcher = 'Bash'\n", item[0], item[1], item[0])
+					}
+				}
+				spineWrite(t, filepath.Join(recipe, "recipe.toml"), body, 0o644)
+			}
+			paths := []string{".claude/settings.json", ".cursor/hooks.json", ".cursor/hooks/hookdemo-main.sh", ".opencode/plugin/hookdemo-main.ts", ".pi/extensions/hookdemo-main.ts", ".omp/extensions/hookdemo-main.ts", launcher, override, ".pi/extensions/hookdemo-user.ts"}
+			writeRecipe(pre)
+			for _, key := range []string{"main", "keeper"} {
+				spineWrite(t, filepath.Join(recipe, "hooks", key+".sh"), "#!/bin/sh\nexit 0\n", 0o755)
+			}
+			for i, event := range []string{"PreToolUse", "beforeShellExecution"} {
+				spineWrite(t, filepath.Join(project, paths[i]), `{"hooks":{"`+event+`":[{"command":"user"}]}}`, 0o644)
+			}
+			for _, path := range paths[7:] {
+				spineWrite(t, filepath.Join(project, path), "user", 0o644)
+			}
+			sync := func(wantStderr string) {
+				t.Helper()
+				var out, stderr bytes.Buffer
+				rc := Run([]string{"sync", project}, isolated, strings.NewReader(""), &out, &stderr)
+				if rc != 0 || !strings.HasSuffix(out.String(), "\n✓ ai-specs sync complete\n") || stderr.String() != wantStderr {
+					t.Fatalf("sync rc=%d, stderr=%q, stdout=%s", rc, stderr.String(), out.String())
+				}
+			}
+			managed := func() map[string]map[string]any {
+				lk, err := lock.LoadLock(filepath.Join(project, "ai-specs/.ai-specs.lock"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				return lk.Managed
+			}
+			sync("")
+			initial, _ := hooksSnapshot(t, project)
+			if initial[paths[4]] == "" || managed()[launcher]["recipe"] != "hookdemo" {
+				t.Fatal("initial sync did not install the hook and record launcher ownership")
+			}
+			active, moved := tc.manifest == enabled, tc.event == "stop"
+			warn := ""
+			if moved {
+				warn = "  ! event 'stop' has no native mapping for harness 'opencode' (recipe 'hookdemo', hook 'main') — skipped\n"
+			} else {
+				spineWrite(t, filepath.Join(project, launcher), "locally edited", 0o755)
+			}
+			initialPi, _ := base64.StdEncoding.DecodeString(initial[paths[4]])
+			spineWrite(t, filepath.Join(project, paths[4]), string(initialPi)+"// locally edited\n", 0o644)
+			spineWrite(t, materializeManifestPath(project), agents+tc.manifest, 0o644)
+			writeRecipe(tc.event)
+			sync(warn)
+			before, _ := hooksSnapshot(t, project)
+			read := func(path string) string {
+				decoded, _ := base64.StdEncoding.DecodeString(before[path])
+				return string(decoded)
+			}
+			for i, event := range []string{"PreToolUse", "beforeShellExecution"} {
+				var doc struct{ Hooks map[string][]map[string]any }
+				if err := json.Unmarshal([]byte(read(paths[i])), &doc); err != nil {
+					t.Fatal(err)
+				}
+				old, next := doc.Hooks[event], doc.Hooks[[]string{"Stop", "stop"}[i]]
+				if len(old) == 0 || !reflect.DeepEqual(old[0], map[string]any{"command": "user"}) ||
+					active && (len(old) != 2 || old[1]["_ai_specs_managed"] != "ai-specs:hooks:hookdemo:keeper") || !active && len(old) != 1 ||
+					moved && (len(next) != 1 || next[0]["_ai_specs_managed"] != "ai-specs:hooks:hookdemo:main") || !moved && len(next) != 0 {
+					t.Errorf("%s: stale wiring or user entry changed: %#v", paths[i], doc.Hooks)
+				}
+			}
+			for i, path := range paths[2:7] {
+				if moved && i != 1 {
+					if data := read(path); data == "" || (i == 2 || i == 3) && (!strings.Contains(data, `pi.on("agent_end"`) || strings.Contains(data, `pi.on("tool_call"`)) {
+						t.Errorf("%s was not rewired", path)
+					}
+				} else if _, err := os.Lstat(filepath.Join(project, path)); !os.IsNotExist(err) {
+					t.Errorf("%s still exists: %v", path, err)
+				}
+			}
+			if !active {
+				entries, err := os.ReadDir(filepath.Join(project, dir))
+				if err != nil || len(entries) != 1 || entries[0].Name() != "overrides" {
+					t.Errorf("disabled recipe directory should contain only overrides: %v, %v", entries, err)
+				}
+			}
+			beforeLock := managed()
+			if (beforeLock[launcher] != nil) != moved || (beforeLock[dir+"hooks/keeper.sh"] != nil) != active {
+				t.Errorf("unexpected lock ownership: %v", beforeLock)
+			}
+			if before[override] != initial[override] || before[paths[8]] != initial[paths[8]] {
+				t.Error("user-owned files did not survive")
+			}
+			sync(warn)
+			after, _ := hooksSnapshot(t, project)
+			for _, path := range paths {
+				if after[path] != before[path] {
+					t.Errorf("resync changed %s", path)
+				}
+			}
+			if !reflect.DeepEqual(beforeLock, managed()) {
+				t.Error("resync changed managed lock entries")
+			}
+		})
+	}
+}
+
+func TestSyncPruneRefusalKeepsWiringAndLock(t *testing.T) {
+	for _, variant := range []string{"runtime-symlink", "blocked-leaf"} {
+		t.Run(variant, func(t *testing.T) {
+			source, _ := spineEnv(t)
+			home := t.TempDir()
+			for _, name := range []string{"templates", "bundled-skills", "bundled-commands", "VERSION", "catalog"} {
+				if err := os.Symlink(filepath.Join(source, name), filepath.Join(home, name)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			const base = "[project]\nname = 'prune-refusal'\n[brief]\nrender = false\n[agents]\nenabled = ['claude', 'pi']\n"
+			project := spineProject(t, base+"[recipes.plan-build-flow]\nenabled = true\n")
+			sync := func() (int, string, string) {
+				var out, stderr bytes.Buffer
+				rc := Run([]string{"sync", project}, home, strings.NewReader(""), &out, &stderr)
+				return rc, out.String(), stderr.String()
+			}
+			if rc, _, stderr := sync(); rc != 0 {
+				t.Fatalf("seed sync rc=%d: %s", rc, stderr)
+			}
+
+			const recipe = "ai-specs/recipes/plan-build-flow/"
+			const launcher = recipe + "hooks/plan-build-gate.sh"
+			const lockRel = "ai-specs/.ai-specs.lock"
+			lockPath := filepath.Join(project, lockRel)
+			lockBytes, err := os.ReadFile(lockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Detect an early normalization write as well as removal of lock records.
+			spineWrite(t, lockPath, string(lockBytes)+"\n# keep this byte-for-byte on refusal\n", 0o644)
+
+			root := spinePlan(t, project).Root
+			// The write-containment preflight (T6c) now refuses this leaf before
+			// the hook-prune plan gets to it: same rc 1, tighter diagnostic.
+			wantError := ""
+			if variant == "runtime-symlink" {
+				extensions := filepath.Join(project, ".pi", "extensions")
+				outside := filepath.Join(t.TempDir(), "extensions")
+				if err := os.Rename(extensions, outside); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, extensions); err != nil {
+					t.Fatal(err)
+				}
+				wantError = fmt.Sprintf("    ✗ refuse to write %s: it resolves outside the project root (%s)\n",
+					filepath.Join(root, ".pi/extensions"), projectcache.ResolvePath(outside))
+				before, modes := hooksSnapshot(t, outside)
+				if len(before) == 0 {
+					t.Fatal("seed sync did not install a Pi shim")
+				}
+				t.Cleanup(func() {
+					after, afterModes := hooksSnapshot(t, outside)
+					if !reflect.DeepEqual(before, after) || !reflect.DeepEqual(modes, afterModes) {
+						t.Error("Pi shims changed outside the project")
+					}
+					if link, err := os.Readlink(extensions); err != nil || link != outside {
+						t.Errorf("Pi extensions symlink changed: %q, %v", link, err)
+					}
+				})
+			} else {
+				path := filepath.Join(project, launcher)
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				spineWrite(t, filepath.Join(path, "user.txt"), "user data", 0o644)
+				wantError = fmt.Sprintf("ERROR: cannot prune recipe artifacts: destination is a directory: %s\n", filepath.Join(root, launcher))
+			}
+
+			spineWrite(t, materializeManifestPath(project), base, 0o644)
+			before, modes := hooksSnapshot(t, project)
+			wantOut := fmt.Sprintf("\nai-specs sync\n  root:    %s\n  planning: %s\n", root, root) +
+				"  topology: standalone (via auto; source: default)\n  targets: root:.\n" +
+				"  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n" +
+				"  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n"
+			if variant == "runtime-symlink" {
+				// The containment preflight now runs before the lock and the
+				// banner (a refusal must write nothing, not even the CLI cache),
+				// so the refusal is the only output.
+				wantOut = ""
+			}
+			if rc, out, stderr := sync(); rc != 1 || stderr != wantError || out != wantOut {
+				t.Fatalf("refusal rc=%d, stderr=%q, stdout=%q; want rc=1 and %q", rc, stderr, out, wantError)
+			}
+			after, afterModes := hooksSnapshot(t, project)
+			for _, rel := range []string{recipe + "README.md", ".claude/settings.json", lockRel} {
+				if before[rel] == "" {
+					t.Errorf("%s missing from fixture", rel)
+				}
+			}
+			if !hooksTreeEqual(before, after) {
+				t.Errorf("project files changed on refusal:\n%s", hooksTreeDiff(before, after))
+			}
+			if !hooksModesEqual(modes, afterModes) {
+				t.Error("project file modes changed on refusal")
+			}
+		})
+	}
+}
+
+func TestSyncPrunePreservesRuntimeFilesReplacedDuringMaterialization(t *testing.T) {
+	source, _ := spineEnv(t)
+	home := t.TempDir()
+	for _, name := range []string{"templates", "bundled-skills", "bundled-commands", "VERSION"} {
+		if err := os.Symlink(filepath.Join(source, name), filepath.Join(home, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const base = "[project]\nname = 'prune-replacement'\n[brief]\nrender = false\n[agents]\nenabled = ['claude', 'pi']\n"
+	project := spineProject(t, base+"[recipes.foo]\nenabled = true\n")
+	catalog := filepath.Join(home, "catalog", "recipes")
+	const hook = "[[provides.hooks]]\nid = '%s'\nevent = 'pre-tool-use'\nscript = 'hooks/%s.sh'\nmatcher = 'Bash'\n"
+	spineWrite(t, filepath.Join(catalog, "foo/recipe.toml"),
+		"[recipe]\nid = 'foo'\nname = 'Foo'\ndescription = 'Fixture'\nversion = '1.0.0'\n"+fmt.Sprintf(hook, "gate", "gate")+fmt.Sprintf(hook, "same", "same"), 0o644)
+	for _, name := range []string{"gate", "same"} {
+		spineWrite(t, filepath.Join(catalog, "foo/hooks", name+".sh"), "#!/bin/sh\nexit 0\n", 0o755)
+	}
+	sync := func() {
+		t.Helper()
+		var out, stderr bytes.Buffer
+		if rc := Run([]string{"sync", project}, home, strings.NewReader(""), &out, &stderr); rc != 0 || stderr.Len() != 0 || !strings.HasSuffix(out.String(), "\n✓ ai-specs sync complete\n") {
+			t.Fatalf("sync rc=%d, stderr=%q, stdout=%q", rc, stderr.String(), out.String())
+		}
+	}
+	sync()
+
+	// Even identical shim bytes must survive when the replacement recipe owns them.
+	const samePath = ".pi/extensions/foo-same.ts"
+	sameBytes, err := os.ReadFile(filepath.Join(project, samePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets := []struct{ path, content string }{
+		{".claude/settings.json", "{\"replacementKey\":\"keep me\"}\n"},
+		{".pi/extensions/foo-gate.ts", "// replacement extension, not a hook shim\n"},
+		{samePath, string(sameBytes)},
+	}
+	replacement := filepath.Join(catalog, "replacement")
+	body := "[recipe]\nid = 'replacement'\nname = 'Replacement'\ndescription = 'Fixture'\nversion = '1.0.0'\n"
+	for i, target := range targets {
+		if _, err := os.Stat(filepath.Join(project, target.path)); err != nil {
+			t.Fatalf("missing seed wiring %s: %v", target.path, err)
+		}
+		name := fmt.Sprintf("payload-%d", i)
+		spineWrite(t, filepath.Join(replacement, name), target.content, 0o644)
+		body += fmt.Sprintf("[[provides.templates]]\nsource = '%s'\ntarget = '%s'\ncondition = 'always'\n", name, target.path)
+	}
+	spineWrite(t, filepath.Join(replacement, "recipe.toml"), body, 0o644)
+	spineWrite(t, materializeManifestPath(project), base+"[recipes.replacement]\nenabled = true\n", 0o644)
+	sync()
+
+	lk, err := lock.LoadLock(filepath.Join(project, "ai-specs/.ai-specs.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range targets {
+		got, err := os.ReadFile(filepath.Join(project, target.path))
+		if err != nil || string(got) != target.content {
+			t.Errorf("%s: replacement lost, got %q (%v)", target.path, got, err)
+		}
+		record := lk.Managed[target.path]
+		if record["recipe"] != "replacement" || record["sha256"] != lock.Sha256Bytes(got) {
+			t.Errorf("%s: replacement file and lock disagree: %v", target.path, record)
+		}
+	}
+}
 
 // --- frozen oracle ----------------------------------------------------------
 
@@ -533,6 +831,57 @@ func TestHooksRenderDifferential(t *testing.T) {
 				t.Fatalf("frozen record stderr/dropped mismatch (traceback=%v)", tc.tracebackStderr)
 			}
 			goOut, goErr, goRC, goTree, goModes := runHooksGo(t, tc)
+
+			// S4 intentionally diverges from Python for invalid output targets.
+			var repaired string
+			switch tc.name {
+			case "claude existing settings invalid json", "claude settings invalid utf8":
+				repaired = ".claude/settings.json"
+				ref = frozenHooksRecord(t, golden, "claude existing settings invalid json")
+			case "claude existing settings duplicate keys", "claude existing settings surrogate and bigint":
+				repaired = ".claude/settings.json"
+				t.Run("valid JSON keeps merge behavior", func(t *testing.T) {
+					finite := strings.NewReplacer(": NaN", ": null", ": Infinity", ": null", ": -Infinity", ": null")
+					valid := tc
+					// The legacy fixture's name says duplicate keys, but its input has none.
+					input := strings.Replace(tc.files[repaired], `"z": 1`, `"z": 0, "z": 1`, 1)
+					valid.files = map[string]string{repaired: finite.Replace(input)}
+					wantTree := maps.Clone(ref.Tree)
+					legacy, err := base64.StdEncoding.DecodeString(wantTree[repaired])
+					if err != nil {
+						t.Fatal(err)
+					}
+					wantTree[repaired] = base64.StdEncoding.EncodeToString([]byte(finite.Replace(string(legacy))))
+					out, stderr, rc, tree, modes := runHooksGo(t, valid)
+					if rc != ref.RC || out != ref.Stdout || stderr != *ref.Stderr {
+						t.Errorf("rc=%d stdout=%q stderr=%q; want rc=%d stdout=%q stderr=%q", rc, out, stderr, ref.RC, ref.Stdout, *ref.Stderr)
+					}
+					if !hooksTreeEqual(tree, wantTree) || !hooksModesEqual(modes, ref.Modes) {
+						t.Errorf("valid target merge differs:\n%s\nmodes=%v, want %v", hooksTreeDiff(tree, wantTree), modes, ref.Modes)
+					}
+				})
+				body, err := base64.StdEncoding.DecodeString(goTree[repaired])
+				if err != nil || !json.Valid(body) {
+					t.Errorf("regenerated target is not valid JSON: %q (%v)", body, err)
+				}
+				ref = frozenHooksRecord(t, golden, "claude existing settings invalid json")
+			case "cursor hooks.json invalid json", "cursor wrapper written then hooks json invalid utf8":
+				repaired = ".cursor/hooks.json"
+				ref = frozenHooksRecord(t, golden, "cursor hooks.json invalid json")
+			case "claude settings unreadable swallowed":
+				// Without the original bytes there is no safe recovery.
+				path := tc.unreadableRel
+				ref.RC = 1
+				ref.Stderr = hooksStr("error: open <TEMP>/" + path + ": permission denied\n")
+				ref.Tree[path] = base64.StdEncoding.EncodeToString([]byte(tc.files[path]))
+			}
+			if repaired != "" {
+				ref.Tree, ref.Modes = maps.Clone(ref.Tree), maps.Clone(ref.Modes)
+				ref.Tree[repaired+".bak"] = base64.StdEncoding.EncodeToString([]byte(tc.files[repaired]))
+				ref.Modes[repaired+".bak"] = 0o600
+				ref.Stderr = hooksStr(fmt.Sprintf("warning: invalid JSON in <TEMP>/%s; backed up to <TEMP>/%s.bak\n", repaired, repaired))
+				tc.tracebackStderr = false
+			}
 
 			if goOut != ref.Stdout {
 				t.Errorf("stdout differs\n--- go ---\n%q\n--- frozen ---\n%q", goOut, ref.Stdout)
