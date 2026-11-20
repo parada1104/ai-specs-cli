@@ -32,6 +32,7 @@ import (
 	"syscall"
 
 	"ai-specs.dev/ai-specs/internal/lock"
+	"ai-specs.dev/ai-specs/internal/schema"
 	"ai-specs.dev/worktree-gate/shared"
 )
 
@@ -49,6 +50,11 @@ type OrphanCleanupInput struct {
 	// home rule (T6e).
 	ProjectRoot string
 	CLIHome     string
+	// RecipeSkillOrphans is the per-skill half of T7 (S3): the skill copies of
+	// an ENABLED recipe under `<recipe skills root>/<recipe>/skills/` that its
+	// recipe.toml no longer declares, recipe id → skill ids (planned by
+	// planRecipeSkillOrphans).
+	RecipeSkillOrphans map[string][]string
 }
 
 // containOrphanRoots refuses BEFORE any delete when an orphan root is
@@ -63,6 +69,22 @@ func containOrphanRoots(in OrphanCleanupInput) error {
 		for _, name := range in.PlanInput.InprojectDeps {
 			if err := projectWriteGuard(in.ProjectRoot, filepath.Join(in.Roots.InprojectDeps, name), true); err != nil {
 				return err
+			}
+		}
+	}
+	if in.CLIHome != "" {
+		for _, recipe := range slices.Sorted(maps.Keys(in.RecipeSkillOrphans)) {
+			if in.Roots.RecipeSkills == "" {
+				break
+			}
+			skillsDir := filepath.Join(in.Roots.RecipeSkills, recipe, "skills")
+			if err := homeWriteGuard(in.CLIHome, skillsDir, true); err != nil {
+				return err
+			}
+			for _, skill := range in.RecipeSkillOrphans[recipe] {
+				if err := homeWriteGuard(in.CLIHome, filepath.Join(skillsDir, skill), true); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -89,6 +111,48 @@ func containOrphanRoots(in OrphanCleanupInput) error {
 		}
 	}
 	return nil
+}
+
+// planRecipeSkillOrphans derives the per-skill half of T7 (S3 "borrar siempre lo
+// gestionado"): for every ENABLED recipe, the skill copies under
+// `<recipe skills root>/<recipe>/skills/` that its recipe.toml no longer
+// declares.
+//
+// No lock record licenses this prune: the lock WRITER drops the [recipes.*]
+// skill-hash table (internal/lock renderLock emits deps/managed, never
+// recipes), so SetRecipeSkillHashes — written by materializeBundledSkill — never
+// survives a run and cannot prove ownership across runs. The rule is the one
+// the recipe-level orphan plan already applies to the same cache namespace: a
+// DISABLED recipe's whole `.recipe/<recipe>` directory is deleted with no record
+// at all, so a copy the catalog no longer declares is an orphan. Only
+// `SKILL.md`-shaped directories are candidates, because that is the shape the
+// resolved-skills flatten collects; anything else in the cache is inert and
+// stays. A recipe that cannot be read declares nothing, so its copies are kept.
+func planRecipeSkillOrphans(recipeRoot, catalogDir string, enabled []materializeRecipe) map[string][]string {
+	out := map[string][]string{}
+	for _, entry := range enabled {
+		recipe, err := schema.LoadRecipeToml(filepath.Join(catalogDir, entry.ID, "recipe.toml"))
+		if err != nil {
+			continue
+		}
+		declared := map[string]bool{}
+		for _, skill := range recipe.Skills {
+			if skill.Source == "bundled" {
+				declared[skill.ID] = true
+			}
+		}
+		skillsDir := filepath.Join(recipeRoot, entry.ID, "skills")
+		for _, name := range dirChildNames(skillsDir) {
+			if declared[name] {
+				continue
+			}
+			if info, statErr := os.Stat(filepath.Join(skillsDir, name, "SKILL.md")); statErr != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			out[entry.ID] = append(out[entry.ID], name)
+		}
+	}
+	return out
 }
 
 // planRecipeArtifactPrune uses managed ownership, not the skill-hash recipes table.
@@ -223,6 +287,31 @@ func orphanScopePrefix(scope string) string {
 	return ""
 }
 
+// applyRecipeSkillOrphans removes the planned per-skill copies. Every candidate
+// was contained by containOrphanRoots before this, so a redirected cache refuses
+// before the first delete.
+func applyRecipeSkillOrphans(in OrphanCleanupInput, remove func(path string) error, out io.Writer) error {
+	for _, recipe := range slices.Sorted(maps.Keys(in.RecipeSkillOrphans)) {
+		for _, skill := range in.RecipeSkillOrphans[recipe] {
+			path := filepath.Join(in.Roots.RecipeSkills, recipe, "skills", skill)
+			if !existsLstat(path) {
+				continue
+			}
+			if err := remove(path); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "  ✓ removed orphaned %s%s/skills/%s\n", orphanScopePrefix("recipe_skills"), recipe, skill)
+		}
+	}
+	return nil
+}
+
+// existsLstat reports whether path exists without following a leaf symlink.
+func existsLstat(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
+}
+
 // CleanOrphans applies the orphan plan, prints each removed line, then prunes
 // the stale lock exactly as Python does. A fully applied deletion is the only
 // path that prints success or touches the lock; a partial, uncertain, or
@@ -274,6 +363,13 @@ func CleanOrphans(in OrphanCleanupInput, remove func(path string) error) (shared
 
 	for _, entry := range outcome.Removed {
 		fmt.Fprintf(out, "  ✓ removed orphaned %s%s\n", orphanScopePrefix(entry.Scope), entry.Name)
+	}
+
+	// Per-skill orphans of an ENABLED recipe (T7, S3): the copy under
+	// `.recipe/<recipe>/skills/<skill>` goes. The whole directory of a DISABLED
+	// recipe was already handled by the shared plan above.
+	if err := applyRecipeSkillOrphans(in, remove, out); err != nil {
+		return outcome, err
 	}
 
 	// _prune_stale_lock parity: rewrite only when the lock is still a regular

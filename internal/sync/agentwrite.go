@@ -86,6 +86,14 @@ func projectTreePreflight(root, home string, targets []string, errW io.Writer) i
 	cacheKey := filepath.Join(homeReal, "cache", "projects", projectcache.CacheKey(root))
 	add(homeWriteGuard, homeReal, filepath.Join(cacheKey, ".deps"))
 	add(homeWriteGuard, homeReal, filepath.Join(cacheKey, ".recipe"))
+	add(homeWriteGuard, homeReal, filepath.Join(cacheKey, "resolved-skills"))
+	// The per-skill orphan prune deletes `<cache>/.recipe/<recipe>/skills/<skill>`
+	// (T7), so a redirected recipe directory must refuse before the first write
+	// rather than at the orphan step.
+	for _, recipe := range cacheChildPaths(filepath.Join(cacheKey, ".recipe")) {
+		add(homeWriteGuard, homeReal, recipe)
+		add(homeWriteGuard, homeReal, filepath.Join(recipe, "skills"))
+	}
 	for _, c := range checks {
 		if err := c.guard(c.root, c.path, true); err != nil {
 			fmt.Fprintf(errW, "    ✗ %s\n", err)
@@ -93,6 +101,21 @@ func projectTreePreflight(root, home string, targets []string, errW io.Writer) i
 		}
 	}
 	return 0
+}
+
+// cacheChildPaths lists the direct children of a CLI-cache directory so the
+// preflight can contain each one: the per-skill orphan prune deletes below
+// `<cache>/.recipe/<recipe>/skills`, so a link there must refuse early.
+func cacheChildPaths(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		paths = append(paths, filepath.Join(dir, entry.Name()))
+	}
+	return paths
 }
 
 // managedRecipeDirs lists the recipe directories under ai-specs/recipes so the

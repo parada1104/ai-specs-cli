@@ -643,5 +643,157 @@ class SyncSkillsOwnershipTests(unittest.TestCase):
                       result.stderr)
 
 
+# T7b (S3 "borrar siempre lo gestionado"): a skill dropped from a still-enabled
+# recipe's [provides].skills. The cache copy is the source of truth for the
+# resolved-skills flatten, so removing only the resolved copy would not stick.
+RECIPE_TWO_SKILLS = """\
+[recipe]
+id = "twoskills"
+name = "Two skills"
+description = "fixture"
+version = "1.0.0"
+
+[provides]
+skills = [{ id = "aa", source = "bundled" }, { id = "bb", source = "bundled" }]
+"""
+
+MANIFEST_TWO_SKILLS = """\
+[project]
+name = 'skill-orphans'
+
+[brief]
+render = false
+
+[agents]
+enabled = ['claude']
+
+[recipes.twoskills]
+enabled = true
+"""
+
+
+class SyncRecipeSkillOrphanTests(unittest.TestCase):
+    def setUp(self) -> None:
+        from _blackbox import cache_project_dir, populate_catalog
+
+        base = Path(tempfile.mkdtemp(prefix="ai-specs-skill-orphans-", dir="/private/tmp"))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        self.base = base
+        self.home = isolated_home(base)
+        self.project = base / "project"
+        for name in ("skills", "commands"):
+            (self.project / "ai-specs" / name).mkdir(parents=True)
+        (self.project / "AGENTS.md").write_text("# brief\n", encoding="utf-8")
+        (self.project / "ai-specs" / "ai-specs.toml").write_text(
+            MANIFEST_TWO_SKILLS, encoding="utf-8"
+        )
+        self.recipe = populate_catalog(self.home, "twoskills", RECIPE_TWO_SKILLS)
+        for skill in ("aa", "bb"):
+            (self.recipe / "skills" / skill).mkdir(parents=True)
+            (self.recipe / "skills" / skill / "SKILL.md").write_text(
+                f"# {skill}\n", encoding="utf-8"
+            )
+        self.cache = cache_project_dir(self.project, self.home)
+        self.skill_copies = self.cache / ".recipe" / "twoskills" / "skills"
+        self.resolved = self.cache / "resolved-skills"
+
+    def set_skills(self, skills: str) -> None:
+        body = RECIPE_TWO_SKILLS.replace(
+            '[{ id = "aa", source = "bundled" }, { id = "bb", source = "bundled" }]', skills
+        )
+        (self.recipe / "recipe.toml").write_text(body, encoding="utf-8")
+
+    def sync(self) -> subprocess.CompletedProcess:
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": str(self.base / "home"),
+            "TMPDIR": str(self.base / "tmp"),
+            "AI_SPECS_HOME": str(self.home),
+            "AI_SPECS_GATE_OFFLINE": "1",
+            "AI_SPECS_NO_NETWORK": "1",
+            "LC_ALL": "C",
+            "LANG": "C",
+        }
+        for name in ("home", "tmp"):
+            (self.base / name).mkdir(exist_ok=True)
+        return subprocess.run(
+            [str(CLI), "sync", str(self.project)],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+            input="",
+        )
+
+    def seed(self) -> None:
+        proc = self.sync()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(proc.stderr, "", proc.stderr)
+
+    def test_dropped_skill_is_pruned_from_every_materialized_place(self) -> None:
+        self.seed()
+        for skill in ("aa", "bb"):
+            self.assertTrue((self.skill_copies / skill / "SKILL.md").is_file(), skill)
+            self.assertTrue((self.resolved / skill / "SKILL.md").is_file(), skill)
+        lock_path = self.project / "ai-specs" / ".ai-specs.lock"
+
+        self.set_skills('[{ id = "aa", source = "bundled" }]')
+        proc = self.sync()
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(proc.stderr, "", proc.stderr)
+        self.assertFalse((self.skill_copies / "bb").exists())
+        self.assertFalse((self.resolved / "bb").exists())
+        # The skill the recipe still provides is untouched.
+        self.assertTrue((self.skill_copies / "aa" / "SKILL.md").is_file())
+        self.assertTrue((self.resolved / "aa" / "SKILL.md").is_file())
+        self.assertNotIn("bb", lock_path.read_text(encoding="utf-8"))
+
+        # A second sync is a no-op: same tree, no removal, no warning.
+        before = lock_path.read_bytes()
+        proc = self.sync()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(proc.stderr, "", proc.stderr)
+        self.assertNotIn("removed orphaned", proc.stdout)
+        self.assertEqual(lock_path.read_bytes(), before)
+        self.assertFalse((self.resolved / "bb").exists())
+
+    def test_project_local_skill_with_the_same_name_survives(self) -> None:
+        local = self.project / "ai-specs" / "skills" / "bb"
+        local.mkdir(parents=True)
+        (local / "SKILL.md").write_text("# local\n", encoding="utf-8")
+        self.seed()
+        # The local tier wins the resolved set, so the resolved copy is the
+        # project's own skill; the recipe's cache copy is still the recipe's.
+        self.assertEqual((self.resolved / "bb" / "SKILL.md").read_text(), "# local\n")
+
+        self.set_skills('[{ id = "aa", source = "bundled" }]')
+        proc = self.sync()
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertFalse((self.skill_copies / "bb").exists())
+        self.assertEqual((self.resolved / "bb" / "SKILL.md").read_text(), "# local\n")
+        self.assertEqual((local / "SKILL.md").read_text(), "# local\n")
+
+    def test_redirected_recipe_cache_refusal_is_write_free(self) -> None:
+        from _blackbox import snapshot
+
+        self.seed()
+        outside = self.base / "outside-skills"
+        shutil.move(str(self.skill_copies), str(outside))
+        self.skill_copies.symlink_to(outside, target_is_directory=True)
+        self.set_skills('[{ id = "aa", source = "bundled" }]')
+        before = [snapshot(self.project), snapshot(self.home), snapshot(outside)]
+
+        proc = self.sync()
+
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("refuse to write", proc.stderr)
+        self.assertEqual(
+            [snapshot(self.project), snapshot(self.home), snapshot(outside)], before
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

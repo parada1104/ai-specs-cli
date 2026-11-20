@@ -147,7 +147,7 @@ func MaterializeRecipes(req MaterializeRequest) (MaterializeResult, error) {
 	if len(enabled) == 0 {
 		projectcache.RemoveRecipeCommandLeftovers(req.ProjectRoot, cliHome, nil, nil, stdout, stderr)
 		planInput, roots := materializeOrphanInputs(req.ProjectRoot, cliHome, []string{}, materializeSortedSet(expectedDepIDs))
-		if _, err := cleanOrphansNative(planInput, roots, req.ProjectRoot, cliHome, stdout); err != nil {
+		if _, err := cleanOrphansNative(planInput, roots, nil, req.ProjectRoot, cliHome, stdout); err != nil {
 			return result, materializeFatal(stderr, err.Error())
 		}
 		binding := ResolveBindings(BindingRequest{
@@ -258,7 +258,12 @@ func MaterializeRecipes(req MaterializeRequest) (MaterializeResult, error) {
 	}
 
 	planInput, roots := materializeOrphanInputs(req.ProjectRoot, cliHome, enabledIDs, materializeSortedSet(expectedDepIDs))
-	if _, err := cleanOrphansNative(planInput, roots, req.ProjectRoot, cliHome, stdout); err != nil {
+	// Per-skill orphans of an enabled recipe (T7, S3) ride the same orphan plan:
+	// the dropped skill's cache copy is gone before the flatten step collects
+	// the resolved set, so `<cache>/resolved-skills/<skill>` stops being
+	// regenerated too.
+	skillOrphans := planRecipeSkillOrphans(roots.RecipeSkills, catalogDir, enabled)
+	if _, err := cleanOrphansNative(planInput, roots, skillOrphans, req.ProjectRoot, cliHome, stdout); err != nil {
 		return result, materializeFatal(stderr, err.Error())
 	}
 	projectcache.RemoveRecipeCommandLeftovers(req.ProjectRoot, cliHome, nil, commandSources, stdout, stderr)
@@ -438,15 +443,16 @@ func warnReconcileStampFailure(stderr io.Writer, catalogDir, recipeID string, er
 // cleanOrphansNative runs the shared orphan plan/apply through the root
 // CleanOrphans boundary, which owns the lock read, the success lines and the
 // stale-lock prune. The lock path is the project lock.
-func cleanOrphansNative(planInput shared.OrphanPlanInput, roots shared.OrphanApplyRoots, projectRoot, cliHome string, stdout io.Writer) (shared.OrphanApplyOutcome, error) {
+func cleanOrphansNative(planInput shared.OrphanPlanInput, roots shared.OrphanApplyRoots, recipeSkillOrphans map[string][]string, projectRoot, cliHome string, stdout io.Writer) (shared.OrphanApplyOutcome, error) {
 	lockPath := filepath.Join(projectRoot, "ai-specs", ".ai-specs.lock")
 	return CleanOrphans(OrphanCleanupInput{
-		PlanInput:   planInput,
-		Roots:       roots,
-		LockPath:    lockPath,
-		Output:      stdout,
-		ProjectRoot: projectRoot,
-		CLIHome:     cliHome,
+		PlanInput:          planInput,
+		Roots:              roots,
+		LockPath:           lockPath,
+		Output:             stdout,
+		ProjectRoot:        projectRoot,
+		CLIHome:            cliHome,
+		RecipeSkillOrphans: recipeSkillOrphans,
 	}, os.RemoveAll)
 }
 
