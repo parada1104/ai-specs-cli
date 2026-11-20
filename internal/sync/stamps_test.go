@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"ai-specs.dev/ai-specs/internal/toml"
 	"ai-specs.dev/worktree-gate/shared"
 )
 
@@ -211,11 +210,12 @@ default = "build"
 }
 
 // TestStampReconcileDefaultsWarnsPerRecipeAndContinues pins the native writer
-// failure contract: a manifest write that refuses for ONE recipe warns once,
-// verbatim, naming the recipe by its [recipe].name, and the remaining planned
-// stamps still land. The stamp step never fails the sync. This is the native
-// twin of the retired Python bridge's per-recipe writer-failure case (an
-// injected OSError there; here the writer's own multiline refusal for beta).
+// failure contract: a manifest write that fails for a recipe warns once,
+// naming the recipe by its [recipe].name, every other planned stamp is
+// attempted the same way, and the stamp step never fails the sync. The trigger
+// is a manifest that cannot be written; a hand-authored value no longer reaches
+// the writer at all, because S8 keeps it (see
+// TestStampReconcileDefaultsKeepsExplicitUserValue).
 func TestStampReconcileDefaultsWarnsPerRecipeAndContinues(t *testing.T) {
 	catalog := t.TempDir()
 	writeSyncCatalogRecipe(t, catalog, "alpha", materializeReconcileRecipe("alpha", "Alpha"))
@@ -225,13 +225,16 @@ func TestStampReconcileDefaultsWarnsPerRecipeAndContinues(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// beta's stamped `reconcile` key already holds a multiline value, which the
-	// shared writer refuses to replace; alpha is a plain first stamp.
-	seed := "[recipes.alpha]\nenabled = true\n\n[recipes.beta]\nenabled = true\n\n" +
-		"[recipes.beta.config]\nreconcile = \"\"\"stale\nmultiline\n\"\"\"\n"
+	// A read-only manifest directory makes every planned write fail, so the
+	// per-recipe warn-and-continue loop is observable for both recipes.
+	seed := "[recipes.alpha]\nenabled = true\n\n[recipes.beta]\nenabled = true\n"
 	if err := os.WriteFile(manifestPath, []byte(seed), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(filepath.Dir(manifestPath), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(filepath.Dir(manifestPath), 0o755) }()
 
 	var stdout, stderr bytes.Buffer
 	if err := stampReconcileDefaults(manifestPath, catalog, []string{"alpha", "beta"}, &stderr); err != nil {
@@ -240,29 +243,93 @@ func TestStampReconcileDefaultsWarnsPerRecipeAndContinues(t *testing.T) {
 	if stdout.Len() != 0 {
 		t.Errorf("the stamp step prints nothing on stdout, got %q", stdout.String())
 	}
-	wantWarning := "  ! recipe 'Beta': reconcile defaults not stamped (RuntimeError: cannot replace multiline value for key 'reconcile')\n"
-	if got := stderr.String(); got != wantWarning {
-		t.Errorf("stderr = %q, want %q", got, wantWarning)
+	lines := strings.Split(strings.TrimSuffix(stderr.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("stderr = %q, want one warning per recipe", stderr.String())
+	}
+	for i, name := range []string{"Alpha", "Beta"} {
+		prefix := "  ! recipe '" + name + "': reconcile defaults not stamped (RuntimeError: "
+		if !strings.HasPrefix(lines[i], prefix) {
+			t.Errorf("warning %d = %q, want prefix %q", i, lines[i], prefix)
+		}
 	}
 
 	final, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(final), "reconcile = \"\"\"stale\nmultiline\n\"\"\"") {
-		t.Errorf("the refused recipe's own bytes must survive untouched:\n%s", final)
+	if string(final) != seed {
+		t.Errorf("a failed stamp must leave the manifest untouched, got:\n%s", final)
 	}
-	manifest, err := toml.Parse(final)
+}
+
+// TestStampReconcileDefaultsKeepsExplicitUserValue pins S8 at the stamp step:
+// a key the project already sets to a value that differs from the recipe's
+// declared one is never rewritten, sync prints exactly one notice naming the
+// recipe, the key and the configuration wizard, and the manifest stays
+// byte-identical. Keys the project never set are still stamped (first run), and
+// an explicit value that already equals the declared one is silent. The notice
+// repeats on every run while the values differ: no ownership record exists for
+// stamped values, so the divergence is re-decided from the manifest itself
+// rather than remembered in the lock.
+func TestStampReconcileDefaultsKeepsExplicitUserValue(t *testing.T) {
+	catalog := t.TempDir()
+	writeSyncCatalogRecipe(t, catalog, "alpha", materializeReconcileRecipe("alpha", "Alpha"))
+
+	manifestPath := filepath.Join(t.TempDir(), "ai-specs", "ai-specs.toml")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, []byte("[recipes.alpha]\nenabled = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	notice := "  ! recipe 'Alpha': config 'workflow' differs from the declared value; " +
+		"kept your value, review it with `ai-specs configure-recipes`\n"
+
+	stamp := func() string {
+		t.Helper()
+		var stderr bytes.Buffer
+		if err := stampReconcileDefaults(manifestPath, catalog, []string{"alpha"}, &stderr); err != nil {
+			t.Fatalf("the stamp step never fails the sync: %v", err)
+		}
+		return stderr.String()
+	}
+
+	if got := stamp(); got != "" {
+		t.Fatalf("values the project never set are stamped silently, got %q", got)
+	}
+	stamped, err := os.ReadFile(manifestPath)
 	if err != nil {
-		t.Fatalf("parse stamped manifest: %v", err)
+		t.Fatal(err)
 	}
-	recipes, _ := manifest.Table("recipes")
-	alpha, _ := recipes.Table("alpha")
-	config, _ := alpha.Table("config")
-	if got, _ := config.Get("workflow"); got != "feature" {
-		t.Errorf("alpha workflow = %v, want the surviving stamp's feature", got)
+	if !strings.Contains(string(stamped), "workflow = \"feature\"") {
+		t.Fatalf("the declared default must be stamped:\n%s", stamped)
 	}
-	if got, _ := config.Get("base_branch"); got != "main" {
-		t.Errorf("alpha base_branch = %v, want the surviving stamp's main", got)
+
+	authored := strings.Replace(string(stamped), "workflow = \"feature\"", "workflow = \"mine\"", 1)
+	if authored == string(stamped) {
+		t.Fatalf("fixture rewrite did not apply:\n%s", stamped)
+	}
+	if err := os.WriteFile(manifestPath, []byte(authored), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for run := 0; run < 2; run++ {
+		if got := stamp(); got != notice {
+			t.Fatalf("run %d stderr = %q, want %q", run, got, notice)
+		}
+		final, err := os.ReadFile(manifestPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(final) != authored {
+			t.Fatalf("run %d rewrote the project's explicit value:\n%s", run, final)
+		}
+	}
+
+	if err := os.WriteFile(manifestPath, []byte(strings.Replace(authored, "workflow = \"mine\"", "workflow = \"feature\"", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := stamp(); got != "" {
+		t.Fatalf("an explicit value equal to the declared one is not a divergence, got %q", got)
 	}
 }

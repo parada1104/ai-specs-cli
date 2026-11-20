@@ -74,12 +74,14 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 		ProjectRoot:      req.ProjectRoot,
 	}
 
+	ownedSkills := []string{}
 	for _, skill := range recipe.Skills {
 		switch skill.Source {
 		case "bundled":
 			if err := materializeBundledSkill(req, recipeDir, lockPath, roots, skill); err != nil {
 				return nil, err
 			}
+			ownedSkills = append(ownedSkills, skill.ID)
 		case "dep":
 			if err := materializeDepSkill(req.ProjectRoot, req.AISpecsHome, skill, req.Stdout, req.Stderr); err != nil {
 				return nil, err
@@ -88,6 +90,12 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 		default:
 			return nil, fmt.Errorf("unknown skill source '%s' for skill '%s'", skill.Source, skill.ID)
 		}
+	}
+
+	// Record the skill copies this run materialized so the per-skill orphan
+	// prune only ever deletes ai-specs' own output (T7, S3).
+	if err := recordOwnedRecipeSkills(req.AISpecsHome, roots.RecipeSkillsRoot, req.Recipe.ID, ownedSkills); err != nil {
+		return nil, err
 	}
 
 	for _, cmd := range recipe.Commands {

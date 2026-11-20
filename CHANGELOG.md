@@ -24,11 +24,68 @@ customized `worktree-cleanup.sh` override and run `ai-specs sync` to refresh it.
   project-local pin or cached gate binary. `WORKTREE_GATE_BIN` remains available
   for the write gate; cleanup ignores a set `WORKTREE_CLEANUP_BIN` with a
   warning and runs only through the installed CLI.
+- **`sync` now removes what it generated when the source disappears.** A recipe
+  removed or disabled in `ai-specs/ai-specs.toml` is unwired from every agent
+  runtime (`.claude/settings.json`, `.cursor/hooks.json` and `.cursor/hooks/*.sh`,
+  `.opencode/plugin/*.ts`, `.pi/extensions/*.ts`, `.omp/extensions/*.ts`), its
+  files under `ai-specs/recipes/<id>/` (except `overrides/`) and its command
+  copies are deleted. A hook dropped from a still-enabled recipe, or one whose
+  event changed, is unwired and its shim replaced. An agent removed from
+  `[agents].enabled` loses the instruction and skills links, command copies, MCP
+  servers, hook wiring and shims ai-specs generated for it, and a skill dropped
+  from a still-enabled recipe's `[provides].skills` is pruned from the recipe
+  cache when the cache records it as copied by ai-specs (an existing cache
+  records first and prunes from the next run; a hand-made copy is kept). Only what the lock records as ai-specs' is touched: user files and
+  untracked copies survive (an untracked legacy command copy stays with one
+  warning).
+- **MCP servers merge per server.** `sync` adds, updates and removes only the
+  servers it recorded for each target, so a user-added server survives and a
+  server dropped from the manifest is removed even when no server remains. Codex
+  `.codex/config.toml` gets its MCP tables inside one managed block; bytes
+  outside the markers, and every comment, ordering and formatting choice, are
+  left exactly as written. A block ai-specs did not record is refused instead of
+  rewritten.
+- **Recipe configuration is no longer replaced by a reconcile stamp.** When a
+  recipe's declared value differs from the project's own
+  `[recipes.<id>.config]` value, `sync` keeps the project value and exits 0 with
+  one notice naming the recipe and the differing key and pointing at
+  `ai-specs configure-recipes`. The notice repeats while the values differ. The
+  configuration wizard that offers the change is a separate feature.
+- **Stale lock records are pruned.** `sync` drops `[hooks]` records whose shim is
+  gone, `[deps.*]` entries the manifest no longer declares, and `[managed.*]`
+  entries whose recipe is retired and whose artifact is already absent.
+
+### Added
+- **Ownership records in `ai-specs/.ai-specs.lock`.** `[managed.*]` with
+  `kind = "recipe-command"` (path → sha256 of the generated copy), `[hooks]`
+  (generated shim → owning hook), `[mcp."<target>"]` (managed server name →
+  rendered entry hash), `[mcp-block."<target>"]` (hash of the Codex managed
+  block) and the existing `[deps.*]` hashes. These records, not file content, are
+  what licenses a later deletion; the `[recipes.*]` and `[skills]` tables are
+  read but never written.
 
 ### Fixed
 - **`vault-canonical-store` sync vendors its kepano Obsidian skills again.** Upstream
   moved them to `plugins/obsidian/skills/<id>`, so the recipe's dep paths follow and
   sync stops failing with `SKILL.md not found`.
+- **An unparseable hook or MCP JSON target is backed up and regenerated.** The
+  exact bytes are copied to `<file>.bak` (or the first free `.bak.N`), sync warns
+  naming the file and the backup, and then rewrites the file, so user content is
+  never lost silently. Bare `NaN`/`Infinity` count as invalid JSON, and a recipe
+  MCP document that contains them is refused with one error line instead of
+  being written.
+- **A real directory at `<agent>/skills` is refused, not deleted.** `sync` and
+  `sync-agent` exit 1 with
+  `    ✗ refuse to overwrite non-symlink: <path> — move or delete it so ai-specs can create the symlink`
+  and leave the directory untouched; the legacy `rm -rf` is gone.
+- **Every write and delete stays inside the project.** A symlinked agent
+  directory is accepted when it resolves inside the project root and refused
+  (rc 1, nothing written) when it resolves outside; a refused write never leaves
+  a half-applied run, and a symlink cannot redirect a project or cache write
+  outside the tree.
+- **A retired agent's leftovers are pruned atomically.** Recorded command copies
+  and links are re-checked before the first delete and again before each unlink;
+  a refused or failed delete exits 1 with the project and lock byte-identical.
 
 ## [0.25.2] — 2026-11-16
 

@@ -1,8 +1,11 @@
 package sync
 
 import (
+	"bytes"
+	"encoding/json"
 	"path/filepath"
 
+	"ai-specs.dev/ai-specs/internal/config"
 	"ai-specs.dev/ai-specs/internal/schema"
 	"ai-specs.dev/ai-specs/internal/toml"
 	"ai-specs.dev/worktree-gate/shared"
@@ -42,6 +45,53 @@ func PlanReconcileStamps(catalogDir string, recipeIDs []string) []shared.Reconci
 		out = append(out, shared.ReconcileStampEntry{ID: rid, Stamp: shared.BuildReconcileStamp(source)})
 	}
 	return out
+}
+
+// splitReconcileStamp is the S8 ownership split of one planned stamp: a key
+// the project's [recipes.<id>.config] table already sets to a DIFFERENT value
+// is the project's value, so it is returned in kept instead of in the write set
+// and the caller reports it. A key the project never set stays stampable, and
+// an explicit value that already equals the declared one stays in the write set
+// (the shared writer then finds nothing pending). No ownership record exists
+// for a previously stamped value, so the divergence is re-decided from the
+// manifest on every run rather than remembered in the lock.
+func splitReconcileStamp(manifest *toml.Table, recipeID string, stamp *shared.OrderedMap) (*shared.OrderedMap, []string, error) {
+	_, _, config := config.RecipeConfigState(manifest, recipeID)
+	write := shared.NewOrderedMap()
+	kept := []string{}
+	for _, key := range stamp.Keys() {
+		value, _ := stamp.Get(key)
+		if config != nil {
+			if current, ok := config.Get(key); ok {
+				same, err := sameStampValue(current, value)
+				if err != nil {
+					return nil, nil, err
+				}
+				if !same {
+					kept = append(kept, key)
+					continue
+				}
+			}
+		}
+		write.Set(key, value)
+	}
+	return write, kept, nil
+}
+
+// sameStampValue compares a parsed manifest value with a stamp value in the
+// stamp's own JSON domain: the stamp reached the writer through one
+// sorted-key JSON round trip, so both sides marshal to the same bytes exactly
+// when the values are structurally equal.
+func sameStampValue(manifestValue, stampValue any) (bool, error) {
+	left, err := json.Marshal(toml.PlainValue(manifestValue))
+	if err != nil {
+		return false, err
+	}
+	right, err := json.Marshal(stampValue)
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(left, right), nil
 }
 
 // plainReconcileValues normalizes the declared [config.reconcile] values one

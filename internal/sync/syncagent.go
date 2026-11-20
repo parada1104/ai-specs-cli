@@ -404,6 +404,13 @@ func buildAgentRun(r *runner, opts agentOptions, s agentStreams, nested bool) (*
 		return nil, 1
 	}
 
+	// Cache containment before the materialize fallback's first write (S1): a
+	// redirected `.recipe` or `resolved-skills` must refuse with nothing written,
+	// including the skill copies the fallback would prune.
+	if rc := cachePreflight(a.sourceRoot, r.home, s.errW); rc != 0 {
+		return nil, rc
+	}
+
 	// Materialize fallback (lib/sync-agent.sh:191-202): when --recipe-mcp is
 	// absent, run materialize now with both streams captured to one temp file
 	// and parse RECIPE_MCP_TEMP: out of it. Failure prints the full output

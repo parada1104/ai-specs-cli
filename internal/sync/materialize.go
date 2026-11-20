@@ -147,7 +147,7 @@ func MaterializeRecipes(req MaterializeRequest) (MaterializeResult, error) {
 	if len(enabled) == 0 {
 		projectcache.RemoveRecipeCommandLeftovers(req.ProjectRoot, cliHome, nil, nil, stdout, stderr)
 		planInput, roots := materializeOrphanInputs(req.ProjectRoot, cliHome, []string{}, materializeSortedSet(expectedDepIDs))
-		if _, err := cleanOrphansNative(planInput, roots, req.ProjectRoot, cliHome, stdout); err != nil {
+		if _, err := cleanOrphansNative(planInput, roots, nil, req.ProjectRoot, cliHome, stdout); err != nil {
 			return result, materializeFatal(stderr, err.Error())
 		}
 		binding := ResolveBindings(BindingRequest{
@@ -258,7 +258,12 @@ func MaterializeRecipes(req MaterializeRequest) (MaterializeResult, error) {
 	}
 
 	planInput, roots := materializeOrphanInputs(req.ProjectRoot, cliHome, enabledIDs, materializeSortedSet(expectedDepIDs))
-	if _, err := cleanOrphansNative(planInput, roots, req.ProjectRoot, cliHome, stdout); err != nil {
+	// Per-skill orphans of an enabled recipe (T7, S3) ride the same orphan plan:
+	// the dropped skill's cache copy is gone before the flatten step collects
+	// the resolved set, so `<cache>/resolved-skills/<skill>` stops being
+	// regenerated too.
+	skillOrphans := planRecipeSkillOrphans(roots.RecipeSkills, catalogDir, enabled)
+	if _, err := cleanOrphansNative(planInput, roots, skillOrphans, req.ProjectRoot, cliHome, stdout); err != nil {
 		return result, materializeFatal(stderr, err.Error())
 	}
 	projectcache.RemoveRecipeCommandLeftovers(req.ProjectRoot, cliHome, nil, commandSources, stdout, stderr)
@@ -384,15 +389,35 @@ func materializeBindingWarnings(stderr io.Writer, resolution shared.BindingResol
 // stampReconcileDefaults mirrors stamp_recipe_reconcile_defaults: plan once
 // with the shared authority, then write each planned stamp through the promoted
 // shared writer. A write failure warns (never fails the sync), mirroring the
-// Python authority's per-entry try/except.
+// Python authority's per-entry try/except. S8: a key the project's
+// [recipes.<id>.config] already sets to a different value is never written; sync
+// keeps it and prints one notice pointing at the configuration wizard. The
+// notice repeats on every run only while the value still differs — no ownership
+// record exists for stamped values, so remembering it in the lock would make a
+// recipe whose declared default changed silently recapture the project value.
 func stampReconcileDefaults(manifestPath, catalogDir string, enabledIDs []string, stderr io.Writer) error {
+	// A manifest that cannot be read keeps the previous behavior: plan and let
+	// the writer report per recipe.
+	manifest, err := config.LoadManifest(manifestPath)
+	if err != nil {
+		manifest = nil
+	}
 	for _, entry := range PlanReconcileStamps(catalogDir, enabledIDs) {
 		ordered, err := materializeStampOrdered(entry)
 		if err != nil {
 			warnReconcileStampFailure(stderr, catalogDir, entry.ID, err)
 			continue
 		}
-		_, refusal, err := shared.ApplyRecipeConfigWrite(manifestPath, entry.ID, ordered)
+		values, kept, err := splitReconcileStamp(manifest, entry.ID, ordered)
+		if err != nil {
+			warnReconcileStampFailure(stderr, catalogDir, entry.ID, err)
+			continue
+		}
+		for _, key := range kept {
+			warnf(stderr, "recipe '%s': config '%s' differs from the declared value; kept your value, review it with `ai-specs configure-recipes`",
+				reconcileStampRecipeName(catalogDir, entry.ID), key)
+		}
+		_, refusal, err := shared.ApplyRecipeConfigWrite(manifestPath, entry.ID, values)
 		if err != nil {
 			warnReconcileStampFailure(stderr, catalogDir, entry.ID, err)
 			continue
@@ -418,15 +443,16 @@ func warnReconcileStampFailure(stderr io.Writer, catalogDir, recipeID string, er
 // cleanOrphansNative runs the shared orphan plan/apply through the root
 // CleanOrphans boundary, which owns the lock read, the success lines and the
 // stale-lock prune. The lock path is the project lock.
-func cleanOrphansNative(planInput shared.OrphanPlanInput, roots shared.OrphanApplyRoots, projectRoot, cliHome string, stdout io.Writer) (shared.OrphanApplyOutcome, error) {
+func cleanOrphansNative(planInput shared.OrphanPlanInput, roots shared.OrphanApplyRoots, recipeSkillOrphans map[string][]string, projectRoot, cliHome string, stdout io.Writer) (shared.OrphanApplyOutcome, error) {
 	lockPath := filepath.Join(projectRoot, "ai-specs", ".ai-specs.lock")
 	return CleanOrphans(OrphanCleanupInput{
-		PlanInput:   planInput,
-		Roots:       roots,
-		LockPath:    lockPath,
-		Output:      stdout,
-		ProjectRoot: projectRoot,
-		CLIHome:     cliHome,
+		PlanInput:          planInput,
+		Roots:              roots,
+		LockPath:           lockPath,
+		Output:             stdout,
+		ProjectRoot:        projectRoot,
+		CLIHome:            cliHome,
+		RecipeSkillOrphans: recipeSkillOrphans,
 	}, os.RemoveAll)
 }
 

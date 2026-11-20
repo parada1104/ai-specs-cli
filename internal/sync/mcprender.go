@@ -1690,6 +1690,10 @@ type RenderMCPOptions struct {
 	// target ("" when none is recorded yet).
 	BlockSHA string
 	Result   *MCPResult
+	// PruneOnly removes every owned server and adds none: the caller is retiring
+	// the whole target (a removed agent, T7), so the manifest's servers must not
+	// be re-added there.
+	PruneOnly bool
 }
 
 // MCPResult is one target render's ownership outcome: the server names
@@ -1767,10 +1771,13 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 		return 1
 	}
 
-	servers, err := mcpLoadServers(root, opts.RecipeMCPPath)
-	if err != nil {
-		fmt.Fprintf(stderr, "error: %s\n", err)
-		return 1
+	servers := newMCPObj()
+	if !opts.PruneOnly {
+		servers, err = mcpLoadServers(root, opts.RecipeMCPPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "error: %s\n", err)
+			return 1
+		}
 	}
 	if servers.len() == 0 && len(opts.Owned) == 0 && !mcpIsFile(targetPath) {
 		fmt.Fprintf(stderr, "info: no [mcp.*] entries \u2014 skipping %s\n", agent)

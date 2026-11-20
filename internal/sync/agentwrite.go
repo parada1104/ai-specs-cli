@@ -86,6 +86,23 @@ func projectTreePreflight(root, home string, targets []string, errW io.Writer) i
 	cacheKey := filepath.Join(homeReal, "cache", "projects", projectcache.CacheKey(root))
 	add(homeWriteGuard, homeReal, filepath.Join(cacheKey, ".deps"))
 	add(homeWriteGuard, homeReal, filepath.Join(cacheKey, ".recipe"))
+	add(homeWriteGuard, homeReal, filepath.Join(cacheKey, "resolved-skills"))
+	// The per-skill orphan prune deletes `<cache>/.recipe/<recipe>/skills/<skill>`
+	// (T7), so a redirected recipe directory must refuse before the first write
+	// rather than at the orphan step. Only DIRECTORY entries (and links that
+	// resolve to one) are covered: a link to an unrelated file (e.g. a
+	// `.recipe/README.md`) is never mutated and must not block the run.
+	for _, recipe := range managedRecipeDirs(filepath.Join(cacheKey, ".recipe")) {
+		add(homeWriteGuard, homeReal, recipe)
+		add(homeWriteGuard, homeReal, filepath.Join(recipe, "skills"))
+	}
+	// Deletion authority for the per-skill prune is the recipe's ownership
+	// marker: a marker that is not a REGULAR file is never trusted and refuses
+	// before any delete or write (S1).
+	if err := requireRegularRecipeSkillMarkers(filepath.Join(cacheKey, ".recipe")); err != nil {
+		fmt.Fprintf(errW, "    ✗ %s\n", err)
+		return 1
+	}
 	for _, c := range checks {
 		if err := c.guard(c.root, c.path, true); err != nil {
 			fmt.Fprintf(errW, "    ✗ %s\n", err)
@@ -93,6 +110,42 @@ func projectTreePreflight(root, home string, targets []string, errW io.Writer) i
 		}
 	}
 	return 0
+}
+
+// cachePreflight refuses a redirected CLI-cache recipe or resolved-skills root
+// BEFORE a sync-agent run's first write (S1): the materialize fallback copies
+// skill copies under `.recipe`, writes the ownership record next to them, and
+// the flatten wipes `resolved-skills` outright. Both roots belong to ai-specs,
+// so any symlink below the CLI home is a refusal.
+func cachePreflight(root, home string, errW io.Writer) int {
+	homeReal := projectcache.AISpecsHome(home)
+	if homeReal == "" {
+		return 0 // the cache steps report the missing home themselves
+	}
+	cacheKey := filepath.Join(homeReal, "cache", "projects", projectcache.CacheKey(root))
+	for _, path := range []string{filepath.Join(cacheKey, ".recipe"), filepath.Join(cacheKey, "resolved-skills")} {
+		if err := homeWriteGuard(homeReal, path, true); err != nil {
+			fmt.Fprintf(errW, "    ✗ %s\n", err)
+			return 1
+		}
+	}
+	if err := requireRegularRecipeSkillMarkers(filepath.Join(cacheKey, ".recipe")); err != nil {
+		fmt.Fprintf(errW, "    ✗ %s\n", err)
+		return 1
+	}
+	return 0
+}
+
+// requireRegularRecipeSkillMarkers refuses a non-regular per-recipe ownership
+// marker anywhere under the cache's `.recipe` root, so the whole run is
+// write-free instead of refusing after the prune (S1).
+func requireRegularRecipeSkillMarkers(recipeRoot string) error {
+	for _, recipe := range managedRecipeDirs(recipeRoot) {
+		if err := requireRegularRecipeSkillMarker(filepath.Join(recipe, recipeSkillRecordName)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // managedRecipeDirs lists the recipe directories under ai-specs/recipes so the
