@@ -2,22 +2,44 @@
 # Provenance stamp: [meta] records the CLI version and timestamp of the last
 # sync. [managed.*] records integrity only for CLI-owned override targets;
 # it is not a general content-integrity manifest. git covers the committed
-# project surface; skill/recipe/dep content hashes are not tracked.
+# project surface; dep content hashes ([deps.*]) are tracked for drift
+# detection; recipe/skill content hashes are not tracked.
 
 [meta]
-cli_version = "0.24.0"
-synced_at = "2026-09-18T22:42:13Z"
+cli_version = "0.25.2"
+synced_at = "2026-11-20T06:19:22Z"
 
 [managed."AGENTS.md"]
-sha256 = "fde95880f9477740eb62c0da846a3814cd7adfb2312945d0eb9efd2bc0eac14d"
+sha256 = "40894bb145de08620673ba4aa831386ab72c3566474001b924851e77d53dc621"
 kind = "runtime-brief"
 policy = "never-force"
+
+[managed."ai-specs/recipes/git-pr-flow/README.md"]
+sha256 = "438024ea7f4a3e8928a84648bf507798ea1f5e14c008db1dd1df164dadd3c79e"
+recipe = "git-pr-flow"
+source = "README.md"
+kind = "doc"
+policy = "auto"
 
 [managed."ai-specs/recipes/plan-build-flow/hooks/plan-build-gate.sh"]
 sha256 = "6a4d7c18d405b1725a05344d0b64966e05b2a6b59195c9b9268f9abcf623077a"
 recipe = "plan-build-flow"
 source = "hooks/plan-build-gate.sh"
 kind = "gate"
+policy = "auto"
+
+[managed."ai-specs/recipes/session-context/README.md"]
+sha256 = "be158790ebf019fa734c8e0f6aeb4c436d328120f7c522b7319cf9a4d7201db0"
+recipe = "session-context"
+source = "README.md"
+kind = "doc"
+policy = "auto"
+
+[managed."ai-specs/recipes/tdd-flow/README.md"]
+sha256 = "0c81e80e0a230a8371bba51f9a9d04d26caa693e832a77f6851625f1f840354c"
+recipe = "tdd-flow"
+source = "README.md"
+kind = "doc"
 policy = "auto"
 
 [managed."ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh"]
@@ -67,6 +89,13 @@ sha256 = "ec7b485f7fea2297b966d60f34fb46db58d14564b6fedf514442719d18147230"
 recipe = "trello-mcp-workflow"
 source = "templates/card-spike.md"
 kind = "template"
+policy = "auto"
+
+[managed."ai-specs/recipes/vault-canonical-store/README.md"]
+sha256 = "7eb32bffd23ef486a377a1c778779f7d91691f85796b4d7a536dc0ba8f30b8b7"
+recipe = "vault-canonical-store"
+source = "README.md"
+kind = "doc"
 policy = "auto"
 
 [managed."ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh"]
