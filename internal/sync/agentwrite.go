@@ -96,6 +96,13 @@ func projectTreePreflight(root, home string, targets []string, errW io.Writer) i
 		add(homeWriteGuard, homeReal, recipe)
 		add(homeWriteGuard, homeReal, filepath.Join(recipe, "skills"))
 	}
+	// Deletion authority for the per-skill prune is the recipe's ownership
+	// marker: a marker that is not a REGULAR file is never trusted and refuses
+	// before any delete or write (S1).
+	if err := requireRegularRecipeSkillMarkers(filepath.Join(cacheKey, ".recipe")); err != nil {
+		fmt.Fprintf(errW, "    ✗ %s\n", err)
+		return 1
+	}
 	for _, c := range checks {
 		if err := c.guard(c.root, c.path, true); err != nil {
 			fmt.Fprintf(errW, "    ✗ %s\n", err)
@@ -122,7 +129,23 @@ func cachePreflight(root, home string, errW io.Writer) int {
 			return 1
 		}
 	}
+	if err := requireRegularRecipeSkillMarkers(filepath.Join(cacheKey, ".recipe")); err != nil {
+		fmt.Fprintf(errW, "    ✗ %s\n", err)
+		return 1
+	}
 	return 0
+}
+
+// requireRegularRecipeSkillMarkers refuses a non-regular per-recipe ownership
+// marker anywhere under the cache's `.recipe` root, so the whole run is
+// write-free instead of refusing after the prune (S1).
+func requireRegularRecipeSkillMarkers(recipeRoot string) error {
+	for _, recipe := range managedRecipeDirs(recipeRoot) {
+		if err := requireRegularRecipeSkillMarker(filepath.Join(recipe, recipeSkillRecordName)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // managedRecipeDirs lists the recipe directories under ai-specs/recipes so the

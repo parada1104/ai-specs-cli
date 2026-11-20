@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/lock"
@@ -234,5 +235,82 @@ func TestMaterializeRefusesSymlinkedRecipeCacheBeforePruning(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(outside, "skills", "bb", "SKILL.md")); err != nil {
 		t.Errorf("the refusal deleted an outside skill: %v", err)
+	}
+}
+
+// TestMaterializeRefusesNonRegularOwnershipMarker pins that deletion authority
+// comes only from a regular marker file inside the cache: a symlinked or
+// directory marker is never trusted, so the run refuses before the first delete
+// (S1).
+func TestMaterializeRefusesNonRegularOwnershipMarker(t *testing.T) {
+	t.Setenv("AI_SPECS_ALLOW_INTERNAL_TEST_RECIPES", "")
+	for _, kind := range []string{"symlink", "directory"} {
+		t.Run(kind, func(t *testing.T) {
+			const both = `, { id = "bb", source = "bundled" }`
+			f := writeMaterializeFixture(t, map[string]string{
+				"two": skillPruneRecipeBody(both),
+			}, "[recipes.two]\nenabled = true\n")
+			writeSkillPruneSkill(t, f.home, "two", "aa")
+			writeSkillPruneSkill(t, f.home, "two", "bb")
+			if err := runSkillPruneMaterialize(t, f); err != nil {
+				t.Fatalf("seed materialize: %v", err)
+			}
+			recipeRoot := filepath.Join(projectcache.RecipeSkillsRoot(f.project, f.home), "two")
+			// A hand-made SKILL.md-shaped copy the marker will claim as its own.
+			handmade := filepath.Join(recipeRoot, "skills", "handmade")
+			if err := os.MkdirAll(handmade, 0o755); err != nil {
+				t.Fatalf("mkdir handmade: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(handmade, "SKILL.md"), []byte("# user-authored\n"), 0o644); err != nil {
+				t.Fatalf("write handmade: %v", err)
+			}
+			marker := filepath.Join(recipeRoot, recipeSkillRecordName)
+			if err := os.Remove(marker); err != nil {
+				t.Fatalf("remove marker: %v", err)
+			}
+			var outsideRecord string
+			if kind == "symlink" {
+				outsideRecord = filepath.Join(t.TempDir(), "record")
+				if err := os.WriteFile(outsideRecord, []byte("handmade\n"), 0o644); err != nil {
+					t.Fatalf("write outside record: %v", err)
+				}
+				if err := os.Symlink(outsideRecord, marker); err != nil {
+					t.Fatalf("symlink marker: %v", err)
+				}
+			} else if err := os.Mkdir(marker, 0o755); err != nil {
+				t.Fatalf("mkdir marker: %v", err)
+			}
+
+			// The recipe drops bb: a trusted marker would prune bb anyway, but the
+			// point here is that no delete runs at all.
+			if err := os.WriteFile(filepath.Join(f.home, "catalog", "recipes", "two", "recipe.toml"), []byte(skillPruneRecipeBody("")), 0o644); err != nil {
+				t.Fatalf("rewrite recipe: %v", err)
+			}
+
+			err := runSkillPruneMaterialize(t, f)
+			if err == nil {
+				t.Fatal("a non-regular ownership marker must refuse the run")
+			}
+			if !strings.Contains(err.Error(), marker) {
+				t.Errorf("the refusal does not name the marker: %v", err)
+			}
+			for _, path := range []string{
+				filepath.Join(handmade, "SKILL.md"),
+				filepath.Join(recipeRoot, "skills", "aa", "SKILL.md"),
+				filepath.Join(recipeRoot, "skills", "bb", "SKILL.md"),
+			} {
+				if _, err := os.Stat(path); err != nil {
+					t.Errorf("the refusal deleted %s: %v", path, err)
+				}
+			}
+			if info, err := os.Lstat(marker); err != nil || info.Mode().IsRegular() {
+				t.Errorf("the refusal replaced the marker: %v %v", info, err)
+			}
+			if kind == "symlink" {
+				if got, err := os.ReadFile(outsideRecord); err != nil || string(got) != "handmade\n" {
+					t.Errorf("the outside record changed: %q %v", got, err)
+				}
+			}
+		})
 	}
 }

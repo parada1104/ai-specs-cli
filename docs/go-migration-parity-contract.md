@@ -471,6 +471,11 @@ old-launcher sync warning is added here.
   deleted; an unrecorded `SKILL.md`-shaped directory (e.g. hand-made) is kept.
   Upgrade: a cache written before the marker existed records what the recipe
   declares on the first run and prunes nothing; pruning starts on the next run.
+  The marker is read only when it is a regular file; a symlinked, directory or
+  otherwise non-regular marker is never trusted and refuses the run read-only
+  (rc 1, `✗ refuse to use <marker>: the skill ownership marker is not a regular
+  file`) from the spine/`sync-agent` cache preflight and again from the orphan
+  containment, before any delete or write.
   A recipe whose `recipe.toml` cannot be read plans nothing. Containment keeps
   the T6e rules: each candidate's `skills` directory and leaf are checked with
   the strict CLI-home rule before the shared apply; the full-sync preflight

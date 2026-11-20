@@ -73,6 +73,14 @@ func containOrphanRoots(in OrphanCleanupInput) error {
 		}
 	}
 	if in.CLIHome != "" {
+		// Deletion authority is only a REGULAR ownership marker: a symlinked,
+		// directory or otherwise non-regular marker refuses before the shared
+		// apply, so the run deletes nothing (S1).
+		for _, recipe := range managedRecipeDirs(in.Roots.RecipeSkills) {
+			if err := requireRegularRecipeSkillMarker(filepath.Join(recipe, recipeSkillRecordName)); err != nil {
+				return err
+			}
+		}
 		for _, recipe := range slices.Sorted(maps.Keys(in.RecipeSkillOrphans)) {
 			if in.Roots.RecipeSkills == "" {
 				break
@@ -120,9 +128,16 @@ const recipeSkillRecordName = ".ai-specs-owned-skills"
 // ownedRecipeSkills reads the skill ids ai-specs materialized into the recipe's
 // cache directory. A missing record (a cache written before the record existed)
 // owns nothing, so the upgrade path records what the recipe declares on the
-// first run and prunes only from the next one on.
+// first run and prunes only from the next one on. The record licenses deleting
+// the copies below it, so only a REGULAR file is trusted: a symlink, directory
+// or other non-regular marker owns nothing here, and the run refuses before any
+// delete (see containOrphanRoots).
 func ownedRecipeSkills(recipeRoot, recipeID string) map[string]bool {
-	data, err := os.ReadFile(filepath.Join(recipeRoot, recipeID, recipeSkillRecordName))
+	path := filepath.Join(recipeRoot, recipeID, recipeSkillRecordName)
+	if requireRegularRecipeSkillMarker(path) != nil {
+		return nil
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
@@ -135,6 +150,16 @@ func ownedRecipeSkills(recipeRoot, recipeID string) map[string]bool {
 	return owned
 }
 
+// requireRegularRecipeSkillMarker refuses an ownership marker that exists but is
+// not a regular file. An absent marker is the documented upgrade path.
+func requireRegularRecipeSkillMarker(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode().IsRegular() {
+		return nil
+	}
+	return fmt.Errorf("refuse to use %s: the skill ownership marker is not a regular file", path)
+}
+
 // recordOwnedRecipeSkills writes the record as exactly the skill ids this run
 // materialized under `<recipeRoot>/<recipeID>/skills` (an empty list keeps an
 // empty record, so no later run inherits a stale license).
@@ -142,8 +167,11 @@ func recordOwnedRecipeSkills(cliHome, recipeRoot, recipeID string, skills []stri
 	dir := filepath.Join(recipeRoot, recipeID)
 	path := filepath.Join(dir, recipeSkillRecordName)
 	// The record licenses deleting the copies below it, so never write it
-	// through a redirected cache (S1).
+	// through a redirected cache (S1) or over a non-regular marker.
 	if err := homeWriteGuard(cliHome, path, true); err != nil {
+		return err
+	}
+	if err := requireRegularRecipeSkillMarker(path); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {

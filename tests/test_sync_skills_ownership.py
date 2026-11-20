@@ -794,6 +794,29 @@ class SyncRecipeSkillOrphanTests(unittest.TestCase):
             [snapshot(self.project), snapshot(self.home), snapshot(outside)], before
         )
 
+    def test_redirected_marker_cannot_authorize_a_prune(self) -> None:
+        from _blackbox import snapshot
+
+        self.seed()
+        handmade = self.skill_copies / "handmade/SKILL.md"
+        handmade.parent.mkdir()
+        handmade.write_bytes(b"# user-authored\n")
+        outside = self.base / "outside"
+        outside.mkdir()
+        record = outside / "record"
+        record.write_bytes(b"handmade\n")
+        marker = self.skill_copies.parent / ".ai-specs-owned-skills"
+        marker.unlink()
+        marker.symlink_to(record)
+        roots = (self.project, self.home, outside)
+        before = list(map(snapshot, roots))
+
+        result = self.sync()
+
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn(str(marker), result.stderr)
+        self.assertEqual(list(map(snapshot, roots)), before)
+
     def test_unowned_shaped_cache_skill_survives(self) -> None:
         """S3: only the copies ai-specs materialized itself may be pruned."""
         self.seed()
