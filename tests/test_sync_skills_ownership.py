@@ -794,6 +794,47 @@ class SyncRecipeSkillOrphanTests(unittest.TestCase):
             [snapshot(self.project), snapshot(self.home), snapshot(outside)], before
         )
 
+    def test_unowned_shaped_cache_skill_survives(self) -> None:
+        """S3: only the copies ai-specs materialized itself may be pruned."""
+        self.seed()
+        skill = self.skill_copies / "handmade" / "SKILL.md"
+        skill.parent.mkdir()
+        skill.write_bytes(b"# hand-authored\n")
+        self.set_skills('[{ id = "aa", source = "bundled" }]')
+        self.seed()
+        self.assertEqual(skill.read_bytes(), b"# hand-authored\n")
+
+    def test_unrelated_cache_file_link_does_not_block_sync(self) -> None:
+        """S1: a cache file link no cleanup touches must not refuse the run."""
+        self.seed()
+        notes = self.base / "notes.md"
+        notes.write_bytes(b"notes\n")
+        (self.cache / ".recipe/README.md").symlink_to(notes)
+        self.seed()
+        self.assertEqual(notes.read_bytes(), b"notes\n")
+
+    def test_standalone_rejects_redirected_resolved_skills(self) -> None:
+        """S1: sync-agent's flatten must not wipe through a redirect."""
+        from _blackbox import invoke, snapshot
+
+        self.seed()
+        outside = self.base / "outside"
+        self.resolved.rename(outside)
+        self.resolved.symlink_to(outside)
+        self.set_skills('[{ id = "aa", source = "bundled" }]')
+        roots = (self.project, self.home, outside)
+        before = list(map(snapshot, roots))
+        (self.base / "tmp").mkdir(exist_ok=True)
+        result = invoke(
+            self.project,
+            "sync-agent",
+            "--claude",
+            cli_home=self.home,
+            tmpdir=self.base / "tmp",
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(list(map(snapshot, roots)), before)
+
 
 if __name__ == "__main__":
     unittest.main()

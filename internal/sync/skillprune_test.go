@@ -2,10 +2,12 @@ package sync
 
 // T7b (S3 "borrar siempre lo gestionado"): per-skill orphans inside an ENABLED
 // recipe. Dropping a skill from `[provides].skills` must remove the copy
-// ai-specs materialized for it under `<cache>/.recipe/<recipe>/skills/<skill>`
-// and its `[recipes.<recipe>]` hash record, because the resolved-skills flatten
-// reads that cache tree as its source of truth. A copy with no hash record is
-// not provably ai-specs' output and stays (T2's rule).
+// ai-specs materialized for it under `<cache>/.recipe/<recipe>/skills/<skill>`,
+// because the resolved-skills flatten reads that cache tree as its source of
+// truth. Ownership is recorded next to the copies (the `.ai-specs-owned-skills`
+// marker the materializer writes), so a hand-made SKILL.md-shaped directory is
+// never deleted, and a cache written before the record existed is adopted on
+// the first run and pruned only from the next one on (T2's rule).
 
 import (
 	"bytes"
@@ -84,17 +86,17 @@ func TestMaterializePrunesRecipeSkillNoLongerProvided(t *testing.T) {
 	if err := os.MkdirAll(manual, 0o755); err != nil {
 		t.Fatalf("mkdir manual: %v", err)
 	}
-	// A stale SKILL.md-shaped copy (the shape the flatten collects) is an orphan
-	// even though this run never declared it.
-	stale := filepath.Join(recipeSkills, "two", "skills", "stale")
-	if err := os.MkdirAll(stale, 0o755); err != nil {
-		t.Fatalf("mkdir stale: %v", err)
+	// A hand-created skill copy under the recipe's cache is NOT recorded as
+	// ai-specs-managed, so it survives the prune even in SKILL.md shape.
+	unowned := filepath.Join(recipeSkills, "two", "skills", "handmade")
+	if err := os.MkdirAll(unowned, 0o755); err != nil {
+		t.Fatalf("mkdir unowned: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(stale, "SKILL.md"), []byte("# stale\n"), 0o644); err != nil {
-		t.Fatalf("write stale: %v", err)
+	if err := os.WriteFile(filepath.Join(unowned, "SKILL.md"), []byte("# handmade\n"), 0o644); err != nil {
+		t.Fatalf("write unowned: %v", err)
 	}
-	// A legacy lock may still carry [recipes.<id>.skills.<skill>]; both records
-	// must follow their copies (the lock WRITER no longer emits this table).
+	// A legacy lock may still carry [recipes.<id>.skills.<skill>]; it is read but
+	// never emitted, and it does not license the prune (the cache marker does).
 	lockPath := filepath.Join(f.project, "ai-specs", ".ai-specs.lock")
 	legacy, err := os.ReadFile(lockPath)
 	if err != nil {
@@ -123,8 +125,8 @@ func TestMaterializePrunesRecipeSkillNoLongerProvided(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(manual, "SKILL.md")); !os.IsNotExist(err) {
 		t.Errorf("an unrecorded skill directory must survive: %v", err)
 	}
-	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Errorf("a stale SKILL.md copy must be pruned: %v", err)
+	if _, err := os.Stat(filepath.Join(unowned, "SKILL.md")); err != nil {
+		t.Errorf("an unrecorded skill copy must survive: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(localBB, "SKILL.md")); err != nil {
 		t.Errorf("the project-local skill is gone: %v", err)
@@ -153,6 +155,53 @@ func TestMaterializePrunesRecipeSkillNoLongerProvided(t *testing.T) {
 	}
 	if !bytes.Equal(before, after) {
 		t.Errorf("a second run rewrote the lock:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// TestMaterializeAdoptsCacheWithoutOwnershipRecord pins the upgrade path: a
+// cache written before the ownership record existed has no marker, so the first
+// run records what the recipe declares and prunes nothing unrecorded.
+func TestMaterializeAdoptsCacheWithoutOwnershipRecord(t *testing.T) {
+	t.Setenv("AI_SPECS_ALLOW_INTERNAL_TEST_RECIPES", "")
+	const both = `, { id = "bb", source = "bundled" }`
+	f := writeMaterializeFixture(t, map[string]string{
+		"two": skillPruneRecipeBody(both),
+	}, "[recipes.two]\nenabled = true\n")
+	writeSkillPruneSkill(t, f.home, "two", "aa")
+	writeSkillPruneSkill(t, f.home, "two", "bb")
+	// Simulate the pre-record cache: the copies exist, the marker does not.
+	skills := filepath.Join(projectcache.RecipeSkillsRoot(f.project, f.home), "two", "skills")
+	for _, skill := range []string{"aa", "bb"} {
+		if err := os.MkdirAll(filepath.Join(skills, skill), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", skill, err)
+		}
+		if err := os.WriteFile(filepath.Join(skills, skill, "SKILL.md"), []byte("# "+skill+"\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", skill, err)
+		}
+	}
+
+	// The first run after the upgrade records the declared set, pruning nothing.
+	if err := runSkillPruneMaterialize(t, f); err != nil {
+		t.Fatalf("adopting materialize: %v", err)
+	}
+	for _, skill := range []string{"aa", "bb"} {
+		if _, err := os.Stat(filepath.Join(skills, skill, "SKILL.md")); err != nil {
+			t.Errorf("adoption pruned %s: %v", skill, err)
+		}
+	}
+
+	// From the next run on the recorded skill is managed: dropping it prunes it.
+	if err := os.WriteFile(filepath.Join(f.home, "catalog", "recipes", "two", "recipe.toml"), []byte(skillPruneRecipeBody("")), 0o644); err != nil {
+		t.Fatalf("rewrite recipe: %v", err)
+	}
+	if err := runSkillPruneMaterialize(t, f); err != nil {
+		t.Fatalf("materialize after the drop: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(skills, "bb")); !os.IsNotExist(err) {
+		t.Errorf("the recorded dropped skill survived: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(skills, "aa", "SKILL.md")); err != nil {
+		t.Errorf("the still-provided skill is gone: %v", err)
 	}
 }
 

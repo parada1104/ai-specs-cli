@@ -113,24 +113,71 @@ func containOrphanRoots(in OrphanCleanupInput) error {
 	return nil
 }
 
+// recipeSkillRecordName is the ownership record the materializer writes inside
+// a recipe's cache directory: one materialized skill id per line, sorted.
+const recipeSkillRecordName = ".ai-specs-owned-skills"
+
+// ownedRecipeSkills reads the skill ids ai-specs materialized into the recipe's
+// cache directory. A missing record (a cache written before the record existed)
+// owns nothing, so the upgrade path records what the recipe declares on the
+// first run and prunes only from the next one on.
+func ownedRecipeSkills(recipeRoot, recipeID string) map[string]bool {
+	data, err := os.ReadFile(filepath.Join(recipeRoot, recipeID, recipeSkillRecordName))
+	if err != nil {
+		return nil
+	}
+	owned := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		if line != "" {
+			owned[line] = true
+		}
+	}
+	return owned
+}
+
+// recordOwnedRecipeSkills writes the record as exactly the skill ids this run
+// materialized under `<recipeRoot>/<recipeID>/skills` (an empty list keeps an
+// empty record, so no later run inherits a stale license).
+func recordOwnedRecipeSkills(cliHome, recipeRoot, recipeID string, skills []string) error {
+	dir := filepath.Join(recipeRoot, recipeID)
+	path := filepath.Join(dir, recipeSkillRecordName)
+	// The record licenses deleting the copies below it, so never write it
+	// through a redirected cache (S1).
+	if err := homeWriteGuard(cliHome, path, true); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	ids := slices.Clone(skills)
+	slices.Sort(ids)
+	content := ""
+	if len(ids) > 0 {
+		content = strings.Join(ids, "\n") + "\n"
+	}
+	return os.WriteFile(path, []byte(content), 0o644)
+}
+
 // planRecipeSkillOrphans derives the per-skill half of T7 (S3 "borrar siempre lo
 // gestionado"): for every ENABLED recipe, the skill copies under
-// `<recipe skills root>/<recipe>/skills/` that its recipe.toml no longer
-// declares.
+// `<recipe skills root>/<recipe>/skills/` that ai-specs recorded as its own and
+// its recipe.toml no longer declares.
 //
-// No lock record licenses this prune: the lock WRITER drops the [recipes.*]
-// skill-hash table (internal/lock renderLock emits deps/managed, never
-// recipes), so SetRecipeSkillHashes — written by materializeBundledSkill — never
-// survives a run and cannot prove ownership across runs. The rule is the one
-// the recipe-level orphan plan already applies to the same cache namespace: a
-// DISABLED recipe's whole `.recipe/<recipe>` directory is deleted with no record
-// at all, so a copy the catalog no longer declares is an orphan. Only
-// `SKILL.md`-shaped directories are candidates, because that is the shape the
-// resolved-skills flatten collects; anything else in the cache is inert and
-// stays. A recipe that cannot be read declares nothing, so its copies are kept.
+// The ownership record is the `.ai-specs-owned-skills` marker the materializer
+// writes next to the copies, not a lock table: the lock WRITER drops the
+// [recipes.*] skill-hash table (renderLock emits deps/managed, never recipes),
+// so SetRecipeSkillHashes never survives a run and cannot prove ownership
+// across runs. A copy the record does not name — a hand-made SKILL.md-shaped
+// directory, or the contents of a cache written before the record existed — is
+// never deleted. A recipe that cannot be read declares nothing, so its copies
+// are kept.
 func planRecipeSkillOrphans(recipeRoot, catalogDir string, enabled []materializeRecipe) map[string][]string {
 	out := map[string][]string{}
 	for _, entry := range enabled {
+		owned := ownedRecipeSkills(recipeRoot, entry.ID)
+		if len(owned) == 0 {
+			continue
+		}
 		recipe, err := schema.LoadRecipeToml(filepath.Join(catalogDir, entry.ID, "recipe.toml"))
 		if err != nil {
 			continue
@@ -141,15 +188,10 @@ func planRecipeSkillOrphans(recipeRoot, catalogDir string, enabled []materialize
 				declared[skill.ID] = true
 			}
 		}
-		skillsDir := filepath.Join(recipeRoot, entry.ID, "skills")
-		for _, name := range dirChildNames(skillsDir) {
-			if declared[name] {
-				continue
+		for _, name := range dirChildNames(filepath.Join(recipeRoot, entry.ID, "skills")) {
+			if owned[name] && !declared[name] {
+				out[entry.ID] = append(out[entry.ID], name)
 			}
-			if info, statErr := os.Stat(filepath.Join(skillsDir, name, "SKILL.md")); statErr != nil || !info.Mode().IsRegular() {
-				continue
-			}
-			out[entry.ID] = append(out[entry.ID], name)
 		}
 	}
 	return out

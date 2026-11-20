@@ -14,6 +14,8 @@ package sync
 // and this test normalizes the Go side symmetrically.
 
 import (
+	"ai-specs.dev/ai-specs/internal/lock"
+	"ai-specs.dev/ai-specs/internal/projectcache"
 	"bytes"
 	"io/fs"
 	"os"
@@ -21,8 +23,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"ai-specs.dev/ai-specs/internal/lock"
-	"ai-specs.dev/ai-specs/internal/projectcache"
 )
 
 // materializeLoopRecipe is one catalog recipe directory: its recipe.toml body
@@ -52,6 +52,10 @@ type materializeLoopScenario struct {
 	resolvedHooksOut  bool
 	refreshGates      bool
 	lockManaged       map[string]string // target -> sha256, seeded into the lock
+	// acceptedCache lists frozen tree paths the Go leg writes and the frozen
+	// Python oracle cannot: the S1/S3 skill ownership record the materializer
+	// now keeps next to the copies it wrote (parity contract §10).
+	acceptedCache map[string]string
 }
 
 func materializeLoopRecipeBody(id, name, extra string) materializeLoopRecipe {
@@ -301,7 +305,14 @@ func TestMaterializeLoopDifferentialFrozen(t *testing.T) {
 				got := freezeMaterializePaths(result.ResolvedHooksDocument, home, project)
 				assertDocumentEqual(t, "resolved-hooks", got, ref.ResolvedHooks)
 			}
-			materializeLoopDiffTree(t, ref.Tree, freezeMaterializeTree(t, goTree, home, project))
+			frozenGoTree := freezeMaterializeTree(t, goTree, home, project)
+			for key, want := range scenario.acceptedCache {
+				if got, ok := frozenGoTree[key]; !ok || got != want {
+					t.Fatalf("accepted divergence %s: got %q, want %q", key, got, want)
+				}
+				delete(frozenGoTree, key)
+			}
+			materializeLoopDiffTree(t, ref.Tree, frozenGoTree)
 		})
 	}
 }
@@ -449,6 +460,9 @@ url = "__DEP_SRC__"
 			manifest:     "[recipes.alpha]\nenabled = true\n",
 			cacheSeed:    map[string]string{"commands/review.md": "stale command\n"},
 			recipeMCPOut: true,
+			acceptedCache: map[string]string{
+				"CACHE/projects/<CACHE_PROJECT>/.recipe/alpha/.ai-specs-owned-skills": "demo\n",
+			},
 		},
 		{
 			name:     "templates fresh managed-current and user-modified",

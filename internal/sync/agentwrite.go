@@ -89,8 +89,10 @@ func projectTreePreflight(root, home string, targets []string, errW io.Writer) i
 	add(homeWriteGuard, homeReal, filepath.Join(cacheKey, "resolved-skills"))
 	// The per-skill orphan prune deletes `<cache>/.recipe/<recipe>/skills/<skill>`
 	// (T7), so a redirected recipe directory must refuse before the first write
-	// rather than at the orphan step.
-	for _, recipe := range cacheChildPaths(filepath.Join(cacheKey, ".recipe")) {
+	// rather than at the orphan step. Only DIRECTORY entries (and links that
+	// resolve to one) are covered: a link to an unrelated file (e.g. a
+	// `.recipe/README.md`) is never mutated and must not block the run.
+	for _, recipe := range managedRecipeDirs(filepath.Join(cacheKey, ".recipe")) {
 		add(homeWriteGuard, homeReal, recipe)
 		add(homeWriteGuard, homeReal, filepath.Join(recipe, "skills"))
 	}
@@ -103,19 +105,24 @@ func projectTreePreflight(root, home string, targets []string, errW io.Writer) i
 	return 0
 }
 
-// cacheChildPaths lists the direct children of a CLI-cache directory so the
-// preflight can contain each one: the per-skill orphan prune deletes below
-// `<cache>/.recipe/<recipe>/skills`, so a link there must refuse early.
-func cacheChildPaths(dir string) []string {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
+// cachePreflight refuses a redirected CLI-cache recipe or resolved-skills root
+// BEFORE a sync-agent run's first write (S1): the materialize fallback copies
+// skill copies under `.recipe`, writes the ownership record next to them, and
+// the flatten wipes `resolved-skills` outright. Both roots belong to ai-specs,
+// so any symlink below the CLI home is a refusal.
+func cachePreflight(root, home string, errW io.Writer) int {
+	homeReal := projectcache.AISpecsHome(home)
+	if homeReal == "" {
+		return 0 // the cache steps report the missing home themselves
 	}
-	paths := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		paths = append(paths, filepath.Join(dir, entry.Name()))
+	cacheKey := filepath.Join(homeReal, "cache", "projects", projectcache.CacheKey(root))
+	for _, path := range []string{filepath.Join(cacheKey, ".recipe"), filepath.Join(cacheKey, "resolved-skills")} {
+		if err := homeWriteGuard(homeReal, path, true); err != nil {
+			fmt.Fprintf(errW, "    ✗ %s\n", err)
+			return 1
+		}
 	}
-	return paths
+	return 0
 }
 
 // managedRecipeDirs lists the recipe directories under ai-specs/recipes so the
