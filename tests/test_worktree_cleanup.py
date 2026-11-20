@@ -141,8 +141,13 @@ class WorktreeCleanupTests(unittest.TestCase):
             f'printf \'%s\\n\' "$*" > "{log}"', "",
         ]))
 
-    def _assert_override_ignored(self, override: Path) -> None:
+    def _assert_override_rejected(self, override: Path) -> None:
         repo = self._make_repo()
+        wt = self._add_worktree(repo, "feat-pinned")
+        (wt / "f.txt").write_text("x\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "work")
+        git(repo, "merge", "-q", "--no-ff", "-m", "merge", "feat-pinned")
         log = override.parent / "cli.log"
         override_log = override.parent / "override.log"
         result = subprocess.run(
@@ -151,25 +156,28 @@ class WorktreeCleanupTests(unittest.TestCase):
                      WORKTREE_CLEANUP_BIN=str(override), OVERRIDE_LOG=str(override_log)),
             capture_output=True, text=True,
         )
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stdout, "")
         self.assertEqual(result.stderr,
-                         "worktree-cleanup: WORKTREE_CLEANUP_BIN is retired; ignoring it and "
-                         "running cleanup through the installed ai-specs CLI\n")
-        self.assertFalse(override_log.exists(), "the retired override must never run")
-        self.assertEqual(log.read_text(), "worktree-gate --cleanup --topology auto --base main\n")
+                         "worktree-cleanup: WORKTREE_CLEANUP_BIN is no longer supported; "
+                         "unset it to run cleanup through the installed ai-specs CLI\n")
+        self.assertFalse(override_log.exists(), "a rejected override must never run")
+        self.assertFalse(log.exists(), "a rejected pin must not fall back to the installed CLI")
+        self.assertTrue(wt.exists(), "a rejected pin must delete nothing")
+        self.assertIn("feat-pinned", git(repo, "branch", "--format=%(refname:short)"))
 
-    def test_executable_cleanup_override_is_ignored_and_cli_runs(self):
+    def test_executable_cleanup_override_is_rejected_before_cleanup(self):
         override = Path(tempfile.mkdtemp(prefix="cleanup-override-")) / "bin"
         self.addCleanup(lambda: shutil.rmtree(override.parent))
         override.write_text("#!/usr/bin/env bash\necho ran > \"$OVERRIDE_LOG\"\n")
         override.chmod(0o755)
-        self._assert_override_ignored(override)
+        self._assert_override_rejected(override)
 
-    def test_non_executable_cleanup_override_is_ignored_and_cli_runs(self):
+    def test_non_executable_cleanup_override_is_rejected_before_cleanup(self):
         override = Path(tempfile.mkdtemp(prefix="cleanup-invalid-pin-")) / "not-executable"
         self.addCleanup(lambda: shutil.rmtree(override.parent))
         override.write_text("not executable")
-        self._assert_override_ignored(override)
+        self._assert_override_rejected(override)
 
     def test_missing_cli_fails_closed_without_running_cleanup(self):
         repo = self._make_repo()

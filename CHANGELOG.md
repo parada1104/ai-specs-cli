@@ -22,8 +22,9 @@ customized `worktree-cleanup.sh` override and run `ai-specs sync` to refresh it.
   assets, their checksum trust root, the standalone gate adapter, and
   `scripts/build-gate.sh` are retired. The launcher no longer uses the
   project-local pin or cached gate binary. `WORKTREE_GATE_BIN` remains available
-  for the write gate; cleanup ignores a set `WORKTREE_CLEANUP_BIN` with a
-  warning and runs only through the installed CLI.
+  for the write gate; a set `WORKTREE_CLEANUP_BIN` no longer runs anything — the
+  cleanup launcher aborts (exit 2, nothing deleted) and asks the caller to unset
+  it to run cleanup through the installed CLI.
 - **`sync` now removes what it generated when the source disappears.** A recipe
   removed or disabled in `ai-specs/ai-specs.toml` is unwired from every agent
   runtime (`.claude/settings.json`, `.cursor/hooks.json` and `.cursor/hooks/*.sh`,
