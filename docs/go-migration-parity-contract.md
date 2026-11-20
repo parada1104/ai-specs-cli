@@ -463,19 +463,28 @@ old-launcher sync warning is added here.
   `<cache>/.recipe/*/skills/*` into `<cache>/resolved-skills`, and that tree is
   wiped and re-populated on every run, so the dropped skill also disappears
   from `resolved-skills` in the same sync without a second mechanism.
-  No ownership key licenses this prune: `materializeBundledSkill` records
-  `[recipes.<id>]` skill hashes in memory, but the lock WRITER never emits that
-  table, so no such record survives a run. The rule is the one the
-  recipe-level orphan plan already applies to the same cache namespace — a
-  disabled recipe's whole `.recipe/<id>` is deleted with no record — so a
-  `SKILL.md`-shaped copy the catalog no longer declares is an orphan. A
-  directory without `SKILL.md` is inert for the flatten and stays, and a recipe
-  whose `recipe.toml` cannot be read plans nothing. Containment keeps the T6e
-  rules: each candidate's `skills` directory and leaf are checked with the
-  strict CLI-home rule before the shared apply, the spine preflight covers
-  `<cache>/resolved-skills`, every `<cache>/.recipe/<recipe>` and each recipe's
-  `skills` directory, and a redirected `.recipe` refuses (rc 1) before the
-  first write with nothing deleted. Output is the existing orphan line shape,
+  The prune is licensed by an ownership record: because the lock writer never
+  emits `[recipes.*]`, the materializer writes the bundled skill ids it copied
+  per recipe to a cache-side marker `<cache>/.recipe/<recipe>/.ai-specs-owned-skills`
+  (one id per line, sorted; empty when the recipe declares none), and the lock
+  gains no section. Only a recorded id the recipe no longer declares is
+  deleted; an unrecorded `SKILL.md`-shaped directory (e.g. hand-made) is kept.
+  Upgrade: a cache written before the marker existed records what the recipe
+  declares on the first run and prunes nothing; pruning starts on the next run.
+  A recipe whose `recipe.toml` cannot be read plans nothing. Containment keeps
+  the T6e rules: each candidate's `skills` directory and leaf are checked with
+  the strict CLI-home rule before the shared apply; the full-sync preflight
+  covers `<cache>/resolved-skills` and every directory entry (or link resolving
+  to one) under `<cache>/.recipe/`, so an unrelated file link such as
+  `.recipe/README.md` does not block sync; a redirected `.recipe/<recipe>`
+  refuses (rc 1) before the first write with nothing deleted. A redirected
+  `resolved-skills` refuses in every entry point: `Flatten` refuses a
+  destination that IS a symlink (`error: refuse to write <dest>: destination is
+  a symlink`, rc 1, nothing removed; a symlinked parent keeps the legacy
+  behavior), and standalone `sync-agent` preflights `.recipe`/`resolved-skills`
+  before its materialize fallback, so the refusal is write-free. Accepted
+  divergences from the Python oracle: the marker file (pinned per scenario via
+  `acceptedCache`) and the symlinked-destination refusal. Output is the existing orphan line shape,
   `  ✓ removed orphaned cache .recipe/<recipe>/skills/<skill>`, filtered by
   compact mode like every other `✓` orphan line.
 

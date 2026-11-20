@@ -34,7 +34,8 @@ customized `worktree-cleanup.sh` override and run `ai-specs sync` to refresh it.
   `[agents].enabled` loses the instruction and skills links, command copies, MCP
   servers, hook wiring and shims ai-specs generated for it, and a skill dropped
   from a still-enabled recipe's `[provides].skills` is pruned from the recipe
-  cache. Only what the lock records as ai-specs' is touched: user files and
+  cache when the cache records it as copied by ai-specs (an existing cache
+  records first and prunes from the next run; a hand-made copy is kept). Only what the lock records as ai-specs' is touched: user files and
   untracked copies survive (an untracked legacy command copy stays with one
   warning).
 - **MCP servers merge per server.** `sync` adds, updates and removes only the

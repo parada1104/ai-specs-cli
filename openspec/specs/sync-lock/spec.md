@@ -94,9 +94,10 @@ project-relative POSIX paths. `internal/lock/lock.go` is the shape authority:
   are pruned.
 
 The lock SHALL NOT emit the legacy `[recipes.*]` and `[skills]` tables: they
-are still read for compatibility, but neither survives a write, which is why no
-skill materialization can claim ownership across runs (per-skill pruning of a
-still-enabled recipe is an orphan rule, not a lock record). Sections are
+are still read for compatibility, but neither survives a write. The per-skill
+ownership record of a still-enabled recipe deliberately lives in the CLI cache
+(`<cache>/.recipe/<recipe>/.ai-specs-owned-skills`), not the lock, so lock bytes
+stay compatible. Sections are
 written in a fixed order (`[meta]`, `[managed.*]`, `[mcp-block.*]`, `[hooks]`,
 `[deps.*]`, `[agents.*]`, `[mcp.*]`) with sorted keys.
 
