@@ -794,6 +794,11 @@ class SyncRecipeSkillOrphanTests(unittest.TestCase):
             [snapshot(self.project), snapshot(self.home), snapshot(outside)], before
         )
 
+    def test_fresh_skillless_recipe_does_not_create_recipe_cache(self):
+        self.set_skills("[]")
+        self.seed()
+        self.assertFalse((self.cache / ".recipe").exists())
+
     def test_redirected_marker_cannot_authorize_a_prune(self) -> None:
         from _blackbox import snapshot
 

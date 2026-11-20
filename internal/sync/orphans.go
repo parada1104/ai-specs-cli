@@ -174,6 +174,12 @@ func recordOwnedRecipeSkills(cliHome, recipeRoot, recipeID string, skills []stri
 	if err := requireRegularRecipeSkillMarker(path); err != nil {
 		return err
 	}
+	// A skill-less recipe with no cache dir owns nothing: do not create one.
+	if len(skills) == 0 {
+		if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
