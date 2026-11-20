@@ -408,12 +408,19 @@ old-launcher sync warning is added here.
   delete, applied after materialization):
   - the instruction link (`CLAUDE.md`, `.omp/AGENTS.md`,
     `.github/copilot-instructions.md`, `GEMINI.md`) only when it is a symlink
-    that still resolves to the target's `AGENTS.md`, and the skills link only
-    when it is a symlink at all (T6 guarantees ai-specs is the only writer that
-    puts one there);
+    that still resolves to the target's `AGENTS.md`;
+  - the skills link only when it is a symlink that still resolves to the exact
+    path sync writes: `<CLI home>/cache/projects/<project key>/resolved-skills`
+    for the root target (`projectcache.ResolvedSkillsDir`), `<target>/ai-specs/skills`
+    for a subrepo target. A link pointing anywhere else is kept, including one
+    repointed to a prior CLI home;
   - command copies with a `[managed.*]` record whose `kind` is
-    `recipe-command`, compared byte-for-byte with the preflight copy (an edit
-    keeps both the copy and its record);
+    `recipe-command` and whose bytes still match the recorded `sha256`. This is
+    stricter than T2's disabled-recipe prune (where a prior edit does not
+    revoke ownership): an edited copy keeps both the copy and its record here.
+    A record whose copy is already gone is dropped on that sync without
+    deleting anything, so a file written at that path later is never ai-specs'
+    to delete;
   - the recorded MCP servers of that agent's target (`[mcp."<rel>"]`), with
     their record and `[mcp-block."<rel>"]` hash — a target with no record is
     never touched, and the renderer's own recovery/refusal rules apply;
@@ -424,7 +431,16 @@ old-launcher sync warning is added here.
     `settings.json`/`hooks.json` survive; an unrecorded generated-looking shim
     is kept with the existing one-line notice, and an unrecorded command copy
     is kept with `  ! <dir>: N command copy(ies) not recorded as
-    ai-specs-managed (kept; delete them if ai-specs did not write them)`.
+    ai-specs-managed (kept; delete them if ai-specs did not write them)` — a
+    notice that prints only while that retired agent still has an
+    ai-specs-owned artifact to prune.
+  Apply order, so a refusal leaves everything byte-identical: re-validate every
+  recorded MCP target with a dry run, preflight every planned unlink (the entry
+  still has the planned identity and its parent is writable, `W_OK|X_OK`),
+  delete command copies and links, rewrite the MCP targets, then write the
+  lock. A refused or failed unlink fails the run (rc 1) with the project and
+  the lock byte-identical, `.mcp.json` and `.pi/mcp.json` included; if a race
+  defeats the preflight, the lock records only what was actually deleted.
   Every delete reuses the containment rules above (`pruneHookFile` for files,
   `projectWriteGuard` for links): a retired agent's directory that resolves
   outside the project refuses the whole run (rc 1) before any delete. Route
@@ -439,6 +455,29 @@ old-launcher sync warning is added here.
   the prune lines above are new stdout/stderr text under the existing
   `✓ …`/`! …` conventions. No parity fixture or golden carries an
   expectation for retired agents, so the corpus is unchanged.
+- **Per-skill orphans of an enabled recipe (T7b).** A skill removed from a
+  still-enabled recipe's `[provides].skills` stops being materialized:
+  `<cache>/.recipe/<recipe>/skills/<skill>` is deleted by the EXISTING orphan
+  plan (`internal/sync/orphans.go` `planRecipeSkillOrphans`, applied through
+  `CleanOrphans`). The recipe tier of the flatten step collects
+  `<cache>/.recipe/*/skills/*` into `<cache>/resolved-skills`, and that tree is
+  wiped and re-populated on every run, so the dropped skill also disappears
+  from `resolved-skills` in the same sync without a second mechanism.
+  No ownership key licenses this prune: `materializeBundledSkill` records
+  `[recipes.<id>]` skill hashes in memory, but the lock WRITER never emits that
+  table, so no such record survives a run. The rule is the one the
+  recipe-level orphan plan already applies to the same cache namespace — a
+  disabled recipe's whole `.recipe/<id>` is deleted with no record — so a
+  `SKILL.md`-shaped copy the catalog no longer declares is an orphan. A
+  directory without `SKILL.md` is inert for the flatten and stays, and a recipe
+  whose `recipe.toml` cannot be read plans nothing. Containment keeps the T6e
+  rules: each candidate's `skills` directory and leaf are checked with the
+  strict CLI-home rule before the shared apply, the spine preflight covers
+  `<cache>/resolved-skills`, every `<cache>/.recipe/<recipe>` and each recipe's
+  `skills` directory, and a redirected `.recipe` refuses (rc 1) before the
+  first write with nothing deleted. Output is the existing orphan line shape,
+  `  ✓ removed orphaned cache .recipe/<recipe>/skills/<skill>`, filtered by
+  compact mode like every other `✓` orphan line.
 
 ---
 
@@ -574,8 +613,8 @@ licence to reproduce the defect.
 |---|---|
 | D1 | **`recipe remove` destroyed lock data — CLOSED** (`ea61d132` PR #301, 2026-09-27, card `lVB8gEin`). The removal path now goes through the lock writer (`load_lock` → `remove_recipe_lock_entries` → `write_lock`), which preserves `[managed.*]`, `[deps]` and `[agents.*]`, and the lock is rewritten only when something was actually removed. The Go route is the same shape (`internal/lock/mutation.go:81`, `internal/cli/recipe.go:565,697`). NOT the same register as the S14-Δ `D1` (empty config key), which is a separate record in §10. **D2, D13 and D14 came from the same card: D13/D14 are the rows below, and D2's row still describes the pre-fix heredoc** (it is queued with §3 for its own pass) |
 | D2 | **Whole-file `\n{3,}` collapse** in `recipe remove` and `skills remove` rewrites untouched regions, including inside multi-line strings |
-| D3 | **`<target>/.claude/commands/` is `rm -rf`'d every sync**, destroying user-added command files |
-| D4 | **Recipe docs are clobbered unconditionally** (`copy2`), unlike lock-tracked templates and gates |
+| D3 | **`<target>/.claude/commands/` is `rm -rf`'d every sync**, destroying user-added command files — **CLOSED** (Go port, `6ee050bc` PR #533). The port keeps the D3' semantics: managed names are overwritten in place, every other file in the commands directory is preserved and reported with `    ! preserved non-managed file <dir>/<base> (move it to ai-specs/commands/ to manage it)` (`internal/sync/syncagent.go:1095-1197` `syncCommands`, pinned by `tests/test_false_success_fixes.py:91` and by the matching parity fixture). T2 of `sync-ownership` extends it: a managed copy gets a `[managed.*]` `kind = "recipe-command"` record and is pruned when its recipe stops being enabled, using the record — not the file hash — as the ownership proof, so a copy edited by the user in an earlier run is still removed (an edit made DURING the same sync keeps the file for the next run); an untracked legacy copy is kept with one warning. The row describes the legacy shell behavior only |
+| D4 | **Recipe docs are clobbered unconditionally** (`copy2`), unlike lock-tracked templates and gates — **CLOSED** (Go port, `6ee050bc` PR #533). Docs now go through the same managed-override classification as templates and gates (`internal/sync/templatedocs.go:90-160` `MaterializeDoc`: `policy = auto`, `kind = doc`, lock sha256 compared before writing), so a user-edited doc is preserved with `· doc skipped (exists) <target>` and only a `managed_stale` doc under `policy = auto` is refreshed; pinned by `tests/test_false_success_fixes.py:239` (D4'). T1 of `sync-ownership` deletes such a doc only when its recipe is disabled and its `[managed.*]` record licenses it |
 
 ### Correctness
 
@@ -603,7 +642,7 @@ licence to reproduce the defect.
 | D19 | **`skills add` id validator accepts `_`** but `skill_contract.NAME_RE` does not, so `my_skill` is accepted then fails during vendoring |
 | D20 | **`set -u` makes six error messages unreachable** in `skills-add.sh`: a trailing `--id` dies with `$2: unbound variable` and exit 1 |
 | D21 | **Malformed manifest → exit 2 with zero output** in `skills add`; the diagnostic branch is dead code |
-| D22 | **`sync-agent` standalone renders no hooks** (`--resolved-hooks` is only passed by `sync.sh`), leaving stale entries in `.claude/settings.json` |
+| D22 | **`sync-agent` standalone renders no hooks** (`--resolved-hooks` is only passed by `sync.sh`), leaving stale entries in `.claude/settings.json` — still the recorded behavior, verified against the Go route: `renderHooksRecording` runs only when `--resolved-hooks` was passed and the file exists (`internal/sync/syncagent.go:964-981`, pinned by `internal/sync/syncagent_test.go:925`), and the parity fixture keeps it (`tests/parity/parity.py:992`). Since T1/T7 of `sync-ownership`, the full `sync` route prunes stale wiring and shims of a disabled recipe or a retired agent, but the standalone route is unchanged |
 | D23 | **Temp file leak** in sync-agent's local-materialize path |
 | D24 | **`WARNING: no agents to sync` exits 0** after flatten/merge already ran and without `ensure_target_workspace`, so a subrepo gets no `AGENTS.md` but reports success |
 
