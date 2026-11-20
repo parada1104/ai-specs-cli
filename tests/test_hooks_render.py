@@ -84,7 +84,9 @@ class _HookFixtureMixin(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(prefix="ai-specs-hooksbb-")
         self.addCleanup(tmp.cleanup)
-        self.base = Path(tmp.name)
+        # Resolve once: the CLI reports real paths (/var -> /private/var on
+        # macOS), so an unresolved fixture root would never match its output.
+        self.base = Path(tmp.name).resolve()
         self.home = _make_home(self.base)
         self.root = self.base / "proj"
         (self.root / "ai-specs" / "skills").mkdir(parents=True)
@@ -157,14 +159,16 @@ class HooksRenderTests(_HookFixtureMixin):
                     self.root, "sync-agent", "--claude",
                     "--source-root", str(self.root), "--target", str(self.root),
                     "--recipe-mcp", str(recipe), cli_home=self.home,
-                    append_root=False,
+                    append_root=False, tmpdir=self.base,
                 )
                 # Invalid recipe input is refused with one line naming the file.
+                # The fixture root is a normalization root, so the line keeps
+                # the file name under <TEMP>.
                 self.assertEqual(result.returncode, 1, result.stderr)
                 self.assertEqual(
                     result.stderr,
-                    f"error: {recipe}: invalid JSON: non-finite constant "
-                    "NaN/Infinity\n",
+                    "error: <TEMP>/recipe-mcp.json: invalid JSON: non-finite "
+                    "constant NaN/Infinity\n",
                 )
                 text = target.read_text()
                 json.loads(text, parse_constant=reject_constant)
