@@ -63,10 +63,12 @@ Then inspect the result (next section) and verify before removing `$bin_dir`.
   second plain `sync` then renders it. Do that only when the intent is to
   accept the local brief as the new baseline.
 - **`ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh`
-  refreshed** — this user override is not part of a dev refresh. Restore it and
-  reset the matching `[managed."…worktree-cleanup.sh"]` sha in
-  `ai-specs/.ai-specs.lock` to the `HEAD` value (`git checkout -- <path>` and
-  `git checkout --` the lock if only that stanza moved).
+  refreshed** — expected: the lock records it as `kind = "template"`,
+  `policy = "auto"`, so sync replaces an unedited copy with the current recipe
+  launcher. Keep the refresh. Restore it only if the lock reports it
+  `user-modified` and the local edits are intentional. The new launcher runs
+  cleanup through the installed CLI, so the installed `ai-specs` must be a
+  release that serves `worktree-cleanup` (upgrade with `ai-specs upgrade`).
 - Generated agent dirs (`.claude/`, `.cursor/`, `.opencode/`, `.omp/`,
   `.mcp.json`, `CLAUDE.md`, `cache/`) are gitignored output — never stage them
   because a sync produced them (see `dogfood-verification-isolation`).

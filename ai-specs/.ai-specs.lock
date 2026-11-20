@@ -9,6 +9,106 @@
 cli_version = "0.25.2"
 synced_at = "2026-11-20T06:19:22Z"
 
+[managed.".claude/commands/pr-create.md"]
+sha256 = "709a703204ad4437a24f7f5a4bc9ca47e2101ca6e6f081c9c96916813dda963d"
+recipe = "git-pr-flow"
+kind = "recipe-command"
+
+[managed.".claude/commands/tdd.md"]
+sha256 = "acfaf37da6eca20f4b572401d4e1809c403b1be69446360a03ac1f572e401f5e"
+recipe = "tdd-flow"
+kind = "recipe-command"
+
+[managed.".claude/commands/trello-workflow.md"]
+sha256 = "c48c7bc680c8018aa052bb9bee87767e3c0a3a993d7a640e691c97837ddaa4a8"
+recipe = "trello-mcp-workflow"
+kind = "recipe-command"
+
+[managed.".claude/commands/worktree-clean.md"]
+sha256 = "fd86f718aa3f5ca123695b53d37dd06d3e954a0ce5fc3c28e7582263bbd73174"
+recipe = "worktree-flow"
+kind = "recipe-command"
+
+[managed.".claude/commands/worktree-new.md"]
+sha256 = "e2d16428aa0897fdbb5431d70eb6a6af3f649188ad7ae4665294f0820e8ace88"
+recipe = "worktree-flow"
+kind = "recipe-command"
+
+[managed.".cursor/commands/pr-create.md"]
+sha256 = "709a703204ad4437a24f7f5a4bc9ca47e2101ca6e6f081c9c96916813dda963d"
+recipe = "git-pr-flow"
+kind = "recipe-command"
+
+[managed.".cursor/commands/tdd.md"]
+sha256 = "acfaf37da6eca20f4b572401d4e1809c403b1be69446360a03ac1f572e401f5e"
+recipe = "tdd-flow"
+kind = "recipe-command"
+
+[managed.".cursor/commands/trello-workflow.md"]
+sha256 = "c48c7bc680c8018aa052bb9bee87767e3c0a3a993d7a640e691c97837ddaa4a8"
+recipe = "trello-mcp-workflow"
+kind = "recipe-command"
+
+[managed.".cursor/commands/worktree-clean.md"]
+sha256 = "fd86f718aa3f5ca123695b53d37dd06d3e954a0ce5fc3c28e7582263bbd73174"
+recipe = "worktree-flow"
+kind = "recipe-command"
+
+[managed.".cursor/commands/worktree-new.md"]
+sha256 = "e2d16428aa0897fdbb5431d70eb6a6af3f649188ad7ae4665294f0820e8ace88"
+recipe = "worktree-flow"
+kind = "recipe-command"
+
+[managed.".omp/commands/pr-create.md"]
+sha256 = "709a703204ad4437a24f7f5a4bc9ca47e2101ca6e6f081c9c96916813dda963d"
+recipe = "git-pr-flow"
+kind = "recipe-command"
+
+[managed.".omp/commands/tdd.md"]
+sha256 = "acfaf37da6eca20f4b572401d4e1809c403b1be69446360a03ac1f572e401f5e"
+recipe = "tdd-flow"
+kind = "recipe-command"
+
+[managed.".omp/commands/trello-workflow.md"]
+sha256 = "c48c7bc680c8018aa052bb9bee87767e3c0a3a993d7a640e691c97837ddaa4a8"
+recipe = "trello-mcp-workflow"
+kind = "recipe-command"
+
+[managed.".omp/commands/worktree-clean.md"]
+sha256 = "fd86f718aa3f5ca123695b53d37dd06d3e954a0ce5fc3c28e7582263bbd73174"
+recipe = "worktree-flow"
+kind = "recipe-command"
+
+[managed.".omp/commands/worktree-new.md"]
+sha256 = "e2d16428aa0897fdbb5431d70eb6a6af3f649188ad7ae4665294f0820e8ace88"
+recipe = "worktree-flow"
+kind = "recipe-command"
+
+[managed.".opencode/commands/pr-create.md"]
+sha256 = "709a703204ad4437a24f7f5a4bc9ca47e2101ca6e6f081c9c96916813dda963d"
+recipe = "git-pr-flow"
+kind = "recipe-command"
+
+[managed.".opencode/commands/tdd.md"]
+sha256 = "acfaf37da6eca20f4b572401d4e1809c403b1be69446360a03ac1f572e401f5e"
+recipe = "tdd-flow"
+kind = "recipe-command"
+
+[managed.".opencode/commands/trello-workflow.md"]
+sha256 = "c48c7bc680c8018aa052bb9bee87767e3c0a3a993d7a640e691c97837ddaa4a8"
+recipe = "trello-mcp-workflow"
+kind = "recipe-command"
+
+[managed.".opencode/commands/worktree-clean.md"]
+sha256 = "fd86f718aa3f5ca123695b53d37dd06d3e954a0ce5fc3c28e7582263bbd73174"
+recipe = "worktree-flow"
+kind = "recipe-command"
+
+[managed.".opencode/commands/worktree-new.md"]
+sha256 = "e2d16428aa0897fdbb5431d70eb6a6af3f649188ad7ae4665294f0820e8ace88"
+recipe = "worktree-flow"
+kind = "recipe-command"
+
 [managed."AGENTS.md"]
 sha256 = "40894bb145de08620673ba4aa831386ab72c3566474001b924851e77d53dc621"
 kind = "runtime-brief"
@@ -19,13 +119,6 @@ sha256 = "438024ea7f4a3e8928a84648bf507798ea1f5e14c008db1dd1df164dadd3c79e"
 recipe = "git-pr-flow"
 source = "README.md"
 kind = "doc"
-policy = "auto"
-
-[managed."ai-specs/recipes/plan-build-flow/hooks/plan-build-gate.sh"]
-sha256 = "6a4d7c18d405b1725a05344d0b64966e05b2a6b59195c9b9268f9abcf623077a"
-recipe = "plan-build-flow"
-source = "hooks/plan-build-gate.sh"
-kind = "gate"
 policy = "auto"
 
 [managed."ai-specs/recipes/session-context/README.md"]
@@ -42,8 +135,15 @@ source = "README.md"
 kind = "doc"
 policy = "auto"
 
+[managed."ai-specs/recipes/trello-mcp-workflow/README.md"]
+sha256 = "0101a0b7a1c9160f26ac48beb71bb1712ce4a3ed6a191c70c1af603443595e7b"
+recipe = "trello-mcp-workflow"
+source = "README.md"
+kind = "doc"
+policy = "auto"
+
 [managed."ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh"]
-sha256 = "088821a6b6754a2c56bbbb4c03c3358b10b140bff5cdbf23b392cebd59c2a59d"
+sha256 = "c31da5ea686c63ac5f96cdef7013fae102acce73efc5e0ada4e2cb4c4bc08d68"
 recipe = "trello-mcp-workflow"
 source = "hooks/tracker-card-gate.sh"
 kind = "gate"
@@ -105,16 +205,59 @@ source = "templates/vault-fs-mcp.sh"
 kind = "template"
 policy = "auto"
 
+[managed."ai-specs/recipes/worktree-flow/README.md"]
+sha256 = "6331fcf43905dbde6611896eb7a531dd996c4271a5eed54ec4f944fd0cf274fe"
+recipe = "worktree-flow"
+source = "README.md"
+kind = "doc"
+policy = "auto"
+
 [managed."ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh"]
-sha256 = "b9e550c9e0ee04dab235bf7e90831b2848dff081f281d6a5ee7dd58d46e65525"
+sha256 = "8509372bf1fcc7cc1d8dd571b65cdad4f96a2840aae764a025de88904830f1da"
 recipe = "worktree-flow"
 source = "hooks/worktree-gate.sh"
 kind = "gate"
 policy = "auto"
 
 [managed."ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh"]
-sha256 = "5ce092d0267fa1f3371f86819012a88dc33e3b56fcaca5cf25efe83c9fda6c0b"
+sha256 = "0a88344a3a17b966e35083a9e1c0d55e9bdcdb644437502a105efc4626fb5cfc"
 recipe = "worktree-flow"
 source = "templates/worktree-cleanup.sh"
 kind = "template"
 policy = "auto"
+
+[hooks]
+".cursor/hooks/trello-mcp-workflow-tracker-card-gate-shell.sh" = "ai-specs:hooks:trello-mcp-workflow:tracker-card-gate-shell"
+".cursor/hooks/worktree-flow-worktree-gate-shell.sh" = "ai-specs:hooks:worktree-flow:worktree-gate-shell"
+".omp/extensions/trello-mcp-workflow-tracker-card-gate-shell.ts" = "ai-specs:hooks:trello-mcp-workflow:tracker-card-gate-shell"
+".omp/extensions/trello-mcp-workflow-tracker-card-gate.ts" = "ai-specs:hooks:trello-mcp-workflow:tracker-card-gate"
+".omp/extensions/worktree-flow-worktree-gate-shell.ts" = "ai-specs:hooks:worktree-flow:worktree-gate-shell"
+".omp/extensions/worktree-flow-worktree-gate.ts" = "ai-specs:hooks:worktree-flow:worktree-gate"
+".opencode/plugin/trello-mcp-workflow-tracker-card-gate-shell.ts" = "ai-specs:hooks:trello-mcp-workflow:tracker-card-gate-shell"
+".opencode/plugin/trello-mcp-workflow-tracker-card-gate.ts" = "ai-specs:hooks:trello-mcp-workflow:tracker-card-gate"
+".opencode/plugin/worktree-flow-worktree-gate-shell.ts" = "ai-specs:hooks:worktree-flow:worktree-gate-shell"
+".opencode/plugin/worktree-flow-worktree-gate.ts" = "ai-specs:hooks:worktree-flow:worktree-gate"
+".pi/extensions/trello-mcp-workflow-tracker-card-gate-shell.ts" = "ai-specs:hooks:trello-mcp-workflow:tracker-card-gate-shell"
+".pi/extensions/trello-mcp-workflow-tracker-card-gate.ts" = "ai-specs:hooks:trello-mcp-workflow:tracker-card-gate"
+".pi/extensions/worktree-flow-worktree-gate-shell.ts" = "ai-specs:hooks:worktree-flow:worktree-gate-shell"
+".pi/extensions/worktree-flow-worktree-gate.ts" = "ai-specs:hooks:worktree-flow:worktree-gate"
+
+[mcp.".cursor/mcp.json"]
+"trello" = "eb68820fa591fc8e20752a6e9dbc343b42ced7a9be1c7b6f2a0e14f2aa5bf41a"
+"vault-canonical" = "8ee8e6be81213f1b5346fb192fd0e1a88a886d95795daef11c19e0d415f1a644"
+
+[mcp.".mcp.json"]
+"trello" = "eb68820fa591fc8e20752a6e9dbc343b42ced7a9be1c7b6f2a0e14f2aa5bf41a"
+"vault-canonical" = "8ee8e6be81213f1b5346fb192fd0e1a88a886d95795daef11c19e0d415f1a644"
+
+[mcp.".omp/mcp.json"]
+"trello" = "eb68820fa591fc8e20752a6e9dbc343b42ced7a9be1c7b6f2a0e14f2aa5bf41a"
+"vault-canonical" = "8ee8e6be81213f1b5346fb192fd0e1a88a886d95795daef11c19e0d415f1a644"
+
+[mcp.".pi/mcp.json"]
+"trello" = "eb68820fa591fc8e20752a6e9dbc343b42ced7a9be1c7b6f2a0e14f2aa5bf41a"
+"vault-canonical" = "8ee8e6be81213f1b5346fb192fd0e1a88a886d95795daef11c19e0d415f1a644"
+
+[mcp."opencode.json"]
+"trello" = "0d8eb57ebad152ce5969ec5a68212d9bd27cd2ab23e7315b7d88a16431d876c0"
+"vault-canonical" = "6004b5c26c6b766e6c66a00d537d8f39e7a8d9257a54db7da6c3ac788bb2b11c"
