@@ -8,6 +8,7 @@ package sync
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 
 	"ai-specs.dev/ai-specs/internal/projectcache"
@@ -62,8 +63,22 @@ func projectTreePreflight(root, home string, targets []string, errW io.Writer) i
 	// The orphan cleanup deletes `<root>/<name>` under these trees, so a
 	// redirected root must refuse before the materialize step runs (T6e).
 	add(projectWriteGuard, root, filepath.Join(root, "ai-specs", ".deps"))
+	// Every ai-specs-managed directory under ai-specs/ must resolve inside the
+	// project before any step runs: leftover, recipe-command, legacy-origin and
+	// recipe-artifact cleanup all delete or write beneath them (T6f).
+	managedDirs := []string{
+		"commands", "skills", "bin", "recipes", ".deps", ".recipe",
+		".resolved-skills", ".internal",
+	}
 	for _, target := range targets {
-		add(projectWriteGuard, root, filepath.Join(target, "ai-specs"))
+		aiSpecs := filepath.Join(target, "ai-specs")
+		add(projectWriteGuard, root, aiSpecs)
+		for _, name := range managedDirs {
+			add(projectWriteGuard, root, filepath.Join(aiSpecs, name))
+		}
+		for _, recipe := range managedRecipeDirs(filepath.Join(aiSpecs, "recipes")) {
+			add(projectWriteGuard, root, recipe)
+		}
 	}
 	homeReal := projectcache.AISpecsHome(home)
 	// CacheRoot RESOLVES the project-key directory, so build the lexical path:
@@ -78,4 +93,20 @@ func projectTreePreflight(root, home string, targets []string, errW io.Writer) i
 		}
 	}
 	return 0
+}
+
+// managedRecipeDirs lists the recipe directories under ai-specs/recipes so the
+// preflight can contain each one (a symlinked `recipes/<id>` is managed).
+func managedRecipeDirs(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var dirs []string
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			dirs = append(dirs, filepath.Join(dir, entry.Name()))
+		}
+	}
+	return dirs
 }

@@ -380,6 +380,15 @@ old-launcher sync warning is added here.
   each tree they delete the same way (a symlink LEAF stays the primitive's own
   shutil-shaped refusal, so the pinned messages are unchanged), and the
   recipe-artifact prune contains each managed artifact path before removing it.
+- **Leftover, migration and legacy-cleanup containment (T6f).** The
+  bundled-command and recipe-command leftover removal, the legacy override
+  migration, and the legacy `premerge_guardian.py` / empty `bin/` removal go
+  through one project-rule handle (`internal/projectcache` `ProjectTree`), so a
+  symlinked `commands/`, `recipes/<id>/` or `bin/` that resolves outside the
+  project never has an outside file deleted or written. The sync spine's
+  project-tree preflight also covers `ai-specs/.deps`, each target's
+  `ai-specs/` managed dirs and every `ai-specs/recipes/<id>`, so the refusal
+  (rc 1) happens before the first write.
 
 ---
 

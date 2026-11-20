@@ -401,6 +401,49 @@ func ResolveWriteTargetOr(path string) string {
 	return ResolvePath(path)
 }
 
+// ProjectTree is the contained view of one project's `ai-specs/` tree. Every
+// project-path mutation in this package goes through it (T6f chokepoint): each
+// operation checks the RESOLVED location first, so a symlinked managed
+// directory (ai-specs/commands, ai-specs/bin, ai-specs/recipes/<id>, …) can
+// never redirect a delete or a write outside the project.
+type ProjectTree struct{ root string }
+
+// ProjectTreeFS returns the contained view rooted at the project that owns
+// aiSpecs.
+func ProjectTreeFS(aiSpecs string) ProjectTree {
+	return ProjectTree{root: filepath.Dir(aiSpecs)}
+}
+
+func (f ProjectTree) check(path string, followLeaf bool) error {
+	return ContainWrite(f.root, path, followLeaf, false, false)
+}
+
+// Remove unlinks path after containing its parent chain (a leaf link is unlinked
+// as a link; the parent chain is what must stay inside the project).
+func (f ProjectTree) Remove(path string) error {
+	if err := f.check(path, false); err != nil {
+		return err
+	}
+	return os.Remove(path)
+}
+
+// MkdirAll creates path after containing its resolved location.
+func (f ProjectTree) MkdirAll(path string, perm os.FileMode) error {
+	if err := f.check(path, true); err != nil {
+		return err
+	}
+	return os.MkdirAll(path, perm)
+}
+
+// CopyTree copies src to dst after containing dst's resolved location: a
+// symlinked destination directory must not receive the migration outside.
+func (f ProjectTree) CopyTree(src, dst string) error {
+	if err := f.check(dst, true); err != nil {
+		return err
+	}
+	return CopyTree(src, dst)
+}
+
 // containLeftover refuses a leftover-cleanup target whose resolved location
 // leaves the project: these cleanups delete trees under `<project>/ai-specs/`,
 // so an ancestor symlink there must never redirect the deletion outside (T6e).
@@ -600,8 +643,8 @@ func RemoveBundledCommandLeftovers(aiSpecs, cliHome string, lockCommands map[str
 					"(differs from CLI-bundled source and lock; resolve manually)", name))
 			continue
 		}
-		if err := os.Remove(child); err != nil {
-			warn(stderr, fmt.Sprintf("failed to remove leftover ai-specs/commands/%s: %s", name, err))
+		if err := ProjectTreeFS(aiSpecs).Remove(child); err != nil {
+			warn(stderr, fmt.Sprintf("kept leftover ai-specs/commands/%s: %s", name, err))
 			continue
 		}
 		fmt.Fprintf(stdout, "  \u2713 removed leftover bundled command ai-specs/commands/%s\n", name)
@@ -666,8 +709,8 @@ func RemoveRecipeCommandLeftovers(projectRoot, cliHome string, lockCommands map[
 					"(differs from recipe-managed cache/source and legacy provenance; resolve manually)", name))
 			continue
 		}
-		if err := os.Remove(child); err != nil {
-			warn(stderr, fmt.Sprintf("failed to remove leftover ai-specs/commands/%s: %s", name, err))
+		if err := ProjectTreeFS(aiSpecs).Remove(child); err != nil {
+			warn(stderr, fmt.Sprintf("kept leftover ai-specs/commands/%s: %s", name, err))
 			continue
 		}
 		fmt.Fprintf(stdout, "  \u2713 removed leftover recipe command ai-specs/commands/%s\n", name)
@@ -855,12 +898,13 @@ func RemoveLegacyOrigin(projectRoot, cliHome string, stdout, stderr io.Writer) {
 				migrationFailed = true
 				continue
 			}
-			if err := os.MkdirAll(filepath.Dir(dest), 0o777); err != nil {
+			tree := ProjectTreeFS(aiSpecs)
+			if err := tree.MkdirAll(filepath.Dir(dest), 0o777); err != nil {
 				warn(stderr, fmt.Sprintf("failed to migrate overrides for '%s': %s", name, err))
 				migrationFailed = true
 				continue
 			}
-			if err := CopyTree(legacyOverrides, dest); err != nil {
+			if err := tree.CopyTree(legacyOverrides, dest); err != nil {
 				warn(stderr, fmt.Sprintf("failed to migrate overrides for '%s': %s", name, err))
 				migrationFailed = true
 				continue
@@ -906,7 +950,7 @@ func RemoveLegacyOrigin(projectRoot, cliHome string, stdout, stderr io.Writer) {
 
 	guardian := filepath.Join(aiSpecs, "bin", "premerge_guardian.py")
 	if info, err := os.Lstat(guardian); err == nil && (info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
-		if err := os.Remove(guardian); err != nil {
+		if err := ProjectTreeFS(aiSpecs).Remove(guardian); err != nil {
 			warn(stderr, fmt.Sprintf("failed to remove leftover ai-specs/bin/premerge_guardian.py: %s", err))
 		} else {
 			fmt.Fprintln(stdout, "  \u2713 removed leftover ai-specs/bin/premerge_guardian.py")
@@ -916,7 +960,7 @@ func RemoveLegacyOrigin(projectRoot, cliHome string, stdout, stderr io.Writer) {
 	binDir := filepath.Join(aiSpecs, "bin")
 	if isDir(binDir) {
 		if entries, err := os.ReadDir(binDir); err == nil && len(entries) == 0 {
-			if err := os.Remove(binDir); err != nil {
+			if err := ProjectTreeFS(aiSpecs).Remove(binDir); err != nil {
 				warn(stderr, fmt.Sprintf("failed to remove empty ai-specs/bin/: %s", err))
 			} else {
 				fmt.Fprintln(stdout, "  \u2713 removed empty ai-specs/bin/")

@@ -495,6 +495,99 @@ class SyncSkillsOwnershipTests(unittest.TestCase):
         self.assertTrue(user.is_file(), "leftover cleanup deleted an outside file")
         self.assertEqual(user.read_bytes(), original)
 
+    # ── T6f: leftover, migration and legacy-cleanup paths ───────────────
+
+    def test_bundled_command_cleanup_does_not_follow_outside_commands_dir(self):
+        shutil.rmtree(self.skills)
+        outside = self.base / "outside-commands"
+        outside.mkdir()
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "bundled-commands" / "rules-audit.md"
+        )
+        command = outside / source.name
+        original = source.read_bytes()
+        command.write_bytes(original)
+        commands = self.project / "ai-specs/commands"
+        commands.rmdir()
+        commands.symlink_to(outside)
+
+        self.sync()
+
+        self.assertTrue(command.is_file(), "cleanup deleted an outside command")
+        self.assertEqual(command.read_bytes(), original)
+
+    def test_recipe_command_cleanup_does_not_follow_outside_commands_dir(self):
+        shutil.rmtree(self.skills)
+        outside = self.base / "outside-recipe-commands"
+        outside.mkdir()
+        same = outside / "same.md"
+        same.write_text("recipe command\n", encoding="utf-8")
+        (self.project / "ai-specs/commands").rmdir()
+        (self.project / "ai-specs/commands").symlink_to(outside)
+        self._seed_probe_recipe(command_id="same")
+
+        result = self.sync()
+
+        self.assertTrue(same.is_file(), "recipe command cleanup deleted an outside file")
+        self.assertEqual(same.read_text(encoding="utf-8"), "recipe command\n")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+
+    def _seed_probe_recipe(self, *, command_id: str = "") -> Path:
+        from _blackbox import populate_catalog
+
+        toml = (
+            '[recipe]\nid = "probe"\nname = "probe"\n'
+            'description = "test recipe"\nversion = "1.0.0"\n'
+        )
+        if command_id:
+            toml += (
+                '[[provides.commands]]\n'
+                f'id = "{command_id}"\n'
+                f'source = "commands/{command_id}.md"\n'
+                'description = "probe command"\n'
+            )
+        recipe = populate_catalog(self.home, "probe", toml)
+        if command_id:
+            (recipe / "commands").mkdir()
+            (recipe / "commands" / f"{command_id}.md").write_text("recipe command\n")
+        return recipe
+
+    def test_legacy_override_migration_does_not_write_through_outside_recipe_dir(self):
+        shutil.rmtree(self.skills)
+        outside = self.base / "outside-recipes"
+        outside.mkdir()
+        (outside / "probe").mkdir()
+        legacy = self.project / "ai-specs/.recipe/probe/overrides"
+        legacy.mkdir(parents=True)
+        (legacy / "user.txt").write_text("legacy override\n", encoding="utf-8")
+        recipes = self.project / "ai-specs/recipes"
+        recipes.mkdir(exist_ok=True)
+        (recipes / "probe").symlink_to(outside / "probe")
+
+        self.sync()
+
+        self.assertFalse(
+            (outside / "probe" / "overrides").exists(),
+            "legacy migration wrote outside the project",
+        )
+
+    def test_legacy_bin_cleanup_does_not_follow_outside_bin_dir(self):
+        shutil.rmtree(self.skills)
+        outside = self.base / "outside-bin"
+        outside.mkdir()
+        guardian = outside / "premerge_guardian.py"
+        guardian.write_text("# user owned\n", encoding="utf-8")
+        bin_dir = self.project / "ai-specs/bin"
+        bin_dir.mkdir(exist_ok=True)
+        bin_dir.rmdir()
+        bin_dir.symlink_to(outside)
+
+        self.sync()
+
+        self.assertTrue(guardian.is_file(), "legacy cleanup deleted an outside file")
+        self.assertEqual(guardian.read_text(encoding="utf-8"), "# user owned\n")
+
 
 if __name__ == "__main__":
     unittest.main()
