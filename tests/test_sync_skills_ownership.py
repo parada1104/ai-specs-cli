@@ -603,6 +603,20 @@ class SyncSkillsOwnershipTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertEqual([snapshot(root) for root in roots], before)
 
+    def test_dangling_recipe_link_does_not_block_sync(self):
+        shutil.rmtree(self.skills)
+        target = self.base / "missing"
+        link = self.project / "ai-specs/recipes/retired"
+        link.parent.mkdir()
+        link.symlink_to(target)
+
+        result = self.sync()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(os.readlink(link), str(target))
+        self.assertFalse(target.exists())
+
     def test_recipe_readme_file_symlink_does_not_block_sync(self):
         shutil.rmtree(self.skills)
         outside = self.base / "README.md"
