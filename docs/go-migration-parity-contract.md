@@ -1143,6 +1143,42 @@ or orphan a dep now gain `[hooks]` records and lose stale `[deps.*]`/
 `mcp-per-agent`). The failing fixture set is unchanged — the same seven of 35 in
 each gate mode — and no golden was regenerated.
 
+### Reconcile stamps never replace an explicit recipe config value — BEHAVIOUR CHANGE (Robert, S8)
+
+`sync` (and `sync-agent`, which shares the materializer) used to stamp each
+enabled recipe's declared `[config.reconcile]` table and used-field defaults
+straight into `ai-specs/ai-specs.toml`, rewriting whatever the project had
+there. That is the silent replacement S8 calls out (L6: "promparearle el wizard
+de configuración"). The stamp step now splits every planned stamp against the
+project's own `[recipes.<id>.config]` table first:
+
+- A key the project already sets to a value that **differs** from the recipe's
+declared value is never written. The project value survives byte-identically
+and sync prints exactly one notice naming the recipe, the key and the wizard:
+`  ! recipe '<name>': config '<key>' differs from the declared value; kept your
+value, review it with `ai-specs configure-recipes``. Exit code stays 0.
+- A key the project never set is stamped exactly as before, and a key whose
+explicit value already equals the declared one stays in the write set (the
+shared writer finds nothing pending), silently.
+- The notice repeats on every run **while the values differ** and disappears
+once they agree. No ownership record exists for a previously stamped value, so
+remembering the divergence in the lock would make a recipe whose declared
+default changed recapture the project value after one run — the opposite of
+S8. The trigger is therefore the value difference itself, which is what keeps
+it bounded: one line per differing recipe key per run, nothing otherwise.
+- The configuration wizard itself (proactive prompting, automatic-vs-ask per
+setting) is a separate feature and is **not** part of this change.
+
+Accepted corpus divergence: the internal frozen stamp capture
+(`internal/sync/testdata/materialize_golden.json`) records legacy rewriting an
+explicit `workflow = "stale"`; the Go case
+`updated value rewrites the stale config` now pins the S8 bytes through the
+`accepted` field of `materializeStampScenario` instead, and the frozen record
+stays untouched. The CLI parity corpus seeds no explicit `[recipes.<id>.config]`
+table, so it cannot observe the rule; the failing fixture set is unchanged (the
+same 28 of 35 per gate mode on this Mac, the known `/private` TMPDIR
+normalization issue, identical before and after this change).
+
 ## 11. Environment variables
 
 | Var | Effect |

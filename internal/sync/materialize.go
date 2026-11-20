@@ -384,15 +384,35 @@ func materializeBindingWarnings(stderr io.Writer, resolution shared.BindingResol
 // stampReconcileDefaults mirrors stamp_recipe_reconcile_defaults: plan once
 // with the shared authority, then write each planned stamp through the promoted
 // shared writer. A write failure warns (never fails the sync), mirroring the
-// Python authority's per-entry try/except.
+// Python authority's per-entry try/except. S8: a key the project's
+// [recipes.<id>.config] already sets to a different value is never written; sync
+// keeps it and prints one notice pointing at the configuration wizard. The
+// notice repeats on every run only while the value still differs — no ownership
+// record exists for stamped values, so remembering it in the lock would make a
+// recipe whose declared default changed silently recapture the project value.
 func stampReconcileDefaults(manifestPath, catalogDir string, enabledIDs []string, stderr io.Writer) error {
+	// A manifest that cannot be read keeps the previous behavior: plan and let
+	// the writer report per recipe.
+	manifest, err := config.LoadManifest(manifestPath)
+	if err != nil {
+		manifest = nil
+	}
 	for _, entry := range PlanReconcileStamps(catalogDir, enabledIDs) {
 		ordered, err := materializeStampOrdered(entry)
 		if err != nil {
 			warnReconcileStampFailure(stderr, catalogDir, entry.ID, err)
 			continue
 		}
-		_, refusal, err := shared.ApplyRecipeConfigWrite(manifestPath, entry.ID, ordered)
+		values, kept, err := splitReconcileStamp(manifest, entry.ID, ordered)
+		if err != nil {
+			warnReconcileStampFailure(stderr, catalogDir, entry.ID, err)
+			continue
+		}
+		for _, key := range kept {
+			warnf(stderr, "recipe '%s': config '%s' differs from the declared value; kept your value, review it with `ai-specs configure-recipes`",
+				reconcileStampRecipeName(catalogDir, entry.ID), key)
+		}
+		_, refusal, err := shared.ApplyRecipeConfigWrite(manifestPath, entry.ID, values)
 		if err != nil {
 			warnReconcileStampFailure(stderr, catalogDir, entry.ID, err)
 			continue

@@ -715,6 +715,10 @@ type materializeStampScenario struct {
 	recipes   map[string]string
 	manifest  string // literal seed; empty means the authority-stamped output
 	untouched bool
+	// accepted is the manifest the S8 rule leaves behind when this case
+	// deliberately diverges from the frozen Python capture; empty means the
+	// frozen record is authoritative.
+	accepted string
 }
 
 // materializeStampScenarios is the shared scenario set of the stamp
@@ -729,9 +733,15 @@ func materializeStampScenarios() []materializeStampScenario {
 			manifest: "[recipes.alpha]\nenabled = true\n",
 		},
 		{
+			// S8: the project's explicit workflow = "stale" is kept, only the
+			// keys the project never set are stamped, so this case no longer
+			// matches the frozen Python capture (which rewrote the value).
+			// Recorded as an accepted divergence in
+			// docs/go-migration-parity-contract.md §10.
 			name:     "updated value rewrites the stale config",
 			recipes:  reconcileRecipes,
 			manifest: "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nworkflow = \"stale\"\n",
+			accepted: "[recipes.alpha]\nenabled = true\n\n[recipes.alpha.config]\nworkflow = \"stale\"\nbase_branch = \"main\"\nreconcile = { expectations = [{ config_field = \"base_branch\", event = \"pr_opened\" }], scope_field = \"workflow\" }\n",
 		},
 		{
 			name:      "no-op run leaves the already-stamped manifest untouched",
@@ -786,7 +796,9 @@ func TestMaterializeSpineStampManifestDifferentialFrozen(t *testing.T) {
 				t.Fatalf("read go manifest: %v", err)
 			}
 			if got := freezeMaterializePaths(string(goBytes), fixture.home, fixture.project); got != ref.Manifest {
-				t.Fatalf("manifest bytes diverge\n--- go ---\n%q\n--- frozen ---\n%q", got, ref.Manifest)
+				if scenario.accepted == "" || got != scenario.accepted {
+					t.Fatalf("manifest bytes diverge\n--- go ---\n%q\n--- frozen ---\n%q", got, ref.Manifest)
+				}
 			}
 			if scenario.untouched {
 				goAfter, err := os.Stat(goManifest)
