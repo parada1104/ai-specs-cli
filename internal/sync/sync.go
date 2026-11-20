@@ -313,7 +313,7 @@ func (r *runner) run(opts options) int {
 		// links, recorded command copies, MCP records and hook wiring/shim
 		// records are planned with every other prune, before the first delete
 		// (internal/sync/agentprune.go).
-		removed, agentApply, planErr := planRetiredAgentLeftovers(root, paths)
+		removed, agentApply, planErr := planRetiredAgentLeftovers(root, r.home, paths)
 		if planErr != nil {
 			fmt.Fprintf(r.stderr, "ERROR: cannot prune agent leftovers: %v\n", planErr)
 			return 1

@@ -224,6 +224,36 @@ class SyncAgentLeftoversTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertEqual(snapshot(self.project), before)
 
+    def test_retirement_keeps_skills_link_to_prior_cli_home(self) -> None:
+        self.seed()
+        link = self.project / ".claude/skills"
+        old_cache = self.base / "prior-install/cache/projects" / link.resolve().parent.name
+        target = old_cache / "resolved-skills"
+        target.mkdir(parents=True)
+        link.unlink()
+        link.symlink_to(target)
+        self.set_agents("['pi']")
+
+        proc = self.sync()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.resolve(), target.resolve())
+
+    def test_retirement_link_unlink_refusal_leaves_project_unchanged(self) -> None:
+        from _blackbox import snapshot
+
+        self.seed()
+        self.set_agents("['pi']")
+        claude = self.project / ".claude"
+        claude.chmod(0o555)
+        self.addCleanup(claude.chmod, 0o755)
+        before = snapshot(self.project)
+
+        proc = self.sync()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("permission denied", proc.stderr)
+        self.assertEqual(snapshot(self.project), before)
+
     def test_retired_command_notice_does_not_repeat(self) -> None:
         self.seed()
         self.set_agents("['pi']")

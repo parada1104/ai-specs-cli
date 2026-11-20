@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/projectcache"
@@ -44,13 +45,14 @@ func retiredAgents(root string) ([]string, error) {
 	return retired, nil
 }
 
-// retiredLink is a symlink ai-specs writes for an agent. want is the path it
-// must still resolve to (the instruction link, a subrepo target's mirrored
-// skills dir); cacheKey marks the root target's skills link instead, because
-// ai-specs writes it to <CLI home>/cache/projects/<project key>/resolved-skills
-// and this plan never sees the CLI home — only that shape is provable here.
+// retiredLink is a symlink ai-specs writes for an agent. want is the EXACT path
+// it must still resolve to: the instruction link's target `AGENTS.md`, a subrepo
+// target's mirrored `ai-specs/skills`, or the root target's
+// `<CLI home>/cache/projects/<project key>/resolved-skills` — the same path sync
+// itself links to, so a link repointed at another install's cache is kept.
 type retiredLink struct {
-	root, path, rel, want, cacheKey string
+	root, path, rel, want string
+	info                  os.FileInfo
 }
 
 // retiredCommand is a command copy recorded in [managed.*] as a recipe command.
@@ -66,14 +68,18 @@ type retiredMCP struct {
 	owned                   []string
 	blockSHA                string
 	prunable                bool
+	// done marks a record whose servers were actually pruned, so a render that
+	// fails mid-apply never drops a record it did not rewrite.
+	done bool
 }
 
 type agentLeftoverPlan struct {
-	root, tomlPath, lockPath string
-	links                    []retiredLink
-	commands                 []retiredCommand
-	mcp                      []retiredMCP
-	kept                     []string
+	root, home         string
+	tomlPath, lockPath string
+	links              []retiredLink
+	commands           []retiredCommand
+	mcp                []retiredMCP
+	kept               []string
 	// unrecorded holds the per-agent "not recorded as ai-specs-managed"
 	// notices; planned holds the agents this plan still has something to prune
 	// for. The notice belongs to the retirement in progress, so it is only
@@ -90,7 +96,7 @@ type agentLeftoverPlan struct {
 // planRetiredAgentLeftovers decides, before the first delete, everything the
 // retired agents leave behind. It returns the retired agent names (the hook
 // plan prunes their runtimes) and the apply step.
-func planRetiredAgentLeftovers(root string, paths []string) ([]string, func(io.Writer, io.Writer) error, error) {
+func planRetiredAgentLeftovers(root, home string, paths []string) ([]string, func(io.Writer, io.Writer) error, error) {
 	noop := func(io.Writer, io.Writer) error { return nil }
 	retired, err := retiredAgents(root)
 	if err != nil {
@@ -106,6 +112,7 @@ func planRetiredAgentLeftovers(root string, paths []string) ([]string, func(io.W
 	}
 	p := &agentLeftoverPlan{
 		root:        root,
+		home:        home,
 		tomlPath:    filepath.Join(root, "ai-specs", "ai-specs.toml"),
 		lockPath:    lockPath,
 		unrecorded:  map[string][]string{},
@@ -142,11 +149,11 @@ func (p *agentLeftoverPlan) addAgent(lk *lock.Lock, target, agent string) error 
 			// one at these paths (it refuses at the skills path, T6).
 			continue
 		}
-		link := retiredLink{root: p.root, path: path, rel: p.rel(path)}
+		link := retiredLink{root: p.root, path: path, rel: p.rel(path), info: info}
 		if field == "instructions_path" {
 			link.want = filepath.Join(target, "AGENTS.md")
 		} else if target == p.root {
-			link.cacheKey = projectcache.CacheKey(p.root)
+			link.want = projectcache.ResolvedSkillsDir(p.root, p.home)
 		} else {
 			link.want = filepath.Join(target, "ai-specs", "skills")
 		}
@@ -297,12 +304,7 @@ func (l retiredLink) ours() bool {
 	if !filepath.IsAbs(text) {
 		text = filepath.Join(filepath.Dir(l.path), text)
 	}
-	resolved := projectcache.ResolvePath(text)
-	if l.cacheKey != "" {
-		return filepath.Base(resolved) == "resolved-skills" &&
-			filepath.Base(filepath.Dir(resolved)) == l.cacheKey
-	}
-	return resolved == projectcache.ResolvePath(l.want)
+	return projectcache.ResolvePath(text) == projectcache.ResolvePath(l.want)
 }
 
 // renderMCP rewrites one planned MCP target, or — with dryRun — re-validates it
@@ -344,8 +346,89 @@ func (p *agentLeftoverPlan) apply(out, errW io.Writer) error {
 			}
 		}
 	}
+	// Preflight every planned unlink before the first mutation, so an unlink
+	// that cannot succeed (a read-only parent directory) refuses here rather
+	// than after other artifacts are already gone (L53).
+	if err := p.preflightDeletes(); err != nil {
+		return err
+	}
 	// Deletes run before the MCP rewrites of the user's config files: a refused
 	// or failed unlink must not leave those files already rewritten.
+	applyErr := p.deleteArtifacts(out)
+	if applyErr == nil {
+		applyErr = p.rewriteMCP(out, errW)
+	}
+	// A delete that still fails mid-apply despite the preflight (a race) removed
+	// the artifacts before it, so the lock records exactly what is gone instead
+	// of keeping stale authority over paths that no longer hold a managed file.
+	lockErr := applyLockRecord(p.lockPath, func(lk *lock.Lock) {
+		for rel := range p.dropManaged {
+			delete(lk.Managed, rel)
+		}
+		for _, item := range p.mcp {
+			if !item.done {
+				continue
+			}
+			delete(lk.MCP, item.rel)
+			delete(lk.MCPBlock, item.rel)
+		}
+	})
+	if applyErr != nil {
+		return applyErr
+	}
+	return lockErr
+}
+
+// preflightDeletes proves, read-only, that every planned unlink can succeed: the
+// entry is still the planned one and its parent directory is writable and
+// searchable by this process, which is what unlink(2) requires.
+func (p *agentLeftoverPlan) preflightDeletes() error {
+	for _, c := range p.commands {
+		info, err := os.Lstat(c.path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !os.SameFile(info, c.info) {
+			continue // Replaced since the plan: kept.
+		}
+		hash, err := lock.Sha256OfFile(c.path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if hash != c.hash {
+			continue // Edited since the plan: kept.
+		}
+		if err := unlinkPreflight(p.root, c.path); err != nil {
+			return err
+		}
+	}
+	for _, link := range p.links {
+		info, err := os.Lstat(link.path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !os.SameFile(info, link.info) || !link.ours() {
+			continue // Relinked or replaced since the plan: kept.
+		}
+		if err := unlinkPreflight(p.root, link.path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// deleteArtifacts unlinks the planned command copies and links, re-checking each
+// one so a copy edited or a link repointed since the plan stays.
+func (p *agentLeftoverPlan) deleteArtifacts(out io.Writer) error {
 	for _, c := range p.commands {
 		exists, err := pruneHookFile(p.root, p.root, c.path)
 		if err != nil {
@@ -383,26 +466,45 @@ func (p *agentLeftoverPlan) apply(out, errW io.Writer) error {
 		}
 		fmt.Fprintf(out, "  ✓ removed retired agent link %s\n", link.rel)
 	}
-	for _, item := range p.mcp {
-		if item.prunable && mcpIsFile(item.target) {
-			if err := p.renderMCP(item, false, out, errW); err != nil {
+	return nil
+}
+
+// rewriteMCP prunes the recorded servers out of each planned target and marks the
+// record droppable only once its render succeeded.
+func (p *agentLeftoverPlan) rewriteMCP(out, errW io.Writer) error {
+	for i := range p.mcp {
+		item := &p.mcp[i]
+		if !item.prunable {
+			continue
+		}
+		if mcpIsFile(item.target) {
+			if err := p.renderMCP(*item, false, out, errW); err != nil {
 				return err
 			}
 		}
-		if item.prunable {
-			fmt.Fprintf(out, "  ✓ removed retired agent %s MCP record %s\n", item.agent, item.rel)
-		}
+		item.done = true
+		fmt.Fprintf(out, "  ✓ removed retired agent %s MCP record %s\n", item.agent, item.rel)
 	}
-	return applyLockRecord(p.lockPath, func(lk *lock.Lock) {
-		for rel := range p.dropManaged {
-			delete(lk.Managed, rel)
+	return nil
+}
+
+// accessW_OK and accessX_OK are the access(2) modes from <unistd.h>: the Go
+// syscall package exports Access but not these constants.
+const (
+	accessW_OK = 0x2
+	accessX_OK = 0x1
+)
+
+// unlinkPreflight fails when the entry's parent directory cannot be written and
+// searched by this process. access(2) only inspects permissions, so nothing is
+// mutated.
+func unlinkPreflight(root, path string) error {
+	if err := syscall.Access(filepath.Dir(path), accessW_OK|accessX_OK); err != nil {
+		rel, rerr := filepath.Rel(root, path)
+		if rerr != nil {
+			rel = path
 		}
-		for _, item := range p.mcp {
-			if !item.prunable {
-				continue
-			}
-			delete(lk.MCP, item.rel)
-			delete(lk.MCPBlock, item.rel)
-		}
-	})
+		return fmt.Errorf("cannot unlink %s: %v", filepath.ToSlash(rel), err)
+	}
+	return nil
 }
