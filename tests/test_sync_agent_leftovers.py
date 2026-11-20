@@ -224,6 +224,27 @@ class SyncAgentLeftoversTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertEqual(snapshot(self.project), before)
 
+    def test_retirement_removes_subrepo_generated_skills_link(self) -> None:
+        self.manifest.write_text(
+            self.manifest.read_text().replace(
+                "[project]\n", '[project]\nsubrepos = ["child"]\n', 1
+            )
+        )
+        child = self.project / "child"
+        child.mkdir()
+        (child / "AGENTS.md").write_text("# child brief\n")
+        self.seed()
+        link = child / ".claude/skills"
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.resolve(), (child / "ai-specs/skills").resolve())
+
+        before = self.manifest.read_text()
+        self.manifest.write_text(before.replace("['claude', 'pi']", "['pi']"))
+        proc = self.sync()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertFalse(link.is_symlink())
+        self.assertTrue((child / "ai-specs/skills").is_dir())
+
     def test_retirement_keeps_skills_link_to_prior_cli_home(self) -> None:
         self.seed()
         link = self.project / ".claude/skills"
