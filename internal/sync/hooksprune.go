@@ -89,9 +89,10 @@ func pruneFileLeaf(path string) (bool, error) {
 	return true, nil
 }
 
-// Plan all runtimes, including ones not selected for this fan-out. Absence
-// of an agent alone is not a reason to remove its otherwise current wiring.
-func planRuntimeHookPrune(projectRoot, root string, hooks []any) (func(io.Writer) error, error) {
+// Plan all runtimes, including ones not selected for this fan-out: only a
+// retired agent (removed from [agents].enabled, T7) loses its otherwise
+// current wiring, and then everything managed in it.
+func planRuntimeHookPrune(projectRoot, root string, hooks []any, retired map[string]bool) (func(io.Writer) error, error) {
 	records := map[string]string{}
 	if lk, err := lock.LoadLock(filepath.Join(projectRoot, bundledLockRel)); err != nil {
 		return nil, err
@@ -114,7 +115,12 @@ func planRuntimeHookPrune(projectRoot, root string, hooks []any) (func(io.Writer
 		{"omp", "", ".omp/extensions", ".ts", hooksTSHeader},
 	} {
 		ids, shims := map[string]string{}, map[string]hookShimLive{}
+		// A retired agent has no live hook for any runtime: every managed wiring
+		// entry and every recorded shim there is a leftover (T7).
 		for _, raw := range hooks {
+			if retired[target.agent] {
+				break
+			}
 			h, _ := raw.(*mcpObj)
 			event, _ := hooksGet(h, "event").(string)
 			native, ok := hooksEventMap[event][target.agent].(string)

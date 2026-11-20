@@ -304,9 +304,24 @@ func (r *runner) run(opts options) int {
 	enabled, hooks, commands, inputErr := loadPruneInputs(root, r.home)
 	var applyRecipePrune func() error
 	var applyCommandPrune func(io.Writer) (map[string]bool, error)
+	var applyAgentPrune func(io.Writer, io.Writer) error
+	retired := map[string]bool{}
 	applyRuntimePrunes := make([]func(io.Writer) error, len(paths))
 	// If the inputs are invalid, leave their diagnostics to materialization.
 	if inputErr == nil {
+		// T7: the agents [agents].enabled no longer names are retired — their
+		// links, recorded command copies, MCP records and hook wiring/shim
+		// records are planned with every other prune, before the first delete
+		// (internal/sync/agentprune.go).
+		removed, agentApply, planErr := planRetiredAgentLeftovers(root, paths)
+		if planErr != nil {
+			fmt.Fprintf(r.stderr, "ERROR: cannot prune agent leftovers: %v\n", planErr)
+			return 1
+		}
+		applyAgentPrune = agentApply
+		for _, agent := range removed {
+			retired[agent] = true
+		}
 		applyRecipePrune, err = planRecipeArtifactPrune(root, enabled, hooks)
 		if err != nil {
 			fmt.Fprintf(r.stderr, "ERROR: cannot prune recipe artifacts: %v\n", err)
@@ -318,7 +333,7 @@ func (r *runner) run(opts options) int {
 			return 1
 		}
 		for i, path := range paths {
-			applyRuntimePrunes[i], err = planRuntimeHookPrune(root, path, hooks)
+			applyRuntimePrunes[i], err = planRuntimeHookPrune(root, path, hooks, retired)
 			if err != nil {
 				fmt.Fprintf(r.stderr, "ERROR: cannot prune runtime hooks: %v\n", err)
 				return 1
@@ -457,6 +472,10 @@ func (r *runner) run(opts options) int {
 	warned, err := applyCommandPrune(r.stderr)
 	if err != nil {
 		fmt.Fprintf(r.stderr, "ERROR: cannot prune recipe commands: %v\n", err)
+		return 1
+	}
+	if err := applyAgentPrune(r.stdout, r.stderr); err != nil {
+		fmt.Fprintf(r.stderr, "ERROR: cannot prune agent leftovers: %v\n", err)
 		return 1
 	}
 

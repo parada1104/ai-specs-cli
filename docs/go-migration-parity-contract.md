@@ -402,6 +402,43 @@ old-launcher sync warning is added here.
   ai-specs/commands/<name>: …` (nothing was attempted) and an ordinary unlink
   error keeps the frozen `  ! failed to remove leftover
   ai-specs/commands/<name>: <error>`.
+- **Retired-agent pruning (T7).** An agent that leaves `[agents].enabled` loses
+  what ai-specs generated for it, and only that
+  (`internal/sync/agentprune.go`, planned by the `sync` spine before its first
+  delete, applied after materialization):
+  - the instruction link (`CLAUDE.md`, `.omp/AGENTS.md`,
+    `.github/copilot-instructions.md`, `GEMINI.md`) only when it is a symlink
+    that still resolves to the target's `AGENTS.md`, and the skills link only
+    when it is a symlink at all (T6 guarantees ai-specs is the only writer that
+    puts one there);
+  - command copies with a `[managed.*]` record whose `kind` is
+    `recipe-command`, compared byte-for-byte with the preflight copy (an edit
+    keeps both the copy and its record);
+  - the recorded MCP servers of that agent's target (`[mcp."<rel>"]`), with
+    their record and `[mcp-block."<rel>"]` hash — a target with no record is
+    never touched, and the renderer's own recovery/refusal rules apply;
+  - hook wiring and shims through the existing `planRuntimeHookPrune`: a
+    retired agent's runtimes have no live hook, so every
+    `ai-specs:hooks:`-prefixed wiring entry and every recorded shim there is
+    pruned and its `[hooks]` record dropped. User hooks in the same
+    `settings.json`/`hooks.json` survive; an unrecorded generated-looking shim
+    is kept with the existing one-line notice, and an unrecorded command copy
+    is kept with `  ! <dir>: N command copy(ies) not recorded as
+    ai-specs-managed (kept; delete them if ai-specs did not write them)`.
+  Every delete reuses the containment rules above (`pruneHookFile` for files,
+  `projectWriteGuard` for links): a retired agent's directory that resolves
+  outside the project refuses the whole run (rc 1) before any delete. Route
+  scope: only the full `sync` retires agents — a standalone `sync-agent --X`
+  keeps its documented ability to sync an agent that is not in
+  `[agents].enabled` — and an absent or empty list retires nothing (that run
+  writes no agent artifacts and warns `no agents to sync`).
+  Accepted divergences from the pre-T7 behavior: an emptied JSON MCP target
+  keeps the file and an empty `mcpServers` object instead of being deleted (a
+  user-owned file is never removed), the retired agent's `.claude/`,
+  `.pi/extensions/` (and similar) directories stay as empty directories, and
+  the prune lines above are new stdout/stderr text under the existing
+  `✓ …`/`! …` conventions. No parity fixture or golden carries an
+  expectation for retired agents, so the corpus is unchanged.
 
 ---
 
