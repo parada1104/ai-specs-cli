@@ -179,6 +179,61 @@ class SyncAgentLeftoversTests(unittest.TestCase):
         self.assertTrue((self.project / ".pi" / "skills").is_symlink())
         self.assertTrue((self.project / ".pi" / "extensions" / "agentdemo-main.ts").exists())
 
+    def test_retiring_claude_keeps_edited_command_and_repointed_skills(self) -> None:
+        self.seed()
+        command = self.project / ".claude/commands/go.md"
+        command.write_bytes(b"# my local edit\r\n")
+        skills = self.project / ".claude/skills"
+        personal = self.base / "personal-skills"
+        personal.mkdir()
+        skills.unlink()
+        skills.symlink_to(personal, target_is_directory=True)
+        self.set_agents("['pi']")
+        proc = self.sync()
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(command.read_bytes(), b"# my local edit\r\n")
+        self.assertEqual(skills.resolve(), personal.resolve())
+        self.assertIn(".claude/commands/go.md", self.lock_text())
+
+    def test_retiring_claude_drops_missing_command_record(self) -> None:
+        self.seed()
+        command = self.project / ".claude/commands/go.md"
+        command.unlink()
+        self.set_agents("['pi']")
+        proc = self.sync()
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn(".claude/commands/go.md", self.lock_text())
+        command.write_bytes(b"# handwritten replacement\r\n")
+        proc = self.sync()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(command.read_bytes(), b"# handwritten replacement\r\n")
+
+    def test_retirement_unlink_refusal_leaves_project_unchanged(self) -> None:
+        from _blackbox import snapshot
+
+        self.seed()
+        commands = self.project / ".claude/commands"
+        commands.chmod(0o555)
+        self.addCleanup(commands.chmod, 0o755)
+        self.set_agents("['pi']")
+        before = snapshot(self.project)
+        proc = self.sync()
+
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(snapshot(self.project), before)
+
+    def test_retired_command_notice_does_not_repeat(self) -> None:
+        self.seed()
+        self.set_agents("['pi']")
+        first, second = self.sync(), self.sync()
+
+        self.assertEqual((first.returncode, second.returncode), (0, 0))
+        notice = ".claude/commands:"
+        self.assertIn(notice, first.stderr)
+        self.assertNotIn(notice, second.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

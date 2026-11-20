@@ -44,12 +44,13 @@ func retiredAgents(root string) ([]string, error) {
 	return retired, nil
 }
 
-// retiredLink is a symlink ai-specs writes for an agent. want is the file it
-// must still point at (the instruction link); "" accepts any symlink at the
-// path (the skills link, where T6 guarantees ai-specs is the only writer that
-// puts a symlink).
+// retiredLink is a symlink ai-specs writes for an agent. want is the path it
+// must still resolve to (the instruction link, a subrepo target's mirrored
+// skills dir); cacheKey marks the root target's skills link instead, because
+// ai-specs writes it to <CLI home>/cache/projects/<project key>/resolved-skills
+// and this plan never sees the CLI home — only that shape is provable here.
 type retiredLink struct {
-	root, path, rel, want string
+	root, path, rel, want, cacheKey string
 }
 
 // retiredCommand is a command copy recorded in [managed.*] as a recipe command.
@@ -73,6 +74,17 @@ type agentLeftoverPlan struct {
 	commands                 []retiredCommand
 	mcp                      []retiredMCP
 	kept                     []string
+	// unrecorded holds the per-agent "not recorded as ai-specs-managed"
+	// notices; planned holds the agents this plan still has something to prune
+	// for. The notice belongs to the retirement in progress, so it is only
+	// printed while that agent is still losing artifacts — otherwise the same
+	// line would repeat on every later sync.
+	unrecorded map[string][]string
+	planned    map[string]bool
+	// dropManaged holds records whose artifact is already gone: dropping a
+	// record only removes deletion authority, so a later handwritten file at
+	// that path is never deleted.
+	dropManaged map[string]bool
 }
 
 // planRetiredAgentLeftovers decides, before the first delete, everything the
@@ -93,9 +105,12 @@ func planRetiredAgentLeftovers(root string, paths []string) ([]string, func(io.W
 		return nil, noop, err
 	}
 	p := &agentLeftoverPlan{
-		root:     root,
-		tomlPath: filepath.Join(root, "ai-specs", "ai-specs.toml"),
-		lockPath: lockPath,
+		root:        root,
+		tomlPath:    filepath.Join(root, "ai-specs", "ai-specs.toml"),
+		lockPath:    lockPath,
+		unrecorded:  map[string][]string{},
+		planned:     map[string]bool{},
+		dropManaged: map[string]bool{},
 	}
 	for _, target := range paths {
 		for _, agent := range retired {
@@ -130,6 +145,10 @@ func (p *agentLeftoverPlan) addAgent(lk *lock.Lock, target, agent string) error 
 		link := retiredLink{root: p.root, path: path, rel: p.rel(path)}
 		if field == "instructions_path" {
 			link.want = filepath.Join(target, "AGENTS.md")
+		} else if target == p.root {
+			link.cacheKey = projectcache.CacheKey(p.root)
+		} else {
+			link.want = filepath.Join(target, "ai-specs", "skills")
 		}
 		if !link.ours() {
 			continue
@@ -138,6 +157,7 @@ func (p *agentLeftoverPlan) addAgent(lk *lock.Lock, target, agent string) error 
 			return err
 		}
 		p.links = append(p.links, link)
+		p.planned[agent] = true
 	}
 	if err := p.addCommands(lk, target, agent); err != nil {
 		return err
@@ -155,13 +175,11 @@ func (p *agentLeftoverPlan) addCommands(lk *lock.Lock, target, agent string) err
 	}
 	dir := filepath.Join(target, rel)
 	entries, err := os.ReadDir(dir)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	unrecorded := 0
+	present := map[string]bool{}
 	for _, entry := range entries {
 		name := entry.Name()
 		if !entry.Type().IsRegular() || filepath.Ext(name) != ".md" {
@@ -173,6 +191,7 @@ func (p *agentLeftoverPlan) addCommands(lk *lock.Lock, target, agent string) err
 			unrecorded++
 			continue
 		}
+		present[p.rel(path)] = true
 		// pruneHookFile holds the inside-root ancestor rule for agent paths (T6b)
 		// and refuses a symlink or directory leaf, so only a real copy is planned.
 		exists, err := pruneHookFile(p.root, target, path)
@@ -190,10 +209,26 @@ func (p *agentLeftoverPlan) addCommands(lk *lock.Lock, target, agent string) err
 		if err != nil {
 			return err
 		}
+		// Ownership is the recorded hash of the last generated copy: an edited
+		// copy is the user's now, so the file and its record both stay (T2, L11).
+		if recorded, _ := rec["sha256"].(string); recorded == "" || hash != recorded {
+			continue
+		}
 		p.commands = append(p.commands, retiredCommand{path: path, rel: p.rel(path), info: info, hash: hash})
+		p.planned[agent] = true
+	}
+	// A record whose copy is already gone loses its deletion authority now: it
+	// proves nothing about a file later written at that path.
+	for relPath, rec := range lk.Managed {
+		if rec["kind"] != RecipeCommandKind || present[relPath] {
+			continue
+		}
+		if filepath.Dir(filepath.Join(p.root, filepath.FromSlash(relPath))) == dir {
+			p.dropManaged[relPath] = true
+		}
 	}
 	if unrecorded > 0 {
-		p.kept = append(p.kept, fmt.Sprintf("%s: %d command copy(ies) not recorded as ai-specs-managed (kept; delete them if ai-specs did not write them)", p.rel(dir), unrecorded))
+		p.unrecorded[agent] = append(p.unrecorded[agent], fmt.Sprintf("%s: %d command copy(ies) not recorded as ai-specs-managed (kept; delete them if ai-specs did not write them)", p.rel(dir), unrecorded))
 	}
 	return nil
 }
@@ -237,6 +272,7 @@ func (p *agentLeftoverPlan) addMCP(lk *lock.Lock, target, agent string) error {
 	}
 	item.prunable = true
 	p.mcp = append(p.mcp, item)
+	p.planned[agent] = true
 	return nil
 }
 
@@ -254,9 +290,6 @@ func (l retiredLink) ours() bool {
 	if err != nil || info.Mode()&os.ModeSymlink == 0 {
 		return false
 	}
-	if l.want == "" {
-		return true
-	}
 	text, err := os.Readlink(l.path)
 	if err != nil {
 		return false
@@ -264,28 +297,55 @@ func (l retiredLink) ours() bool {
 	if !filepath.IsAbs(text) {
 		text = filepath.Join(filepath.Dir(l.path), text)
 	}
-	return projectcache.ResolvePath(text) == projectcache.ResolvePath(l.want)
+	resolved := projectcache.ResolvePath(text)
+	if l.cacheKey != "" {
+		return filepath.Base(resolved) == "resolved-skills" &&
+			filepath.Base(filepath.Dir(resolved)) == l.cacheKey
+	}
+	return resolved == projectcache.ResolvePath(l.want)
+}
+
+// renderMCP rewrites one planned MCP target, or — with dryRun — re-validates it
+// against the current file, so a target edited since the plan is refused before
+// the first delete instead of halfway through the apply.
+func (p *agentLeftoverPlan) renderMCP(item retiredMCP, dryRun bool, out, errW io.Writer) error {
+	opts := RenderMCPOptions{PruneOnly: true, DryRun: dryRun, Owned: item.owned, Recorded: true, BlockSHA: item.blockSHA}
+	if !dryRun {
+		if rc := RenderMCPFile(p.tomlPath, item.agent, item.target, item.key, opts, out, errW); rc != 0 {
+			return fmt.Errorf("cannot prune %s MCP servers", item.rel)
+		}
+		return nil
+	}
+	var reason bytes.Buffer
+	if rc := RenderMCPFile(p.tomlPath, item.agent, item.target, item.key, opts, io.Discard, &reason); rc != 0 {
+		return fmt.Errorf("cannot prune %s MCP servers: %s", item.rel, strings.TrimSpace(reason.String()))
+	}
+	return nil
 }
 
 func (p *agentLeftoverPlan) apply(out, errW io.Writer) error {
 	for _, kept := range p.kept {
 		fmt.Fprintf(errW, "  ! %s\n", kept)
 	}
-	// MCP first: its render can still refuse (a target edited since preflight),
-	// and a refusal must precede the other deletes of this plan where possible.
-	for _, item := range p.mcp {
-		if item.prunable && mcpIsFile(item.target) {
-			if rc := RenderMCPFile(p.tomlPath, item.agent, item.target, item.key, RenderMCPOptions{
-				PruneOnly: true, Owned: item.owned, Recorded: true, BlockSHA: item.blockSHA,
-			}, out, errW); rc != 0 {
-				return fmt.Errorf("cannot prune %s MCP servers", item.rel)
-			}
+	for _, agent := range slices.Sorted(maps.Keys(p.unrecorded)) {
+		if !p.planned[agent] {
+			continue
 		}
-		if item.prunable {
-			fmt.Fprintf(out, "  ✓ removed retired agent %s MCP record %s\n", item.agent, item.rel)
+		for _, kept := range p.unrecorded[agent] {
+			fmt.Fprintf(errW, "  ! %s\n", kept)
 		}
 	}
-	dropManaged := map[string]bool{}
+	// Every MCP target is re-validated first: its render may still refuse (a
+	// target edited since the plan) and a refusal must precede every delete.
+	for _, item := range p.mcp {
+		if item.prunable && mcpIsFile(item.target) {
+			if err := p.renderMCP(item, true, io.Discard, errW); err != nil {
+				return err
+			}
+		}
+	}
+	// Deletes run before the MCP rewrites of the user's config files: a refused
+	// or failed unlink must not leave those files already rewritten.
 	for _, c := range p.commands {
 		exists, err := pruneHookFile(p.root, p.root, c.path)
 		if err != nil {
@@ -308,7 +368,7 @@ func (p *agentLeftoverPlan) apply(out, errW io.Writer) error {
 		if err := os.Remove(c.path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
-		dropManaged[c.rel] = true
+		p.dropManaged[c.rel] = true
 		fmt.Fprintf(out, "  ✓ removed retired agent command %s\n", c.rel)
 	}
 	for _, link := range p.links {
@@ -323,8 +383,18 @@ func (p *agentLeftoverPlan) apply(out, errW io.Writer) error {
 		}
 		fmt.Fprintf(out, "  ✓ removed retired agent link %s\n", link.rel)
 	}
+	for _, item := range p.mcp {
+		if item.prunable && mcpIsFile(item.target) {
+			if err := p.renderMCP(item, false, out, errW); err != nil {
+				return err
+			}
+		}
+		if item.prunable {
+			fmt.Fprintf(out, "  ✓ removed retired agent %s MCP record %s\n", item.agent, item.rel)
+		}
+	}
 	return applyLockRecord(p.lockPath, func(lk *lock.Lock) {
-		for rel := range dropManaged {
+		for rel := range p.dropManaged {
 			delete(lk.Managed, rel)
 		}
 		for _, item := range p.mcp {
