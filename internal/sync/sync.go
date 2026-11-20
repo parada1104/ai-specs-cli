@@ -218,6 +218,37 @@ func (r *runner) run(opts options) int {
 		return rc
 	}
 
+	paths := make([]string, len(p.Targets))
+	labels := make([]string, len(p.Targets))
+	for i, t := range p.Targets {
+		paths[i] = t.Path
+		labels[i] = t.Kind + ":" + t.Rel
+	}
+
+	// Read-only preflights run BEFORE the sync lock, which itself creates the
+	// CLI-home cache dir and `sync.lock`: a refusal must write nothing at all,
+	// including the cache. Both checks only resolve paths, and every actual
+	// write and delete is contained again at its own site under the lock, so
+	// ordering them first costs no safety (T6f follow-up).
+	//
+	// Agent-path ownership preflight (S1, parity contract §4) for EVERY fan-out
+	// target and selected agent, before the first write of any step: the child
+	// runs repeat this check, but they run after the gitignore/env/lock steps,
+	// so a refusal there would already have changed the project (T6 follow-up).
+	fanoutAgents := selectedAgentsFor(tomlPath, agentOptions{selectAll: true})
+	for _, path := range paths {
+		if rc := preflightAgentPaths(root, path, fanoutAgents, r.stderr); rc != 0 {
+			return 1
+		}
+	}
+
+	// Project-tree containment preflight (T6d): a symlinked .gitignore, env rc
+	// file, env example, AGENTS.md or target ai-specs/ mirror is refused before
+	// the first step writes anything, so a refusal is write-free.
+	if rc := projectTreePreflight(root, r.home, paths, r.stderr); rc != 0 {
+		return rc
+	}
+
 	unlock, lockErr := acquireSyncLock(root, r.home)
 	if lockErr != nil {
 		if errors.Is(lockErr, errSyncLockTimeout) {
@@ -239,13 +270,6 @@ func (r *runner) run(opts options) int {
 		return 1
 	}
 
-	paths := make([]string, len(p.Targets))
-	labels := make([]string, len(p.Targets))
-	for i, t := range p.Targets {
-		paths[i] = t.Path
-		labels[i] = t.Kind + ":" + t.Rel
-	}
-
 	fmt.Fprintln(r.stdout, "")
 	fmt.Fprintln(r.stdout, "ai-specs sync")
 	fmt.Fprintf(r.stdout, "  root:    %s\n", root)
@@ -262,24 +286,6 @@ func (r *runner) run(opts options) int {
 	fmt.Fprintln(r.stdout, "  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)")
 	fmt.Fprintln(r.stdout, "  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs")
 	fmt.Fprintln(r.stdout, "")
-
-	// Agent-path ownership preflight (S1, parity contract §4) for EVERY fan-out
-	// target and selected agent, before the first write of any step: the child
-	// runs repeat this check, but they run after the gitignore/env/lock steps,
-	// so a refusal there would already have changed the project (T6 follow-up).
-	fanoutAgents := selectedAgentsFor(tomlPath, agentOptions{selectAll: true})
-	for _, path := range paths {
-		if rc := preflightAgentPaths(root, path, fanoutAgents, r.stderr); rc != 0 {
-			return 1
-		}
-	}
-
-	// Project-tree containment preflight (T6d): a symlinked .gitignore, env rc
-	// file, env example, AGENTS.md or target ai-specs/ mirror is refused before
-	// the first step writes anything, so a refusal is write-free.
-	if rc := projectTreePreflight(root, r.home, paths, r.stderr); rc != 0 {
-		return rc
-	}
 
 	// Strangler flags a-c: GO_SYNC_STEP_GITIGNORE and GO_SYNC_STEP_GITIGNORE_ROOT
 	// selected the native Go gitignore renderers, GO_SYNC_STEP_AGENTS_RENDER the

@@ -588,6 +588,46 @@ class SyncSkillsOwnershipTests(unittest.TestCase):
         self.assertTrue(guardian.is_file(), "legacy cleanup deleted an outside file")
         self.assertEqual(guardian.read_text(encoding="utf-8"), "# user owned\n")
 
+    def test_managed_dir_refusal_does_not_create_cli_cache(self):
+        from _blackbox import snapshot
+
+        shutil.rmtree(self.skills)
+        outside = self.base / "outside"
+        outside.mkdir()
+        commands = self.project / "ai-specs/commands"
+        commands.rmdir()
+        commands.symlink_to(outside)
+        roots = (self.project, outside, self.home)
+        before = [snapshot(root) for root in roots]
+        result = self.sync()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual([snapshot(root) for root in roots], before)
+
+    def test_recipe_readme_file_symlink_does_not_block_sync(self):
+        shutil.rmtree(self.skills)
+        outside = self.base / "README.md"
+        outside.write_bytes(b"user notes\n")
+        link = self.project / "ai-specs/recipes/README.md"
+        link.parent.mkdir()
+        link.symlink_to(outside)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(outside.read_bytes(), b"user notes\n")
+
+    @unittest.skipIf(os.geteuid() == 0, "requires unlink permission denial")
+    def test_bundled_unlink_failure_keeps_existing_diagnostic(self):
+        shutil.rmtree(self.skills)
+        commands = self.project / "ai-specs/commands"
+        name = "rules-audit.md"
+        shutil.copyfile(self.home / "bundled-commands" / name, commands / name)
+        commands.chmod(0o555)
+        self.addCleanup(commands.chmod, 0o755)
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"  ! failed to remove leftover ai-specs/commands/{name}:",
+                      result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

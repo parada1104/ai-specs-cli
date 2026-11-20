@@ -387,8 +387,21 @@ old-launcher sync warning is added here.
   symlinked `commands/`, `recipes/<id>/` or `bin/` that resolves outside the
   project never has an outside file deleted or written. The sync spine's
   project-tree preflight also covers `ai-specs/.deps`, each target's
-  `ai-specs/` managed dirs and every `ai-specs/recipes/<id>`, so the refusal
-  (rc 1) happens before the first write.
+  `ai-specs/` managed dirs and every `ai-specs/recipes/<id>` DIRECTORY, so the
+  refusal (rc 1) happens before the first write. That preflight — read-only,
+  like the agent-destination one — runs BEFORE the sync lock, which itself
+  creates the CLI-home cache directory and `sync.lock`: a refusal therefore
+  writes nothing at all, not even the cache, while every actual write and
+  delete stays under the lock and is contained again at its own site (ordering
+  chosen because the checks only resolve paths; serializing them would buy
+  nothing and would make the refusal impossible to keep write-free). A
+  symlinked recipe DIRECTORY resolving outside is still refused; a file link
+  under `ai-specs/recipes/` (e.g. a hand-made `recipes/README.md`) is not a
+  managed recipe dir, so it never blocks a sync. Removal failures keep their
+  two distinct diagnostics: a containment refusal says `  ! kept leftover
+  ai-specs/commands/<name>: …` (nothing was attempted) and an ordinary unlink
+  error keeps the frozen `  ! failed to remove leftover
+  ai-specs/commands/<name>: <error>`.
 
 ---
 

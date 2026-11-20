@@ -606,6 +606,17 @@ func RemoveBundledSkillLeftovers(aiSpecs, cliHome string, lockSkills map[string]
 	}
 }
 
+// warnLeftoverRemoval reports a failed leftover unlink. A containment refusal
+// never reached the file, so it says so; an ordinary removal error keeps the
+// long-standing "failed to remove" line.
+func warnLeftoverRemoval(stderr io.Writer, name string, err error) {
+	if isContainmentRefusal(err) {
+		warn(stderr, fmt.Sprintf("kept leftover ai-specs/commands/%s: %s", name, err))
+		return
+	}
+	warn(stderr, fmt.Sprintf("failed to remove leftover ai-specs/commands/%s: %s", name, err))
+}
+
 // RemoveBundledCommandLeftovers mirrors remove_bundled_command_leftovers.
 func RemoveBundledCommandLeftovers(aiSpecs, cliHome string, lockCommands map[string]string, stdout, stderr io.Writer) {
 	home := bundledHome(cliHome)
@@ -644,7 +655,7 @@ func RemoveBundledCommandLeftovers(aiSpecs, cliHome string, lockCommands map[str
 			continue
 		}
 		if err := ProjectTreeFS(aiSpecs).Remove(child); err != nil {
-			warn(stderr, fmt.Sprintf("kept leftover ai-specs/commands/%s: %s", name, err))
+			warnLeftoverRemoval(stderr, name, err)
 			continue
 		}
 		fmt.Fprintf(stdout, "  \u2713 removed leftover bundled command ai-specs/commands/%s\n", name)
@@ -710,7 +721,7 @@ func RemoveRecipeCommandLeftovers(projectRoot, cliHome string, lockCommands map[
 			continue
 		}
 		if err := ProjectTreeFS(aiSpecs).Remove(child); err != nil {
-			warn(stderr, fmt.Sprintf("kept leftover ai-specs/commands/%s: %s", name, err))
+			warnLeftoverRemoval(stderr, name, err)
 			continue
 		}
 		fmt.Fprintf(stdout, "  \u2713 removed leftover recipe command ai-specs/commands/%s\n", name)

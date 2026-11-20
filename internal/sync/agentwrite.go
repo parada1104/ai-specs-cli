@@ -96,7 +96,10 @@ func projectTreePreflight(root, home string, targets []string, errW io.Writer) i
 }
 
 // managedRecipeDirs lists the recipe directories under ai-specs/recipes so the
-// preflight can contain each one (a symlinked `recipes/<id>` is managed).
+// preflight can contain each one (a symlinked `recipes/<id>` is managed). Only
+// DIRECTORY entries count: cleanup and migration delete or write beneath
+// recipe dirs, never through a file link nobody mutates (e.g. a
+// `recipes/README.md` symlink), which must not block the run.
 func managedRecipeDirs(dir string) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -104,8 +107,18 @@ func managedRecipeDirs(dir string) []string {
 	}
 	var dirs []string
 	for _, entry := range entries {
-		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+		if entry.IsDir() {
 			dirs = append(dirs, filepath.Join(dir, entry.Name()))
+			continue
+		}
+		if entry.Type()&os.ModeSymlink == 0 {
+			continue
+		}
+		// A link counts as a recipe dir when it resolves to one; a link to a file
+		// or a dangling link is not a recipe directory.
+		path := filepath.Join(dir, entry.Name())
+		if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
+			dirs = append(dirs, path)
 		}
 	}
 	return dirs

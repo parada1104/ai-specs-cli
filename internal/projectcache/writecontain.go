@@ -6,6 +6,7 @@ package projectcache
 // destinations, the project tree and this package's own cache/lock paths.
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,27 +35,44 @@ func ContainWrite(root, path string, followLeaf, strict, protect bool) error {
 	}
 	if strict {
 		if err := refuseSymlinkedAncestors(rootReal, probe); err != nil {
-			return fmt.Errorf("refuse to write %s: %v", path, err)
+			return refusal("refuse to write %s: %v", path, err)
 		}
 		if info, err := os.Lstat(probe); err == nil && info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("refuse to write %s: destination is a symlink (%s)", path, probe)
+			return refusal("refuse to write %s: destination is a symlink (%s)", path, probe)
 		}
 	}
 	effective, err := ResolveWriteTarget(probe)
 	if err != nil {
-		return fmt.Errorf("refuse to write %s: %v", path, err)
+		return refusal("refuse to write %s: %v", path, err)
 	}
 	if !pathContained(rootReal, effective) {
-		return fmt.Errorf("refuse to write %s: it resolves outside the project root (%s)", path, effective)
+		return refusal("refuse to write %s: it resolves outside the project root (%s)", path, effective)
 	}
 	if protect {
 		for _, tree := range []string{"ai-specs", ".git"} {
 			if pathContained(filepath.Join(rootReal, tree), effective) {
-				return fmt.Errorf("refuse to write %s: it resolves inside the protected %s/ tree (%s)", path, tree, effective)
+				return refusal("refuse to write %s: it resolves inside the protected %s/ tree (%s)", path, tree, effective)
 			}
 		}
 	}
 	return nil
+}
+
+// containmentRefusal marks a refusal DECIDED by containment, as opposed to a
+// filesystem error from the operation itself: callers phrase the two
+// differently (nothing was attempted vs. it was attempted and failed).
+type containmentRefusal struct{ msg string }
+
+func (e containmentRefusal) Error() string { return e.msg }
+
+func refusal(format string, args ...any) error {
+	return containmentRefusal{msg: fmt.Sprintf(format, args...)}
+}
+
+// isContainmentRefusal reports whether err is a containment decision.
+func isContainmentRefusal(err error) bool {
+	var r containmentRefusal
+	return errors.As(err, &r)
 }
 
 // ResolveWriteTarget reports where a write to path would land: an existing

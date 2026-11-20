@@ -219,6 +219,12 @@ func TestSyncPruneRefusalKeepsWiringAndLock(t *testing.T) {
 				"  topology: standalone (via auto; source: default)\n  targets: root:.\n" +
 				"  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n" +
 				"  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n"
+			if variant == "runtime-symlink" {
+				// The containment preflight now runs before the lock and the
+				// banner (a refusal must write nothing, not even the CLI cache),
+				// so the refusal is the only output.
+				wantOut = ""
+			}
 			if rc, out, stderr := sync(); rc != 1 || stderr != wantError || out != wantOut {
 				t.Fatalf("refusal rc=%d, stderr=%q, stdout=%q; want rc=1 and %q", rc, stderr, out, wantError)
 			}
