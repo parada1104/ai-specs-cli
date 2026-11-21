@@ -306,6 +306,7 @@ func TestWorktreeGateRoutePinnedContracts(t *testing.T) {
 	assertGatePinned(t, ledgerRepo, code, out, errOut, 0, `{"capability":"tracker","active":true,"checkpoint":"pre-merge","mode":"ask","decision":"allow","reason":"adjudicated","identity":{"common_dir":"<repo>/.git","branch":"main","change":null,"key":"<repo>/.git\u001fmain"},"item":{"id":"fixture-item","identity":{"common_dir":"<repo>/.git","branch":"main","change":""},"status":"open","item_id":"card-local","provider_id":"trello-mcp-workflow","native_type":"","url":"","state":"","provider":null,"exemption":"","conflict":null,"decisions":[{"at":"2026-09-13T12:00:00Z","checkpoint":"","kind":"open","choice":"","note":""},{"at":"2026-09-13T12:30:00Z","checkpoint":"pre-merge","kind":"adjudicate","choice":"local","note":""}]},"conflict":null,"prompt":null,"doctor":{"severity":"OK","name":"tracker-ledger","message":""}}`+"\n", "")
 
 	cleanupRepo := newGateFixture(t)
+	enableWorktreeFlow(t, cleanupRepo)
 	wt := filepath.Join(cleanupRepo, ".worktrees", "feat-unmerged")
 	gitTest(t, cleanupRepo, "worktree", "add", "-b", "feat-unmerged", wt)
 	if err := os.WriteFile(filepath.Join(wt, "change"), []byte("unmerged\n"), 0o600); err != nil {
@@ -318,6 +319,7 @@ func TestWorktreeGateRoutePinnedContracts(t *testing.T) {
 	assertGatePinned(t, cleanupRepo, code, out, errOut, 0, "skipped feat-unmerged (unmerged)\n", "")
 
 	dirtyRepo := newGateFixture(t)
+	enableWorktreeFlow(t, dirtyRepo)
 	dirtyWT := filepath.Join(dirtyRepo, ".worktrees", "feat-dirty")
 	gitTest(t, dirtyRepo, "worktree", "add", "-b", "feat-dirty", dirtyWT)
 	if err := os.WriteFile(filepath.Join(dirtyWT, "landed"), []byte("landed\n"), 0o600); err != nil {
@@ -333,6 +335,7 @@ func TestWorktreeGateRoutePinnedContracts(t *testing.T) {
 	assertGatePinned(t, dirtyRepo, code, out, errOut, 0, "skipped feat-dirty (dirty)\n", "")
 
 	detachedRepo := newGateFixture(t)
+	enableWorktreeFlow(t, detachedRepo)
 	detachedWT := filepath.Join(detachedRepo, ".worktrees", "detached")
 	if err := os.MkdirAll(filepath.Dir(detachedWT), 0o755); err != nil {
 		t.Fatal(err)
@@ -340,6 +343,19 @@ func TestWorktreeGateRoutePinnedContracts(t *testing.T) {
 	gitTest(t, detachedRepo, "worktree", "add", "--detach", detachedWT, "main")
 	code, out, errOut = runGateCLI(t, detachedRepo, home, "", cleanupArgs)
 	assertGatePinned(t, detachedRepo, code, out, errOut, 0, "skipped detached (detached)\n", "")
+}
+
+// enableWorktreeFlow authorizes destructive cleanup in a fixture repo: cleanup
+// runs only where the main checkout's manifest enables the recipe.
+func enableWorktreeFlow(t *testing.T, root string) {
+	t.Helper()
+	dir := filepath.Join(root, "ai-specs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ai-specs.toml"), []byte("[recipes.worktree-flow]\nenabled = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func newGateFixture(t *testing.T) string {

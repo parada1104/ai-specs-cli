@@ -790,6 +790,66 @@ func enumerateCleanupPasses(superRoot string, topology string, scopes []string) 
 	return passes
 }
 
+// worktreeFlowRecipeID is the recipe that owns the cleanup launcher and the
+// post-merge hook. Cleanup is destructive, so it runs only where the project
+// manifest still enables that recipe.
+const worktreeFlowRecipeID = "worktree-flow"
+
+// mainCheckoutRoot resolves the repository's main checkout from the git common
+// dir. The hooks are shared by every worktree, so the manifest that authorizes
+// cleanup is always the main checkout's, wherever the hook fired.
+func mainCheckoutRoot(root string) string {
+	common := RealPath(gitCommon(root))
+	if common == "" {
+		return ""
+	}
+	if filepath.Base(common) == ".git" {
+		return filepath.Dir(common)
+	}
+	// A separate git dir or a bare layout: Git lists the main worktree first.
+	if records := worktreeRecords(root); len(records) > 0 {
+		return filepath.Clean(records[0].path)
+	}
+	return ""
+}
+
+// worktreeFlowEnabled reads the recipe's [recipes.worktree-flow] table. A false
+// value, an absent table, and an absent enabled key all grant no authority.
+func worktreeFlowEnabled(manifest string) (bool, error) {
+	recipes, err := readManifestRecipes(manifest)
+	if err != nil {
+		return false, err
+	}
+	recipe, ok := recipes[worktreeFlowRecipeID]
+	if !ok || recipe.Enabled == nil {
+		return false, nil
+	}
+	return *recipe.Enabled, nil
+}
+
+// cleanupRecipeGate reports whether the pass may run. When it may not, it prints
+// the single reason line and returns the exit code: a disabled recipe is a clean
+// no-op, while a missing or unreadable manifest fails closed because destructive
+// cleanup never guesses whether the user disabled it.
+func cleanupRecipeGate(superRoot string, errOut io.Writer) (int, bool) {
+	mainRoot := mainCheckoutRoot(superRoot)
+	if mainRoot == "" {
+		fmt.Fprintln(errOut, "worktree-cleanup: the main repository worktree could not be resolved; no destructive action taken")
+		return 2, false
+	}
+	manifest := manifestPath(mainRoot)
+	enabled, err := worktreeFlowEnabled(manifest)
+	if err != nil {
+		fmt.Fprintf(errOut, "worktree-cleanup: project manifest %s is missing or unreadable (%v); no destructive action taken\n", manifest, err)
+		return 2, false
+	}
+	if !enabled {
+		fmt.Fprintf(errOut, "worktree-cleanup: worktree-flow is not enabled in %s; nothing to clean\n", manifest)
+		return 0, false
+	}
+	return 0, true
+}
+
 func runCleanup(superRoot string, cfg cleanupConfig, out, errOut io.Writer) int {
 	if err := requirePrimaryCleanupCheckout(superRoot); err != nil {
 		fmt.Fprintln(errOut, err)
@@ -801,6 +861,9 @@ func runCleanup(superRoot string, cfg cleanupConfig, out, errOut io.Writer) int 
 	if superRoot == "" {
 		fmt.Fprintln(errOut, "worktree-cleanup: repository root could not be resolved; no destructive action taken")
 		return 2
+	}
+	if code, ok := cleanupRecipeGate(superRoot, errOut); !ok {
+		return code
 	}
 	passes := enumerateCleanupPasses(superRoot, cfg.topology, cfg.scopes)
 	if len(passes) == 0 {
