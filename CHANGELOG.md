@@ -88,6 +88,12 @@ run while it is set (exit 2, nothing deleted).
   (rc 1, nothing written) when it resolves outside; a refused write never leaves
   a half-applied run, and a symlink cannot redirect a project or cache write
   outside the tree.
+- **Containment also covers the CLI cache entries sync materializes.**
+  A symlinked `<cache>/commands/<id>.md`, a recipe's `<cache>/.recipe/<id>/skills`
+  directory and a `<cache>/backups` entry are refused before the first write
+  (rc 1, `refuse to write`), so a recipe command copy, a bundled skill
+  replacement and a `sync --refresh-gates` snapshot can no longer follow the
+  link and write or delete outside the CLI home.
 - **A retired agent's leftovers are pruned atomically.** Recorded command copies
   and links are re-checked before the first delete and again before each unlink;
   a refused or failed delete exits 1 with the project and lock byte-identical.
