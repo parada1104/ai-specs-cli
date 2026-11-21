@@ -827,6 +827,12 @@ func worktreeFlowEnabled(manifest string) (bool, error) {
 	return *recipe.Enabled, nil
 }
 
+// isBareRepository reports whether root is a bare repository record. A bare
+// repository has no main working tree, so it can never authorize cleanup.
+func isBareRepository(root string) bool {
+	return gitMemo(root, "rev-parse", "--is-bare-repository") == "true"
+}
+
 // cleanupRecipeGate reports whether the pass may run. When it may not, it prints
 // the single reason line and returns the exit code: a disabled recipe is a clean
 // no-op, while a missing or unreadable manifest fails closed because destructive
@@ -835,6 +841,13 @@ func cleanupRecipeGate(superRoot string, errOut io.Writer) (int, bool) {
 	mainRoot := mainCheckoutRoot(superRoot)
 	if mainRoot == "" {
 		fmt.Fprintln(errOut, "worktree-cleanup: the main repository worktree could not be resolved; no destructive action taken")
+		return 2, false
+	}
+	// A bare repository never authorizes cleanup: it has no main working tree,
+	// so its manifest cannot be the project's, and acting on it deletes before
+	// the base sync can fail.
+	if isBareRepository(mainRoot) {
+		fmt.Fprintln(errOut, "worktree-cleanup: the repository is bare and has no main worktree to authorize cleanup; no destructive action taken")
 		return 2, false
 	}
 	manifest := manifestPath(mainRoot)
@@ -851,10 +864,6 @@ func cleanupRecipeGate(superRoot string, errOut io.Writer) (int, bool) {
 }
 
 func runCleanup(superRoot string, cfg cleanupConfig, out, errOut io.Writer) int {
-	if err := requirePrimaryCleanupCheckout(superRoot); err != nil {
-		fmt.Fprintln(errOut, err)
-		return 2
-	}
 	if superRoot != "" {
 		superRoot = RealPath(superRoot)
 	}
@@ -862,8 +871,15 @@ func runCleanup(superRoot string, cfg cleanupConfig, out, errOut io.Writer) int 
 		fmt.Fprintln(errOut, "worktree-cleanup: repository root could not be resolved; no destructive action taken")
 		return 2
 	}
+	// The recipe gate runs first: whatever worktree the shared hook fired from,
+	// a disabled main manifest is a clean no-op, and only an enabled one is
+	// subject to the primary-worktree requirement below.
 	if code, ok := cleanupRecipeGate(superRoot, errOut); !ok {
 		return code
+	}
+	if err := requirePrimaryCleanupCheckout(superRoot); err != nil {
+		fmt.Fprintln(errOut, err)
+		return 2
 	}
 	passes := enumerateCleanupPasses(superRoot, cfg.topology, cfg.scopes)
 	if len(passes) == 0 {

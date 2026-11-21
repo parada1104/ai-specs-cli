@@ -1176,3 +1176,103 @@ func TestCleanupRemovesMergedWorktreeWhenEnabled(t *testing.T) {
 		t.Fatalf("enabled cleanup printed an enablement notice: %q", stderr.String())
 	}
 }
+
+// TestCleanupDisabledMainManifestWinsFromLinkedCheckout is the verifier
+// blocker regression for a linked invocation: the recipe gate is the MAIN
+// checkout's manifest and it is consulted before the primary-worktree
+// boundary, so a disabled recipe is a clean no-op wherever the hook fired.
+func TestCleanupDisabledMainManifestWinsFromLinkedCheckout(t *testing.T) {
+	root := makeCleanupRepo(t)
+	wt := mergedCleanupCandidate(t, root, "feat-linked-disabled")
+	linked := addCleanupWorktree(t, root, "feat-caller")
+	manifest := writeCleanupManifest(t, root, "[recipes.worktree-flow]\nenabled = false\n")
+	before, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(linked, ".worktrees", "main", "main", "standalone", false, nil)
+	if code := runCleanup(linked, cfg, &stdout, &stderr); code != 0 {
+		t.Fatalf("disabled cleanup from a linked worktree exit=%d stderr=%q", code, stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Fatalf("disabled cleanup wrote to stdout: %q", stdout.String())
+	}
+	want := "worktree-cleanup: worktree-flow is not enabled in " + filepath.Join(RealPath(root), "ai-specs", "ai-specs.toml") + "; nothing to clean\n"
+	if stderr.String() != want {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+	}
+	assertCleanupPreserved(t, root, wt, "feat-linked-disabled")
+	after, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("cleanup rewrote the manifest: %q", string(after))
+	}
+}
+
+// TestCleanupLinkedCheckoutStillRejectedWhenEnabled is the preserve case for
+// the reordered gate: an enabled main manifest still sends a linked invocation
+// to the existing primary-worktree rejection, unchanged.
+func TestCleanupLinkedCheckoutStillRejectedWhenEnabled(t *testing.T) {
+	root := makeCleanupRepo(t)
+	mergedCleanupCandidate(t, root, "feat-linked-enabled")
+	linked := addCleanupWorktree(t, root, "feat-caller-enabled")
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(linked, ".worktrees", "main", "main", "standalone", false, nil)
+	if code := runCleanup(linked, cfg, &stdout, &stderr); code != 2 {
+		t.Fatalf("linked cleanup with an enabled manifest exit=%d, want 2; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "run cleanup from the main repository worktree; linked worktrees are not allowed") {
+		t.Fatalf("stderr = %q, want the existing primary-worktree rejection", stderr.String())
+	}
+}
+
+// bareCleanupFixture builds the bare-repo layout from the verifier report: a
+// bare clone with a linked worktree and an enabled manifest inside the bare
+// repository. Nothing about it may authorize cleanup.
+func bareCleanupFixture(t *testing.T) (bare, remote string) {
+	t.Helper()
+	root := makeCleanupRepo(t)
+	cleanupGitTest(t, root, "branch", "eligible")
+	dir := t.TempDir()
+	remote = filepath.Join(dir, "remote.git")
+	bare = filepath.Join(dir, "bare")
+	cleanupGitTest(t, dir, "clone", "--bare", "-q", root, remote)
+	cleanupGitTest(t, dir, "clone", "--bare", "-q", remote, bare)
+	wt := filepath.Join(bare, ".worktrees", "eligible")
+	if err := os.MkdirAll(filepath.Dir(wt), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cleanupGitTest(t, bare, "worktree", "add", "-q", wt, "eligible")
+	writeCleanupManifest(t, bare, cleanupEnabledManifest)
+	return bare, remote
+}
+
+// TestCleanupBareRepositoryCannotAuthorizeCleanup is the second verifier
+// blocker regression: a bare repository has no main working tree, so it must
+// fail closed before any destructive step even with an enabled manifest.
+func TestCleanupBareRepositoryCannotAuthorizeCleanup(t *testing.T) {
+	bare, remote := bareCleanupFixture(t)
+	wt := filepath.Join(bare, ".worktrees", "eligible")
+
+	var stdout, stderr bytes.Buffer
+	cfg := newCleanupConfig(bare, ".worktrees", "main", "main", "standalone", false, nil)
+	if code := runCleanup(bare, cfg, &stdout, &stderr); code != 2 {
+		t.Fatalf("bare cleanup exit=%d, want 2; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Fatalf("bare cleanup wrote to stdout: %q", stdout.String())
+	}
+	want := "worktree-cleanup: the repository is bare and has no main worktree to authorize cleanup; no destructive action taken\n"
+	if stderr.String() != want {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+	}
+	assertCleanupPreserved(t, bare, wt, "eligible")
+	if got := cleanupGitTest(t, remote, "show-ref"); !strings.Contains(got, "refs/heads/eligible") {
+		t.Fatalf("remote branch was deleted by a bare cleanup: %q", got)
+	}
+}

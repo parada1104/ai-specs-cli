@@ -208,6 +208,42 @@ class WorktreeCleanupTests(unittest.TestCase):
         self.assertIn("removed feat-enabled", result.stdout)
         self.assertNotIn("not enabled", result.stderr)
 
+    def test_disabled_main_manifest_wins_from_linked_checkout(self):
+        """The shared hook can fire from a linked worktree; the recipe gate is
+        the main checkout's manifest, and it must be consulted before the
+        primary-worktree boundary rejects the invocation."""
+        repo = self._make_repo()
+        merged = self._merged_candidate(repo, "eligible")
+        linked = self._add_worktree(repo, "caller")
+        manifest = self._write_manifest(
+            repo, "[recipes.worktree-flow]\nenabled = false\n"
+        )
+        before = manifest.read_bytes()
+        result = self._run_cleanup(linked, check=False)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (
+            0, "", f"worktree-cleanup: worktree-flow is not enabled in "
+            f"{manifest.resolve()}; nothing to clean\n",
+        ))
+        self._assert_candidate_preserved(repo, merged, "eligible")
+        self.assertEqual(manifest.read_bytes(), before)
+
+    def test_bare_repo_cannot_authorize_cleanup(self):
+        """A bare repository has no main working tree, so it can never
+        authorize a destructive cleanup, even with an enabled manifest."""
+        repo = self._make_repo()
+        git(repo, "branch", "eligible")
+        remote = repo.parent / "remote.git"
+        bare = repo.parent / "bare"
+        git(repo, "clone", "--bare", str(repo), str(remote))
+        git(repo, "clone", "--bare", str(remote), str(bare))
+        wt = bare / ".worktrees" / "eligible"
+        git(bare, "worktree", "add", str(wt), "eligible")
+        self._write_manifest(bare, ENABLED_WORKTREE_FLOW_MANIFEST)
+        result = self._run_cleanup(bare, check=False)
+        self.assertEqual(result.returncode, 2)
+        self._assert_candidate_preserved(bare, wt, "eligible")
+        self.assertIn("refs/heads/eligible", git(remote, "show-ref"))
+
     def test_cli_route_preserves_arguments_output_and_exit(self):
         repo = self._make_repo()
         home = self._cli_home("\n".join([
