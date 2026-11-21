@@ -102,6 +102,12 @@ type agentLeftoverPlan struct {
 // planRetiredAgentLeftovers decides, before the first delete, everything the
 // retired agents leave behind. It returns the retired agent names (the hook
 // plan prunes their runtimes) and the apply step.
+//
+// Every agent [agents].enabled no longer names is retired for the hook plan: its
+// managed wiring and shims are recognisable by their own ai-specs markers and
+// [hooks] records, so a retired runtime loses them even when the lock holds no
+// link record for it. The link, command and MCP leftovers need the stricter
+// evidence check below, because an unrecorded user link must stay silent.
 func planRetiredAgentLeftovers(root, home string, paths []string) ([]string, func(io.Writer, io.Writer) error, error) {
 	noop := func(io.Writer, io.Writer) error { return nil }
 	retired, err := retiredAgents(root)
@@ -126,28 +132,28 @@ func planRetiredAgentLeftovers(root, home string, paths []string) ([]string, fun
 		dropManaged: map[string]bool{},
 		legacyLinks: map[string][]string{},
 	}
-	var live []string
 	for _, agent := range retired {
-		if !p.agentHasRecords(lk, paths, agent) {
+		if !p.agentEvidence(lk, paths, agent) {
 			// A project that never enabled this agent has nothing of ours to
 			// retire: its user-made links stay, silently.
 			continue
 		}
-		live = append(live, agent)
 		for _, target := range paths {
 			if err := p.addAgent(lk, target, agent); err != nil {
 				return nil, noop, err
 			}
 		}
 	}
-	return live, p.apply, nil
+	return retired, p.apply, nil
 }
 
-// agentHasRecords reports whether the lock holds any record attributable to
-// agent: a link, command copy, MCP target or hook shim sync created for it.
-// Without one, an agent missing from [agents].enabled is indistinguishable from
-// one the project never enabled, so it is not retired (S4).
-func (p *agentLeftoverPlan) agentHasRecords(lk *lock.Lock, paths []string, agent string) bool {
+// agentEvidence reports whether ai-specs demonstrably managed agent: a link,
+// command copy, MCP target or hook shim sync recorded for it, or — for a lock
+// written before 0.26 recorded links — the managed marker still present in its
+// runtime hook file. Without any of these, an agent missing from
+// [agents].enabled is indistinguishable from one the project never enabled, so
+// its user links stay silent (S4).
+func (p *agentLeftoverPlan) agentEvidence(lk *lock.Lock, paths []string, agent string) bool {
 	under := func(rel, dir string) bool {
 		return rel == dir || strings.HasPrefix(rel, dir+"/")
 	}
@@ -165,6 +171,9 @@ func (p *agentLeftoverPlan) agentHasRecords(lk *lock.Lock, paths []string, agent
 			if _, ok := lk.MCP[p.rel(filepath.Join(target, rel))]; ok {
 				return true
 			}
+		}
+		if p.hookMarker(target, agent) {
+			return true
 		}
 		for _, field := range []string{"commands_dir", "runtime_hooks_target"} {
 			rel, _ := platformGet(agent, field)
@@ -185,6 +194,22 @@ func (p *agentLeftoverPlan) agentHasRecords(lk *lock.Lock, paths []string, agent
 		}
 	}
 	return false
+}
+
+// hookMarker reports whether the agent's runtime hook file still carries a
+// managed hook id: proof ai-specs wired this agent before the lock recorded
+// links. It is best-effort, so an unreadable or unusual file is no evidence.
+func (p *agentLeftoverPlan) hookMarker(target, agent string) bool {
+	rel, _ := platformGet(agent, "runtime_hooks_target")
+	if rel == "" {
+		return false
+	}
+	path := filepath.Join(target, rel)
+	if exists, err := pruneHookFile(p.root, target, path); err != nil || !exists {
+		return false
+	}
+	content, err := os.ReadFile(path)
+	return err == nil && strings.Contains(string(content), hooksManagedPrefix)
 }
 
 // addAgent plans one retired agent's artifacts under one target.

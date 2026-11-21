@@ -339,6 +339,43 @@ class SyncAgentLeftoversTests(unittest.TestCase):
             r"ai-specs-managed \(kept; delete them if ai-specs did not write them\)$",
         )
 
+    def test_legacy_links_warn_once_and_hook_retires(self) -> None:
+        import re
+
+        recipe = self.home / "catalog/recipes/agentdemo/recipe.toml"
+        recipe.write_text(
+            RECIPE.replace('commands = [{ id = "go", path = "commands/go.md" }]\n', ""),
+            encoding="utf-8",
+        )
+        config = (
+            "[project]\nname = 'legacy'\n[brief]\nrender = false\n"
+            "[recipes.agentdemo]\nenabled = true\n[agents]\nenabled = {}\n"
+        )
+        self.manifest.write_text(config.format("['claude']"), encoding="utf-8")
+        self.seed()
+        settings = self.project / ".claude/settings.json"
+        self.assertIn("ai-specs:hooks:agentdemo:main", settings.read_text())
+        lock = self.project / "ai-specs/.ai-specs.lock"
+        lock.write_text(
+            re.sub(r"(?ms)^\[links\]\n.*?(?=^\[|\Z)", "", self.lock_text()),
+            encoding="utf-8",
+        )
+
+        self.manifest.write_text(config.format("['codex']"), encoding="utf-8")
+        first, second = self.sync(), self.sync()
+        self.assertEqual((first.returncode, second.returncode), (0, 0))
+        notices = [
+            line
+            for line in first.stderr.splitlines()
+            if "retired agent link(s)" in line
+        ]
+        self.assertEqual(len(notices), 1, first.stderr)
+        for rel in ("CLAUDE.md", ".claude/skills"):
+            self.assertIn(rel, notices[0])
+            self.assertTrue((self.project / rel).is_symlink())
+        self.assertNotIn("retired agent link(s)", second.stderr)
+        self.assertNotIn("ai-specs:hooks:agentdemo:main", settings.read_text())
+
     def test_retired_command_notice_does_not_repeat(self) -> None:
         self.seed()
         self.set_agents("['pi']")
