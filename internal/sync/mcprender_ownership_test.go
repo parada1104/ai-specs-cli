@@ -45,6 +45,16 @@ const mcpOwnershipManifestNone = `[project]
 name = 'own'
 `
 
+const mcpOwnershipManifestAlphaChanged = `[project]
+name = 'own'
+
+[mcp.alpha]
+command = 'alpha-new'
+
+[mcp.beta]
+command = 'beta-cmd'
+`
+
 type mcpOwnershipAgent struct {
 	agent  string
 	rel    string
@@ -95,6 +105,13 @@ func mcpRenderOwned(t *testing.T, dir, manifest, agent, target, key string, owne
 func mcpNotice(target, servers string) string {
 	return fmt.Sprintf("    ! %s: MCP servers not recorded as ai-specs-managed: %s (remove them if ai-specs generated them)\n",
 		target, servers)
+}
+
+// mcpPreservedLine is the collision notice: the user's entry was kept because it
+// differs from what sync would render today, plus how to regenerate it.
+func mcpPreservedLine(target, name string) string {
+	return fmt.Sprintf("    ! preserved user MCP server %q in %s (not recorded as ai-specs-managed; delete that entry and run sync to regenerate it)\n",
+		name, target)
 }
 
 // mcpSeedTarget writes the target file, creating its parent directory.
@@ -240,8 +257,8 @@ func TestMCPOwnershipCollisionKeepsUserServer(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, stderr)
 	}
-	if !strings.HasPrefix(stderr, "    ! preserved user MCP server \"alpha\"") {
-		t.Fatalf("stderr = %q", stderr)
+	if want := mcpPreservedLine(target, "alpha"); stderr != want {
+		t.Fatalf("stderr = %q, want %q", stderr, want)
 	}
 	text := mcpReadTarget(t, target)
 	if !strings.Contains(text, "user-authored") {
@@ -823,5 +840,121 @@ func TestMCPOwnershipCodexUnchangedBlockIsStable(t *testing.T) {
 	}
 	if got := mcpReadTarget(t, target); got != "" {
 		t.Errorf("pruned target = %q, want empty", got)
+	}
+}
+
+// TestMCPOwnershipAdoptsIdenticalLegacyServers pins L4 (B-002): an existing
+// server the lock does not record is adopted — recorded as ai-specs-managed and
+// from then on updated and removed like any managed one — only when its entry is
+// exactly what sync would render today. This is the v0.25.2 → v0.26 upgrade path,
+// where the generated entries carry no record at all.
+func TestMCPOwnershipAdoptsIdenticalLegacyServers(t *testing.T) {
+	for _, a := range mcpOwnershipAgents {
+		if a.agent == "codex" {
+			// Codex TOML keeps its managed-block contract (rule: unchanged).
+			continue
+		}
+		t.Run(a.agent, func(t *testing.T) {
+			dir := t.TempDir()
+			target := mcpSeedTarget(t, dir, a)
+			// A pre-0.26 sync generated the entries; the record never existed.
+			if _, _, rc, _ := mcpRenderOwned(t, dir, mcpOwnershipManifest, a.agent, target, a.key, nil); rc != 0 {
+				t.Fatalf("seed render rc=%d", rc)
+			}
+			legacy := mcpReadTarget(t, target)
+
+			// Identical entries are adopted: no collision line, still the only
+			// remaining notice is the undeclared user server.
+			_, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifest, a.agent, target, a.key, nil)
+			if rc != 0 || stderr != mcpNotice(target, "mine") {
+				t.Fatalf("adoption render rc=%d stderr=%q want %q", rc, stderr, mcpNotice(target, "mine"))
+			}
+			if got, want := mcpManagedNames(res), []string{"alpha", "beta"}; strings.Join(got, ",") != strings.Join(want, ",") {
+				t.Fatalf("adopted managed = %v, want %v", got, want)
+			}
+			if got := mcpReadTarget(t, target); got != legacy {
+				t.Errorf("adoption rewrote identical entries:\n--- got ---\n%s\n--- want ---\n%s", got, legacy)
+			}
+
+			// Adopted means managed: a changed manifest value is applied.
+			_, stderr, rc, updated := mcpRenderOwned(t, dir, mcpOwnershipManifestAlphaChanged, a.agent, target, a.key, mcpManagedNames(res))
+			if rc != 0 || stderr != "" {
+				t.Fatalf("update render rc=%d stderr=%q", rc, stderr)
+			}
+			if got, want := mcpManagedNames(updated), []string{"alpha", "beta"}; strings.Join(got, ",") != strings.Join(want, ",") {
+				t.Fatalf("updated managed = %v, want %v", got, want)
+			}
+			text := mcpReadTarget(t, target)
+			if !strings.Contains(text, "alpha-new") || strings.Contains(text, "alpha-cmd") {
+				t.Errorf("adopted server was not updated from the manifest:\n%s", text)
+			}
+			if !strings.Contains(text, a.marker) {
+				t.Errorf("update lost the user server:\n%s", text)
+			}
+
+			// Adopted also means removable when the manifest drops it.
+			_, stderr, rc, _ = mcpRenderOwned(t, dir, mcpOwnershipManifestNone, a.agent, target, a.key, mcpManagedNames(updated))
+			if rc != 0 || stderr != "" {
+				t.Fatalf("prune render rc=%d stderr=%q", rc, stderr)
+			}
+			if text := mcpReadTarget(t, target); strings.Contains(text, "alpha") || strings.Contains(text, "beta") {
+				t.Errorf("adopted servers survived the manifest removal:\n%s", text)
+			}
+		})
+	}
+}
+
+// TestMCPOwnershipAdoptionIgnoresTheRecord pins the two limits of L4 (B-002):
+// adoption does not depend on whether the target has a record (so pruning the
+// last managed server, which drops the record, cannot re-arm anything), and a
+// differing entry is never adopted.
+func TestMCPOwnershipAdoptionIgnoresTheRecord(t *testing.T) {
+	t.Run("identical entry with a record naming another server", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(dir, ".mcp.json")
+		original := `{"mcpServers": {"alpha": {"command": "alpha-cmd", "args": [], "env": {}}}}` + "\n"
+		if err := os.WriteFile(target, []byte(original), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifest, "claude", target, "mcpServers", []string{"other"})
+		if rc != 0 || stderr != "" {
+			t.Fatalf("rc=%d stderr=%q", rc, stderr)
+		}
+		if got, want := mcpManagedNames(res), []string{"alpha", "beta"}; strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("managed = %v, want %v", got, want)
+		}
+	})
+
+	for _, tc := range []struct {
+		name  string
+		owned []string
+	}{
+		{"record without the name", []string{}},
+		{"no record at all", nil},
+	} {
+		t.Run("differing entry/"+tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(dir, ".mcp.json")
+			original := `{"mcpServers": {"alpha": {"command": "user-authored"}}}` + "\n"
+			if err := os.WriteFile(target, []byte(original), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			// The record is gone: the last managed server was just pruned.
+			for i := 0; i < 2; i++ {
+				_, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifestAlphaOnly, "claude", target, "mcpServers", tc.owned)
+				if rc != 0 {
+					t.Fatalf("rc=%d stderr=%q", rc, stderr)
+				}
+				if want := mcpPreservedLine(target, "alpha"); stderr != want {
+					t.Fatalf("run %d stderr = %q, want %q", i, stderr, want)
+				}
+				if got := mcpManagedNames(res); len(got) != 0 {
+					t.Errorf("run %d managed = %v, want none", i, got)
+				}
+				if got := mcpReadTarget(t, target); got != original {
+					t.Errorf("run %d user server was overwritten: got %q want %q", i, got, original)
+				}
+			}
+		})
 	}
 }

@@ -1152,8 +1152,15 @@ func mcpPlanMerge(desired *mcpObj, owned map[string]bool, ownedNames []string, c
 	}
 	for _, name := range desired.keys {
 		if current.has(name) && !owned[name] {
-			plan.preserved = append(plan.preserved, name)
-			continue
+			// L4 (B-002): an unrecorded entry is adopted only when it is exactly
+			// what sync renders today (a pre-0.26 generated one). Anything else
+			// is the user's and stays byte-identical. Adoption never depends on
+			// whether the target has a record, so dropping the last managed
+			// server cannot re-arm an overwrite.
+			if !mcpJSONSemanticEqual(current.vals[name], desired.vals[name]) {
+				plan.preserved = append(plan.preserved, name)
+				continue
+			}
 		}
 		plan.managed = append(plan.managed, name)
 	}
@@ -1163,6 +1170,55 @@ func mcpPlanMerge(desired *mcpObj, owned map[string]bool, ownedNames []string, c
 		}
 	}
 	return plan
+}
+
+// mcpJSONSemanticEqual reports whether two parsed JSON values are equal as data:
+// object key order is irrelevant, array order is not, and numbers compare by
+// value (1 equals 1.0).
+func mcpJSONSemanticEqual(a, b any) bool {
+	switch x := a.(type) {
+	case *mcpObj:
+		y, ok := b.(*mcpObj)
+		if !ok || x.len() != y.len() {
+			return false
+		}
+		for _, k := range x.keys {
+			if !y.has(k) || !mcpJSONSemanticEqual(x.vals[k], y.vals[k]) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		y, ok := b.([]any)
+		if !ok || len(x) != len(y) {
+			return false
+		}
+		for i := range x {
+			if !mcpJSONSemanticEqual(x[i], y[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	if ak, ok := mcpJSONNumberKey(a); ok {
+		bk, ok := mcpJSONNumberKey(b)
+		return ok && ak == bk
+	}
+	return a == b
+}
+
+// mcpJSONNumberKey renders a JSON number as a canonical string, so an int64, its
+// float64 spelling and an overflow literal of the same value all agree.
+func mcpJSONNumberKey(v any) (string, bool) {
+	switch n := v.(type) {
+	case int64:
+		return strconv.FormatInt(n, 10), true
+	case mcpBigInt:
+		return string(n), true
+	case float64:
+		return strconv.FormatFloat(n, 'g', -1, 64), true
+	}
+	return "", false
 }
 
 // mcpMergeIntoJSON merges per server (S5): foreign top-level keys keep their
@@ -1825,7 +1881,7 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 		opts.Result.BlockSHA = plan.blockSHA
 	}
 	for _, name := range plan.preserved {
-		fmt.Fprintf(stderr, "    ! preserved user MCP server %q in %s (not recorded as ai-specs-managed)\n", name, targetPath)
+		fmt.Fprintf(stderr, "    ! preserved user MCP server %q in %s (not recorded as ai-specs-managed; delete that entry and run sync to regenerate it)\n", name, targetPath)
 	}
 	// Upgrade notice: a target with servers ai-specs never recorded, before the
 	// lock knows about the target at all. One line per target, never a delete.

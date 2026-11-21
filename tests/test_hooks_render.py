@@ -266,6 +266,61 @@ class HooksRenderTests(_HookFixtureMixin):
                          {"mine": {"command": "user-cmd"}})
         self.assertNotIn('"demo"', (self.root / "ai-specs/.ai-specs.lock").read_text())
 
+    def test_mcp_legacy_generated_entries_are_adopted_then_updated(self):
+        """L4 (B-002): a v0.25.x generated entry that is exactly what sync
+        renders today is adopted, so a later manifest change reaches it."""
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("claude", "cursor", "pi")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        manifest.write_text(manifest.read_text() + "\n[mcp.demo]\ncommand = 'cmd-a'\n")
+        targets = [self.root / ".mcp.json", self.root / ".cursor/mcp.json",
+                   self.root / ".pi/mcp.json"]
+        legacy = b'{"mcpServers":{"demo":{"command":"cmd-a","args":[],"env":{}}}}\n'
+        for target in targets:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(legacy)
+
+        # Adopted, not preserved: no collision line, nothing else on stderr.
+        self.assertEqual(self.sync().stderr, "")
+        for target in targets:
+            self.assertEqual(
+                json.loads(target.read_text())["mcpServers"]["demo"],
+                {"command": "cmd-a", "args": [], "env": {}},
+            )
+        lock = (self.root / "ai-specs/.ai-specs.lock").read_text()
+        for target in targets:
+            rel = target.relative_to(self.root).as_posix()
+            self.assertIn(f'[mcp."{rel}"]', lock)
+
+        manifest.write_text(manifest.read_text().replace(
+            "command = 'cmd-a'", "command = 'cmd-b'"))
+        self.assertEqual(self.sync().stderr, "")
+        for target in targets:
+            self.assertEqual(
+                json.loads(target.read_text())["mcpServers"]["demo"],
+                {"command": "cmd-b", "args": [], "env": {}},
+            )
+
+    def test_mcp_legacy_entry_that_differs_is_preserved_byte_identical(self):
+        """L4 (B-002): an entry that differs from what sync would render is
+        never overwritten, and the notice says how to regenerate it."""
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("claude")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        manifest.write_text(manifest.read_text() + "\n[mcp.demo]\ncommand = 'cmd-b'\n")
+        target = self.root / ".mcp.json"
+        original = b'{"mcpServers":{"demo":{"command":"cmd-a","args":[],"env":{}}}}\n'
+        target.write_bytes(original)
+
+        notice = ('    ! preserved user MCP server "demo" in <TEMP>/.mcp.json '
+                  '(not recorded as ai-specs-managed; delete that entry and run '
+                  'sync to regenerate it)\n')
+        self.assertEqual(self.sync().stderr, notice)
+        self.assertEqual(target.read_bytes(), original)
+        # Stable: the same line every sync, and the user bytes never change.
+        self.assertEqual(self.sync().stderr, notice)
+        self.assertEqual(target.read_bytes(), original)
+
     def test_codex_mcp_collision_survives_writes_and_prune(self):
         import tomllib
 
@@ -290,7 +345,8 @@ class HooksRenderTests(_HookFixtureMixin):
                 self.assertEqual(
                     result.stderr,
                     '    ! preserved user MCP server "same" in '
-                    '<TEMP>/.codex/config.toml (not recorded as ai-specs-managed)\n',
+                    '<TEMP>/.codex/config.toml (not recorded as ai-specs-managed; '
+                    'delete that entry and run sync to regenerate it)\n',
                 )
                 servers = tomllib.loads(target.read_text())["mcp_servers"]
                 self.assertEqual(servers["same"]["command"], "user-command")
@@ -346,7 +402,8 @@ class HooksRenderTests(_HookFixtureMixin):
         self.assertEqual(
             result.stderr,
             '    ! preserved user MCP server "same" in '
-            '<TEMP>/.codex/config.toml (not recorded as ai-specs-managed)\n',
+            '<TEMP>/.codex/config.toml (not recorded as ai-specs-managed; '
+            'delete that entry and run sync to regenerate it)\n',
         )
         servers = tomllib.loads(target.read_text())["mcp_servers"]
         self.assertEqual(servers["same"], {"command": "user"})
