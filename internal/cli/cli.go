@@ -276,11 +276,7 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		if len(rest) > 0 {
 			rest = rest[1:]
 		}
-		return upgrade.Run(rest, upgrade.Env{
-			Home:       home,
-			UserHome:   os.Getenv("HOME"),
-			Executable: selfPath(),
-		}, stdout, stderr)
+		return upgrade.Run(rest, upgradeEnv(home), stdout, stderr)
 	case routeHub:
 		rest := args
 		if len(rest) > 0 {
@@ -419,6 +415,19 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 // instead of printing its frozen message (GO-20 U3a-fix).
 func isTTY(stdin io.Reader, stdout io.Writer) bool {
 	return tty.IsTTY(stdin, stdout)
+}
+
+// upgradeEnv resolves the process environment the upgrade engine runs against.
+// AI_SPECS_RELEASE_BASE is honored here exactly as the launcher's self-heal
+// honors it: without this the dist refresh always hit the default GitHub URL,
+// even when the install came from a mirror or a local release base (JD-A-005).
+func upgradeEnv(home string) upgrade.Env {
+	return upgrade.Env{
+		Home:        home,
+		UserHome:    os.Getenv("HOME"),
+		Executable:  selfPath(),
+		ReleaseBase: os.Getenv("AI_SPECS_RELEASE_BASE"),
+	}
 }
 
 // selfPath is the running dispatcher's own absolute path, exported to shimmed

@@ -36,7 +36,7 @@ INSTALL_URL = (
 _TOOLS = (
     "awk", "bash", "cat", "chmod", "cp", "curl", "dirname", "grep", "head",
     "ls", "mkdir", "mktemp", "mv", "readlink", "rm", "sed", "sha256sum",
-    "shasum", "sh", "tr", "uname",
+    "shasum", "sh", "stat", "tr", "uname",
 )
 
 # A stand-in native binary: it proves dispatch and verbose output separation.
@@ -280,11 +280,19 @@ class LauncherSelfHealTests(unittest.TestCase):
                          "an existing binary means no acquisition at all")
         self.assertEqual(self.server.requests, [])
         self.assertEqual(
-            (self.home / "dist" / "VERSION").read_text().strip(), "0.25.0",
+            self._stamp_version(), "0.25.0",
             "a copy proven current by its committed digest is stamped, so the "
             "next invocation needs no probe download")
+        self.assertEqual(
+            len((self.home / "dist" / "VERSION").read_text().split()), 3,
+            "the stamp binds the version to the exact bytes: "
+            "'<version> <sha256> <size>:<mtime>'")
 
     # -- JD-A-005: the launcher compares real versions, never mtimes ---------
+    def _stamp_version(self) -> str:
+        """The version field of the launcher-copy stamp."""
+        return (self.home / "dist" / "VERSION").read_text().split()[0]
+
     def _dist_copy(self, stamp: str, banner: str = "stale") -> bytes:
         """An executable dist copy that reports `stamp` as its own version."""
         payload = _versioned_payload(banner)
@@ -317,7 +325,7 @@ class LauncherSelfHealTests(unittest.TestCase):
         self.assertEqual(self.dist.read_bytes(), PAYLOAD,
                          "the stale copy must be replaced, not executed")
         self.assertEqual(
-            (self.home / "dist" / "VERSION").read_text().strip(), "0.26.0",
+            self._stamp_version(), "0.26.0",
             "the acquired copy is stamped with the version it was verified for")
         self.assertEqual(len(self.server.requests), 1)
 
@@ -370,8 +378,96 @@ class LauncherSelfHealTests(unittest.TestCase):
             "exactly one warning line, naming both versions and the fix",
         )
         self.assertEqual(
-            (self.home / "dist" / "VERSION").read_text().strip(), "0.25.0",
+            self._stamp_version(), "0.25.0",
             "a failed refresh leaves the copy untouched")
+
+    def test_rejected_dist_refresh_emits_one_warning(self):
+        # The refresh path is silent about its own attempt: a failed download
+        # leaves ONE warning line, never fetch progress plus a raw curl error.
+        stale = self._dist_copy("0.24.0")
+        self._serve()
+        self._trust(hashlib.sha256(b"other artifact").hexdigest())
+
+        proc = self._run("probe")
+
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        self.assertEqual(self.dist.read_bytes(), stale)
+        self.assertEqual(
+            proc.stderr.splitlines(),
+            ["ai-specs: warning: installed binary reports version 0.24.0"
+             " but this checkout is 0.25.0; re-run install.sh or run"
+             " 'ai-specs upgrade' to reinstall it",
+             "native-stderr"],
+            "the failed refresh may not leak fetch progress or curl output",
+        )
+        self.assertEqual(self.server.requests, ["/" + self.asset],
+                         "the verified asset was attempted exactly once")
+
+    def test_a_downgrade_fetches_the_verified_older_asset_once(self):
+        # The comparison is the real version in BOTH directions: a copy newer
+        # than this checkout is not current either.
+        (self.home / "VERSION").write_text("0.24.0\n", encoding="utf-8")
+        self._dist_copy("0.25.0", banner="newer")
+        self._serve()
+        self._trust(hashlib.sha256(PAYLOAD).hexdigest())
+
+        proc = self._run("version")
+
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        self.assertEqual(proc.stdout, "native version\n")
+        self.assertEqual(
+            proc.stderr.splitlines(),
+            [
+                f"ai-specs: outdated launcher copy at {self.dist};"
+                f" fetching {self.asset} from {self.server.base_url}",
+                f"ai-specs: installed {self.asset} at {self.dist}",
+                "native-stderr",
+            ],
+        )
+        self.assertEqual(self.dist.read_bytes(), PAYLOAD)
+        self.assertEqual(self._stamp_version(), "0.24.0")
+        self.assertEqual(len(self.server.requests), 1,
+                         "the verified older asset is fetched once")
+
+    def test_a_stamp_bound_to_another_binary_is_not_proof(self):
+        # A stamp names the version AND the digest of the bytes. Replacing the
+        # copy under a still-matching version stamp must be detected (JD-A-005).
+        (self.home / "VERSION").write_text("0.26.0\n", encoding="utf-8")
+        current = _versioned_payload("native")
+        self._dist_copy("0.26.0", banner="native")  # legacy, unbound stamp
+        (self.assets / self.asset).write_bytes(current)
+        self._trust(hashlib.sha256(current).hexdigest())
+
+        first = self._run("version")
+
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(first.stdout, "0.26.0\n")
+        self.assertEqual(self.server.requests, [],
+                         "a copy proven by its committed digest is admitted")
+        stamp = (self.home / "dist" / "VERSION").read_text().split()
+        self.assertEqual(len(stamp), 3,
+                         f"the admitted copy must be bound to its bytes: {stamp}")
+
+        # Same version string, different (older) bytes, stamp untouched.
+        self.dist.write_bytes(_versioned_payload("older"))
+        self.dist.chmod(0o755)
+        (self.assets / self.asset).write_bytes(PAYLOAD)
+        self._trust(hashlib.sha256(PAYLOAD).hexdigest())
+
+        proc = self._run("probe")
+
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        self.assertEqual(
+            proc.stderr.splitlines(),
+            [
+                f"ai-specs: outdated launcher copy at {self.dist};"
+                f" fetching {self.asset} from {self.server.base_url}",
+                f"ai-specs: installed {self.asset} at {self.dist}",
+                "native-stderr",
+            ],
+            "a stamp that no longer binds the binary proves nothing",
+        )
+        self.assertEqual(self.dist.read_bytes(), PAYLOAD)
 
     def test_a_pinned_binary_is_never_version_checked_or_replaced(self):
         (self.home / "VERSION").write_text("0.26.0\n", encoding="utf-8")
@@ -413,7 +509,7 @@ class LauncherSelfHealTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            (real / "dist" / "VERSION").read_text().strip(), "0.25.0",
+            (real / "dist" / "VERSION").read_text().split()[0], "0.25.0",
             "the acquisition stamp lands under the canonical home")
         self.assertEqual((real / "dist" / "ai-specs").read_bytes(), PAYLOAD,
                          "the canonical home directory receives dist/")

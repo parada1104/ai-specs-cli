@@ -474,18 +474,65 @@ func distCopyPath(inst Install) string {
 }
 
 // distStampPath holds the version a launcher copy was acquired for. It is the
-// version record the launcher compares against: mtimes are never used
-// (JD-A-005), because touching VERSION must not trigger a download.
+// record the launcher compares against: mtimes are never used (JD-A-005),
+// because touching VERSION must not trigger a download.
 func distStampPath(inst Install) string {
 	return filepath.Join(canonicalDistHome(inst), "dist", "VERSION")
 }
 
-// stampDistCopy records the version dist/ai-specs now holds.
+// distCacheKey is the cheap "<size>:<mtime>" key the launcher also computes.
+// It only decides whether a stamp's digest must be recomputed; it is never
+// version evidence (JD-A-005).
+func distCacheKey(path string) (string, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d:%d", fi.Size(), fi.ModTime().Unix()), nil
+}
+
+// stampDistCopy records the version dist/ai-specs now holds AND the digest of
+// the bytes it holds: "<version> <sha256> <size>:<mtime>". The digest is what
+// makes the stamp proof of the binary rather than of a string, so a copy
+// replaced later is treated as absent (JD-A-005).
 func stampDistCopy(inst Install, version string) error {
-	if err := os.WriteFile(distStampPath(inst), []byte(version+"\n"), 0o644); err != nil {
+	dist := distCopyPath(inst)
+	digest, err := Sha256File(dist)
+	if err != nil {
+		return fmt.Errorf("could not hash the launcher copy: %w", err)
+	}
+	key, err := distCacheKey(dist)
+	if err != nil {
+		return fmt.Errorf("could not read the launcher copy: %w", err)
+	}
+	if err := os.WriteFile(distStampPath(inst), []byte(version+" "+digest+" "+key+"\n"), 0o644); err != nil {
 		return fmt.Errorf("could not record the launcher copy version: %w", err)
 	}
 	return nil
+}
+
+// distStampProves reports whether the stamp is bound to the copy on disk and
+// names `version`. A stamp without a digest, or one whose digest no longer
+// matches the file, proves nothing (JD-A-005).
+func distStampProves(inst Install, version string) bool {
+	data, err := os.ReadFile(distStampPath(inst))
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) != 3 || fields[0] != version {
+		return false
+	}
+	dist := distCopyPath(inst)
+	if key, err := distCacheKey(dist); err == nil && key == fields[2] {
+		return true
+	}
+	digest, err := Sha256File(dist)
+	if err != nil || digest != fields[1] {
+		return false
+	}
+	// Same bytes, new mtime: refresh the cache key so the next run is cheap.
+	return stampDistCopy(inst, version) == nil
 }
 
 // refreshLegacyDistCopy replaces a stale launcher copy with the verified
@@ -499,7 +546,7 @@ func refreshLegacyDistCopy(inst Install, env Env, version string, stdout io.Writ
 	if _, err := os.Lstat(dist); err != nil {
 		return nil
 	}
-	if stamp, err := os.ReadFile(distStampPath(inst)); err == nil && strings.TrimSpace(string(stamp)) == version {
+	if distStampProves(inst, version) {
 		return nil
 	}
 	asset := AssetName(runtime.GOOS, runtime.GOARCH)

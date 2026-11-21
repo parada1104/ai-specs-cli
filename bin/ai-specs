@@ -19,11 +19,14 @@
 # into a working CLI instead of a missing binary: the upgrade only fast-forwards
 # the git tree, so the first verb afterwards acquires dist/ai-specs itself.
 #
-# An existing copy is checked against the checkout too (JD-A-005): the launcher
-# compares the version the copy REPORTS for itself (`... version`) with
-# $AI_SPECS_HOME/VERSION — never file mtimes — and re-acquires the verified
-# asset when they differ. If it cannot, it warns once and runs the existing
-# binary, so no command is ever blocked by the check.
+# An existing copy is checked against the checkout too (JD-A-005). The launcher
+# keeps a stamp next to it, `dist/VERSION` = `<version> <sha256> <size>:<mtime>`,
+# and treats the copy as current only when the stamp's version is
+# $AI_SPECS_HOME/VERSION AND the stamp is bound to the bytes on disk (the digest
+# re-hashed only when the cache key changes; mtimes are never version evidence).
+# Otherwise it re-acquires the verified asset. If it cannot, it warns once — one
+# single stderr line — and runs the existing binary, so no command is ever
+# blocked by the check.
 # Progress goes to stderr; the verb's stdout is never written here. There is no
 # legacy Bash/Python fallback: that route was retired by GO-20 U2e (T2).
 set -e
@@ -83,10 +86,29 @@ _expected_digest() {
         "${AI_SPECS_TRUST_ROOT_FILE:-$AI_SPECS_HOME/bin/SHA256SUMS}" 2>/dev/null | head -n 1
 }
 
-# Record the version an acquisition was verified for. It is the stamp
-# _dist_version reads back; file mtimes are never used (JD-A-005).
+# A cheap cache key for a binary file: "<size>:<mtime-seconds>". It only
+# decides whether a stamp's digest must be recomputed; it is NEVER version
+# evidence, and an empty key just means the digest is checked every run
+# (JD-A-005).
+_file_key() {
+    local out
+    case "$(uname -s)" in
+        Darwin) out="$(stat -f '%z:%Fm' "$1" 2>/dev/null || true)"; out="${out%%.*}" ;;
+        *)      out="$(stat -c '%s:%Y' "$1" 2>/dev/null || true)" ;;
+    esac
+    printf '%s' "$out"
+}
+
+# Record the version AND the exact bytes an acquisition produced:
+# "<version> <sha256> <size>:<mtime>". The digest is what makes a stamp proof
+# of the binary instead of proof of a string someone wrote in a file; the key
+# is only the cache that keeps re-hashing out of every invocation (JD-A-005).
 _stamp_dist() {
-    printf '%s\n' "$1" > "$(_dist_home)/dist/VERSION" 2>/dev/null || true
+    local version="$1" digest="$2" key
+    [ -n "$digest" ] || return 0
+    key="$(_file_key "$(_dist_home)/dist/ai-specs")"
+    [ -n "$key" ] || return 0
+    printf '%s %s %s\n' "$version" "$digest" "$key" > "$(_dist_home)/dist/VERSION" 2>/dev/null || true
 }
 
 # The version the installed copy reports for itself. The `version` verb prints
@@ -98,24 +120,40 @@ _dist_version() {
     printf '%s' "${out%%[[:space:]]*}"
 }
 
-# True when the installed copy matches the version this checkout declares.
-# A copy installed without a stamp (install.sh, an older launcher, a legacy
-# upgrade) is still proven current by its committed digest — the same trust
-# root the acquisition uses — and is stamped, so later invocations only compare
-# strings.
+# True when the installed copy IS the version this checkout declares. The
+# stamp records the digest it was acquired for, so a stamp whose binary no
+# longer matches it is treated as absent: a matching version string proves
+# nothing (JD-A-005). A stamp without a digest — written by install.sh before
+# the binding, by an older launcher, or by a legacy upgrade — is proven against
+# the committed digest instead, the same trust root the acquisition uses, and
+# is then stamped so later invocations only compare the cache key.
 _dist_is_current() {
-    local want have asset expected got
+    local want stamp sversion sdigest skey key got asset expected
     want="$(_trimmed "$AI_SPECS_HOME/VERSION")"
     [ -n "$want" ] || return 0
-    have="$(_dist_version)"
-    [ "$have" = "$want" ] && return 0
+    stamp="$(_dist_home)/dist/VERSION"
+    read -r sversion sdigest skey <<< "$(head -n 1 "$stamp" 2>/dev/null || true)"
+    if [ "${sversion:-}" = "$want" ] && [ -n "${sdigest:-}" ] && [ -n "${skey:-}" ]; then
+        key="$(_file_key "$NATIVE_BIN")"
+        if [ -n "$key" ] && [ "$key" = "$skey" ]; then
+            return 0
+        fi
+        # The binary changed since the stamp was written: re-hash it once. Same
+        # bytes under a new mtime just refreshes the key.
+        got="$(_sha256_of "$NATIVE_BIN" || true)"
+        if [ -n "$got" ] && [ "$got" = "$sdigest" ]; then
+            _stamp_dist "$want" "$got"
+            return 0
+        fi
+        return 1
+    fi
     asset="$(_platform_asset 2>/dev/null || true)"
     [ -n "$asset" ] || return 1
     expected="$(_expected_digest "$asset")"
     [ -n "$expected" ] || return 1
     got="$(_sha256_of "$NATIVE_BIN" || true)"
     [ "$got" = "$expected" ] || return 1
-    _stamp_dist "$want"
+    _stamp_dist "$want" "$got"
     return 0
 }
 
@@ -155,7 +193,7 @@ _self_heal() {
                 got="$(_sha256_of "$tmp" || true)"
                 if [ -n "$got" ] && [ "$got" = "$expected" ]; then
                     if chmod 0755 "$tmp" && mv -f "$tmp" "$dist_bin"; then
-                        _stamp_dist "$version"
+                        _stamp_dist "$version" "$got"
                         echo "ai-specs: installed $asset at $dist_bin" >&2
                         return 0
                     fi
@@ -172,7 +210,7 @@ _self_heal() {
         if (cd "$AI_SPECS_HOME" && go build -trimpath -buildvcs=false -o "$tmp" ./cmd/ai-specs); then
             if chmod 0755 "$tmp" && mv -f "$tmp" "$dist_bin"; then
                 # The build comes from this checkout, so it IS this version.
-                _stamp_dist "$version"
+                _stamp_dist "$version" "$(_sha256_of "$dist_bin" || true)"
                 echo "ai-specs: built and installed $dist_bin" >&2
                 return 0
             fi
@@ -191,9 +229,16 @@ if [ -z "${AI_SPECS_GO_BIN:-}" ]; then
         # Re-acquire the verified asset (same trust root); when that is
         # impossible (offline, digest mismatch, no Go) warn once and run the
         # existing binary, so no command is ever blocked by the check.
+        # A failed refresh leaves exactly ONE line on stderr — the warning
+        # below — so the fetch progress and curl's own error are captured and
+        # replayed only when the refresh actually worked.
         have="$(_dist_version)"
         want="$(_trimmed "$AI_SPECS_HOME/VERSION")"
-        if ! _self_heal "outdated launcher copy at"; then
+        if progress="$(_self_heal "outdated launcher copy at" 2>&1 >/dev/null)"; then
+            if [ -n "$progress" ]; then
+                printf '%s\n' "$progress" >&2
+            fi
+        else
             echo "ai-specs: warning: installed binary reports version ${have:-unknown} but this checkout is $want; re-run install.sh or run 'ai-specs upgrade' to reinstall it" >&2
         fi
     fi

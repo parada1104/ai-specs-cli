@@ -645,8 +645,8 @@ func TestLegacyUpgradeRefreshesDistCopyBeforeReportingCompletion(t *testing.T) {
 	if fi, err := os.Stat(filepath.Join(distDir, "ai-specs")); err != nil || fi.Mode().Perm()&0o111 == 0 {
 		t.Errorf("the refreshed launcher copy must stay executable: %v", err)
 	}
-	if stamp := strings.TrimSpace(readFile(t, filepath.Join(distDir, "VERSION"))); stamp != "1.1.0" {
-		t.Errorf("launcher copy stamp = %q, want 1.1.0", stamp)
+	if stamp := strings.Fields(readFile(t, filepath.Join(distDir, "VERSION"))); len(stamp) != 3 || stamp[0] != "1.1.0" {
+		t.Errorf("launcher copy stamp = %v, want '<version> <sha256> <size>:<mtime>' for 1.1.0", stamp)
 	}
 	refreshed := strings.Index(out.String(), "Refreshed launcher copy:")
 	upgraded := strings.Index(out.String(), "Upgraded: 1.0.0 -> 1.1.0")
@@ -705,7 +705,8 @@ func TestLegacyUpgradeReportsTheAdvanceWhenTheDistRefreshFails(t *testing.T) {
 	}
 }
 
-// JD-A-005: a copy already stamped with the target version needs no download.
+// JD-A-005: a copy already stamped with the target version AND bound to its own
+// bytes needs no download.
 func TestLegacyUpgradeSkipsTheDistRefreshWhenTheStampMatches(t *testing.T) {
 	f := newFakeInstall(t, "1.0.0")
 	distDir := filepath.Join(f.aiSpecs, "dist")
@@ -714,7 +715,10 @@ func TestLegacyUpgradeSkipsTheDistRefreshWhenTheStampMatches(t *testing.T) {
 	}
 	current := "#!/bin/sh\necho current\n"
 	writeFile(t, filepath.Join(distDir, "ai-specs"), current, 0o755)
-	writeFile(t, filepath.Join(distDir, "VERSION"), "1.1.0\n", 0o644)
+	inst := Install{Home: f.aiSpecs, ExpectedHome: f.aiSpecs}
+	if err := stampDistCopy(inst, "1.1.0"); err != nil {
+		t.Fatalf("bind the stamp: %v", err)
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("a matching stamp must not download anything: %s", r.URL.Path)
 		http.NotFound(w, r)
@@ -733,5 +737,36 @@ func TestLegacyUpgradeSkipsTheDistRefreshWhenTheStampMatches(t *testing.T) {
 	}
 	if got := readFile(t, filepath.Join(distDir, "ai-specs")); got != current {
 		t.Errorf("an already-current copy must not be rewritten: %q", got)
+	}
+}
+
+// JD-A-005: a stamp naming the target version is not proof by itself. When the
+// bytes under it are a different (older) binary the copy must be re-acquired,
+// never executed as if it were current.
+func TestLegacyUpgradeRefreshesACopyWhoseStampBindsAnotherBinary(t *testing.T) {
+	f := newFakeInstall(t, "1.0.0")
+	distDir := filepath.Join(f.aiSpecs, "dist")
+	if err := os.MkdirAll(distDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(distDir, "ai-specs"), "#!/bin/sh\necho current\n", 0o755)
+	inst := Install{Home: f.aiSpecs, ExpectedHome: f.aiSpecs}
+	if err := stampDistCopy(inst, "1.1.0"); err != nil {
+		t.Fatalf("bind the stamp: %v", err)
+	}
+	// Swap the bytes underneath the still-matching version stamp.
+	writeFile(t, filepath.Join(distDir, "ai-specs"), "#!/bin/sh\necho older\n", 0o755)
+	payload := binaryAssetPayload("1.1.0")
+	srv := serveVerifiedAsset(t, f, payload)
+	f.pushVersion(t, "1.1.0")
+
+	env := f.env()
+	env.ReleaseBase = srv.URL
+	var out, errb bytes.Buffer
+	if code := Run([]string{"--force"}, env, &out, &errb); code != ExitOK {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, out.String(), errb.String())
+	}
+	if got := readFile(t, filepath.Join(distDir, "ai-specs")); got != string(payload) {
+		t.Errorf("a copy the stamp does not bind must be replaced:\n got: %q\n want: %q", got, payload)
 	}
 }

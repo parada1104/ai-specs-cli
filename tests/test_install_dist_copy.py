@@ -136,6 +136,12 @@ class InstallDistCopyTests(unittest.TestCase):
                              "dist must be a byte-for-byte copy of the installed entry")
             self.assertEqual(dist.read_bytes(), payload,
                              "dist must carry the VERIFIED bytes, not a rebuild")
+            # JD-A-005: the stamp binds the version to those exact bytes, so the
+            # launcher's first run needs neither a download nor a hash.
+            stamp = (home / "dist" / "VERSION").read_text().split()
+            self.assertEqual(len(stamp), 3, stamp)
+            self.assertEqual(stamp[0], "1.0.0", stamp)
+            self.assertEqual(stamp[1], hashlib.sha256(payload).hexdigest(), stamp)
 
             # PR-B owns the "$AI_SPECS_HOME/bin/ai-specs" launcher assertion;
             # the flip has not happened yet, so only the dist copy runs here.
@@ -165,10 +171,14 @@ class InstallDistCopyTests(unittest.TestCase):
             first = self._run_install(base, source, server, home)
             self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
 
-            # Re-run against a home whose dist/ cannot accept the copy.
+            # Re-run against a home whose dist/ cannot accept the copy. The
+            # whole directory goes: the stamp inside it is untracked content the
+            # fixture repo does not ignore, and a dirty tree is a different
+            # (earlier) failure than the one under test.
             second_home = base / "home2"
             shutil.copytree(home, second_home, symlinks=True)
-            (second_home / "dist" / "ai-specs").unlink()
+            shutil.rmtree(second_home / "dist")
+            (second_home / "dist").mkdir()
             (second_home / "dist").chmod(0o555)
 
             proc = self._run_install(base, source, server, second_home,
