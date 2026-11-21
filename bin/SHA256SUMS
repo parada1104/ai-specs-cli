@@ -27,7 +27,7 @@
 # The worktree gate ships inside the CLI (no separate gate sums), so a version
 # bump only needs this file regenerated from the exact committed tree.
 #
-db6bb5272409e703eb4a8550fca8b002a345352dda1e5a5b0c8751df9a2d573a  ai-specs-darwin-amd64
-6b5f8281e96e89f992a52e4c01ac8de2318a2a7746614b9a1a3efa33cabdefab  ai-specs-darwin-arm64
-a763846fc838bb62f2f0e96dddecc4a2a859ae661d9da7fb4eb1de4b0f47c51d  ai-specs-linux-amd64
-a46fbebdd81f29399e01f010df39e9e46532cb4c6e66d8c43fbee51d0487f1b7  ai-specs-linux-arm64
+6109c9ce5177d01765dbe18309082c74ab5ad6373dce13cb22d5d22d2e4ae573  ai-specs-darwin-amd64
+d1d040c977b9981d8dfd7dd83a1633b49d763b572e7697e628de6e1d63e4b452  ai-specs-darwin-arm64
+30e19802e2330585475238b256e0c35c91c62f6bbea6bb5de7c4f6e63789dad4  ai-specs-linux-amd64
+703bfee0fb6d3c1bbbd59e32b9e8ea60fa82f92b7b79ad6d2274fbd75e8dae95  ai-specs-linux-arm64
