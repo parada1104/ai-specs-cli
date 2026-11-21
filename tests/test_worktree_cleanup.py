@@ -243,6 +243,13 @@ class WorktreeCleanupTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self._assert_candidate_preserved(bare, wt, "eligible")
         self.assertIn("refs/heads/eligible", git(remote, "show-ref"))
+        result = self._run_cleanup(wt, check=False)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (
+            2, "", "worktree-cleanup: the repository is bare and has no main "
+            "worktree to authorize cleanup; no destructive action taken\n",
+        ))
+        self._assert_candidate_preserved(bare, wt, "eligible")
+        self.assertIn("refs/heads/eligible", git(remote, "show-ref"))
 
     def test_cli_route_preserves_arguments_output_and_exit(self):
         repo = self._make_repo()
