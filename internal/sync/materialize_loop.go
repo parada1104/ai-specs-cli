@@ -207,6 +207,11 @@ func materializeDocManagedEntry(lockPath, target string) (*DocManagedEntry, erro
 func materializeBundledSkill(req materializeArtifactRequest, recipeDir, lockPath string, roots CopyRoots, skill *schema.SkillRef) error {
 	src := filepath.Join(recipeDir, "skills", skill.ID)
 	dest := filepath.Join(roots.RecipeSkillsRoot, req.Recipe.ID, "skills", skill.ID)
+	// The copier RemoveAll's the destination: a redirected skills directory
+	// below the CLI home would delete and replace the link target (JD-A-002).
+	if err := cachePathGuard(req.AISpecsHome, dest); err != nil {
+		return err
+	}
 	results, err := ApplyCopyItems([]shared.CopyItem{{
 		Kind: "bundled-skill",
 		ID:   skill.ID,
@@ -274,6 +279,11 @@ func materializeSkillFileHashes(dest string) (map[string]string, error) {
 func materializeCommandArtifact(req materializeArtifactRequest, recipeDir string, roots CopyRoots, cmd *schema.CommandRef) error {
 	src := filepath.Join(recipeDir, cmd.Path)
 	dest := filepath.Join(roots.CommandsDir, cmd.ID+".md")
+	// The shared copier writes and chmods through a destination symlink: a
+	// redirected live command entry below the CLI home must refuse (JD-A-001).
+	if err := cachePathGuard(req.AISpecsHome, dest); err != nil {
+		return err
+	}
 	results, err := ApplyCopyItems([]shared.CopyItem{{
 		Kind:        "command",
 		ID:          cmd.ID,
@@ -443,7 +453,13 @@ func materializeGateBackupPath(req materializeArtifactRequest, rel string) (stri
 	if err != nil {
 		return "", err
 	}
-	return projectcache.GateBackupPath(req.ProjectRoot, rel, lock.Sha256Bytes(data), req.AISpecsHome), nil
+	backup := projectcache.GateBackupPath(req.ProjectRoot, rel, lock.Sha256Bytes(data), req.AISpecsHome)
+	// The actuator mkdirs and writes the snapshot: a redirected backups entry
+	// below the CLI home must refuse instead of writing outside it (JD-A-003).
+	if err := cachePathGuard(req.AISpecsHome, backup); err != nil {
+		return "", err
+	}
+	return backup, nil
 }
 
 // materializeResolvedHookEntry builds the dict hooks-render.py consumes:

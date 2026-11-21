@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"ai-specs.dev/ai-specs/internal/projectcache"
+	shared "ai-specs.dev/worktree-gate/shared"
 )
 
 // protectedTrees are never a valid agent destination, even inside the root:
@@ -36,6 +37,31 @@ func projectWriteGuard(root, path string, followLeaf bool) error {
 // below that home refuses, because ai-specs owns those paths outright.
 func homeWriteGuard(root, path string, followLeaf bool) error {
 	return projectcache.ContainWrite(root, path, followLeaf, true, false)
+}
+
+// cachePathGuard applies homeWriteGuard to a destination the materializer
+// derives from the CLI home. A caller with no home (unit seams) or with a
+// destination outside it is not a CLI-cache write, so it is left alone.
+func cachePathGuard(home, path string) error {
+	root := projectcache.AISpecsHome(home)
+	if root == "" || !shared.TemplatePathContained(root, path) {
+		return nil
+	}
+	return homeWriteGuard(root, path, true)
+}
+
+// cacheEntryGuard is homeWriteGuard for a cache directory or entry another run
+// may create or remove concurrently: a path that has vanished cannot redirect a
+// write, so that transient listing race is not a refusal.
+func cacheEntryGuard(root, path string, followLeaf bool) error {
+	err := homeWriteGuard(root, path, followLeaf)
+	if err == nil {
+		return nil
+	}
+	if _, statErr := os.Lstat(path); os.IsNotExist(statErr) {
+		return nil
+	}
+	return err
 }
 
 // projectTreePreflight refuses the run before its first step when a
@@ -87,6 +113,18 @@ func projectTreePreflight(root, home string, targets []string, errW io.Writer) i
 	add(homeWriteGuard, homeReal, filepath.Join(cacheKey, ".deps"))
 	add(homeWriteGuard, homeReal, filepath.Join(cacheKey, ".recipe"))
 	add(homeWriteGuard, homeReal, filepath.Join(cacheKey, "resolved-skills"))
+	// Materialization copies a live recipe command into `<cache>/commands` and
+	// refreshes a gate snapshot under `<cache>/backups`: both follow a symlink
+	// leaf or ancestor, so a redirected entry refuses before the first write.
+	for _, dir := range []string{
+		filepath.Join(cacheKey, "commands"),
+		filepath.Join(cacheKey, "backups"),
+	} {
+		add(cacheEntryGuard, homeReal, dir)
+		for _, entry := range dirEntries(dir) {
+			add(cacheEntryGuard, homeReal, entry)
+		}
+	}
 	// The per-skill orphan prune deletes `<cache>/.recipe/<recipe>/skills/<skill>`
 	// (T7), so a redirected recipe directory must refuse before the first write
 	// rather than at the orphan step. Only DIRECTORY entries (and links that
@@ -123,8 +161,26 @@ func cachePreflight(root, home string, errW io.Writer) int {
 		return 0 // the cache steps report the missing home themselves
 	}
 	cacheKey := filepath.Join(homeReal, "cache", "projects", projectcache.CacheKey(root))
-	for _, path := range []string{filepath.Join(cacheKey, ".recipe"), filepath.Join(cacheKey, "resolved-skills")} {
-		if err := homeWriteGuard(homeReal, path, true); err != nil {
+	checks := []string{
+		filepath.Join(cacheKey, ".recipe"),
+		filepath.Join(cacheKey, "resolved-skills"),
+		filepath.Join(cacheKey, "commands"),
+		filepath.Join(cacheKey, "backups"),
+	}
+	// The fallback materializer replaces a bundled skill through
+	// `<recipe>/skills/<skill>`: a redirected skills directory would make its
+	// RemoveAll recurse into the link target (JD-A-002).
+	for _, recipe := range managedRecipeDirs(filepath.Join(cacheKey, ".recipe")) {
+		checks = append(checks, recipe, filepath.Join(recipe, "skills"))
+	}
+	for _, dir := range []string{
+		filepath.Join(cacheKey, "commands"),
+		filepath.Join(cacheKey, "backups"),
+	} {
+		checks = append(checks, dirEntries(dir)...)
+	}
+	for _, path := range checks {
+		if err := cacheEntryGuard(homeReal, path, true); err != nil {
 			fmt.Fprintf(errW, "    ✗ %s\n", err)
 			return 1
 		}
@@ -146,6 +202,20 @@ func requireRegularRecipeSkillMarkers(recipeRoot string) error {
 		}
 	}
 	return nil
+}
+
+// dirEntries lists the direct children of dir (files and links included).
+// An unreadable or missing directory has none.
+func dirEntries(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		paths = append(paths, filepath.Join(dir, entry.Name()))
+	}
+	return paths
 }
 
 // managedRecipeDirs lists the recipe directories under ai-specs/recipes so the
