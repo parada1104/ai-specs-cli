@@ -958,3 +958,125 @@ func TestMCPOwnershipAdoptionIgnoresTheRecord(t *testing.T) {
 		})
 	}
 }
+
+const mcpOwnershipManifestSameAndFoo = `[project]
+name = 'own'
+
+[mcp.same]
+command = 'cmd-a'
+
+[mcp.foo]
+command = 'cmd-a'
+`
+
+// TestMCPOwnershipAdoptionKeepsNeighborBytes pins the byte contract of L4
+// (B-002): an entry adopted because it already equals the render records
+// ownership in the lock only, so the file is never rewritten for it and a
+// preserved neighbour keeps its exact bytes.
+func TestMCPOwnershipAdoptionKeepsNeighborBytes(t *testing.T) {
+	t.Run("adoption alone does not write", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(dir, ".mcp.json")
+		user := `{ "command" : "user-cmd" }`
+		original := `{"mcpServers":{"same":{"command":"cmd-a","args":[],"env":{}},"foo":` +
+			user + "}}\n"
+		if err := os.WriteFile(target, []byte(original), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, stderr, rc, res := mcpRenderOwned(t, dir, mcpOwnershipManifestSameAndFoo, "claude", target, "mcpServers", nil)
+		if rc != 0 {
+			t.Fatalf("rc=%d stderr=%q", rc, stderr)
+		}
+		if want := mcpPreservedLine(target, "foo"); stderr != want {
+			t.Fatalf("stderr = %q, want %q", stderr, want)
+		}
+		if got := mcpManagedNames(res); strings.Join(got, ",") != "same" {
+			t.Errorf("managed = %v, want [same]", got)
+		}
+		if res.Wrote {
+			t.Errorf("adoption rewrote the target")
+		}
+		if got := mcpReadTarget(t, target); got != original {
+			t.Errorf("target bytes changed:\n--- got ---\n%s\n--- want ---\n%s", got, original)
+		}
+	})
+
+	t.Run("a managed change keeps the neighbour bytes", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(dir, ".mcp.json")
+		user := `{ "command" : "user-cmd" }`
+		original := `{"mcpServers":{"same":{"command":"cmd-a","args":[],"env":{}},"foo":` +
+			user + "}}\n"
+		if err := os.WriteFile(target, []byte(original), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		manifest := mcpOwnershipManifestSameAndFoo + "\n[mcp.added]\ncommand = 'new-cmd'\n"
+		_, stderr, rc, _ := mcpRenderOwned(t, dir, manifest, "claude", target, "mcpServers", nil)
+		if rc != 0 {
+			t.Fatalf("rc=%d stderr=%q", rc, stderr)
+		}
+		text := mcpReadTarget(t, target)
+		if !strings.Contains(text, user) {
+			t.Errorf("preserved neighbour was reformatted:\n%s", text)
+		}
+		if !strings.Contains(text, `"added"`) {
+			t.Errorf("managed server was not added:\n%s", text)
+		}
+	})
+}
+
+// TestMCPOwnershipAdoptionComparesNumberLiterals pins the second half of L4
+// (B-002): equality is by exact literal, so a float that rounds to the manifest
+// value is still the user's entry and keeps its bytes.
+func TestMCPOwnershipAdoptionComparesNumberLiterals(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, ".mcp.json")
+	original := `{"mcpServers":{"foo":{"command":"cmd-a","args":[],"env":{},` +
+		`"extra":0.10000000000000001}}}` + "\n"
+	if err := os.WriteFile(target, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `[project]
+name = 'own'
+
+[mcp.foo]
+command = 'cmd-a'
+extra = 0.1
+`
+	_, stderr, rc, res := mcpRenderOwned(t, dir, manifest, "claude", target, "mcpServers", nil)
+	if rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, stderr)
+	}
+	if want := mcpPreservedLine(target, "foo"); stderr != want {
+		t.Fatalf("stderr = %q, want %q", stderr, want)
+	}
+	if got := mcpManagedNames(res); len(got) != 0 {
+		t.Errorf("managed = %v, want none", got)
+	}
+	if got := mcpReadTarget(t, target); got != original {
+		t.Errorf("user entry was rounded into a match:\n--- got ---\n%s\n--- want ---\n%s", got, original)
+	}
+}
+
+// TestMCPOwnershipCodexCollisionNoticeIsBaseline pins the Codex wording: the
+// regenerate hint belongs to the JSON targets only, where deleting an entry is
+// the actual fix.
+func TestMCPOwnershipCodexCollisionNoticeIsBaseline(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	user := "[mcp_servers.same]\ncommand = \"user\"\n"
+	if err := os.WriteFile(target, []byte(user), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, rc, _ := mcpRenderOwned(t, dir, mcpOwnershipManifestSame, "codex", target, "mcp_servers", nil)
+	if rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, stderr)
+	}
+	want := fmt.Sprintf("    ! preserved user MCP server %q in %s (not recorded as ai-specs-managed)\n", "same", target)
+	if stderr != want {
+		t.Errorf("stderr = %q, want %q", stderr, want)
+	}
+}

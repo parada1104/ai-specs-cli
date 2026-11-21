@@ -39,6 +39,10 @@ import (
 type mcpObj struct {
 	keys []string
 	vals map[string]any
+	// raw is the object's original source text, kept only by the decoder mode
+	// that preserves bytes (mcpParseJSONOrderedKeepRaw). set/del clear it, so a
+	// mutated object is never re-emitted as its stale source.
+	raw string
 }
 
 func newMCPObj() *mcpObj { return &mcpObj{vals: map[string]any{}} }
@@ -48,6 +52,7 @@ func (o *mcpObj) set(k string, v any) {
 		o.keys = append(o.keys, k)
 	}
 	o.vals[k] = v
+	o.raw = ""
 }
 
 func (o *mcpObj) get(k string) (any, bool) {
@@ -68,6 +73,7 @@ func (o *mcpObj) del(k string) bool {
 		return false
 	}
 	delete(o.vals, k)
+	o.raw = ""
 	for i, key := range o.keys {
 		if key == k {
 			o.keys = append(o.keys[:i], o.keys[i+1:]...)
@@ -135,6 +141,10 @@ func mcpToOrdered(v any) any {
 // precision) instead of degrading to an approximate float64.
 type mcpBigInt string
 
+// mcpJSONNumberLit is a JSON number kept as the exact literal text it was
+// written with (mcpParseJSONOrderedKeepRaw).
+type mcpJSONNumberLit string
+
 // mcpJSONMaxDepth bounds the decoder's nesting depth. Python's json.loads
 // raises RecursionError at a stack- and version-dependent depth (100000
 // accepted, 200000 rejected on CPython 3.14); Go's unbounded recursion would
@@ -156,10 +166,24 @@ var errMCPJSONTooDeep = errors.New("json: maximum recursion depth exceeded")
 // recursive-descent decoder. Python's json scanner accepts exactly the
 // whitespace set ' ', '\t', '\n', '\r'.
 func mcpParseJSONOrdered(data []byte) (any, error) {
+	return mcpParseJSON(data, "")
+}
+
+// mcpParseJSONOrderedKeepRaw is mcpParseJSONOrdered keeping the source text of
+// the servers map under serversKey: each of its entries carries its original
+// text (mcpObj.raw) and each number inside keeps its literal
+// (mcpJSONNumberLit). That lets a merge decide by exact text — is this entry
+// exactly what sync would write? — and re-emit a preserved entry unchanged,
+// while the rest of the document stays normalized like the frozen renderer.
+func mcpParseJSONOrderedKeepRaw(data []byte, serversKey string) (any, error) {
+	return mcpParseJSON(data, serversKey)
+}
+
+func mcpParseJSON(data []byte, serversKey string) (any, error) {
 	if !utf8.Valid(data) {
 		return nil, fmt.Errorf("json: invalid UTF-8")
 	}
-	d := &mcpJSONDecoder{s: string(data)}
+	d := &mcpJSONDecoder{s: string(data), serversKey: serversKey}
 	v, err := d.value()
 	if err != nil {
 		return nil, err
@@ -175,6 +199,10 @@ type mcpJSONDecoder struct {
 	s     string
 	pos   int
 	depth int
+	// serversKey names the object whose entries keep their source text;
+	// inServers is true while parsing inside it ("" = keep nothing).
+	serversKey string
+	inServers  bool
 }
 
 // nested runs one object()/array() recursion level under the depth bound.
@@ -242,6 +270,18 @@ func (d *mcpJSONDecoder) literal(lit string, v any) (any, error) {
 }
 
 func (d *mcpJSONDecoder) object() (any, error) {
+	start := d.pos
+	obj, err := d.objectBody()
+	if err != nil {
+		return nil, err
+	}
+	if d.inServers {
+		obj.raw = d.s[start:d.pos]
+	}
+	return obj, nil
+}
+
+func (d *mcpJSONDecoder) objectBody() (*mcpObj, error) {
 	d.pos++ // '{'
 	obj := newMCPObj()
 	d.ws()
@@ -263,7 +303,14 @@ func (d *mcpJSONDecoder) object() (any, error) {
 			return nil, fmt.Errorf("json: expected ':'")
 		}
 		d.pos++
+		enter := d.serversKey != "" && d.depth == 1 && k == d.serversKey
+		if enter {
+			d.inServers = true
+		}
 		v, err := d.value()
+		if enter {
+			d.inServers = false
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -463,6 +510,11 @@ func (d *mcpJSONDecoder) number() (any, error) {
 		}
 	}
 	text := d.s[start:d.pos]
+	if d.inServers {
+		// The literal, not its value: 0.1 and 0.10000000000000001 must not
+		// compare equal just because float64 rounds them the same.
+		return mcpJSONNumberLit(text), nil
+	}
 	if !isFloat {
 		if i, err := strconv.ParseInt(text, 10, 64); err == nil {
 			return i, nil
@@ -549,6 +601,12 @@ func mcpJSONUnserializable(v any) error {
 func mcpWriteJSONIndent(sb *strings.Builder, v any, depth int) {
 	switch x := v.(type) {
 	case *mcpObj:
+		if x != nil && x.raw != "" {
+			// A parsed object the merge never touched re-emits its own bytes,
+			// so a preserved entry is not reformatted by a neighbour's change.
+			sb.WriteString(x.raw)
+			return
+		}
 		if x == nil || x.len() == 0 {
 			sb.WriteString("{}")
 			return
@@ -605,6 +663,8 @@ func mcpWriteJSONCompact(sb *strings.Builder, v any) {
 	case int64:
 		sb.WriteString(strconv.FormatInt(x, 10))
 	case mcpBigInt:
+		sb.WriteString(string(x))
+	case mcpJSONNumberLit:
 		sb.WriteString(string(x))
 	case toml.BigInt:
 		// Defensive: mcpToOrdered normalizes toml.BigInt to mcpBigInt.
@@ -1137,6 +1197,10 @@ type mcpMergePlan struct {
 	removed    []string
 	preserved  []string
 	unrecorded []string
+	// changed says the merge alters the target's content: a server is added,
+	// removed or replaced. An entry adopted because it already equals the render
+	// is managed without being changed, so the file is never rewritten for it.
+	changed bool
 	// blockSHA is the sha256 of the managed block bytes this render wrote
 	// (markers inclusive, through the end marker's newline), "" when the target
 	// keeps no block.
@@ -1151,19 +1215,25 @@ func mcpPlanMerge(desired *mcpObj, owned map[string]bool, ownedNames []string, c
 		}
 	}
 	for _, name := range desired.keys {
-		if current.has(name) && !owned[name] {
+		present := current.has(name)
+		if present && !mcpJSONSemanticEqual(current.vals[name], desired.vals[name]) {
 			// L4 (B-002): an unrecorded entry is adopted only when it is exactly
 			// what sync renders today (a pre-0.26 generated one). Anything else
 			// is the user's and stays byte-identical. Adoption never depends on
 			// whether the target has a record, so dropping the last managed
 			// server cannot re-arm an overwrite.
-			if !mcpJSONSemanticEqual(current.vals[name], desired.vals[name]) {
+			if !owned[name] {
 				plan.preserved = append(plan.preserved, name)
 				continue
 			}
+			plan.changed = true
+		}
+		if !present {
+			plan.changed = true
 		}
 		plan.managed = append(plan.managed, name)
 	}
+	plan.changed = plan.changed || len(plan.removed) > 0
 	for _, name := range current.keys {
 		if !owned[name] && !desired.has(name) {
 			plan.unrecorded = append(plan.unrecorded, name)
@@ -1173,8 +1243,9 @@ func mcpPlanMerge(desired *mcpObj, owned map[string]bool, ownedNames []string, c
 }
 
 // mcpJSONSemanticEqual reports whether two parsed JSON values are equal as data:
-// object key order is irrelevant, array order is not, and numbers compare by
-// value (1 equals 1.0).
+// object key order is irrelevant and array order is not. Numbers compare by their
+// exact literal text, so an entry is adopted only when it is exactly what sync
+// would write (0.1 never matches 0.10000000000000001).
 func mcpJSONSemanticEqual(a, b any) bool {
 	switch x := a.(type) {
 	case *mcpObj:
@@ -1200,23 +1271,28 @@ func mcpJSONSemanticEqual(a, b any) bool {
 		}
 		return true
 	}
-	if ak, ok := mcpJSONNumberKey(a); ok {
-		bk, ok := mcpJSONNumberKey(b)
-		return ok && ak == bk
+	if at, ok := mcpJSONNumberText(a); ok {
+		bt, ok := mcpJSONNumberText(b)
+		return ok && at == bt
+	}
+	if _, ok := mcpJSONNumberText(b); ok {
+		return false
 	}
 	return a == b
 }
 
-// mcpJSONNumberKey renders a JSON number as a canonical string, so an int64, its
-// float64 spelling and an overflow literal of the same value all agree.
-func mcpJSONNumberKey(v any) (string, bool) {
+// mcpJSONNumberText renders a parsed number exactly as sync writes it, whether
+// it is a kept literal or a value read from the manifest; false for a non-number.
+func mcpJSONNumberText(v any) (string, bool) {
 	switch n := v.(type) {
+	case mcpJSONNumberLit:
+		return string(n), true
 	case int64:
 		return strconv.FormatInt(n, 10), true
 	case mcpBigInt:
 		return string(n), true
 	case float64:
-		return strconv.FormatFloat(n, 'g', -1, 64), true
+		return mcpJSONFloat(n), true
 	}
 	return "", false
 }
@@ -1263,6 +1339,27 @@ func mcpMergeIntoJSON(existing *mcpObj, mcpKey string, desired *mcpObj, owned ma
 		return "", plan, err
 	}
 	return document + "\n", plan, nil
+}
+
+// loadJSONTargetRaw is loadJSONTarget keeping the source text of the server
+// entries under mcpKey, so the merge can re-emit a preserved entry unchanged
+// even when another server forces the document to be rewritten.
+func loadJSONTargetRaw(path, mcpKey string) (*mcpObj, []byte, error) {
+	obj, invalid, err := loadJSONTarget(path)
+	if err != nil || invalid != nil || obj.len() == 0 {
+		return obj, invalid, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	parsed, perr := mcpParseJSONOrderedKeepRaw(data, mcpKey)
+	// loadJSONTarget already validated the document; on any disagreement keep
+	// its plain parse rather than failing a render that used to succeed.
+	if raw, ok := parsed.(*mcpObj); perr == nil && ok {
+		return raw, nil, nil
+	}
+	return obj, nil, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1610,6 +1707,7 @@ func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[stri
 			plan.removed = append(plan.removed, name)
 		}
 	}
+	plan.changed = len(plan.managed) > 0 || len(plan.removed) > 0
 	if !block.present && len(plan.managed) == 0 {
 		// Nothing to write and nothing to prune: never touch the file.
 		return text, plan, nil
@@ -1864,7 +1962,7 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 		content, plan, err = mcpMergeIntoTOML(targetPath, mcpKey, slimmed, owned, ownedNames, opts.BlockSHA)
 	} else {
 		var existing *mcpObj
-		existing, invalid, err = loadJSONTarget(targetPath)
+		existing, invalid, err = loadJSONTargetRaw(targetPath, mcpKey)
 		if err == nil {
 			content, plan, err = mcpMergeIntoJSON(existing, mcpKey, slimmed, owned, ownedNames, agent)
 		}
@@ -1881,6 +1979,12 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 		opts.Result.BlockSHA = plan.blockSHA
 	}
 	for _, name := range plan.preserved {
+		if mcpPathSuffix(targetPath) == ".toml" {
+			// Codex keeps its baseline wording: its collision is a table outside
+			// the managed block, where "delete the entry" is not the advice.
+			fmt.Fprintf(stderr, "    ! preserved user MCP server %q in %s (not recorded as ai-specs-managed)\n", name, targetPath)
+			continue
+		}
 		fmt.Fprintf(stderr, "    ! preserved user MCP server %q in %s (not recorded as ai-specs-managed; delete that entry and run sync to regenerate it)\n", name, targetPath)
 	}
 	// Upgrade notice: a target with servers ai-specs never recorded, before the
@@ -1894,9 +1998,12 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 	}
 	// A corrupt target is regenerated only when ai-specs owns something there.
 	regenerate := invalid != nil && len(ownedNames) > 0
-	if len(plan.managed) == 0 && len(plan.removed) == 0 && !regenerate {
+	if !plan.changed && !regenerate {
 		// Nothing to add, update or drop: an untouched user file stays untouched.
-		// The caller owns the "no [mcp.*] entries" line for an existing target.
+		// A server adopted because it already equals the render is recorded in
+		// the lock, but rewriting the file for it would reformat its neighbours'
+		// bytes. The caller owns the "no [mcp.*] entries" line for an existing
+		// target.
 		return 0
 	}
 

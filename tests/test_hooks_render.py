@@ -321,6 +321,38 @@ class HooksRenderTests(_HookFixtureMixin):
         self.assertEqual(self.sync().stderr, notice)
         self.assertEqual(target.read_bytes(), original)
 
+    def test_adoption_preserves_neighboring_user_entry_bytes(self):
+        """L4 (B-002): adopting an entry that already equals the render records
+        it without rewriting the file, so a neighbouring user server keeps its
+        exact bytes."""
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("claude")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        with manifest.open("a") as f:
+            f.write("\n[mcp.same]\ncommand='cmd-a'\n[mcp.foo]\ncommand='cmd-a'\n")
+        target = self.root / ".mcp.json"
+        user = b'{ "command" : "user-cmd" }'
+        target.write_bytes(b'{"mcpServers":{"same":{"command":"cmd-a",'
+                           b'"args":[],"env":{}},"foo":' + user + b'}}\n')
+        self.sync()
+        self.assertIn(user, target.read_bytes())
+        mcp, _ = mcp_record_bytes((self.root / "ai-specs/.ai-specs.lock").read_bytes())
+        self.assertEqual(set(mcp[".mcp.json"]), {"same"})
+
+    def test_adoption_does_not_round_distinct_numbers_into_a_match(self):
+        """L4 (B-002): equality is by exact literal, never by float value, so a
+        differing number keeps the entry as the user's."""
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("claude")
+        with (self.root / "ai-specs/ai-specs.toml").open("a") as f:
+            f.write("\n[mcp.foo]\ncommand='cmd-a'\nextra=0.1\n")
+        target = self.root / ".mcp.json"
+        original = (b'{"mcpServers":{"foo":{"command":"cmd-a","args":[],'
+                    b'"env":{},"extra":0.10000000000000001}}}\n')
+        target.write_bytes(original)
+        self.assertIn('preserved user MCP server "foo"', self.sync().stderr)
+        self.assertEqual(target.read_bytes(), original)
+
     def test_codex_mcp_collision_survives_writes_and_prune(self):
         import tomllib
 
@@ -345,8 +377,7 @@ class HooksRenderTests(_HookFixtureMixin):
                 self.assertEqual(
                     result.stderr,
                     '    ! preserved user MCP server "same" in '
-                    '<TEMP>/.codex/config.toml (not recorded as ai-specs-managed; '
-                    'delete that entry and run sync to regenerate it)\n',
+                    '<TEMP>/.codex/config.toml (not recorded as ai-specs-managed)\n',
                 )
                 servers = tomllib.loads(target.read_text())["mcp_servers"]
                 self.assertEqual(servers["same"]["command"], "user-command")
@@ -402,8 +433,7 @@ class HooksRenderTests(_HookFixtureMixin):
         self.assertEqual(
             result.stderr,
             '    ! preserved user MCP server "same" in '
-            '<TEMP>/.codex/config.toml (not recorded as ai-specs-managed; '
-            'delete that entry and run sync to regenerate it)\n',
+            '<TEMP>/.codex/config.toml (not recorded as ai-specs-managed)\n',
         )
         servers = tomllib.loads(target.read_text())["mcp_servers"]
         self.assertEqual(servers["same"], {"command": "user"})
