@@ -386,6 +386,23 @@ class SyncAgentLeftoversTests(unittest.TestCase):
         self.assertIn(notice, first.stderr)
         self.assertNotIn(notice, second.stderr)
 
+    def test_standalone_sync_does_not_claim_existing_instruction_link(self) -> None:
+        from _blackbox import invoke
+
+        self.set_agents("['codex']")
+        link = self.project / "CLAUDE.md"
+        link.symlink_to("AGENTS.md")
+        result = invoke(
+            self.project, "sync-agent", "--claude",
+            "--source-root", str(self.project), "--target", str(self.project),
+            cli_home=self.home, tmpdir=self.base, append_root=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('"CLAUDE.md" = ', self.lock_text())
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(os.readlink(link), "AGENTS.md")
+
 
 if __name__ == "__main__":
     unittest.main()
