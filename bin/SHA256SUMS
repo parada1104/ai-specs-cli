@@ -24,10 +24,10 @@
 # The four executable assets are intentionally CI/release outputs, not tracked
 # files. These lines are their source-level trust manifest; regenerate them with
 # scripts/build-cli.sh after any CLI change and verify before publishing.
-# The CLI embeds catalog/ (including the gate's bin/SHA256SUMS), so regenerate
-# the gate sums FIRST on a version bump, then build the CLI from that exact tree.
+# The worktree gate ships inside the CLI (no separate gate sums), so a version
+# bump only needs this file regenerated from the exact committed tree.
 #
-a22d28b2148e7f2ddc72e4a246e5260a70e1211ff9daa19e7ffc877cf4960a27  ai-specs-darwin-amd64
-a17080ae5a4da3e0079104157223099830db6d458960dcd25ec10c0a2cb2305e  ai-specs-darwin-arm64
-9de29256dfc5f399f23335266eef5051cdb78007dda936f3b937929df73c263a  ai-specs-linux-amd64
-b9d12b42965362088e0f814edefc06957fa2758021e0fc5c6b0486caaa98c751  ai-specs-linux-arm64
+6109c9ce5177d01765dbe18309082c74ab5ad6373dce13cb22d5d22d2e4ae573  ai-specs-darwin-amd64
+d1d040c977b9981d8dfd7dd83a1633b49d763b572e7697e628de6e1d63e4b452  ai-specs-darwin-arm64
+30e19802e2330585475238b256e0c35c91c62f6bbea6bb5de7c4f6e63789dad4  ai-specs-linux-amd64
+703bfee0fb6d3c1bbbd59e32b9e8ea60fa82f92b7b79ad6d2274fbd75e8dae95  ai-specs-linux-arm64

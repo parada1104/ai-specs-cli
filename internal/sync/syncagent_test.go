@@ -397,7 +397,7 @@ func TestMakeRelativeSymlinkCreatesRelativeLink(t *testing.T) {
 	}
 	link := filepath.Join(root, ".omp", "AGENTS.md")
 	var out, errOut bytes.Buffer
-	if rc, _ := makeRelativeSymlinkWithRefusal(root, target, link, &out, &errOut); rc != 0 {
+	if rc, _, _ := makeRelativeSymlinkWithRefusal(root, target, link, &out, &errOut); rc != 0 {
 		t.Fatalf("rc = %d, stderr=%s", rc, errOut.String())
 	}
 	if got, err := os.Readlink(link); err != nil || got != "../AGENTS.md" {
@@ -457,12 +457,14 @@ func TestMakeRelativeSymlinkIdempotent(t *testing.T) {
 	}
 	link := filepath.Join(root, "CLAUDE.md")
 	var out bytes.Buffer
-	if rc, _ := makeRelativeSymlinkWithRefusal(root, target, link, &out, io.Discard); rc != 0 {
+	if rc, _, _ := makeRelativeSymlinkWithRefusal(root, target, link, &out, io.Discard); rc != 0 {
 		t.Fatalf("first rc = %d", rc)
 	}
 	out.Reset()
-	if rc, _ := makeRelativeSymlinkWithRefusal(root, target, link, &out, io.Discard); rc != 0 {
+	if rc, _, created := makeRelativeSymlinkWithRefusal(root, target, link, &out, io.Discard); rc != 0 {
 		t.Fatalf("second rc = %d", rc)
+	} else if created {
+		t.Fatal("an existing matching link must not be reported as created")
 	}
 	if out.String() != "    · symlink ok      "+link+" → AGENTS.md\n" {
 		t.Errorf("stdout = %q", out.String())
@@ -480,7 +482,7 @@ func TestMakeRelativeSymlinkRefusesNonSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
-	if rc, refused := makeRelativeSymlinkWithRefusal(root, target, link, &out, &errOut); rc != 1 || !refused {
+	if rc, refused, _ := makeRelativeSymlinkWithRefusal(root, target, link, &out, &errOut); rc != 1 || !refused {
 		t.Fatalf("rc = %d, want 1", rc)
 	}
 	if errOut.String() != "    ✗ refuse to overwrite non-symlink: "+link+"\n" {
@@ -520,7 +522,7 @@ func TestMakeRelativeSymlinkOsFailureContinues(t *testing.T) {
 	}
 	link := filepath.Join(root, ".omp", "AGENTS.md")
 	var out, errOut bytes.Buffer
-	if rc, _ := makeRelativeSymlinkWithRefusal(root, target, link, &out, &errOut); rc != 0 {
+	if rc, _, _ := makeRelativeSymlinkWithRefusal(root, target, link, &out, &errOut); rc != 0 {
 		t.Fatalf("rc = %d, want 0 (the shell continues after mkdir/ln failures)", rc)
 	}
 	if !strings.Contains(errOut.String(), "mkdir: "+filepath.Join(root, ".omp")+": File exists\n") {
@@ -542,7 +544,7 @@ func TestMakeRelativeSymlinkOsFailureContinues(t *testing.T) {
 	}
 	skillsLink := filepath.Join(root2, ".pi", "skills")
 	var out2, errOut2 bytes.Buffer
-	if rc := makeSkillsSymlink(root2, target, skillsLink, &out2, &errOut2); rc != 0 {
+	if rc, _ := makeSkillsSymlink(root2, target, skillsLink, &out2, &errOut2); rc != 0 {
 		t.Fatalf("rc = %d, want 0", rc)
 	}
 	if !strings.Contains(errOut2.String(), "mkdir: "+filepath.Join(root2, ".pi")+": File exists\n") {
@@ -617,7 +619,7 @@ func TestMakeSkillsSymlinkUsesAbsoluteRealpathTarget(t *testing.T) {
 	project := t.TempDir()
 	link := filepath.Join(project, ".claude", "skills")
 	var out, errOut bytes.Buffer
-	if rc := makeSkillsSymlink(project, source, link, &out, &errOut); rc != 0 {
+	if rc, _ := makeSkillsSymlink(project, source, link, &out, &errOut); rc != 0 {
 		t.Fatalf("rc = %d, stderr=%s", rc, errOut.String())
 	}
 	got, err := os.Readlink(link)

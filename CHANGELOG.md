@@ -21,6 +21,26 @@ customized `worktree-cleanup.sh` override and run `ai-specs sync` to refresh it.
 If you set `WORKTREE_CLEANUP_BIN`, unset it: the cleanup launcher now refuses to
 run while it is set (exit 2, nothing deleted).
 
+Upgrading from a pre-0.26 install takes two commands. The `ai-specs upgrade` you
+run first is the older program: it fast-forwards the checkout and prints
+`Upgraded: <old> -> 0.26.0`, but it cannot replace `$AI_SPECS_HOME/dist/ai-specs`.
+Run any `ai-specs` command once more: the launcher checks the installed copy
+against this checkout and, if it is not proven current, downloads the verified
+0.26.0 binary (or rebuilds it with Go) and records
+`<version> <sha256> <size>:<mtime>:<ctime>:<inode>` in `dist/VERSION`. If it
+cannot (offline, no committed digest, no Go) it prints one line,
+`ai-specs: warning: could not verify the installed binary for version <want> (<reason>); re-run install.sh or run 'ai-specs upgrade' to reinstall it`,
+and keeps running the existing binary. `ai-specs version` after that second run
+is the proof, not the `Upgraded:` line. A locally built CLI belongs in
+`AI_SPECS_GO_BIN`, which the launcher never checks or replaces.
+
+Agent links (`CLAUDE.md`, `.claude/skills`, ...) created before 0.26 are not
+recorded as ai-specs'; when their agent is retired, sync keeps them and prints
+one notice. Delete them yourself if ai-specs wrote them. MCP servers a pre-0.26
+sync generated are adopted automatically when they still match what sync
+renders; an edited one is kept and reported. Delete that entry and run `sync`
+to regenerate it.
+
 ### Changed
 - **The worktree gate ships inside the CLI.** Separate `worktree-gate` release
   assets, their checksum trust root, the standalone gate adapter, and
@@ -94,6 +114,28 @@ run while it is set (exit 2, nothing deleted).
   (rc 1, `refuse to write`), so a recipe command copy, a bundled skill
   replacement and a `sync --refresh-gates` snapshot can no longer follow the
   link and write or delete outside the CLI home.
+- **A disabled worktree-flow never cleans up.** `worktree-cleanup` checks the
+  main checkout's manifest first: recipe disabled or absent exits 0 with
+  `worktree-cleanup: worktree-flow is not enabled in <manifest>; nothing to clean`;
+  a missing or unreadable manifest, or a bare repository, exits 2 and deletes
+  nothing. A hook left behind by a disabled recipe can no longer remove
+  worktrees or branches (JD-A-004).
+- **An upgraded legacy install refreshes its launcher copy.** `bin/ai-specs`
+  trusts `dist/ai-specs` only when its bytes are proven: a stamp binding the
+  version to the binary's SHA-256 (re-hashed when size, mtime, ctime or inode
+  change) or the committed digest in `bin/SHA256SUMS`. Otherwise it fetches the
+  verified asset once; a failed refresh prints exactly one warning and runs the
+  existing binary. `install.sh` writes the stamp, and `ai-specs upgrade` honors
+  `AI_SPECS_RELEASE_BASE` (JD-A-005). Known limit: an in-place same-size
+  rewrite with its mtime restored within the same second is not detected; the
+  stamp is a cache, not a security boundary.
+- **Retired agent links are deleted only when ai-specs created them.** A new
+  `[links]` lock section records each link sync creates; links that already
+  existed, or that predate 0.26, are kept with one notice (JD-B-001).
+- **Pre-0.26 MCP servers are adopted, user servers are never overwritten.** A
+  same-named server whose value is exactly what sync renders is recorded and
+  managed from then on; any other is kept byte-for-byte, and the JSON notice
+  says how to regenerate it (JD-B-002).
 - **A retired agent's leftovers are pruned atomically.** Recorded command copies
   and links are re-checked before the first delete and again before each unlink;
   a refused or failed delete exits 1 with the project and lock byte-identical.

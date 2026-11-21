@@ -1047,6 +1047,27 @@ recipe MCP input: a recipe `--recipe-mcp` document carrying bare `NaN` or
 untouched, where legacy wrote the bare constants into the target (and `nan` /
 `inf` for Codex TOML).
 
+### Agent links are owned through `[links]` — BEHAVIOUR CHANGE (Robert, v0.26.0, JD-B-001)
+
+A retired agent's instruction and skills links (`CLAUDE.md`, `.claude/skills`,
+`.github/copilot-instructions.md`, ...) are deleted only when the lock's
+`[links]` section records them as `"<rel>" = "ai-specs:link"`. `sync` and
+`sync-agent` record a link only when they create or replace it; a link that
+already existed is never recorded, and no record holds an absolute path. A
+retired link without a record (pre-0.26 links, user links) is kept and reported
+once per run as
+`  ! <rel>, <rel>: retired agent link(s) not recorded as ai-specs-managed (kept; delete them if ai-specs did not write them)`.
+
+### worktree-cleanup is gated on the recipe — BEHAVIOUR CHANGE (Robert, v0.26.0, JD-A-004)
+
+`worktree-cleanup` reads the main checkout's `ai-specs/ai-specs.toml` before any
+other rule. worktree-flow disabled or absent: exit 0 with
+`worktree-cleanup: worktree-flow is not enabled in <manifest>; nothing to clean`.
+Manifest missing or unreadable: exit 2 with
+`worktree-cleanup: project manifest <manifest> is missing or unreadable (<cause>); no destructive action taken`.
+Bare repository: exit 2 with
+`worktree-cleanup: the repository is bare and has no main worktree to authorize cleanup; no destructive action taken`.
+
 ### MCP config merge is per server — BEHAVIOUR CHANGE (Robert, 2026-11-18, S5)
 
 Legacy replaced the whole `mcpServers` / `mcp` key (and rebuilt every
@@ -1058,8 +1079,14 @@ only those:
 - a recorded server is updated in place, and removed from every agent target
   when the manifest stops declaring it — including when zero servers remain
   (legacy skipped the render entirely at zero, leaving the stale entries);
-- a server the lock does not record is never overwritten or deleted; a
-  same-named entry that was never recorded as ours is kept and reported with
+- a server the lock does not record is never overwritten or deleted. A
+  same-named entry whose value is exactly what sync renders today (exact
+  literal equality, numbers included) is adopted: it is recorded in the lock and
+  re-rendered from then on, which is how servers a pre-0.26 sync generated are
+  taken over (JD-B-002). Any other same-named entry is kept byte-for-byte and
+  reported; JSON targets print
+  `    ! preserved user MCP server "<name>" in <path> (not recorded as ai-specs-managed; delete that entry and run sync to regenerate it)`,
+  Codex keeps the baseline notice
   `    ! preserved user MCP server "<name>" in <target> (not recorded as
   ai-specs-managed)` (conservative choice: user-authored wins);
 - **Codex TOML is written inside one managed block** (`.codex/config.toml` only;

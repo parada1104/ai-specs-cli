@@ -266,6 +266,110 @@ class HooksRenderTests(_HookFixtureMixin):
                          {"mine": {"command": "user-cmd"}})
         self.assertNotIn('"demo"', (self.root / "ai-specs/.ai-specs.lock").read_text())
 
+    def test_mcp_legacy_generated_entries_are_adopted_then_updated(self):
+        """L4 (B-002): a v0.25.x generated entry that is exactly what sync
+        renders today is adopted, so a later manifest change reaches it."""
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("claude", "cursor", "pi")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        manifest.write_text(manifest.read_text() + "\n[mcp.demo]\ncommand = 'cmd-a'\n")
+        targets = [self.root / ".mcp.json", self.root / ".cursor/mcp.json",
+                   self.root / ".pi/mcp.json"]
+        legacy = b'{"mcpServers":{"demo":{"command":"cmd-a","args":[],"env":{}}}}\n'
+        for target in targets:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(legacy)
+
+        # Adopted, not preserved: no collision line, nothing else on stderr.
+        self.assertEqual(self.sync().stderr, "")
+        for target in targets:
+            self.assertEqual(
+                json.loads(target.read_text())["mcpServers"]["demo"],
+                {"command": "cmd-a", "args": [], "env": {}},
+            )
+        lock = (self.root / "ai-specs/.ai-specs.lock").read_text()
+        for target in targets:
+            rel = target.relative_to(self.root).as_posix()
+            self.assertIn(f'[mcp."{rel}"]', lock)
+
+        manifest.write_text(manifest.read_text().replace(
+            "command = 'cmd-a'", "command = 'cmd-b'"))
+        self.assertEqual(self.sync().stderr, "")
+        for target in targets:
+            self.assertEqual(
+                json.loads(target.read_text())["mcpServers"]["demo"],
+                {"command": "cmd-b", "args": [], "env": {}},
+            )
+
+    def test_mcp_legacy_entry_that_differs_is_preserved_byte_identical(self):
+        """L4 (B-002): an entry that differs from what sync would render is
+        never overwritten, and the notice says how to regenerate it."""
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("claude")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        manifest.write_text(manifest.read_text() + "\n[mcp.demo]\ncommand = 'cmd-b'\n")
+        target = self.root / ".mcp.json"
+        original = b'{"mcpServers":{"demo":{"command":"cmd-a","args":[],"env":{}}}}\n'
+        target.write_bytes(original)
+
+        notice = ('    ! preserved user MCP server "demo" in <TEMP>/.mcp.json '
+                  '(not recorded as ai-specs-managed; delete that entry and run '
+                  'sync to regenerate it)\n')
+        self.assertEqual(self.sync().stderr, notice)
+        self.assertEqual(target.read_bytes(), original)
+        # Stable: the same line every sync, and the user bytes never change.
+        self.assertEqual(self.sync().stderr, notice)
+        self.assertEqual(target.read_bytes(), original)
+
+    def test_adoption_preserves_neighboring_user_entry_bytes(self):
+        """L4 (B-002): adopting an entry that already equals the render records
+        it, while a neighbouring user server keeps its exact bytes."""
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("claude")
+        manifest = self.root / "ai-specs/ai-specs.toml"
+        with manifest.open("a") as f:
+            f.write("\n[mcp.same]\ncommand='cmd-a'\n[mcp.foo]\ncommand='cmd-a'\n")
+        target = self.root / ".mcp.json"
+        user = b'{ "command" : "user-cmd" }'
+        target.write_bytes(b'{"mcpServers":{"same":{"command":"cmd-a",'
+                           b'"args":[],"env":{}},"foo":' + user + b'}}\n')
+        self.sync()
+        self.assertIn(user, target.read_bytes())
+        mcp, _ = mcp_record_bytes((self.root / "ai-specs/.ai-specs.lock").read_bytes())
+        self.assertEqual(set(mcp[".mcp.json"]), {"same"})
+
+    def test_adoption_does_not_round_distinct_numbers_into_a_match(self):
+        """L4 (B-002): equality is by exact literal, never by float value, so a
+        differing number keeps the entry as the user's."""
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("claude")
+        with (self.root / "ai-specs/ai-specs.toml").open("a") as f:
+            f.write("\n[mcp.foo]\ncommand='cmd-a'\nextra=0.1\n")
+        target = self.root / ".mcp.json"
+        original = (b'{"mcpServers":{"foo":{"command":"cmd-a","args":[],'
+                    b'"env":{},"extra":0.10000000000000001}}}\n')
+        target.write_bytes(original)
+        self.assertIn('preserved user MCP server "foo"', self.sync().stderr)
+        self.assertEqual(target.read_bytes(), original)
+
+    def test_managed_mcp_resync_still_normalizes_and_reports(self):
+        """L4 (B-002): adoption must not turn a managed re-sync into a no-op, so
+        a compact managed target is still normalized and reported."""
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("claude")
+        with (self.root / "ai-specs/ai-specs.toml").open("a") as f:
+            f.write("\n[mcp.foo]\ncommand='cmd-a'\n")
+        self.sync()
+        target = self.root / ".mcp.json"
+        canonical = target.read_bytes()
+        target.write_bytes(
+            b'{"mcpServers":{"foo":{"env":{},"command":"cmd-a","args":[]}}}\n'
+        )
+        result = invoke(self.root, "sync", "--verbose", cli_home=self.home)
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual(target.read_bytes(), canonical)
+        self.assertIn("  \u2713 claude \u2192 <TEMP>/.mcp.json (1 server(s))\n", result.stdout)
+
     def test_codex_mcp_collision_survives_writes_and_prune(self):
         import tomllib
 

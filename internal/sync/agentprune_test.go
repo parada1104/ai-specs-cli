@@ -206,21 +206,21 @@ func TestSyncPrunesRetiredAgentLeftovers(t *testing.T) {
 	if strings.Contains(string(data), "ai-specs:hooks:") {
 		t.Fatalf("managed hook wiring survived in %s:\n%s", settings, data)
 	}
-	// Lock: the retired targets and copies lost their records, the enabled
-	// agent keeps every one of them.
+	// Lock: the retired targets, copies and links lost their records, the
+	// enabled agent keeps every one of them.
 	lockText := readLockText(t, project)
-	for _, gone := range []string{`".pi/mcp.json"`, `"CLAUDE.md"`, `".claude/commands/go.md"`, `".pi/extensions/agentdemo-main.ts"`, `".mcp.json"`} {
+	for _, gone := range []string{`".pi/mcp.json"`, `"CLAUDE.md"`, `".claude/skills"`, `".claude/commands/go.md"`, `".pi/extensions/agentdemo-main.ts"`, `".mcp.json"`} {
 		if strings.Contains(lockText, gone) {
 			t.Fatalf("lock still records %s:\n%s", gone, lockText)
 		}
 	}
 	for _, kept := range []string{`".cursor/skills"`, `".cursor/hooks/agentdemo-main.sh"`, `".cursor/mcp.json"`, `".cursor/commands/go.md"`} {
-		if kept == `".cursor/skills"` {
-			continue // links carry no lock record
-		}
 		if !strings.Contains(lockText, kept) {
 			t.Fatalf("lock lost the enabled agent's record %s:\n%s", kept, lockText)
 		}
+	}
+	if !strings.Contains(lockText, `[links]`) || !strings.Contains(lockText, `".cursor/skills" = "ai-specs:link"`) {
+		t.Fatalf("lock does not record the link sync created:\n%s", lockText)
 	}
 	// The enabled agent's artifacts are untouched.
 	if info := mustLstat(t, filepath.Join(project, ".cursor", "skills")); info.Mode()&os.ModeSymlink == 0 {
@@ -304,6 +304,61 @@ func TestSyncRetiredAgentKeepsUnrecordedContent(t *testing.T) {
 	}
 	if body, err := os.ReadFile(legacyShim); err != nil || !strings.HasPrefix(string(body), hooksTSHeader) {
 		t.Fatalf("generated-looking unrecorded shim changed: %q (err=%v)", body, err)
+	}
+}
+
+// stripLinkRecords removes the [links] section, leaving a lock written before
+// ai-specs recorded link ownership.
+func stripLinkRecords(t *testing.T, project string) {
+	t.Helper()
+	path := filepath.Join(project, "ai-specs/.ai-specs.lock")
+	var kept []string
+	skipping := false
+	for _, line := range strings.Split(readLockText(t, project), "\n") {
+		if line == "[links]" {
+			skipping = true
+			continue
+		}
+		if skipping && line == "" {
+			skipping = false
+			continue
+		}
+		if !skipping {
+			kept = append(kept, line)
+		}
+	}
+	spineWrite(t, path, strings.Join(kept, "\n"), 0o644)
+}
+
+// T3 (S4, B-001): a link only sync itself created carries a record, so a link
+// from before 0.26 is kept and named instead of deleted, even when the rest of
+// the retired agent's recorded artifacts still go.
+func TestSyncRetiredAgentKeepsUnrecordedLinks(t *testing.T) {
+	home, project := agentLeftoverFixture(t, "['claude', 'pi']")
+	if stderr := runSyncCase(t, home, project); stderr != "" {
+		t.Fatalf("seed sync stderr = %q", stderr)
+	}
+	stripLinkRecords(t, project)
+	retireAgents(t, project, "['pi']")
+	out, stderr := runSyncCaseOutput(t, home, project)
+
+	for _, rel := range []string{"CLAUDE.md", ".claude/skills"} {
+		path := filepath.Join(project, rel)
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("unrecorded link %s was not kept (err=%v)", rel, err)
+		}
+	}
+	if strings.Contains(out, "removed retired agent link") {
+		t.Fatalf("an unrecorded link was deleted:\n%s", out)
+	}
+	// The agent still has other records, so it is retired and loses them.
+	if !strings.Contains(out, "  ✓ removed retired agent command .claude/commands/go.md") {
+		t.Fatalf("stdout = %s", out)
+	}
+	want := "  ! CLAUDE.md, .claude/skills: retired agent link(s) not recorded as ai-specs-managed (kept; delete them if ai-specs did not write them)"
+	if !strings.Contains(stderr, want) {
+		t.Fatalf("stderr missing %q:\n%s", want, stderr)
 	}
 }
 

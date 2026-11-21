@@ -74,6 +74,11 @@ type Lock struct {
 	// shim path → the hook id that produced it. Only a recorded path may be
 	// pruned by sync, even after the user edited it.
 	Hooks map[string]string
+	// Links is the symlink ownership record (S4): project relative link path →
+	// LinkMarker. A link is recorded only when sync itself created or replaced
+	// it; the target is recomputed from the platform matrix at sync time, so the
+	// record never holds an absolute or home path.
+	Links map[string]string
 }
 
 // NewLock returns a Lock with every map initialized empty (the shape
@@ -89,6 +94,7 @@ func NewLock() *Lock {
 		MCP:      map[string]map[string]any{},
 		MCPBlock: map[string]string{},
 		Hooks:    map[string]string{},
+		Links:    map[string]string{},
 	}
 }
 
@@ -206,6 +212,15 @@ func LoadLock(lockPath string) (*Lock, error) {
 			if owner, ok := hooks.String(path); ok {
 				if trimmed := strings.TrimSpace(owner); trimmed != "" {
 					lock.Hooks[path] = trimmed
+				}
+			}
+		}
+	}
+	if links, ok := root.Table("links"); ok {
+		for _, path := range links.Keys() {
+			if marker, ok := links.String(path); ok {
+				if trimmed := strings.TrimSpace(marker); trimmed != "" {
+					lock.Links[path] = trimmed
 				}
 			}
 		}
@@ -620,6 +635,10 @@ func refuseControlChars(lockPath string, lock *Lock) error {
 		appendCheck("hook shim path", path)
 		appendCheck("hook shim owner", lock.Hooks[path])
 	}
+	for _, path := range sortedKeys(lock.Links) {
+		appendCheck("link path", path)
+		appendCheck("link marker", lock.Links[path])
+	}
 	depIDs := make([]string, 0, len(lock.Deps))
 	for depID := range lock.Deps {
 		depIDs = append(depIDs, depID)
@@ -722,6 +741,14 @@ func renderLock(lock *Lock) (string, error) {
 		lines = append(lines, "[hooks]")
 		for _, path := range sortedKeys(lock.Hooks) {
 			lines = append(lines, TOMLString(path)+" = "+TOMLString(lock.Hooks[path]))
+		}
+		lines = append(lines, "")
+	}
+
+	if len(lock.Links) > 0 {
+		lines = append(lines, "[links]")
+		for _, path := range sortedKeys(lock.Links) {
+			lines = append(lines, TOMLString(path)+" = "+TOMLString(lock.Links[path]))
 		}
 		lines = append(lines, "")
 	}
