@@ -2,10 +2,16 @@ package upgrade
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -602,5 +608,130 @@ func TestFetchAdvancesOriginMainWithoutConfiguredRefspec(t *testing.T) {
 		if got := gitRun(t, f.aiSpecs, "show", "origin/main:VERSION"); strings.TrimSpace(got) != "1.1.0" {
 			t.Fatalf("args=%v origin/main VERSION = %q", args, got)
 		}
+	}
+}
+
+// JD-A-005 (T2, S3): the legacy route fast-forwards the checkout but runs
+// inside the OLD binary, so the launcher copy left behind must be replaced with
+// the verified asset of the version the checkout now declares — and the
+// completion message may only appear after that refresh succeeded.
+func TestLegacyUpgradeRefreshesDistCopyBeforeReportingCompletion(t *testing.T) {
+	f := newFakeInstall(t, "1.0.0")
+	distDir := filepath.Join(f.aiSpecs, "dist")
+	if err := os.MkdirAll(distDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(distDir, "ai-specs"), "#!/bin/sh\necho stale\n", 0o755)
+	writeFile(t, filepath.Join(distDir, "VERSION"), "1.0.0\n", 0o644)
+	payload := binaryAssetPayload("1.1.0")
+	srv := serveVerifiedAsset(t, f, payload)
+	f.pushVersion(t, "1.1.0")
+
+	env := f.env()
+	env.ReleaseBase = srv.URL
+	var out, errb bytes.Buffer
+	// --force: the fixture's dist/ copy is untracked working-tree content.
+	if code := Run([]string{"--force"}, env, &out, &errb); code != ExitOK {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, out.String(), errb.String())
+	}
+
+	got, err := os.ReadFile(filepath.Join(distDir, "ai-specs"))
+	if err != nil {
+		t.Fatalf("the upgrade must refresh the launcher copy: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("stale launcher copy survived the upgrade:\n got: %q\n want: %q", got, payload)
+	}
+	if fi, err := os.Stat(filepath.Join(distDir, "ai-specs")); err != nil || fi.Mode().Perm()&0o111 == 0 {
+		t.Errorf("the refreshed launcher copy must stay executable: %v", err)
+	}
+	if stamp := strings.TrimSpace(readFile(t, filepath.Join(distDir, "VERSION"))); stamp != "1.1.0" {
+		t.Errorf("launcher copy stamp = %q, want 1.1.0", stamp)
+	}
+	refreshed := strings.Index(out.String(), "Refreshed launcher copy:")
+	upgraded := strings.Index(out.String(), "Upgraded: 1.0.0 -> 1.1.0")
+	if refreshed < 0 || upgraded < 0 || refreshed > upgraded {
+		t.Errorf("completion must follow the refresh:\n%s", out.String())
+	}
+}
+
+// JD-A-005: when the refresh fails the route reports the checkout advance and
+// the failed refresh separately, and exits non-zero instead of claiming success
+// while the old executable is still what the launcher runs.
+func TestLegacyUpgradeReportsTheAdvanceWhenTheDistRefreshFails(t *testing.T) {
+	f := newFakeInstall(t, "1.0.0")
+	distDir := filepath.Join(f.aiSpecs, "dist")
+	if err := os.MkdirAll(distDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := "#!/bin/sh\necho stale\n"
+	writeFile(t, filepath.Join(distDir, "ai-specs"), stale, 0o755)
+	writeFile(t, filepath.Join(distDir, "VERSION"), "1.0.0\n", 0o644)
+	// A committed digest for an asset the release base does not serve.
+	asset := AssetName(runtime.GOOS, runtime.GOARCH)
+	sum := sha256.Sum256(binaryAssetPayload("1.1.0"))
+	writeFile(t, filepath.Join(f.aiSpecs, "bin", "SHA256SUMS"),
+		fmt.Sprintf("%s  %s\n", hex.EncodeToString(sum[:]), asset), 0o644)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	f.pushVersion(t, "1.1.0")
+
+	env := f.env()
+	env.ReleaseBase = srv.URL
+	var out, errb bytes.Buffer
+	if code := Run([]string{"--force"}, env, &out, &errb); code == ExitOK {
+		t.Fatalf("a failed refresh must not report success; stdout=%s", out.String())
+	}
+
+	if !strings.Contains(out.String(), "Fast-forwarded the checkout: 1.0.0 -> 1.1.0") {
+		t.Errorf("the checkout advance must be reported on stdout:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "Upgraded:") {
+		t.Errorf("the completion message must wait for the refresh:\n%s", out.String())
+	}
+	if !strings.Contains(errb.String(), "could not refresh the launcher copy") {
+		t.Errorf("the failed refresh must be reported on stderr: %q", errb.String())
+	}
+	if !strings.Contains(errb.String(), filepath.Join(distDir, "ai-specs")) {
+		t.Errorf("the failure must name the launcher copy: %q", errb.String())
+	}
+	if got := readFile(t, filepath.Join(distDir, "ai-specs")); got != stale {
+		t.Errorf("a failed refresh must leave the copy untouched: %q", got)
+	}
+	if got := strings.TrimSpace(readFile(t, filepath.Join(f.aiSpecs, "VERSION"))); got != "1.1.0" {
+		t.Errorf("the checkout must have advanced: VERSION = %q", got)
+	}
+}
+
+// JD-A-005: a copy already stamped with the target version needs no download.
+func TestLegacyUpgradeSkipsTheDistRefreshWhenTheStampMatches(t *testing.T) {
+	f := newFakeInstall(t, "1.0.0")
+	distDir := filepath.Join(f.aiSpecs, "dist")
+	if err := os.MkdirAll(distDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	current := "#!/bin/sh\necho current\n"
+	writeFile(t, filepath.Join(distDir, "ai-specs"), current, 0o755)
+	writeFile(t, filepath.Join(distDir, "VERSION"), "1.1.0\n", 0o644)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("a matching stamp must not download anything: %s", r.URL.Path)
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	f.pushVersion(t, "1.1.0")
+
+	env := f.env()
+	env.ReleaseBase = srv.URL
+	var out, errb bytes.Buffer
+	if code := Run([]string{"--force"}, env, &out, &errb); code != ExitOK {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "Upgraded: 1.0.0 -> 1.1.0") {
+		t.Errorf("stdout missing upgrade line:\n%s", out.String())
+	}
+	if got := readFile(t, filepath.Join(distDir, "ai-specs")); got != current {
+		t.Errorf("an already-current copy must not be rewritten: %q", got)
 	}
 }

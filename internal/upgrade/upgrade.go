@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"ai-specs.dev/ai-specs/internal/changelog"
@@ -411,7 +412,7 @@ func printReleaseReport(home, current, new string, stdout io.Writer) {
 //
 // Pinned both directions by TestUpgradeRunsNativelyAndSkipsTheShellPostSteps,
 // so an accidental reintroduction fails a test instead of passing silently.
-func realUpgrade(inst Install, o Options, git Git, stdout, stderr io.Writer) int {
+func realUpgrade(inst Install, o Options, env Env, git Git, stdout, stderr io.Writer) int {
 	if code := runStep(o, git, inst.Home, stdout, stderr, "fetching origin/main", "fetch", "origin", fetchRefspec); code != 0 {
 		return abort(stderr, "Failed to fetch from origin. Check your network connection.", ExitFetch)
 	}
@@ -435,6 +436,14 @@ func realUpgrade(inst Install, o Options, git Git, stdout, stderr io.Writer) int
 	if current == newVersion {
 		fmt.Fprintf(stdout, "Already up to date (version %s).\n", current)
 	} else {
+		// JD-A-005: this route runs inside the OLD binary, so the launcher copy
+		// it leaves behind is what keeps serving commands. Refresh it FIRST and
+		// only then claim completion; a failed refresh reports the checkout
+		// advance and the failure separately, never a success.
+		if err := refreshLegacyDistCopy(inst, env, newVersion, stdout); err != nil {
+			fmt.Fprintf(stdout, "Fast-forwarded the checkout: %s -> %s\n", current, newVersion)
+			return abort(stderr, fmt.Sprintf("could not refresh the launcher copy %s: %v. The checkout advanced; re-run install.sh or run 'ai-specs upgrade' again once it can be replaced.", distCopyPath(inst), err), ExitPostVerify)
+		}
 		fmt.Fprintf(stdout, "Upgraded: %s -> %s\n", current, newVersion)
 		printReleaseReport(inst.Home, current, newVersion, stdout)
 	}
@@ -449,22 +458,84 @@ func realUpgrade(inst Install, o Options, git Git, stdout, stderr io.Writer) int
 	return ExitOK
 }
 
+// canonicalDistHome resolves the HOME DIRECTORY a launcher copy lives under
+// (D-U2e-1): a symlinked home must receive dist/ under its real directory.
+func canonicalDistHome(inst Install) string {
+	home := inst.ExpectedHome
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolved
+	}
+	return home
+}
+
+// distCopyPath is the launcher copy bin/ai-specs execs after the flip.
+func distCopyPath(inst Install) string {
+	return filepath.Join(canonicalDistHome(inst), "dist", "ai-specs")
+}
+
+// distStampPath holds the version a launcher copy was acquired for. It is the
+// version record the launcher compares against: mtimes are never used
+// (JD-A-005), because touching VERSION must not trigger a download.
+func distStampPath(inst Install) string {
+	return filepath.Join(canonicalDistHome(inst), "dist", "VERSION")
+}
+
+// stampDistCopy records the version dist/ai-specs now holds.
+func stampDistCopy(inst Install, version string) error {
+	if err := os.WriteFile(distStampPath(inst), []byte(version+"\n"), 0o644); err != nil {
+		return fmt.Errorf("could not record the launcher copy version: %w", err)
+	}
+	return nil
+}
+
+// refreshLegacyDistCopy replaces a stale launcher copy with the verified
+// release asset of the version the checkout now declares (JD-A-005). The
+// launcher only acquires a missing copy or one whose reported version differs,
+// so a stale copy would keep serving the old executable after a "successful"
+// upgrade. A copy that is already stamped with the target version is left
+// alone, and an absent one is left to the launcher's own self-heal.
+func refreshLegacyDistCopy(inst Install, env Env, version string, stdout io.Writer) error {
+	dist := distCopyPath(inst)
+	if _, err := os.Lstat(dist); err != nil {
+		return nil
+	}
+	if stamp, err := os.ReadFile(distStampPath(inst)); err == nil && strings.TrimSpace(string(stamp)) == version {
+		return nil
+	}
+	asset := AssetName(runtime.GOOS, runtime.GOARCH)
+	root, err := LoadTrustRoot(filepath.Join(inst.Home, "bin", "SHA256SUMS"))
+	if err != nil {
+		return fmt.Errorf("could not read the committed digests: %w", err)
+	}
+	if _, ok := root[asset]; !ok {
+		return fmt.Errorf("no committed digest for %s, so the stale copy cannot be replaced", asset)
+	}
+	if _, err := Acquire(AcquireOptions{
+		TrustRoot: root,
+		BaseURL:   releaseBaseURL(env, version),
+		Asset:     asset,
+		Target:    dist,
+	}); err != nil {
+		return err
+	}
+	if err := stampDistCopy(inst, version); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Refreshed launcher copy: %s\n", dist)
+	return nil
+}
+
 // refreshDistCopy writes the just-installed LocalBin bytes to
 // $AI_SPECS_HOME/dist/ai-specs, the path the repo launcher bin/ai-specs execs
 // after the flip (GO-20 U2e). It reuses the installed file — never a rebuild —
-// and reports a failed write instead of swallowing it.
+// reports a failed write instead of swallowing it, and stamps the version it
+// copied so the launcher's version check needs no download (JD-A-005).
 func refreshDistCopy(inst Install) error {
 	data, err := os.ReadFile(inst.LocalBin)
 	if err != nil {
 		return fmt.Errorf("could not read the installed binary at %s: %w", inst.LocalBin, err)
 	}
-	// Canonicalize the HOME DIRECTORY (D-U2e-1), never the binary: a symlinked
-	// home still receives dist/ under its real directory.
-	home := inst.ExpectedHome
-	if resolved, err := filepath.EvalSymlinks(home); err == nil {
-		home = resolved
-	}
-	target := filepath.Join(home, "dist", "ai-specs")
+	target := distCopyPath(inst)
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("could not create %s: %w", filepath.Dir(target), err)
 	}
@@ -474,7 +545,7 @@ func refreshDistCopy(inst Install) error {
 	if err := os.Chmod(target, 0o755); err != nil {
 		return fmt.Errorf("could not make %s executable: %w", target, err)
 	}
-	return nil
+	return stampDistCopy(inst, readVersion(inst.Home))
 }
 
 // Run executes the upgrade and returns the process exit code.
@@ -522,5 +593,5 @@ func Run(args []string, env Env, stdout, stderr io.Writer) int {
 	if o.DryRun {
 		return dryRunReport(inst, o, git, stdout, stderr)
 	}
-	return realUpgrade(inst, o, git, stdout, stderr)
+	return realUpgrade(inst, o, env, git, stdout, stderr)
 }

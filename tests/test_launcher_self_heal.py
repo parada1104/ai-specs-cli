@@ -43,6 +43,25 @@ _TOOLS = (
 PAYLOAD = b'#!/bin/sh\necho "native $*"\necho "native-stderr" >&2\nexit 3\n'
 
 
+def _versioned_payload(banner: str) -> bytes:
+    """A stand-in CLI whose `version` verb mirrors the real one.
+
+    The real verb prints the VERSION file of the home it runs against
+    (AI_SPECS_HOME), so a copy asks for the version it was acquired for by
+    reading the stamp the launcher writes next to it.
+    """
+    return (
+        "#!/bin/sh\n"
+        'if [ "$#" -eq 1 ] && [ "$1" = version ]; then\n'
+        '    cat "${AI_SPECS_HOME}/VERSION" 2>/dev/null || echo unknown\n'
+        "    exit 0\n"
+        "fi\n"
+        f'echo "{banner} $*"\n'
+        'echo "native-stderr" >&2\n'
+        "exit 3\n"
+    ).encode()
+
+
 def _tool_path(farm: Path) -> str:
     """A PATH holding only the launcher's tools: no `go`, no surprises."""
     farm.mkdir(parents=True, exist_ok=True)
@@ -171,7 +190,8 @@ class LauncherSelfHealTests(unittest.TestCase):
                          "the verified bytes are what gets installed")
         self.assertEqual(stat.S_IMODE(self.dist.stat().st_mode), 0o755)
         self.assertEqual([p.name for p in self.dist.parent.iterdir()],
-                         ["ai-specs"], "no temp file may survive a success")
+                         ["VERSION", "ai-specs"],
+                         "no temp file may survive a success")
         self.assertEqual(len(self.server.requests), 1)
 
     def test_a_digest_mismatch_installs_nothing(self):
@@ -259,6 +279,117 @@ class LauncherSelfHealTests(unittest.TestCase):
         self.assertEqual(proc.stderr, "native-stderr\n",
                          "an existing binary means no acquisition at all")
         self.assertEqual(self.server.requests, [])
+        self.assertEqual(
+            (self.home / "dist" / "VERSION").read_text().strip(), "0.25.0",
+            "a copy proven current by its committed digest is stamped, so the "
+            "next invocation needs no probe download")
+
+    # -- JD-A-005: the launcher compares real versions, never mtimes ---------
+    def _dist_copy(self, stamp: str, banner: str = "stale") -> bytes:
+        """An executable dist copy that reports `stamp` as its own version."""
+        payload = _versioned_payload(banner)
+        (self.home / "dist").mkdir(exist_ok=True)
+        self.dist.write_bytes(payload)
+        self.dist.chmod(0o755)
+        (self.home / "dist" / "VERSION").write_text(stamp + "\n",
+                                                     encoding="utf-8")
+        return payload
+
+    def test_an_outdated_dist_copy_is_replaced_before_the_verb_runs(self):
+        (self.home / "VERSION").write_text("0.26.0\n", encoding="utf-8")
+        self._dist_copy("0.25.0")
+        self._serve()
+        self._trust(hashlib.sha256(PAYLOAD).hexdigest())
+
+        proc = self._run("version")
+
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        self.assertEqual(proc.stdout, "native version\n")
+        self.assertEqual(
+            proc.stderr.splitlines(),
+            [
+                f"ai-specs: outdated launcher copy at {self.dist};"
+                f" fetching {self.asset} from {self.server.base_url}",
+                f"ai-specs: installed {self.asset} at {self.dist}",
+                "native-stderr",
+            ],
+        )
+        self.assertEqual(self.dist.read_bytes(), PAYLOAD,
+                         "the stale copy must be replaced, not executed")
+        self.assertEqual(
+            (self.home / "dist" / "VERSION").read_text().strip(), "0.26.0",
+            "the acquired copy is stamped with the version it was verified for")
+        self.assertEqual(len(self.server.requests), 1)
+
+    def test_a_dist_copy_reporting_the_checkout_version_runs_without_a_request(self):
+        self._dist_copy("0.25.0", banner="native")
+        self._serve()
+        self._trust(hashlib.sha256(_versioned_payload("native")).hexdigest())
+
+        proc = self._run("version")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "0.25.0\n")
+        self.assertEqual(proc.stderr, "")
+        self.assertEqual(self.server.requests, [])
+
+    def test_a_newer_version_file_alone_never_triggers_a_download(self):
+        # A newer VERSION mtime is not the signal (JD-A-005 round 2).
+        self._dist_copy("0.25.0", banner="native")
+        os.utime(self.dist, (0, 0))
+        os.utime(self.home / "VERSION", (2**31 - 1, 2**31 - 1))
+        self._serve()
+        self._trust(hashlib.sha256(_versioned_payload("native")).hexdigest())
+
+        proc = self._run("version")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "0.25.0\n")
+        self.assertEqual(self.server.requests, [])
+
+    def test_an_outdated_copy_that_cannot_be_replaced_warns_once_and_still_runs(self):
+        # Offline, no committed digest, no Go: the copy cannot be replaced, so
+        # the launcher warns once and execs it instead of blocking the command.
+        (self.home / "VERSION").write_text("0.26.0\n", encoding="utf-8")
+        self._dist_copy("0.25.0")
+
+        proc = self._run("version")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "0.26.0\n",
+                         "the existing copy still serves the verb")
+        self.assertEqual(self.dist.read_bytes(), _versioned_payload("stale"),
+                         "the failed refresh must not touch the copy")
+        self.assertEqual(
+            proc.stderr.splitlines(),
+            [
+                "ai-specs: warning: installed binary reports version 0.25.0"
+                " but this checkout is 0.26.0; re-run install.sh or run"
+                " 'ai-specs upgrade' to reinstall it",
+            ],
+            "exactly one warning line, naming both versions and the fix",
+        )
+        self.assertEqual(
+            (self.home / "dist" / "VERSION").read_text().strip(), "0.25.0",
+            "a failed refresh leaves the copy untouched")
+
+    def test_a_pinned_binary_is_never_version_checked_or_replaced(self):
+        (self.home / "VERSION").write_text("0.26.0\n", encoding="utf-8")
+        pinned = self.base / "pinned" / "ai-specs"
+        pinned.parent.mkdir()
+        pinned.write_text("#!/bin/sh\necho 0.1.0\n", encoding="utf-8")
+        pinned.chmod(0o755)
+        self._serve()
+        self._trust(hashlib.sha256(PAYLOAD).hexdigest())
+
+        proc = self._run("version", env_extra={"AI_SPECS_GO_BIN": str(pinned)})
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "0.1.0\n")
+        self.assertEqual(proc.stderr, "")
+        self.assertEqual(self.server.requests, [])
+        self.assertFalse((self.home / "dist").exists(),
+                         "a pinned binary is never replaced")
 
     def test_a_symlinked_home_receives_dist_under_its_real_directory(self):
         real = self.base / "real-home"
@@ -281,6 +412,9 @@ class LauncherSelfHealTests(unittest.TestCase):
                 "native-stderr",
             ],
         )
+        self.assertEqual(
+            (real / "dist" / "VERSION").read_text().strip(), "0.25.0",
+            "the acquisition stamp lands under the canonical home")
         self.assertEqual((real / "dist" / "ai-specs").read_bytes(), PAYLOAD,
                          "the canonical home directory receives dist/")
 

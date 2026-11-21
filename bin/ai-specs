@@ -8,7 +8,8 @@
 # Binary resolution, in order:
 #   1. $AI_SPECS_GO_BIN  (exported by the Go CLI to the processes it starts,
 #      and by tests that pin a specific build). A pinned binary is never
-#      replaced: when it is missing this launcher fails loudly.
+#      replaced nor version-checked: when it is missing this launcher fails
+#      loudly.
 #   2. $AI_SPECS_HOME/dist/ai-specs  (produced by scripts/build-cli.sh)
 #
 # When nothing resolves and $AI_SPECS_GO_BIN is unset, the launcher self-heals
@@ -17,6 +18,12 @@
 # toolchain. That is what turns an `ai-specs upgrade` run from an old checkout
 # into a working CLI instead of a missing binary: the upgrade only fast-forwards
 # the git tree, so the first verb afterwards acquires dist/ai-specs itself.
+#
+# An existing copy is checked against the checkout too (JD-A-005): the launcher
+# compares the version the copy REPORTS for itself (`... version`) with
+# $AI_SPECS_HOME/VERSION — never file mtimes — and re-acquires the verified
+# asset when they differ. If it cannot, it warns once and runs the existing
+# binary, so no command is ever blocked by the check.
 # Progress goes to stderr; the verb's stdout is never written here. There is no
 # legacy Bash/Python fallback: that route was retired by GO-20 U2e (T2).
 set -e
@@ -58,9 +65,66 @@ _sha256_of() {
     fi
 }
 
+# The checkout's directory holding dist/, canonicalized (D-U2e-1).
+_dist_home() {
+    local home
+    home="$(cd -P "$AI_SPECS_HOME" 2>/dev/null && pwd -P)" || home="$AI_SPECS_HOME"
+    printf '%s' "$home"
+}
+
+_trimmed() {
+    tr -d '[:space:]' < "$1" 2>/dev/null || true
+}
+
+# The committed digest for a release asset (the trust root install.sh and the
+# Go CLI also use). Empty means no download is allowed.
+_expected_digest() {
+    awk -v asset="$1" '$2 == asset { print $1 }' \
+        "${AI_SPECS_TRUST_ROOT_FILE:-$AI_SPECS_HOME/bin/SHA256SUMS}" 2>/dev/null | head -n 1
+}
+
+# Record the version an acquisition was verified for. It is the stamp
+# _dist_version reads back; file mtimes are never used (JD-A-005).
+_stamp_dist() {
+    printf '%s\n' "$1" > "$(_dist_home)/dist/VERSION" 2>/dev/null || true
+}
+
+# The version the installed copy reports for itself. The `version` verb prints
+# the VERSION file of the home it runs against, so the copy is asked with its
+# own directory as the home: that is the stamp written at acquisition time.
+_dist_version() {
+    local out
+    out="$(AI_SPECS_HOME="$(_dist_home)/dist" "$NATIVE_BIN" version 2>/dev/null)" || out=""
+    printf '%s' "${out%%[[:space:]]*}"
+}
+
+# True when the installed copy matches the version this checkout declares.
+# A copy installed without a stamp (install.sh, an older launcher, a legacy
+# upgrade) is still proven current by its committed digest — the same trust
+# root the acquisition uses — and is stamped, so later invocations only compare
+# strings.
+_dist_is_current() {
+    local want have asset expected got
+    want="$(_trimmed "$AI_SPECS_HOME/VERSION")"
+    [ -n "$want" ] || return 0
+    have="$(_dist_version)"
+    [ "$have" = "$want" ] && return 0
+    asset="$(_platform_asset 2>/dev/null || true)"
+    [ -n "$asset" ] || return 1
+    expected="$(_expected_digest "$asset")"
+    [ -n "$expected" ] || return 1
+    got="$(_sha256_of "$NATIVE_BIN" || true)"
+    [ "$got" = "$expected" ] || return 1
+    _stamp_dist "$want"
+    return 0
+}
+
 # Acquire dist/ai-specs once. Verify before installing and install atomically,
-# so a failure leaves neither a binary nor a temp file behind.
+# so a failure leaves neither a binary nor a temp file behind. The optional
+# argument is the reason printed on the acquisition line ("no native binary at"
+# by default, an outdated copy after an upgrade).
 _self_heal() {
+    local why="${1:-no native binary at}"
     local version asset expected base dist_home dist_bin tmp got
     # A home without VERSION is not a checkout (typically a mistyped
     # AI_SPECS_HOME): create nothing and download nothing.
@@ -71,7 +135,7 @@ _self_heal() {
     version="$(cat "$AI_SPECS_HOME/VERSION" 2>/dev/null || true)"
     # Canonicalize the HOME DIRECTORY (D-U2e-1), never the binary, so a
     # symlinked home receives dist/ under its real directory.
-    dist_home="$(cd -P "$AI_SPECS_HOME" 2>/dev/null && pwd -P)" || dist_home="$AI_SPECS_HOME"
+    dist_home="$(_dist_home)"
     dist_bin="$dist_home/dist/ai-specs"
     if ! mkdir -p "$dist_home/dist"; then
         echo "ai-specs: could not create $dist_home/dist" >&2
@@ -84,14 +148,14 @@ _self_heal() {
         # The network supplies only bytes; the checkout supplies the expected
         # digest. No committed digest means no download is attempted.
         base="${AI_SPECS_RELEASE_BASE:-https://github.com/parada1104/ai-specs-cli/releases/download/v$version}"
-        expected="$(awk -v asset="$asset" '$2 == asset { print $1 }' \
-            "${AI_SPECS_TRUST_ROOT_FILE:-$AI_SPECS_HOME/bin/SHA256SUMS}" 2>/dev/null | head -n 1)"
+        expected="$(_expected_digest "$asset")"
         if [ -n "$expected" ] && command -v curl >/dev/null 2>&1; then
-            echo "ai-specs: no native binary at $dist_bin; fetching $asset from $base" >&2
+            echo "ai-specs: $why $dist_bin; fetching $asset from $base" >&2
             if curl -fsSL "$base/$asset" -o "$tmp"; then
                 got="$(_sha256_of "$tmp" || true)"
                 if [ -n "$got" ] && [ "$got" = "$expected" ]; then
                     if chmod 0755 "$tmp" && mv -f "$tmp" "$dist_bin"; then
+                        _stamp_dist "$version"
                         echo "ai-specs: installed $asset at $dist_bin" >&2
                         return 0
                     fi
@@ -107,6 +171,8 @@ _self_heal() {
         echo "ai-specs: no verified asset for this platform; building locally with go" >&2
         if (cd "$AI_SPECS_HOME" && go build -trimpath -buildvcs=false -o "$tmp" ./cmd/ai-specs); then
             if chmod 0755 "$tmp" && mv -f "$tmp" "$dist_bin"; then
+                # The build comes from this checkout, so it IS this version.
+                _stamp_dist "$version"
                 echo "ai-specs: built and installed $dist_bin" >&2
                 return 0
             fi
@@ -117,8 +183,20 @@ _self_heal() {
     return 1
 }
 
-if [ -z "${AI_SPECS_GO_BIN:-}" ] && [ ! -x "$NATIVE_BIN" ]; then
-    _self_heal || true
+if [ -z "${AI_SPECS_GO_BIN:-}" ]; then
+    if [ ! -x "$NATIVE_BIN" ]; then
+        _self_heal || true
+    elif [ -f "$AI_SPECS_HOME/VERSION" ] && ! _dist_is_current; then
+        # JD-A-005: the copy on disk is not the version this checkout declares.
+        # Re-acquire the verified asset (same trust root); when that is
+        # impossible (offline, digest mismatch, no Go) warn once and run the
+        # existing binary, so no command is ever blocked by the check.
+        have="$(_dist_version)"
+        want="$(_trimmed "$AI_SPECS_HOME/VERSION")"
+        if ! _self_heal "outdated launcher copy at"; then
+            echo "ai-specs: warning: installed binary reports version ${have:-unknown} but this checkout is $want; re-run install.sh or run 'ai-specs upgrade' to reinstall it" >&2
+        fi
+    fi
 fi
 
 if [ ! -x "$NATIVE_BIN" ]; then
