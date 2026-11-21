@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 
@@ -480,21 +481,76 @@ func distStampPath(inst Install) string {
 	return filepath.Join(canonicalDistHome(inst), "dist", "VERSION")
 }
 
-// distCacheKey is the cheap "<size>:<mtime>" key the launcher also computes.
-// It only decides whether a stamp's digest must be recomputed; it is never
-// version evidence (JD-A-005).
+// distCacheKey is the cheap "<size>:<mtime>:<ctime>:<inode>" key the launcher
+// and install.sh also compute. It only decides whether a stamp's digest must be
+// recomputed; it is never version evidence (JD-A-005). The ctime and the inode
+// are what a swap cannot restore: size and mtime survive os.Chtimes, but any
+// write, rename or chmod moves the ctime.
 func distCacheKey(path string) (string, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%d:%d", fi.Size(), fi.ModTime().Unix()), nil
+	ctime, ino, ok := cacheKeyIdentity(fi)
+	if !ok {
+		return "", fmt.Errorf("could not read the file identity of %s", path)
+	}
+	return fmt.Sprintf("%d:%d:%d:%d", fi.Size(), fi.ModTime().Unix(), ctime, ino), nil
+}
+
+// cacheKeyIdentity reads the change time (whole seconds) and the inode out of
+// the platform's Stat_t. The field names differ (Ctimespec on Darwin, Ctim on
+// Linux, Ino on both), so they are resolved by name rather than with one
+// build-tagged file per platform. Either way the value matches stat(1), which
+// is what install.sh and bin/ai-specs compute for the same file: keeping the
+// three implementations on one format is what keeps the cache key a cache hit.
+func cacheKeyIdentity(fi os.FileInfo) (ctime int64, ino uint64, ok bool) {
+	v := reflect.ValueOf(fi.Sys())
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return 0, 0, false
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return 0, 0, false
+	}
+	// The first field that has an integer Sec, as int64.
+	seconds := func(structNames ...string) (int64, bool) {
+		for _, name := range structNames {
+			ts := v.FieldByName(name)
+			if !ts.IsValid() || ts.Kind() != reflect.Struct {
+				continue
+			}
+			sec := ts.FieldByName("Sec")
+			if !sec.IsValid() {
+				continue
+			}
+			switch sec.Kind() {
+			case reflect.Int, reflect.Int32, reflect.Int64:
+				return sec.Int(), true
+			}
+		}
+		return 0, false
+	}
+	ctime, ok = seconds("Ctimespec", "Ctim")
+	if !ok {
+		return 0, 0, false
+	}
+	inode := v.FieldByName("Ino")
+	switch inode.Kind() {
+	case reflect.Uint, reflect.Uint32, reflect.Uint64:
+		return ctime, inode.Uint(), true
+	case reflect.Int, reflect.Int32, reflect.Int64:
+		return ctime, uint64(inode.Int()), true
+	}
+	return 0, 0, false
 }
 
 // stampDistCopy records the version dist/ai-specs now holds AND the digest of
-// the bytes it holds: "<version> <sha256> <size>:<mtime>". The digest is what
-// makes the stamp proof of the binary rather than of a string, so a copy
-// replaced later is treated as absent (JD-A-005).
+// the bytes it holds: "<version> <sha256> <size>:<mtime>:<ctime>:<inode>". The
+// digest is what makes the stamp proof of the binary rather than of a string,
+// so a copy replaced later is treated as absent (JD-A-005).
 func stampDistCopy(inst Install, version string) error {
 	dist := distCopyPath(inst)
 	digest, err := Sha256File(dist)
@@ -531,7 +587,7 @@ func distStampProves(inst Install, version string) bool {
 	if err != nil || digest != fields[1] {
 		return false
 	}
-	// Same bytes, new mtime: refresh the cache key so the next run is cheap.
+	// Same bytes, new cache key: refresh it so the next run is cheap.
 	return stampDistCopy(inst, version) == nil
 }
 

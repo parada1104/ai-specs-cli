@@ -14,11 +14,13 @@ test can reach the network or a real build.
 """
 from __future__ import annotations
 import hashlib
+import math
 import os
 import shutil
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -70,6 +72,30 @@ def _tool_path(farm: Path) -> str:
         if real is not None and not (farm / name).exists():
             (farm / name).symlink_to(real)
     return str(farm)
+
+
+def _logging_tool_path(farm: Path, log: Path) -> str:
+    """`_tool_path` whose hashers and curl append their arguments to `log`.
+
+    Proves what the launcher did NOT run: a cached stamp must reach neither a
+    hash nor a download.
+    """
+    path = _tool_path(farm)
+    for name in ("shasum", "sha256sum", "curl"):
+        real = shutil.which(name)
+        if real is None:
+            continue
+        wrapper = farm / name
+        if wrapper.is_symlink() or wrapper.exists():
+            wrapper.unlink()
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            f'printf "{name} %s\\n" "$*" >> "{log}"\n'
+            f'exec "{real}" "$@"\n',
+            encoding="utf-8",
+        )
+        wrapper.chmod(0o755)
+    return path
 
 
 class _CountingServer(_Server):
@@ -286,7 +312,7 @@ class LauncherSelfHealTests(unittest.TestCase):
         self.assertEqual(
             len((self.home / "dist" / "VERSION").read_text().split()), 3,
             "the stamp binds the version to the exact bytes: "
-            "'<version> <sha256> <size>:<mtime>'")
+            "'<version> <sha256> <size>:<mtime>:<ctime>:<inode>'")
 
     # -- JD-A-005: the launcher compares real versions, never mtimes ---------
     def _stamp_version(self) -> str:
@@ -371,11 +397,12 @@ class LauncherSelfHealTests(unittest.TestCase):
         self.assertEqual(
             proc.stderr.splitlines(),
             [
-                "ai-specs: warning: installed binary reports version 0.25.0"
-                " but this checkout is 0.26.0; re-run install.sh or run"
-                " 'ai-specs upgrade' to reinstall it",
+                "ai-specs: warning: could not verify the installed binary for"
+                f" version 0.26.0 (no committed digest for {self.asset});"
+                " re-run install.sh or run 'ai-specs upgrade' to reinstall it",
             ],
-            "exactly one warning line, naming both versions and the fix",
+            "exactly one warning line, naming the version and the fix and "
+            "never a version the binary does not prove",
         )
         self.assertEqual(
             self._stamp_version(), "0.25.0",
@@ -394,9 +421,10 @@ class LauncherSelfHealTests(unittest.TestCase):
         self.assertEqual(self.dist.read_bytes(), stale)
         self.assertEqual(
             proc.stderr.splitlines(),
-            ["ai-specs: warning: installed binary reports version 0.24.0"
-             " but this checkout is 0.25.0; re-run install.sh or run"
-             " 'ai-specs upgrade' to reinstall it",
+            ["ai-specs: warning: could not verify the installed binary for"
+             f" version 0.25.0 ({self.asset} did not match the committed"
+             " digest); re-run install.sh or run 'ai-specs upgrade' to"
+             " reinstall it",
              "native-stderr"],
             "the failed refresh may not leak fetch progress or curl output",
         )
@@ -468,6 +496,55 @@ class LauncherSelfHealTests(unittest.TestCase):
             "a stamp that no longer binds the binary proves nothing",
         )
         self.assertEqual(self.dist.read_bytes(), PAYLOAD)
+
+    # -- JD-A-005 round 3: a cache key a user cannot restore ------------------
+    def _wait_past_the_second(self) -> None:
+        """Cross a ctime second boundary.
+
+        The cache key carries the ctime in whole seconds (the Go CLI, install.sh
+        and this launcher all agree on that format), and a replacement written
+        inside the same second as the stamp would keep the old ctime.
+        """
+        now = time.time()
+        time.sleep(math.floor(now) + 1.0 - now + 0.01)
+
+    def test_a_same_size_copy_with_a_restored_mtime_is_not_trusted(self):
+        # A verifier replaced the bound copy with an older binary padded to the
+        # same size and restored its mtime: size+mtime alone cannot tell them
+        # apart, so the key also carries the ctime and the inode.
+        (self.home / "VERSION").write_text("0.26.0\n", encoding="utf-8")
+        current = _versioned_payload("stale")
+        self._dist_copy("0.26.0", banner="stale")  # legacy, unbound stamp
+        (self.assets / self.asset).write_bytes(current)
+        self._trust(hashlib.sha256(current).hexdigest())
+
+        bound = self._run("version")
+        self.assertEqual(bound.returncode, 0, bound.stderr)
+        self.assertEqual(bound.stdout, "0.26.0\n")
+        self.assertEqual(self.server.requests, [],
+                         "the committed digest binds the stamp with no request")
+        mtime_ns = self.dist.stat().st_mtime_ns
+
+        self._wait_past_the_second()
+        replacement = _versioned_payload("older")
+        self.assertEqual(len(replacement), len(current),
+                         "the swap must keep the file size identical")
+        self.dist.write_bytes(replacement)
+        os.utime(self.dist, ns=(mtime_ns, mtime_ns))
+
+        log = self.base / "calls.log"
+        path = _logging_tool_path(self.base / "path-logged", log)
+        proc = self._run("probe", path=path)
+
+        self.assertEqual(self.dist.read_bytes(), current,
+                         "the swapped copy must be re-verified and replaced")
+        self.assertEqual(proc.stdout, "stale probe\n")
+        self.assertEqual(self.server.requests, ["/" + self.asset],
+                         "the bound copy is re-acquired once")
+        hashes = [line for line in log.read_text().splitlines()
+                  if str(self.dist) in line]
+        self.assertEqual(len(hashes), 1,
+                         f"the existing copy is re-hashed once: {log.read_text()}")
 
     def test_a_pinned_binary_is_never_version_checked_or_replaced(self):
         (self.home / "VERSION").write_text("0.26.0\n", encoding="utf-8")

@@ -96,6 +96,6 @@ func TestUpgradeRouteDownloadsFromTheReleaseBase(t *testing.T) {
 	}
 	fields := strings.Fields(string(stamp))
 	if len(fields) != 3 || fields[0] != "1.0.0" {
-		t.Errorf("launcher copy stamp = %q, want '<version> <sha256> <size>:<mtime>'", stamp)
+		t.Errorf("launcher copy stamp = %q, want '<version> <sha256> <size>:<mtime>:<ctime>:<inode>'", stamp)
 	}
 }

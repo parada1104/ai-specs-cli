@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // setupGitEnv pins everything git reads so the fixtures are hermetic: the
@@ -646,7 +647,7 @@ func TestLegacyUpgradeRefreshesDistCopyBeforeReportingCompletion(t *testing.T) {
 		t.Errorf("the refreshed launcher copy must stay executable: %v", err)
 	}
 	if stamp := strings.Fields(readFile(t, filepath.Join(distDir, "VERSION"))); len(stamp) != 3 || stamp[0] != "1.1.0" {
-		t.Errorf("launcher copy stamp = %v, want '<version> <sha256> <size>:<mtime>' for 1.1.0", stamp)
+		t.Errorf("launcher copy stamp = %v, want '<version> <sha256> <size>:<mtime>:<ctime>:<inode>' for 1.1.0", stamp)
 	}
 	refreshed := strings.Index(out.String(), "Refreshed launcher copy:")
 	upgraded := strings.Index(out.String(), "Upgraded: 1.0.0 -> 1.1.0")
@@ -768,5 +769,84 @@ func TestLegacyUpgradeRefreshesACopyWhoseStampBindsAnotherBinary(t *testing.T) {
 	}
 	if got := readFile(t, filepath.Join(distDir, "ai-specs")); got != string(payload) {
 		t.Errorf("a copy the stamp does not bind must be replaced:\n got: %q\n want: %q", got, payload)
+	}
+}
+
+// waitPastTheSecond crosses a ctime second boundary. The cache key the launcher,
+// install.sh and this package share carries the ctime in whole seconds, so a
+// write inside the same second as the stamp would keep the old ctime.
+func waitPastTheSecond(t *testing.T) {
+	t.Helper()
+	next := time.Now().Truncate(time.Second).Add(time.Second + 20*time.Millisecond)
+	time.Sleep(time.Until(next))
+}
+
+// JD-A-005 (round 3): the cache key must carry fields a user cannot restore.
+// Replacing the bound copy with an older binary padded to the same size and
+// putting the mtime back with os.Chtimes left size+mtime identical, so the key
+// has to include the ctime and the inode as well.
+func TestDistStampDoesNotProveASameSizeCopyWithARestoredMtime(t *testing.T) {
+	inst := Install{Home: t.TempDir(), ExpectedHome: ""}
+	if resolved, err := filepath.EvalSymlinks(inst.Home); err == nil {
+		inst.Home = resolved
+	}
+	inst.ExpectedHome = inst.Home
+	if err := os.MkdirAll(filepath.Join(inst.Home, "dist"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dist := distCopyPath(inst)
+	current := "#!/bin/sh\necho current\n"
+	writeFile(t, dist, current, 0o755)
+	if err := stampDistCopy(inst, "1.1.0"); err != nil {
+		t.Fatalf("bind the stamp: %v", err)
+	}
+	if !distStampProves(inst, "1.1.0") {
+		t.Fatal("a freshly bound stamp must prove the copy it was written for")
+	}
+	bound, err := os.Stat(dist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := distCacheKey(dist)
+	if err != nil {
+		t.Fatalf("distCacheKey: %v", err)
+	}
+	if fields := strings.Split(key, ":"); len(fields) != 4 {
+		t.Fatalf("cache key = %q, want '<size>:<mtime>:<ctime>:<inode>'", key)
+	}
+	// install.sh and bin/ai-specs compute this key with stat(1): the three
+	// implementations must agree, or every run would miss the cache.
+	statFlag, statFormat := "-c", "%s:%Y:%Z:%i"
+	if runtime.GOOS == "darwin" {
+		statFlag, statFormat = "-f", "%z:%m:%c:%i"
+	}
+	out, err := exec.Command("stat", statFlag, statFormat, dist).Output()
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != key {
+		t.Errorf("shell cache key = %q, Go cache key = %q", got, key)
+	}
+
+	waitPastTheSecond(t)
+
+	replacement := "#!/bin/sh\necho replace\n"
+	if len(replacement) != len(current) {
+		t.Fatalf("the swap must keep the size: %d != %d", len(replacement), len(current))
+	}
+	writeFile(t, dist, replacement, 0o755)
+	if err := os.Chtimes(dist, bound.ModTime(), bound.ModTime()); err != nil {
+		t.Fatalf("restore the mtime: %v", err)
+	}
+	swapped, err := os.Stat(dist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if swapped.Size() != bound.Size() || !swapped.ModTime().Equal(bound.ModTime()) {
+		t.Fatalf("the fixture must keep size and mtime: %v vs %v", swapped, bound)
+	}
+
+	if distStampProves(inst, "1.1.0") {
+		t.Errorf("a same-size copy with a restored mtime must not be proven: key %q still matches", key)
 	}
 }

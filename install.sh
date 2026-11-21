@@ -298,18 +298,21 @@ if ! chmod 0755 "$DIST_BIN"; then
 fi
 
 # Bind the launcher-copy stamp to the exact bytes that were just placed:
-# "<version> <sha256> <size>:<mtime>", the same format bin/ai-specs writes and
-# verifies (JD-A-005). A fresh install then needs no hash on its first run,
-# while a copy replaced later still fails the check.
-DIST_KEY="$(case "$(uname -s)" in
-    Darwin)
-        # %Fm carries a fraction; the launcher (and internal/upgrade) key on
-        # whole seconds, so strip it and the cache hits stay comparable.
-        _k="$(stat -f '%z:%Fm' "$DIST_BIN" 2>/dev/null || true)"
-        printf '%s' "${_k%%.*}"
-        ;;
-    *) stat -c '%s:%Y' "$DIST_BIN" 2>/dev/null || true ;;
-esac)"
+# "<version> <sha256> <size>:<mtime>:<ctime>:<inode>", the same format
+# bin/ai-specs writes and verifies (JD-A-005). A fresh install then needs no
+# hash on its first run, while a copy replaced later still fails the check.
+# A function, never a `case` inside "$(...)": macOS's Bash 3.2 mis-parses that
+# and would put shell source in the stamp while still exiting 0.
+_dist_cache_key() {
+    # The ctime and the inode are what a user cannot restore with utime: any
+    # write, rename or chmod moves the ctime, and size+mtime alone cannot tell
+    # swapped bytes of equal length apart.
+    case "$(uname -s)" in
+        Darwin) stat -f '%z:%m:%c:%i' "$1" 2>/dev/null || true ;;
+        *)      stat -c '%s:%Y:%Z:%i' "$1" 2>/dev/null || true ;;
+    esac
+}
+DIST_KEY="$(_dist_cache_key "$DIST_BIN")"
 DIST_DIGEST="$(_sha256_of "$DIST_BIN" || true)"
 if [ -n "$DIST_KEY" ] && [ -n "$DIST_DIGEST" ]; then
     printf '%s %s %s\n' "$VERSION" "$DIST_DIGEST" "$DIST_KEY" > "$DIST_HOME/dist/VERSION" || {
