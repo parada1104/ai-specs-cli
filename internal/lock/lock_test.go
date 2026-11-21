@@ -991,6 +991,43 @@ func TestMCPOwnershipRecordRoundTrip(t *testing.T) {
 	}
 }
 
+func TestLinkOwnershipRecordRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".ai-specs.lock")
+	lk := NewLock()
+	SetLink(lk, ".claude/skills", LinkMarker)
+	SetLink(lk, "CLAUDE.md", LinkMarker)
+	if err := WriteLock(path, lk); err != nil {
+		t.Fatalf("WriteLock: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[links]\n\".claude/skills\" = \"ai-specs:link\"\n\"CLAUDE.md\" = \"ai-specs:link\""
+	if !strings.Contains(string(raw), want) {
+		t.Fatalf("link records not emitted in sorted order:\n%s", raw)
+	}
+
+	loaded, err := LoadLock(path)
+	if err != nil {
+		t.Fatalf("LoadLock: %v", err)
+	}
+	if loaded.Links["CLAUDE.md"] != LinkMarker {
+		t.Fatalf("link record not loaded: %v", loaded.Links)
+	}
+
+	SetLink(loaded, "CLAUDE.md", "")
+	if _, ok := loaded.Links["CLAUDE.md"]; ok {
+		t.Fatal("an empty marker must drop the record")
+	}
+	if err := WriteLock(path, loaded); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(path); err != nil || strings.Contains(string(raw), "CLAUDE.md") {
+		t.Fatalf("dropped record still emitted: %s (%v)", raw, err)
+	}
+}
+
 func TestHookShimOwnershipRecordRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".ai-specs.lock")
 	lk := NewLock()

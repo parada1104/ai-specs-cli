@@ -275,6 +275,70 @@ class SyncAgentLeftoversTests(unittest.TestCase):
         self.assertIn("permission denied", proc.stderr)
         self.assertEqual(snapshot(self.project), before)
 
+    def test_user_links_for_never_enabled_agents_are_kept(self) -> None:
+        self.set_agents("['codex']")
+        links = {}
+        for rel in ("CLAUDE.md", "GEMINI.md", ".github/copilot-instructions.md"):
+            path = self.project / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            target = os.path.relpath(self.project / "AGENTS.md", path.parent)
+            path.symlink_to(target)
+            links[path] = target
+
+        proc = self.sync()
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(proc.stderr, "", proc.stderr)
+        self.assertNotIn("retired agent link", proc.stdout)
+        for path, target in links.items():
+            self.assertTrue(path.is_symlink(), f"{path} was deleted")
+            self.assertEqual(os.readlink(path), target)
+        self.assertNotIn("[links]", self.lock_text())
+
+    def test_sync_records_links_it_creates_and_retirement_drops_them(self) -> None:
+        self.seed()
+        lock = self.lock_text()
+        self.assertIn("[links]", lock)
+        self.assertIn('"CLAUDE.md" = "ai-specs:link"', lock)
+        self.assertIn('".claude/skills" = "ai-specs:link"', lock)
+        # No absolute path may reach the record: the lock stays identical
+        # across checkouts, worktrees and teammates.
+        self.assertNotIn(str(self.project), lock)
+        self.assertNotIn(str(self.base), lock)
+
+        self.set_agents("['pi']")
+        proc = self.sync()
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("  ✓ removed retired agent link CLAUDE.md", proc.stdout)
+        self.assertIn("  ✓ removed retired agent link .claude/skills", proc.stdout)
+        lock = self.lock_text()
+        self.assertNotIn('"CLAUDE.md"', lock)
+        self.assertNotIn('".claude/skills"', lock)
+        # The still-enabled agent keeps its own record.
+        self.assertIn('".pi/skills" = "ai-specs:link"', lock)
+
+    def test_pre_existing_user_link_is_never_claimed(self) -> None:
+        claude = self.project / "CLAUDE.md"
+        claude.symlink_to("AGENTS.md")
+        self.seed()
+        self.assertNotIn('"CLAUDE.md" = ', self.lock_text())
+        self.assertIn('".claude/skills" = "ai-specs:link"', self.lock_text())
+
+        self.set_agents("['pi']")
+        proc = self.sync()
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("removed retired agent link CLAUDE.md", proc.stdout)
+        self.assertTrue(claude.is_symlink())
+        self.assertEqual(claude.resolve(), (self.project / "AGENTS.md").resolve())
+        self.assertFalse((self.project / ".claude/skills").is_symlink())
+        self.assertRegex(
+            proc.stderr,
+            r"(?m)^  ! CLAUDE\.md: retired agent link\(s\) not recorded as "
+            r"ai-specs-managed \(kept; delete them if ai-specs did not write them\)$",
+        )
+
     def test_retired_command_notice_does_not_repeat(self) -> None:
         self.seed()
         self.set_agents("['pi']")

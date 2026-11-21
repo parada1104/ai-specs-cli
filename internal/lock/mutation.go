@@ -148,3 +148,20 @@ func RemoveDepLockEntries(lock *Lock, depID string) bool {
 }
 
 func strPtr(s string) *string { return &s }
+
+// LinkMarker is the constant value a [links] record carries: the path itself
+// says which link it is, and the expected target is recomputed at sync time.
+const LinkMarker = "ai-specs:link"
+
+// SetLink records that the link at path was created or replaced by sync; an
+// empty marker drops the record.
+func SetLink(lock *Lock, path, marker string) {
+	if lock.Links == nil {
+		lock.Links = map[string]string{}
+	}
+	if marker == "" {
+		delete(lock.Links, path)
+		return
+	}
+	lock.Links[path] = marker
+}

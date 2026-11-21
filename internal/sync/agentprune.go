@@ -80,6 +80,12 @@ type agentLeftoverPlan struct {
 	commands           []retiredCommand
 	mcp                []retiredMCP
 	kept               []string
+	// dropLinks holds recorded links that are no longer the link ai-specs
+	// wrote: dropping a record only removes deletion authority.
+	dropLinks []string
+	// legacyLinks holds one notice per retired agent naming the links that
+	// carry no record (created before 0.26): they are never auto-deleted.
+	legacyLinks map[string][]string
 	// unrecorded holds the per-agent "not recorded as ai-specs-managed"
 	// notices; planned holds the agents this plan still has something to prune
 	// for. The notice belongs to the retirement in progress, so it is only
@@ -118,15 +124,67 @@ func planRetiredAgentLeftovers(root, home string, paths []string) ([]string, fun
 		unrecorded:  map[string][]string{},
 		planned:     map[string]bool{},
 		dropManaged: map[string]bool{},
+		legacyLinks: map[string][]string{},
 	}
-	for _, target := range paths {
-		for _, agent := range retired {
+	var live []string
+	for _, agent := range retired {
+		if !p.agentHasRecords(lk, paths, agent) {
+			// A project that never enabled this agent has nothing of ours to
+			// retire: its user-made links stay, silently.
+			continue
+		}
+		live = append(live, agent)
+		for _, target := range paths {
 			if err := p.addAgent(lk, target, agent); err != nil {
 				return nil, noop, err
 			}
 		}
 	}
-	return retired, p.apply, nil
+	return live, p.apply, nil
+}
+
+// agentHasRecords reports whether the lock holds any record attributable to
+// agent: a link, command copy, MCP target or hook shim sync created for it.
+// Without one, an agent missing from [agents].enabled is indistinguishable from
+// one the project never enabled, so it is not retired (S4).
+func (p *agentLeftoverPlan) agentHasRecords(lk *lock.Lock, paths []string, agent string) bool {
+	under := func(rel, dir string) bool {
+		return rel == dir || strings.HasPrefix(rel, dir+"/")
+	}
+	for _, target := range paths {
+		for _, field := range []string{"instructions_path", "skills_dir"} {
+			rel, _ := platformGet(agent, field)
+			if rel == "" {
+				continue
+			}
+			if _, ok := lk.Links[p.rel(filepath.Join(target, rel))]; ok {
+				return true
+			}
+		}
+		if rel, _ := platformGet(agent, "mcp_config_path"); rel != "" {
+			if _, ok := lk.MCP[p.rel(filepath.Join(target, rel))]; ok {
+				return true
+			}
+		}
+		for _, field := range []string{"commands_dir", "runtime_hooks_target"} {
+			rel, _ := platformGet(agent, field)
+			if rel == "" {
+				continue
+			}
+			dir := p.rel(filepath.Join(target, rel))
+			for key, rec := range lk.Managed {
+				if under(key, dir) && rec["kind"] == RecipeCommandKind {
+					return true
+				}
+			}
+			for key := range lk.Hooks {
+				if under(key, dir) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // addAgent plans one retired agent's artifacts under one target.
@@ -137,8 +195,13 @@ func (p *agentLeftoverPlan) addAgent(lk *lock.Lock, target, agent string) error 
 			continue
 		}
 		path := filepath.Join(target, rel)
+		linkRel := p.rel(path)
+		recorded := lk.Links[linkRel] == lock.LinkMarker
 		info, err := os.Lstat(path)
 		if os.IsNotExist(err) {
+			if recorded {
+				p.dropLinks = append(p.dropLinks, linkRel)
+			}
 			continue
 		}
 		if err != nil {
@@ -146,10 +209,14 @@ func (p *agentLeftoverPlan) addAgent(lk *lock.Lock, target, agent string) error 
 		}
 		if info.Mode()&os.ModeSymlink == 0 {
 			// A real file or directory here is the user's: ai-specs never writes
-			// one at these paths (it refuses at the skills path, T6).
+			// one at these paths (it refuses at the skills path, T6). A stale
+			// record must not license deleting a link later written there.
+			if recorded {
+				p.dropLinks = append(p.dropLinks, linkRel)
+			}
 			continue
 		}
-		link := retiredLink{root: p.root, path: path, rel: p.rel(path), info: info}
+		link := retiredLink{root: p.root, path: path, rel: linkRel, info: info}
 		if field == "instructions_path" {
 			link.want = filepath.Join(target, "AGENTS.md")
 		} else if target == p.root {
@@ -157,7 +224,15 @@ func (p *agentLeftoverPlan) addAgent(lk *lock.Lock, target, agent string) error 
 		} else {
 			link.want = filepath.Join(target, "ai-specs", "skills")
 		}
+		// Only a link the lock records as sync's own may be retired (S4); one
+		// that predates 0.26 is kept and named once.
+		if lk.Links[link.rel] != lock.LinkMarker {
+			p.legacyLinks[agent] = append(p.legacyLinks[agent], link.rel)
+			continue
+		}
 		if !link.ours() {
+			// Repointed or replaced since sync wrote it: the user's now.
+			p.dropLinks = append(p.dropLinks, link.rel)
 			continue
 		}
 		if err := projectWriteGuard(p.root, path, false); err != nil {
@@ -337,6 +412,11 @@ func (p *agentLeftoverPlan) apply(out, errW io.Writer) error {
 			fmt.Fprintf(errW, "  ! %s\n", kept)
 		}
 	}
+	// Links without a record predate 0.26: sync never owned them, so they stay
+	// and one notice names them.
+	for _, agent := range slices.Sorted(maps.Keys(p.legacyLinks)) {
+		fmt.Fprintf(errW, "  ! %s: retired agent link(s) not recorded as ai-specs-managed (kept; delete them if ai-specs did not write them)\n", strings.Join(p.legacyLinks[agent], ", "))
+	}
 	// Every MCP target is re-validated first: its render may still refuse (a
 	// target edited since the plan) and a refusal must precede every delete.
 	for _, item := range p.mcp {
@@ -364,6 +444,12 @@ func (p *agentLeftoverPlan) apply(out, errW io.Writer) error {
 	lockErr := applyLockRecord(p.lockPath, func(lk *lock.Lock) {
 		for rel := range p.dropManaged {
 			delete(lk.Managed, rel)
+		}
+		for _, rel := range p.dropLinks {
+			lock.SetLink(lk, rel, "")
+		}
+		for _, link := range p.links {
+			lock.SetLink(lk, link.rel, "")
 		}
 		for _, item := range p.mcp {
 			if !item.done {

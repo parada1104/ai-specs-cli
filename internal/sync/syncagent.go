@@ -929,14 +929,18 @@ func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 	}
 
 	// Instructions: a RELATIVE symlink to the target AGENTS.md.
+	links := map[string]bool{}
 	if instr, _ := platformGet(agent, "instructions_path"); instr != "" {
-		if rc, refused := makeRelativeSymlinkWithRefusal(a.sourceRoot, filepath.Join(a.targetPath, "AGENTS.md"), filepath.Join(a.targetPath, instr), out, errW); rc != 0 {
+		instrPath := filepath.Join(a.targetPath, instr)
+		if rc, refused, created := makeRelativeSymlinkWithRefusal(a.sourceRoot, filepath.Join(a.targetPath, "AGENTS.md"), instrPath, out, errW); rc != 0 {
 			if refused {
 				fmt.Fprintln(errW, "    → move or delete the file above, then re-run sync")
 				a.blockedInstructions = append(a.blockedInstructions, agent)
 				return 0
 			}
 			return rc
+		} else if created {
+			links[instrPath] = true
 		}
 	}
 
@@ -946,9 +950,19 @@ func (a *agentRun) syncOneAgent(agent string, out, errW io.Writer) int {
 	// where writeSymlinkWithRefusal relinks a stale or dangling one in place.
 	if skillsDir, _ := platformGet(agent, "skills_dir"); skillsDir != "" {
 		skillsLink := filepath.Join(a.targetPath, skillsDir)
-		if rc := makeSkillsSymlink(a.sourceRoot, a.skillsSource, skillsLink, out, errW); rc != 0 {
+		rc, created := makeSkillsSymlink(a.sourceRoot, a.skillsSource, skillsLink, out, errW)
+		if rc != 0 {
 			return rc
 		}
+		if created {
+			links[skillsLink] = true
+		}
+	}
+	// S4 (B-001): only a link sync itself created or replaced is recorded as
+	// ai-specs-owned; an existing link that already matched stays the user's.
+	if err := a.recordLinks(links); err != nil {
+		fmt.Fprintln(errW, err)
+		return 1
 	}
 
 	// MCP: rendered per server (S5) whenever the manifest declares servers; with
@@ -1016,6 +1030,25 @@ func (a *agentRun) recordHookShims(shims map[string]string) error {
 		return nil
 	}
 	return lock.WriteLock(lockPath, lk)
+}
+
+// recordLinks records, project-relatively, the links this agent run created or
+// replaced (S4). A link that already matched is never recorded, so a user-made
+// CLAUDE.md → AGENTS.md stays user-owned.
+func (a *agentRun) recordLinks(links map[string]bool) error {
+	if len(links) == 0 {
+		return nil
+	}
+	lockPath := filepath.Join(a.sourceRoot, bundledLockRel)
+	return applyLockRecord(lockPath, func(lk *lock.Lock) {
+		for path := range links {
+			rel, err := filepath.Rel(a.sourceRoot, path)
+			if err != nil {
+				continue
+			}
+			lock.SetLink(lk, filepath.ToSlash(rel), lock.LinkMarker)
+		}
+	})
 }
 
 // syncMCP renders one agent's MCP config with the lock's per-target server
@@ -1408,12 +1441,13 @@ func argValue(args []string, i *int) (string, bool) {
 // ── Symlink helpers (lib/sync-agent.sh:318-355) ───────────────────────────
 
 // makeSkillsSymlink links with an ABSOLUTE realpath target: cache-backed
-// resolved skills live out of tree.
-func makeSkillsSymlink(projectRoot, targetAbs, linkPath string, out, errW io.Writer) int {
+// resolved skills live out of tree. The bool reports whether the link was
+// created or replaced (the sole license to record it as ai-specs-owned).
+func makeSkillsSymlink(projectRoot, targetAbs, linkPath string, out, errW io.Writer) (int, bool) {
 	linkDir := filepath.Dir(linkPath)
 	if err := agentWriteGuard(projectRoot, linkPath, false); err != nil {
 		fmt.Fprintf(errW, "    ✗ %s\n", err)
-		return 1
+		return 1, false
 	}
 	if err := mkdirPMirror(linkDir); err != nil {
 		// `mkdir -p "$link_dir"` has no `|| return` in the oracle: the failure
@@ -1422,16 +1456,16 @@ func makeSkillsSymlink(projectRoot, targetAbs, linkPath string, out, errW io.Wri
 		printChildErr(errW, "mkdir", err)
 	}
 	abs := projectcache.ResolvePath(targetAbs) // os.path.realpath
-	rc, _ := writeSymlinkWithRefusal(linkPath, abs, out, errW)
-	return rc
+	rc, _, created := writeSymlinkWithRefusal(linkPath, abs, out, errW)
+	return rc, created
 }
 
 // makeRelativeSymlinkWithRefusal links relative to the link's directory and reports hard refusal on non-symlink occupancy.
-func makeRelativeSymlinkWithRefusal(projectRoot, targetAbs, linkPath string, out, errW io.Writer) (int, bool) {
+func makeRelativeSymlinkWithRefusal(projectRoot, targetAbs, linkPath string, out, errW io.Writer) (int, bool, bool) {
 	linkDir := filepath.Dir(linkPath)
 	if err := agentWriteGuard(projectRoot, linkPath, false); err != nil {
 		fmt.Fprintf(errW, "    ✗ %s\n", err)
-		return 1, false
+		return 1, false, false
 	}
 	if err := mkdirPMirror(linkDir); err != nil {
 		printChildErr(errW, "mkdir", err)
@@ -1442,34 +1476,37 @@ func makeRelativeSymlinkWithRefusal(projectRoot, targetAbs, linkPath string, out
 	rel, err := filepath.Rel(projectcache.ResolvePath(linkDir), projectcache.ResolvePath(targetAbs))
 	if err != nil {
 		fmt.Fprintf(errW, "error: %s\n", err)
-		return 1, false
+		return 1, false, false
 	}
 	return writeSymlinkWithRefusal(linkPath, rel, out, errW)
 }
 
-// writeSymlinkWithRefusal is idempotent for an existing matching link, relinks elsewhere, and refuses non-symlink occupancy.
-func writeSymlinkWithRefusal(linkPath, target string, out, errW io.Writer) (int, bool) {
+// writeSymlinkWithRefusal is idempotent for an existing matching link, relinks elsewhere, and refuses non-symlink occupancy. The bools report refusal and whether the link was created or replaced.
+func writeSymlinkWithRefusal(linkPath, target string, out, errW io.Writer) (int, bool, bool) {
 	if info, err := os.Lstat(linkPath); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
 			if existing, rerr := os.Readlink(linkPath); rerr == nil && existing == target {
 				// Noise (keep ·): idempotent success detail; filtered in
 				// compact mode.
 				fmt.Fprintf(out, "    · symlink ok      %s → %s\n", linkPath, target)
-				return 0, false
+				return 0, false, false
 			}
 			if err := os.Remove(linkPath); err != nil {
 				printChildErr(errW, "rm", err)
 			}
 		} else if _, serr := os.Stat(linkPath); serr == nil {
 			fmt.Fprintf(errW, "    ✗ refuse to overwrite non-symlink: %s\n", linkPath)
-			return 1, true
+			return 1, true, false
 		}
 	}
+	created := false
 	if err := os.Symlink(target, linkPath); err != nil {
 		printChildErr(errW, "ln", err)
+	} else {
+		created = true
 	}
 	fmt.Fprintf(out, "    ✓ symlink created %s → %s\n", linkPath, target)
-	return 0, false
+	return 0, false, created
 }
 
 // printChildErr renders a failed child-tool error the way the named coreutils
