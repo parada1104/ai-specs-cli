@@ -595,11 +595,10 @@ func distStampProves(inst Install, version string) bool {
 }
 
 // refreshLegacyDistCopy replaces a stale launcher copy with the verified
-// release asset of the version the checkout now declares (JD-A-005). The
-// launcher only acquires a missing copy or one whose reported version differs,
-// so a stale copy would keep serving the old executable after a "successful"
-// upgrade. A copy that is already stamped with the target version is left
-// alone, and an absent one is left to the launcher's own self-heal.
+// release asset of the version the checkout now declares (JD-A-005), so the
+// upgrade itself, not only the next launcher run, leaves a proven copy. A copy
+// whose stamp proves it (version + digest of its bytes, see distStampProves)
+// is left alone, and an absent one is left to the launcher's own self-heal.
 func refreshLegacyDistCopy(inst Install, env Env, version string, stdout io.Writer) error {
 	dist := distCopyPath(inst)
 	if _, err := os.Lstat(dist); err != nil {
