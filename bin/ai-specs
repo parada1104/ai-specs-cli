@@ -96,6 +96,10 @@ _expected_digest() {
 # evidence, and an empty key just means the digest is checked every run
 # (JD-A-005). The ctime and the inode are what a swap cannot put back: size and
 # mtime survive os.utime, but any write/rename/chmod moves the ctime.
+# shortcut: whole-second ctime, so an in-place same-size rewrite with mtime
+# restored inside the same second is not detected. Anyone able to do that can
+# also rewrite the stamp, so the key is a cache, not a security boundary; use
+# nanosecond ctime if accidental same-second swaps ever matter.
 _file_key() {
     local out
     case "$(uname -s)" in

@@ -486,6 +486,9 @@ func distStampPath(inst Install) string {
 // recomputed; it is never version evidence (JD-A-005). The ctime and the inode
 // are what a swap cannot restore: size and mtime survive os.Chtimes, but any
 // write, rename or chmod moves the ctime.
+// shortcut: whole-second ctime (matches the launcher); a same-size in-place
+// rewrite with mtime restored within that second is not detected. The key is a
+// cache, not a security boundary (whoever can do that can rewrite the stamp).
 func distCacheKey(path string) (string, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
