@@ -1197,10 +1197,6 @@ type mcpMergePlan struct {
 	removed    []string
 	preserved  []string
 	unrecorded []string
-	// changed says the merge alters the target's content: a server is added,
-	// removed or replaced. An entry adopted because it already equals the render
-	// is managed without being changed, so the file is never rewritten for it.
-	changed bool
 	// blockSHA is the sha256 of the managed block bytes this render wrote
 	// (markers inclusive, through the end marker's newline), "" when the target
 	// keeps no block.
@@ -1215,25 +1211,18 @@ func mcpPlanMerge(desired *mcpObj, owned map[string]bool, ownedNames []string, c
 		}
 	}
 	for _, name := range desired.keys {
-		present := current.has(name)
-		if present && !mcpJSONSemanticEqual(current.vals[name], desired.vals[name]) {
-			// L4 (B-002): an unrecorded entry is adopted only when it is exactly
-			// what sync renders today (a pre-0.26 generated one). Anything else
-			// is the user's and stays byte-identical. Adoption never depends on
-			// whether the target has a record, so dropping the last managed
-			// server cannot re-arm an overwrite.
-			if !owned[name] {
-				plan.preserved = append(plan.preserved, name)
-				continue
-			}
-			plan.changed = true
-		}
-		if !present {
-			plan.changed = true
+		// L4 (B-002): an unrecorded entry is adopted only when it is exactly
+		// what sync renders today (a pre-0.26 generated one). Anything else is
+		// the user's and stays byte-identical. Adoption never depends on whether
+		// the target has a record, so dropping the last managed server cannot
+		// re-arm an overwrite.
+		if current.has(name) && !owned[name] &&
+			!mcpJSONSemanticEqual(current.vals[name], desired.vals[name]) {
+			plan.preserved = append(plan.preserved, name)
+			continue
 		}
 		plan.managed = append(plan.managed, name)
 	}
-	plan.changed = plan.changed || len(plan.removed) > 0
 	for _, name := range current.keys {
 		if !owned[name] && !desired.has(name) {
 			plan.unrecorded = append(plan.unrecorded, name)
@@ -1707,7 +1696,6 @@ func mcpMergeIntoTOML(targetPath, mcpKey string, desired *mcpObj, owned map[stri
 			plan.removed = append(plan.removed, name)
 		}
 	}
-	plan.changed = len(plan.managed) > 0 || len(plan.removed) > 0
 	if !block.present && len(plan.managed) == 0 {
 		// Nothing to write and nothing to prune: never touch the file.
 		return text, plan, nil
@@ -1998,12 +1986,11 @@ func RenderMCPFile(tomlPath, agent, targetPath, mcpKey string, opts RenderMCPOpt
 	}
 	// A corrupt target is regenerated only when ai-specs owns something there.
 	regenerate := invalid != nil && len(ownedNames) > 0
-	if !plan.changed && !regenerate {
+	if len(plan.managed) == 0 && len(plan.removed) == 0 && !regenerate {
 		// Nothing to add, update or drop: an untouched user file stays untouched.
-		// A server adopted because it already equals the render is recorded in
-		// the lock, but rewriting the file for it would reformat its neighbours'
-		// bytes. The caller owns the "no [mcp.*] entries" line for an existing
-		// target.
+		// An adopted entry is a managed one, so it is rewritten and reported like
+		// before; its preserved neighbours keep their bytes through the raw emit.
+		// The caller owns the "no [mcp.*] entries" line for an existing target.
 		return 0
 	}
 

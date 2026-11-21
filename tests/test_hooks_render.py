@@ -323,8 +323,7 @@ class HooksRenderTests(_HookFixtureMixin):
 
     def test_adoption_preserves_neighboring_user_entry_bytes(self):
         """L4 (B-002): adopting an entry that already equals the render records
-        it without rewriting the file, so a neighbouring user server keeps its
-        exact bytes."""
+        it, while a neighbouring user server keeps its exact bytes."""
         self.seed_recipe(RECIPE_SHELL, "shell-gate")
         self.write_manifest("claude")
         manifest = self.root / "ai-specs/ai-specs.toml"
@@ -352,6 +351,24 @@ class HooksRenderTests(_HookFixtureMixin):
         target.write_bytes(original)
         self.assertIn('preserved user MCP server "foo"', self.sync().stderr)
         self.assertEqual(target.read_bytes(), original)
+
+    def test_managed_mcp_resync_still_normalizes_and_reports(self):
+        """L4 (B-002): adoption must not turn a managed re-sync into a no-op, so
+        a compact managed target is still normalized and reported."""
+        self.seed_recipe(RECIPE_SHELL, "shell-gate")
+        self.write_manifest("claude")
+        with (self.root / "ai-specs/ai-specs.toml").open("a") as f:
+            f.write("\n[mcp.foo]\ncommand='cmd-a'\n")
+        self.sync()
+        target = self.root / ".mcp.json"
+        canonical = target.read_bytes()
+        target.write_bytes(
+            b'{"mcpServers":{"foo":{"env":{},"command":"cmd-a","args":[]}}}\n'
+        )
+        result = invoke(self.root, "sync", "--verbose", cli_home=self.home)
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual(target.read_bytes(), canonical)
+        self.assertIn("  \u2713 claude \u2192 <TEMP>/.mcp.json (1 server(s))\n", result.stdout)
 
     def test_codex_mcp_collision_survives_writes_and_prune(self):
         import tomllib

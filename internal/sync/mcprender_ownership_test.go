@@ -971,10 +971,9 @@ command = 'cmd-a'
 
 // TestMCPOwnershipAdoptionKeepsNeighborBytes pins the byte contract of L4
 // (B-002): an entry adopted because it already equals the render records
-// ownership in the lock only, so the file is never rewritten for it and a
-// preserved neighbour keeps its exact bytes.
+// ownership in the lock, while a preserved neighbour keeps its exact bytes.
 func TestMCPOwnershipAdoptionKeepsNeighborBytes(t *testing.T) {
-	t.Run("adoption alone does not write", func(t *testing.T) {
+	t.Run("adoption records the entry and keeps the neighbour bytes", func(t *testing.T) {
 		dir := t.TempDir()
 		target := filepath.Join(dir, ".mcp.json")
 		user := `{ "command" : "user-cmd" }`
@@ -993,11 +992,12 @@ func TestMCPOwnershipAdoptionKeepsNeighborBytes(t *testing.T) {
 		if got := mcpManagedNames(res); strings.Join(got, ",") != "same" {
 			t.Errorf("managed = %v, want [same]", got)
 		}
-		if res.Wrote {
-			t.Errorf("adoption rewrote the target")
+		text := mcpReadTarget(t, target)
+		if !strings.Contains(text, user) {
+			t.Errorf("preserved neighbour was reformatted:\n%s", text)
 		}
-		if got := mcpReadTarget(t, target); got != original {
-			t.Errorf("target bytes changed:\n--- got ---\n%s\n--- want ---\n%s", got, original)
+		if !strings.Contains(text, `"same": {`) {
+			t.Errorf("adopted server was not rendered canonically:\n%s", text)
 		}
 	})
 
