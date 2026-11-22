@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.26.0] — 2026-11-20
+## [0.26.1] — 2026-11-22
+
+First published release of the 0.26 line. The `v0.26.0` tag exists but was never
+released: its release workflow failed before publishing any asset. Upgrading
+from 0.25.x replays the [0.26.0] upgrade notes below.
+
+### Fixed
+- **The worktree gate's ledger contract test no longer depends on the host's
+  `init.defaultBranch`.** Its fixture repository now starts on `main`
+  explicitly, so the release workflow passes on runners whose git defaults to
+  `master`.
+
+## [0.26.0] — 2026-11-20 (tagged, not released)
 
 ### Upgrade notes
 After upgrading, run `ai-specs sync` in each project to refresh hook launchers.
