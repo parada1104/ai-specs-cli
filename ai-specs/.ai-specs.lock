@@ -6,8 +6,8 @@
 # detection; recipe/skill content hashes are not tracked.
 
 [meta]
-cli_version = "0.25.2"
-synced_at = "2026-11-20T06:19:22Z"
+cli_version = "0.26.2"
+synced_at = "2026-11-22T22:50:13Z"
 
 [managed.".claude/commands/pr-create.md"]
 sha256 = "709a703204ad4437a24f7f5a4bc9ca47e2101ca6e6f081c9c96916813dda963d"
@@ -143,7 +143,7 @@ kind = "doc"
 policy = "auto"
 
 [managed."ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh"]
-sha256 = "c31da5ea686c63ac5f96cdef7013fae102acce73efc5e0ada4e2cb4c4bc08d68"
+sha256 = "41fb987666f088f1c21b0edad5486b173b1ae6ff5341538d7a837e62a560d954"
 recipe = "trello-mcp-workflow"
 source = "hooks/tracker-card-gate.sh"
 kind = "gate"
@@ -241,6 +241,15 @@ policy = "auto"
 ".pi/extensions/trello-mcp-workflow-tracker-card-gate.ts" = "ai-specs:hooks:trello-mcp-workflow:tracker-card-gate"
 ".pi/extensions/worktree-flow-worktree-gate-shell.ts" = "ai-specs:hooks:worktree-flow:worktree-gate-shell"
 ".pi/extensions/worktree-flow-worktree-gate.ts" = "ai-specs:hooks:worktree-flow:worktree-gate"
+
+[links]
+".claude/skills" = "ai-specs:link"
+".cursor/skills" = "ai-specs:link"
+".omp/AGENTS.md" = "ai-specs:link"
+".omp/skills" = "ai-specs:link"
+".opencode/skills" = "ai-specs:link"
+".pi/skills" = "ai-specs:link"
+"CLAUDE.md" = "ai-specs:link"
 
 [mcp.".cursor/mcp.json"]
 "trello" = "eb68820fa591fc8e20752a6e9dbc343b42ced7a9be1c7b6f2a0e14f2aa5bf41a"
