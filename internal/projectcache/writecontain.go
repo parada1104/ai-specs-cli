@@ -75,6 +75,10 @@ func isContainmentRefusal(err error) bool {
 	return errors.As(err, &r)
 }
 
+// evalSymlinks is a test seam: containment races can only be reproduced by
+// interleaving the real resolution, not by planting another symlink.
+var evalSymlinks = filepath.EvalSymlinks
+
 // ResolveWriteTarget reports where a write to path would land: an existing
 // symlink (leaf or ancestor) resolves to its target, and a not-yet-existing
 // tail is re-joined onto the deepest existing ancestor. A link that exists but
@@ -88,11 +92,14 @@ func ResolveWriteTarget(path string) (string, error) {
 	cur := filepath.Clean(path)
 	var tail []string
 	for {
-		resolved, err := filepath.EvalSymlinks(cur)
+		resolved, err := evalSymlinks(cur)
 		if err == nil {
 			return filepath.Join(append([]string{resolved}, tail...)...), nil
 		}
-		if _, lerr := os.Lstat(cur); lerr == nil {
+		info, lerr := os.Lstat(cur)
+		if lerr == nil && info.Mode()&os.ModeSymlink != 0 {
+			// Only a link that exists and cannot resolve is broken; a plain
+			// component is just gone, or was recreated by a concurrent run.
 			return "", err
 		}
 		parent := filepath.Dir(cur)
