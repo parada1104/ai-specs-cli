@@ -28,7 +28,7 @@ func TestTrackerLedgerUnboundWitnessIsNotInPlay(t *testing.T) {
 	assertChecks(t, d, []Check{})
 }
 
-// A bound witness keeps the ledger in play: no verified gate is still an ERROR.
+// A bound witness keeps the ledger in play: a missing installed CLI is still an ERROR.
 func TestTrackerLedgerBoundWitnessStaysInPlay(t *testing.T) {
 	d := New(gitRootWithWitness(t, "bound"), t.TempDir())
 	d.checkTrackerLedger()
@@ -37,8 +37,8 @@ func TestTrackerLedgerBoundWitnessStaysInPlay(t *testing.T) {
 			"work-start is unhosted: enable plan-build-flow to grade that checkpoint",
 			"enable the plan-build-flow recipe, or grade work-start with an explicit --write"},
 		{ERROR, "tracker-ledger",
-			"no verified worktree-gate binary; the tracker ledger is failing open",
-			"run ai-specs sync or ai-specs sync --refresh-gates"},
+			"ai-specs CLI is missing or not executable; the tracker ledger is failing open",
+			"reinstall ai-specs via install.sh"},
 	})
 }
 
@@ -48,7 +48,7 @@ func TestTrackerLedgerAmbiguousWitnessStaysInPlay(t *testing.T) {
 	d.checkTrackerLedger()
 	assertChecks(t, d, []Check{
 		{ERROR, "tracker-ledger",
-			"no verified worktree-gate binary; the tracker ledger is failing open",
-			"run ai-specs sync or ai-specs sync --refresh-gates"},
+			"ai-specs CLI is missing or not executable; the tracker ledger is failing open",
+			"reinstall ai-specs via install.sh"},
 	})
 }

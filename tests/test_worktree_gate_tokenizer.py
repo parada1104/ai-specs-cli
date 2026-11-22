@@ -18,15 +18,12 @@ Three assertions run per case:
 3. ValueError in the reference maps to error=true in the Go binary (the
    fail-open verdict pass1 depends on), and a clean parse maps to error=false.
 
-The Go half skips loudly when no binary is built yet (task 1.17 / 1.22); the
-Python pinning half always runs, so the corpus keeps guarding the reference
-on machines without Go. Build with scripts/build-gate.sh, which emits
-dist/worktree-gate-<goos>-<goarch>.
+The Go half invokes the importable runner through the ai-specs CLI; the
+Python pinning half independently guards the reference corpus.
 """
 from __future__ import annotations
 
 import json
-import platform
 import shlex
 import subprocess
 import sys
@@ -35,23 +32,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CORPUS = ROOT / "tests/fixtures/worktree-gate-tokenizer-corpus.json"
-BINARY_GLOBS = sorted(ROOT.glob("dist/worktree-gate-*"))
 
 
-def find_binary() -> Path | None:
-    """Locate a built Go gate binary, preferring the current platform.
-
-    scripts/build-gate.sh emits dist/worktree-gate-<goos>-<goarch>; the
-    differential runner keys off those real build outputs so the Go half
-    activates exactly when a binary exists.
-    """
-    system = platform.system().lower()
-    machine = platform.machine().lower()
-    want = f"worktree-gate-{system}-{machine}"
-    for binary in BINARY_GLOBS:
-        if binary.name == want:
-            return binary
-    return BINARY_GLOBS[0] if BINARY_GLOBS else None
+def find_binary() -> Path:
+    """Return the shared CLI wrapper that routes to worktree-gate."""
+    from tests.gate_cli import gate_command
+    return gate_command()
 
 
 def reference_tokens(cmd: str) -> tuple[list[str], bool]:
@@ -102,10 +88,6 @@ class TokenizerDifferentialTests(unittest.TestCase):
 
     def test_go_tokenizer_matches_reference_token_for_token(self):
         binary = find_binary()
-        if binary is None:
-            self.skipTest(
-                "no Go gate binary in dist/ (run scripts/build-gate.sh); "
-                "Python-vs-corpus half still ran")
         for case in load_corpus():
             with self.subTest(cmd=case["cmd"]):
                 tokens, ok = reference_tokens(case["cmd"])
@@ -123,8 +105,6 @@ class TokenizerDifferentialTests(unittest.TestCase):
         # --tokenize diagnostic must surface it the same way pass1 consumes
         # it — an explicit error verdict, never a corrupted token stream.
         binary = find_binary()
-        if binary is None:
-            self.skipTest("no Go gate binary in dist/")
         for case in load_corpus():
             if not case.get("error"):
                 continue

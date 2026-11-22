@@ -355,14 +355,14 @@ func TestCheckAgentCommands(t *testing.T) {
 			t.Errorf("check = %+v", d.Checks[0])
 		}
 	})
-	t.Run("stale-commands", func(t *testing.T) {
+	t.Run("user-commands-are-not-stale", func(t *testing.T) {
 		root := t.TempDir()
 		writeFile(t, filepath.Join(root, "ai-specs", "commands", "alpha.md"), "x\n")
 		writeFile(t, filepath.Join(root, ".claude", "commands", "alpha.md"), "x\n")
 		writeFile(t, filepath.Join(root, ".claude", "commands", "old.md"), "x\n")
 		d := New(root, t.TempDir())
 		d.checkAgentCommands(".claude/commands")
-		if d.Checks[0] != (Check{WARN, ".claude/commands", "1 stale command(s): old.md", "run ai-specs sync"}) {
+		if d.Checks[0] != (Check{OK, ".claude/commands", "1 command(s) in sync", ""}) {
 			t.Errorf("check = %+v", d.Checks[0])
 		}
 	})
@@ -381,6 +381,19 @@ func TestCheckAgentCommands(t *testing.T) {
 			t.Errorf("check = %+v", d.Checks[0])
 		}
 	})
+}
+
+func TestAgentRecipeCommandExpectations(t *testing.T) {
+	d := New(t.TempDir(), t.TempDir())
+	writeFile(t, d.manifestPath(), "[project]\nname='demo'\n[recipes.demo]\nenabled=false\n")
+	writeFile(t, filepath.Join(d.Home, "catalog/recipes/demo/recipe.toml"), "[recipe]\nid='demo'\nname='Demo'\ndescription='Fixture'\nversion='1.0.0'\n[provides]\ncommands=[{id='retired', path='retired.md'}]\n")
+	const dir = ".claude/commands"
+	writeFile(t, filepath.Join(d.Root, dir, "user.md"), "mine")
+	writeFile(t, filepath.Join(d.commandsDir(), "retired.md"), "recipe command")
+	d.checkAgentCommands(dir)
+	if want := (Check{OK, dir, "no commands configured", ""}); len(d.Checks) != 1 || d.Checks[0] != want {
+		t.Fatalf("disabled cache entry or user command was treated as managed: %+v", d.Checks)
+	}
 }
 
 // TestMdNames pins glob("*.md") semantics: dotfiles excluded, directories

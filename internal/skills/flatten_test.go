@@ -317,6 +317,39 @@ func TestFlattenDifferential(t *testing.T) {
 	}
 }
 
+// TestFlattenRefusesSymlinkedDest pins the S1 containment exception (sync
+// ownership T7 follow-up): a destination that IS a symlink is refused BEFORE
+// the wipe, because rmtree would delete the link target's contents.
+func TestFlattenRefusesSymlinkedDest(t *testing.T) {
+	root, home, _ := buildSkillTree(t)
+	outside := t.TempDir()
+	writeFileT(t, filepath.Join(outside, "keep.md"), "keep\n")
+	dest := filepath.Join(projectcache.CacheRoot(root, home), "resolved-skills")
+	symlinkT(t, outside, dest)
+	t.Setenv("AI_SPECS_HOME", home)
+
+	var stdout, stderr bytes.Buffer
+	if rc := Flatten(root, dest, "", &stdout, &stderr); rc != 1 {
+		t.Fatalf("rc = %d, want 1", rc)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "destination is a symlink") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatalf("read outside dir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "keep.md" {
+		t.Fatalf("outside target changed: %v", entries)
+	}
+	if data, err := os.ReadFile(filepath.Join(outside, "keep.md")); err != nil || string(data) != "keep\n" {
+		t.Fatalf("outside file = %q, %v", data, err)
+	}
+}
+
 // TestFlattenRequiresHome pins the S6 accepted deviation: Python falls back to
 // its module repo root when AI_SPECS_HOME is unset; the port fails loudly.
 func TestFlattenRequiresHome(t *testing.T) {

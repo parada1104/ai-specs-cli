@@ -1331,31 +1331,31 @@
     },
     {
      "id": "obsidian-markdown",
-     "path": "skills/obsidian-markdown",
+     "path": "plugins/obsidian/skills/obsidian-markdown",
      "source": "dep",
      "url": "https://github.com/kepano/obsidian-skills.git"
     },
     {
      "id": "obsidian-bases",
-     "path": "skills/obsidian-bases",
+     "path": "plugins/obsidian/skills/obsidian-bases",
      "source": "dep",
      "url": "https://github.com/kepano/obsidian-skills.git"
     },
     {
      "id": "json-canvas",
-     "path": "skills/json-canvas",
+     "path": "plugins/obsidian/skills/json-canvas",
      "source": "dep",
      "url": "https://github.com/kepano/obsidian-skills.git"
     },
     {
      "id": "obsidian-cli",
-     "path": "skills/obsidian-cli",
+     "path": "plugins/obsidian/skills/obsidian-cli",
      "source": "dep",
      "url": "https://github.com/kepano/obsidian-skills.git"
     },
     {
      "id": "defuddle",
-     "path": "skills/defuddle",
+     "path": "plugins/obsidian/skills/defuddle",
      "source": "dep",
      "url": "https://github.com/kepano/obsidian-skills.git"
     }
@@ -1449,7 +1449,7 @@
        "auto",
        "go"
       ],
-      "help_text": "Worktree gate implementation: auto (use the Go binary when the CLI can provide it) or go (explicit Go pin). Both acquire the verified binary and fail open with a doctor ERROR when none resolves. The bash value has been removed.",
+      "help_text": "Worktree gate implementation: auto (default) and go both use the installed CLI's worktree-gate command. If the CLI cannot serve it, the launcher fails open and doctor reports an ERROR. The bash value has been removed.",
       "type": "string",
       "validation": {}
      },

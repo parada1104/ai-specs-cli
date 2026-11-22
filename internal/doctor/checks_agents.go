@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"ai-specs.dev/ai-specs/internal/sync"
 	"ai-specs.dev/ai-specs/internal/toml"
 )
 
@@ -197,8 +198,7 @@ func (d *Doctor) checkSkillsSymlink(name, skillsPath string) {
 }
 
 // checkAgentCommands is the commands branch of _check_agent_outputs. Expected
-// = hand-authored ai-specs/commands/ ∪ cache commands/ ∪ CLI-bundled cache
-// commands (all three are CLI-driven or merge inputs).
+// commands come from project sources, enabled recipes and the bundled cache.
 func (d *Doctor) checkAgentCommands(name string) {
 	commandsPath := filepath.Join(d.Root, name)
 	if !isDir(commandsPath) {
@@ -211,8 +211,14 @@ func (d *Doctor) checkAgentCommands(name string) {
 			expected[k] = true
 		}
 	}
-	for k := range d.cacheCommandNames() {
-		expected[k] = true
+	if live, err := sync.RecipeCommandNames(d.Root, d.Home); err == nil {
+		for k := range live {
+			expected[k] = true
+		}
+	} else {
+		for k := range d.cacheCommandNames() {
+			expected[k] = true
+		}
 	}
 	for k := range d.bundledCacheCommandNames() {
 		expected[k] = true
@@ -220,9 +226,20 @@ func (d *Doctor) checkAgentCommands(name string) {
 	actual := mdNames(commandsPath)
 	missing := setDiff(expected, actual)
 	extra := setDiff(actual, expected)
+	known, managed := sync.StaleRecipeCommandNames(d.Root, d.Home), d.loadManagedOverrides()
+	for _, file := range sortedSet(extra) {
+		rel := filepath.Join(name, file)
+		if managed[rel]["kind"] == sync.RecipeCommandKind {
+			continue
+		}
+		if known[file] && managed[rel] == nil {
+			d.add(WARN, "commands", sync.StaleRecipeCommandWarning(rel))
+		}
+		delete(extra, file)
+	}
 
 	switch {
-	case len(actual) == 0 && len(expected) == 0:
+	case len(expected) == 0 && len(extra) == 0:
 		d.add(OK, name, "no commands configured")
 	case len(actual) == 0:
 		d.add(WARN, name, "directory empty", "ai-specs sync to populate")
@@ -235,7 +252,7 @@ func (d *Doctor) checkAgentCommands(name string) {
 			fmt.Sprintf("%d stale command(s): %s", len(extra), strings.Join(sortedSet(extra), ", ")),
 			"run ai-specs sync")
 	default:
-		d.add(OK, name, fmt.Sprintf("%d command(s) in sync", len(actual)))
+		d.add(OK, name, fmt.Sprintf("%d command(s) in sync", len(expected)))
 	}
 }
 

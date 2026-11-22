@@ -11,11 +11,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"ai-specs.dev/ai-specs/internal/hub"
 	"ai-specs.dev/ai-specs/internal/sync"
 	"ai-specs.dev/ai-specs/internal/tty"
 	"ai-specs.dev/ai-specs/internal/upgrade"
+	"ai-specs.dev/worktree-gate/runner"
 )
 
 // routeKind classifies a dispatcher decision.
@@ -60,6 +63,7 @@ const (
 	routeHook                               // native: the `hook` family remainder — usage/help/unknown (GO-20 U2e U-F2a)
 	routeHookField                          // native: `hook field`, JSON value reader for plan-build-gate.sh (GO-20 U2e U-F2a)
 	routeHookNormalizePath                  // native: `hook normalize-path`, canonical hook target (GO-20 U2e U-F2a)
+	routeWorktreeGate                       // direct passthrough to the importable worktree-gate runner
 	routeUnknown                            // unknown command: usage error, exit 2
 )
 
@@ -100,13 +104,14 @@ var native = map[string]route{
 	"hub":                 {kind: routeHub},
 	// init is native for the classic path and delegates the wizard to the shim
 	// itself (odd/tasks/go-20-u4-init.md S6).
-	"init":      {kind: routeInit},
-	"version":   {kind: routeVersion},
-	"-v":        {kind: routeVersion},
-	"--version": {kind: routeVersion},
-	"help":      {kind: routeHelp},
-	"-h":        {kind: routeHelp},
-	"--help":    {kind: routeHelp},
+	"init":          {kind: routeInit},
+	"version":       {kind: routeVersion},
+	"-v":            {kind: routeVersion},
+	"--version":     {kind: routeVersion},
+	"help":          {kind: routeHelp},
+	"-h":            {kind: routeHelp},
+	"--help":        {kind: routeHelp},
+	"worktree-gate": {kind: routeWorktreeGate},
 }
 
 // Route resolves the dispatcher decision for args. Bare invocation (no args)
@@ -230,6 +235,12 @@ func Route(args []string) route {
 func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) int {
 	r := Route(args)
 	switch r.kind {
+	case routeWorktreeGate:
+		version := "unknown"
+		if data, err := os.ReadFile(filepath.Join(home, "VERSION")); err == nil {
+			version = strings.TrimRight(string(data), "\r\n")
+		}
+		return runner.Run(args[1:], stdin, stdout, stderr, version)
 	case routeVersion:
 		if len(args) > 1 {
 			fmt.Fprintf(stderr, "ERROR: unexpected positional argument: %s\n", args[1])
@@ -265,11 +276,7 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		if len(rest) > 0 {
 			rest = rest[1:]
 		}
-		return upgrade.Run(rest, upgrade.Env{
-			Home:       home,
-			UserHome:   os.Getenv("HOME"),
-			Executable: selfPath(),
-		}, stdout, stderr)
+		return upgrade.Run(rest, upgradeEnv(home), stdout, stderr)
 	case routeHub:
 		rest := args
 		if len(rest) > 0 {
@@ -408,6 +415,19 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 // instead of printing its frozen message (GO-20 U3a-fix).
 func isTTY(stdin io.Reader, stdout io.Writer) bool {
 	return tty.IsTTY(stdin, stdout)
+}
+
+// upgradeEnv resolves the process environment the upgrade engine runs against.
+// AI_SPECS_RELEASE_BASE is honored here exactly as the launcher's self-heal
+// honors it: without this the dist refresh always hit the default GitHub URL,
+// even when the install came from a mirror or a local release base (JD-A-005).
+func upgradeEnv(home string) upgrade.Env {
+	return upgrade.Env{
+		Home:        home,
+		UserHome:    os.Getenv("HOME"),
+		Executable:  selfPath(),
+		ReleaseBase: os.Getenv("AI_SPECS_RELEASE_BASE"),
+	}
 }
 
 // selfPath is the running dispatcher's own absolute path, exported to shimmed

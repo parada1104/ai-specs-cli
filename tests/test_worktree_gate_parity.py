@@ -7,9 +7,7 @@ the fixture in a temp dir, substitutes placeholders ({repo}, {worktree},
 {external}) into the event, and asserts the exit-code contract — plus the
 exact stderr message when the case pins one.
 
-Skip loudly only when the Go binary is absent (`dist/worktree-gate-current`).
-Never skip because a Bash reference is missing; the retired script is not
-an oracle.
+Uses the shared CLI build helper; never relies on a standalone gate binary.
 """
 from __future__ import annotations
 
@@ -21,7 +19,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARY = ROOT / "dist" / "worktree-gate-current"
+from tests.gate_cli import gate_command
 CORPUS = ROOT / "tests/fixtures/worktree-gate-corpus"
 
 STAMPED_MODE = "always"
@@ -29,18 +27,9 @@ STAMPED_SCOPE = "auto"
 STAMPED_TOPOLOGY = "auto"
 
 
-def require_go_binary() -> Path:
-    if not BINARY.is_file():
-        raise unittest.SkipTest(
-            "no Go gate binary in dist/ (run scripts/build-gate.sh); "
-            "parity is Go-only and does not skip because a Bash reference is missing"
-        )
-    return BINARY
-
-
 def run_go(event: dict | None, stdin_text: str | None,
            cwd: Path) -> subprocess.CompletedProcess:
-    binary = require_go_binary()
+    binary = gate_command()
     return subprocess.run(
         [str(binary), "--gate-mode", STAMPED_MODE,
          "--gate-scope", STAMPED_SCOPE,
@@ -317,10 +306,8 @@ class WorktreeCwdNormalizationParityTests(unittest.TestCase):
     binary must reach the same block decision after trimming.
     """
 
-    GO_BINARY = ROOT / "dist" / "worktree-gate-current"
-
     def setUp(self):
-        require_go_binary()
+        self.go_binary = gate_command()
 
     def _fixture(self, root: Path) -> tuple[Path, Path]:
         """Protected main checkout + linked feature worktree (allowing
@@ -330,7 +317,7 @@ class WorktreeCwdNormalizationParityTests(unittest.TestCase):
 
     def _run_go(self, payload: str, cwd: Path) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [str(self.GO_BINARY), "--gate-mode", STAMPED_MODE,
+            [str(self.go_binary), "--gate-mode", STAMPED_MODE,
              "--gate-scope", STAMPED_SCOPE, "--repo-topology", STAMPED_TOPOLOGY,
              "--protected", "main development"],
             input=payload, capture_output=True, text=True, cwd=str(cwd))

@@ -24,6 +24,7 @@ from _blackbox import (
     cache_project_dir,
     invoke,
     isolated_home,
+    populate_catalog,
     snapshot,
     tree_diff,
 )
@@ -1401,17 +1402,29 @@ class CacheAwareCommandsDoctorTests(unittest.TestCase):
         )
 
     def test_cache_managed_commands_not_flagged_as_stale(self):
-        """Doctor must not flag agent commands as stale when they come from the cache."""
+        """Doctor must not flag recipe-declared commands as stale when they come from the recipe cache."""
         target = self.base / "prj"
         target.mkdir()
         ai_specs_init(target, self.home, agents=["cursor"])
-        # Populate cache with a recipe-managed command
-        cache_cmds = cache_project_dir(target, self.home) / "commands"
-        cache_cmds.mkdir(parents=True, exist_ok=True)
-        (cache_cmds / "recipe-cmd.md").write_text("# recipe command\n")
-        # Sync so agent commands dir is populated
+        # A recipe-declared command: materialize copies it into the project
+        # cache and sync records which recipe owns the agent copy. A cache
+        # file no enabled recipe declares is an unowned leftover by design
+        # and is reported as stale (tests/test_sync_commands.py pins that).
+        catalog_dir = populate_catalog(
+            self.home, "recipe-demo",
+            "[recipe]\nid = 'recipe-demo'\nname = 'Recipe demo'\n"
+            "description = 'cache command fixture'\nversion = '1.0.0'\n"
+            "[provides]\ncommands = [{id = 'recipe-cmd', path = 'recipe-cmd.md'}]\n",
+        )
+        (catalog_dir / "recipe-cmd.md").write_text("# recipe command\n")
+        toml_path = target / "ai-specs" / "ai-specs.toml"
+        toml_path.write_text(
+            toml_path.read_text() + "\n[recipes.recipe-demo]\nenabled = true\n")
+        # Sync so agent commands dir is populated from the recipe cache
         sync = invoke(target, "sync-agent", cli_home=self.home)
         self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
+        self.assertTrue((target / ".cursor/commands/recipe-cmd.md").is_file(),
+                        "the cache-managed command was not copied to the agent dir")
         result = invoke(target, "doctor", cli_home=self.home)
         cmd_lines = [
             ln for ln in result.stdout.splitlines()

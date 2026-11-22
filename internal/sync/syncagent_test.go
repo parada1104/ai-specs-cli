@@ -397,7 +397,7 @@ func TestMakeRelativeSymlinkCreatesRelativeLink(t *testing.T) {
 	}
 	link := filepath.Join(root, ".omp", "AGENTS.md")
 	var out, errOut bytes.Buffer
-	if rc, _ := makeRelativeSymlinkWithRefusal(target, link, &out, &errOut); rc != 0 {
+	if rc, _, _ := makeRelativeSymlinkWithRefusal(root, target, link, &out, &errOut); rc != 0 {
 		t.Fatalf("rc = %d, stderr=%s", rc, errOut.String())
 	}
 	if got, err := os.Readlink(link); err != nil || got != "../AGENTS.md" {
@@ -437,7 +437,7 @@ func TestMirrorDirectoryReadOnlySource(t *testing.T) {
 		})
 	})
 	var errOut bytes.Buffer
-	if rc := mirrorDirectory(src, dest, &errOut); rc != 0 {
+	if rc := mirrorDirectory(base, src, dest, &errOut); rc != 0 {
 		t.Fatalf("rc = %d, stderr=%s", rc, errOut.String())
 	}
 	data, err := os.ReadFile(filepath.Join(dest, "skill-a", "SKILL.md"))
@@ -457,12 +457,14 @@ func TestMakeRelativeSymlinkIdempotent(t *testing.T) {
 	}
 	link := filepath.Join(root, "CLAUDE.md")
 	var out bytes.Buffer
-	if rc, _ := makeRelativeSymlinkWithRefusal(target, link, &out, io.Discard); rc != 0 {
+	if rc, _, _ := makeRelativeSymlinkWithRefusal(root, target, link, &out, io.Discard); rc != 0 {
 		t.Fatalf("first rc = %d", rc)
 	}
 	out.Reset()
-	if rc, _ := makeRelativeSymlinkWithRefusal(target, link, &out, io.Discard); rc != 0 {
+	if rc, _, created := makeRelativeSymlinkWithRefusal(root, target, link, &out, io.Discard); rc != 0 {
 		t.Fatalf("second rc = %d", rc)
+	} else if created {
+		t.Fatal("an existing matching link must not be reported as created")
 	}
 	if out.String() != "    · symlink ok      "+link+" → AGENTS.md\n" {
 		t.Errorf("stdout = %q", out.String())
@@ -480,7 +482,7 @@ func TestMakeRelativeSymlinkRefusesNonSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
-	if rc, refused := makeRelativeSymlinkWithRefusal(target, link, &out, &errOut); rc != 1 || !refused {
+	if rc, refused, _ := makeRelativeSymlinkWithRefusal(root, target, link, &out, &errOut); rc != 1 || !refused {
 		t.Fatalf("rc = %d, want 1", rc)
 	}
 	if errOut.String() != "    ✗ refuse to overwrite non-symlink: "+link+"\n" {
@@ -520,7 +522,7 @@ func TestMakeRelativeSymlinkOsFailureContinues(t *testing.T) {
 	}
 	link := filepath.Join(root, ".omp", "AGENTS.md")
 	var out, errOut bytes.Buffer
-	if rc, _ := makeRelativeSymlinkWithRefusal(target, link, &out, &errOut); rc != 0 {
+	if rc, _, _ := makeRelativeSymlinkWithRefusal(root, target, link, &out, &errOut); rc != 0 {
 		t.Fatalf("rc = %d, want 0 (the shell continues after mkdir/ln failures)", rc)
 	}
 	if !strings.Contains(errOut.String(), "mkdir: "+filepath.Join(root, ".omp")+": File exists\n") {
@@ -542,7 +544,7 @@ func TestMakeRelativeSymlinkOsFailureContinues(t *testing.T) {
 	}
 	skillsLink := filepath.Join(root2, ".pi", "skills")
 	var out2, errOut2 bytes.Buffer
-	if rc := makeSkillsSymlink(target, skillsLink, &out2, &errOut2); rc != 0 {
+	if rc, _ := makeSkillsSymlink(root2, target, skillsLink, &out2, &errOut2); rc != 0 {
 		t.Fatalf("rc = %d, want 0", rc)
 	}
 	if !strings.Contains(errOut2.String(), "mkdir: "+filepath.Join(root2, ".pi")+": File exists\n") {
@@ -617,7 +619,7 @@ func TestMakeSkillsSymlinkUsesAbsoluteRealpathTarget(t *testing.T) {
 	project := t.TempDir()
 	link := filepath.Join(project, ".claude", "skills")
 	var out, errOut bytes.Buffer
-	if rc := makeSkillsSymlink(source, link, &out, &errOut); rc != 0 {
+	if rc, _ := makeSkillsSymlink(project, source, link, &out, &errOut); rc != 0 {
 		t.Fatalf("rc = %d, stderr=%s", rc, errOut.String())
 	}
 	got, err := os.Readlink(link)
@@ -1461,5 +1463,412 @@ func TestManifestFatalPathContractPinned(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "  syncing ") {
 		t.Errorf("no step work may happen: %q", out.String())
+	}
+}
+
+// ── T6 (S1): a real skills path is never removed ──────────────────────────
+
+// skillsRefusalLine is the one-line refusal for an occupied skills path.
+func skillsRefusalLine(path string) string {
+	return "    ✗ refuse to overwrite non-symlink: " + path +
+		" — move or delete it so ai-specs can create the symlink\n"
+}
+
+func mustSymlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRunBodyRefusesRealSkillsPath: parity contract §4 — a real directory (or
+// regular file) at `<agent>/skills` is a hard error. Nothing in it is touched,
+// and the refusal happens in preflight so no OTHER agent of the run is
+// written either. A symlink (correct, stale or dangling) keeps the relink.
+func TestRunBodyRefusesRealSkillsPath(t *testing.T) {
+	twoAgents := func(t *testing.T) *agentRun {
+		run := newAgentRun(t, t.TempDir())
+		run.enabledAgents = []string{"claude", "pi"}
+		manifest := "[project]\nname = 't'\n\n[agents]\nenabled = ['claude', 'pi']\n"
+		if err := os.WriteFile(run.tomlPath, []byte(manifest), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return run
+	}
+
+	t.Run("real directory", func(t *testing.T) {
+		run := twoAgents(t)
+		bad := filepath.Join(run.targetPath, ".claude", "skills")
+		userSkill := filepath.Join(bad, "mine", "SKILL.md")
+		if err := os.MkdirAll(filepath.Dir(userSkill), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(userSkill, []byte("# mine\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		var out, errOut bytes.Buffer
+		run.out, run.errW = &out, &errOut
+		if rc := run.runBody(); rc != 1 {
+			t.Fatalf("rc = %d, want 1; stdout=%q stderr=%q", rc, out.String(), errOut.String())
+		}
+		if got, err := os.ReadFile(userSkill); err != nil || string(got) != "# mine\n" {
+			t.Errorf("user skill changed: %q (%v)", got, err)
+		}
+		if info, err := os.Lstat(bad); err != nil || info.Mode()&os.ModeSymlink != 0 {
+			t.Errorf("skills path was replaced: info=%v err=%v", info, err)
+		}
+		if errOut.String() != skillsRefusalLine(bad) {
+			t.Errorf("stderr = %q, want %q", errOut.String(), skillsRefusalLine(bad))
+		}
+		// Preflight: the other agent of the run stays untouched.
+		if _, err := os.Lstat(filepath.Join(run.targetPath, ".pi", "skills")); !os.IsNotExist(err) {
+			t.Errorf(".pi/skills was written despite the refusal (err=%v)", err)
+		}
+		if _, err := os.Lstat(filepath.Join(run.targetPath, "CLAUDE.md")); !os.IsNotExist(err) {
+			t.Errorf("CLAUDE.md was written despite the refusal (err=%v)", err)
+		}
+		if _, err := os.Lstat(filepath.Join(run.targetPath, ".claude", "commands")); !os.IsNotExist(err) {
+			t.Errorf(".claude/commands was written despite the refusal (err=%v)", err)
+		}
+	})
+
+	t.Run("regular file", func(t *testing.T) {
+		run := twoAgents(t)
+		bad := filepath.Join(run.targetPath, ".pi", "skills")
+		if err := os.MkdirAll(filepath.Dir(bad), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(bad, []byte("not a symlink\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		var out, errOut bytes.Buffer
+		run.out, run.errW = &out, &errOut
+		if rc := run.runBody(); rc != 1 {
+			t.Fatalf("rc = %d, want 1; stdout=%q stderr=%q", rc, out.String(), errOut.String())
+		}
+		if got, err := os.ReadFile(bad); err != nil || string(got) != "not a symlink\n" {
+			t.Errorf("file at skills path changed: %q (%v)", got, err)
+		}
+		if errOut.String() != skillsRefusalLine(bad) {
+			t.Errorf("stderr = %q, want %q", errOut.String(), skillsRefusalLine(bad))
+		}
+	})
+
+	t.Run("stale symlink is relinked", func(t *testing.T) {
+		run := newAgentRun(t, t.TempDir())
+		stale := filepath.Join(run.targetPath, "old-skills")
+		if err := os.MkdirAll(stale, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(run.targetPath, ".claude", "skills")
+		mustSymlink(t, stale, link)
+
+		var out, errOut bytes.Buffer
+		if rc := run.syncOneAgent("claude", &out, &errOut); rc != 0 {
+			t.Fatalf("rc = %d, want 0; stderr=%q", rc, errOut.String())
+		}
+		got, err := os.Readlink(link)
+		if err != nil || got != projectcache.ResolvePath(run.skillsSource) {
+			t.Errorf("skills link = %q (%v), want %q", got, err, projectcache.ResolvePath(run.skillsSource))
+		}
+	})
+
+	t.Run("dangling symlink is relinked", func(t *testing.T) {
+		run := newAgentRun(t, t.TempDir())
+		link := filepath.Join(run.targetPath, ".claude", "skills")
+		mustSymlink(t, filepath.Join(run.targetPath, "does-not-exist"), link)
+
+		var out, errOut bytes.Buffer
+		if rc := run.syncOneAgent("claude", &out, &errOut); rc != 0 {
+			t.Fatalf("rc = %d, want 0; stderr=%q", rc, errOut.String())
+		}
+		got, err := os.Readlink(link)
+		if err != nil || got != projectcache.ResolvePath(run.skillsSource) {
+			t.Errorf("skills link = %q (%v), want %q", got, err, projectcache.ResolvePath(run.skillsSource))
+		}
+	})
+
+	t.Run("correct symlink is a no-op", func(t *testing.T) {
+		run := newAgentRun(t, t.TempDir())
+		link := filepath.Join(run.targetPath, ".claude", "skills")
+		want := projectcache.ResolvePath(run.skillsSource)
+		mustSymlink(t, want, link)
+
+		var out, errOut bytes.Buffer
+		if rc := run.syncOneAgent("claude", &out, &errOut); rc != 0 {
+			t.Fatalf("rc = %d, want 0; stderr=%q", rc, errOut.String())
+		}
+		if got, _ := os.Readlink(link); got != want {
+			t.Errorf("skills link = %q, want %q", got, want)
+		}
+		if !strings.Contains(out.String(), "    · symlink ok      "+link+" → "+want+"\n") {
+			t.Errorf("stdout missing the idempotent line:\n%s", out.String())
+		}
+	})
+}
+
+// symlinkedAncestorLine is the one-line refusal for an agent destination whose
+// ancestor below the project root is a symlink (the shared guard's message).
+func symlinkedAncestorLine(ancestor string) string {
+	return "    ✗ ancestor path is a symlink: " + ancestor +
+		" — replace it with a real directory so ai-specs can write inside the project\n"
+}
+
+// TestPreflightAgentPathsRefusesSymlinkedAgentParent: one check shared by
+// `sync` and `sync-agent` refuses an agent destination reached through a
+// symlinked ancestor, before anything is written through it or outside the
+// project.
+func TestPreflightAgentPathsRefusesSymlinkedAgentParent(t *testing.T) {
+	project := t.TempDir()
+	outside := t.TempDir()
+	mustSymlink(t, outside, filepath.Join(project, ".claude"))
+
+	var errOut bytes.Buffer
+	if rc := preflightAgentPaths(project, project, []string{"claude", "pi"}, &errOut); rc != 1 {
+		t.Fatalf("rc = %d, want 1; stderr=%q", rc, errOut.String())
+	}
+	if want := symlinkedAncestorLine(filepath.Join(project, ".claude")); errOut.String() != want {
+		t.Errorf("stderr = %q, want %q", errOut.String(), want)
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil || len(entries) != 0 {
+		t.Errorf("wrote outside the project: %v (%v)", entries, err)
+	}
+	if entries, err := os.ReadDir(project); err != nil || len(entries) != 1 {
+		t.Errorf("project gained entries: %v (%v)", entries, err)
+	}
+}
+
+// TestRunBodyRefusesSymlinkedAgentParent: a nested or direct run keeps its own
+// refusal, so an entry point that bypasses the early preflight is still safe.
+func TestRunBodyRefusesSymlinkedAgentParent(t *testing.T) {
+	run := newAgentRun(t, t.TempDir())
+	outside := t.TempDir()
+	if err := os.RemoveAll(filepath.Join(run.targetPath, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+	mustSymlink(t, outside, filepath.Join(run.targetPath, ".claude"))
+
+	var out, errOut bytes.Buffer
+	run.out, run.errW = &out, &errOut
+	if rc := run.runBody(); rc != 1 {
+		t.Fatalf("rc = %d, want 1; stdout=%q stderr=%q", rc, out.String(), errOut.String())
+	}
+	if want := symlinkedAncestorLine(filepath.Join(run.targetPath, ".claude")); errOut.String() != want {
+		t.Errorf("stderr = %q, want %q", errOut.String(), want)
+	}
+	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+		t.Errorf("wrote outside the project: %v (%v)", entries, err)
+	}
+}
+
+// TestAgentAncestorRefusalAllowsInsideProjectLinks (T6b): a symlinked agent
+// parent is allowed when it fully resolves inside the main project root; a link
+// that resolves outside, a chained link ending outside, and a dangling link are
+// still refused.
+func TestAgentAncestorRefusalAllowsInsideProjectLinks(t *testing.T) {
+	build := func(t *testing.T) (root, target string) {
+		project := t.TempDir()
+		return project, project
+	}
+
+	t.Run("inside root is allowed", func(t *testing.T) {
+		root, target := build(t)
+		inside := filepath.Join(root, "config", "claude")
+		if err := os.MkdirAll(inside, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustSymlink(t, inside, filepath.Join(target, ".claude"))
+		if ancestor, bad := symlinkedAncestorOutside(root, target, filepath.Join(target, ".claude", "commands")); bad {
+			t.Errorf("inside link refused at %s", ancestor)
+		}
+	})
+
+	t.Run("relative link inside is allowed", func(t *testing.T) {
+		root, target := build(t)
+		if err := os.MkdirAll(filepath.Join(root, "config", "claude"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustSymlink(t, "./config/claude", filepath.Join(target, ".claude"))
+		if ancestor, bad := symlinkedAncestorOutside(root, target, filepath.Join(target, ".claude", "skills")); bad {
+			t.Errorf("relative inside link refused at %s", ancestor)
+		}
+	})
+
+	t.Run("outside root is refused", func(t *testing.T) {
+		root, target := build(t)
+		outside := t.TempDir()
+		mustSymlink(t, outside, filepath.Join(target, ".claude"))
+		ancestor, bad := symlinkedAncestorOutside(root, target, filepath.Join(target, ".claude", "commands"))
+		if !bad {
+			t.Fatal("outside link was allowed")
+		}
+		if ancestor != filepath.Join(target, ".claude") {
+			t.Errorf("ancestor = %q, want %q", ancestor, filepath.Join(target, ".claude"))
+		}
+	})
+
+	t.Run("chained link ending outside is refused", func(t *testing.T) {
+		root, target := build(t)
+		outside := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "config"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustSymlink(t, outside, filepath.Join(root, "config", "claude"))
+		mustSymlink(t, "./config/claude", filepath.Join(target, ".claude"))
+		if _, bad := symlinkedAncestorOutside(root, target, filepath.Join(target, ".claude", "commands")); !bad {
+			t.Fatal("chained outside link was allowed")
+		}
+	})
+
+	t.Run("dangling link is refused", func(t *testing.T) {
+		root, target := build(t)
+		mustSymlink(t, "./nowhere", filepath.Join(target, ".claude"))
+		if _, bad := symlinkedAncestorOutside(root, target, filepath.Join(target, ".claude", "commands")); !bad {
+			t.Fatal("dangling link was allowed")
+		}
+	})
+
+	t.Run("subrepo target inside root allows link inside root", func(t *testing.T) {
+		root := t.TempDir()
+		target := filepath.Join(root, "sub-a")
+		if err := os.MkdirAll(filepath.Join(root, "config", "claude"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustSymlink(t, filepath.Join(root, "config", "claude"), filepath.Join(target, ".claude"))
+		if ancestor, bad := symlinkedAncestorOutside(root, target, filepath.Join(target, ".claude", "commands")); bad {
+			t.Errorf("link resolving inside the main root refused at %s", ancestor)
+		}
+	})
+}
+
+// ── write containment: the final write target must stay in the project ────
+
+// TestAgentWriteGuardRefusesOutsideLeafSymlink: a symlink at the destination
+// leaf (or any generated child) redirects the write, so the guard resolves the
+// FINAL path and refuses one outside the project root (a24d5de2 audit).
+func TestAgentWriteGuardRefusesOutsideLeafSymlink(t *testing.T) {
+	// Each case gets its own project so the leaf established by one case never
+	// leaks into the next.
+	setup := func(t *testing.T) (project, outsideFile string) {
+		t.Helper()
+		project = t.TempDir()
+		outsideFile = filepath.Join(t.TempDir(), "client.json")
+		if err := os.WriteFile(outsideFile, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return project, outsideFile
+	}
+
+	t.Run("outside leaf refused", func(t *testing.T) {
+		project, outsideFile := setup(t)
+		leaf := filepath.Join(project, ".pi", "mcp.json")
+		if err := os.MkdirAll(filepath.Dir(leaf), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustSymlink(t, outsideFile, leaf)
+		if err := agentWriteGuard(project, leaf, true); err == nil {
+			t.Fatal("outside leaf was allowed")
+		}
+	})
+
+	t.Run("inside leaf allowed", func(t *testing.T) {
+		project, _ := setup(t)
+		inside := filepath.Join(project, "config", "mcp.json")
+		if err := os.MkdirAll(filepath.Dir(inside), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(inside, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		leaf := filepath.Join(project, ".pi", "mcp.json")
+		if err := os.MkdirAll(filepath.Dir(leaf), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustSymlink(t, inside, leaf)
+		if err := agentWriteGuard(project, leaf, true); err != nil {
+			t.Errorf("inside leaf refused: %v", err)
+		}
+	})
+
+	t.Run("dangling leaf refused", func(t *testing.T) {
+		project, _ := setup(t)
+		leaf := filepath.Join(project, "dangling", "mcp.json")
+		if err := os.MkdirAll(filepath.Dir(leaf), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustSymlink(t, "./nowhere.json", leaf)
+		if err := agentWriteGuard(project, leaf, true); err == nil {
+			t.Fatal("dangling leaf was allowed")
+		}
+	})
+
+	t.Run("protected trees refused", func(t *testing.T) {
+		project, _ := setup(t)
+		for _, tree := range []string{"ai-specs", ".git"} {
+			if err := os.MkdirAll(filepath.Join(project, tree), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, leaf := range []string{"mcp.json", "skills"} {
+				path := filepath.Join(project, tree, leaf)
+				if err := agentWriteGuard(project, path, true); err == nil {
+					t.Errorf("%s/%s was allowed", tree, leaf)
+				}
+			}
+		}
+	})
+
+	t.Run("replacing a leaf link is allowed", func(t *testing.T) {
+		project, outsideFile := setup(t)
+		leaf := filepath.Join(project, ".claude", "skills")
+		if err := os.MkdirAll(filepath.Dir(leaf), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustSymlink(t, outsideFile, leaf)
+		if err := agentWriteGuard(project, leaf, false); err != nil {
+			t.Errorf("leaf replacement refused: %v", err)
+		}
+	})
+}
+
+// TestRenderHooksRefusesWriteThroughOutsideShimLeaf: enabling a hook must not
+// overwrite a generated shim that is a symlink to a file outside the project.
+func TestRenderHooksRefusesWriteThroughOutsideShimLeaf(t *testing.T) {
+	project := t.TempDir()
+	outside := t.TempDir()
+	outsideFile := filepath.Join(outside, "probe-check.ts")
+	if err := os.WriteFile(outsideFile, []byte("user owned\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(project, ".pi", "extensions", "hookdemo-shell-gate.ts")
+	if err := os.MkdirAll(filepath.Dir(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustSymlink(t, outsideFile, shim)
+
+	hooksPath := filepath.Join(project, "resolved-hooks.json")
+	if err := os.WriteFile(hooksPath, []byte(hooksBlob(
+		hook("hookdemo", "shell-gate", "pre-tool-use", "Bash", hooksScriptPath, true, nil),
+	)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var errOut bytes.Buffer
+	if rc := renderHooks(hooksPath, "pi", project, project, &errOut, false); rc != 1 {
+		t.Fatalf("rc = %d, want 1; stderr=%q", rc, errOut.String())
+	}
+	if got, err := os.ReadFile(outsideFile); err != nil || string(got) != "user owned\n" {
+		t.Errorf("outside shim target changed: %q (%v)", got, err)
+	}
+	if !strings.Contains(errOut.String(), "outside the project root") {
+		t.Errorf("stderr = %q, want the containment refusal", errOut.String())
 	}
 }

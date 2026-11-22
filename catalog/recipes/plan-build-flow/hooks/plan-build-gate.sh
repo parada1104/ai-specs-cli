@@ -10,9 +10,9 @@
 # stdin: normalized JSON {event, tool_name, tool_input, cwd}
 # exit 0: allow; exit 2: block. Malformed or unrelated events fail open.
 # PLAN_BUILD_GATE_PATHS is scope only (default: src lib catalog).
-# The ledger mode is Go-owned: this hook invokes `--ledger` with no mode flag and
-# Go resolves the effective mode from env, the witness-bound recipe config and
-# the warn default (see ledger_mode.go / ledger_cmd.go).
+# The ledger mode is Go-owned: this hook invokes the installed CLI's
+# `worktree-gate --ledger` verb with no mode flag, so Go resolves env, the
+# witness-bound recipe config and the warn default.
 
 prod_dirs="${PLAN_BUILD_GATE_PATHS:-src lib catalog}"
 [ -n "${prod_dirs// /}" ] || prod_dirs="src lib catalog"
@@ -79,30 +79,9 @@ done
 [ "$is_prod" -eq 1 ] || exit 0
 
 # --- Ledger work-start checkpoint (acquisition + JSON bridge only) ------------
-# The five ledger checkpoints are graded by the verified Go `--ledger` mode on
-# the shared worktree-gate binary (one predicate, one trust root). This host
-# only acquires a verified binary and maps the JSON verdict; Go resolves the
-# effective mode from env, the witness-bound recipe config and the warn default.
-# A missing/unverified binary, a parse error, or an IO failure fails open
-# (exit 0). `openspec/**` never reaches this point, so it is never blocked.
-
-_ledger_binary() {
-  if [ -n "${WORKTREE_GATE_BIN:-}" ] && [ -x "$WORKTREE_GATE_BIN" ]; then
-    printf '%s\n' "$WORKTREE_GATE_BIN"
-    return 0
-  fi
-  local home="${AI_SPECS_HOME:-$HOME/.ai-specs}"
-  local version=""
-  if [ -f "$home/VERSION" ]; then version="$(tr -d '[:space:]' < "$home/VERSION")"; fi
-  [ -n "$version" ] || version="dev"
-  local goos goarch
-  case "$(uname -s)" in Darwin) goos=darwin ;; Linux) goos=linux ;; *) return 1 ;; esac
-  case "$(uname -m)" in arm64|aarch64) goarch=arm64 ;; x86_64|amd64) goarch=amd64 ;; *) return 1 ;; esac
-  local candidate="$home/cache/bin/worktree-gate/$version/$goos-$goarch/worktree-gate"
-  [ -x "$candidate" ] || return 1
-  [ -f "$candidate.verified" ] || return 1
-  printf '%s\n' "$candidate"
-}
+# The shared Go predicate is reached through the same installed CLI path used
+# above for hook field/normalize-path. Missing CLI or IO errors fail open here;
+# topology proof below remains fail closed.
 
 _ledger_field() {
   # stdin: verdict JSON. $1: top-level key, read through `hook field`. Without
@@ -136,7 +115,7 @@ _ledger_ask() {
   exec 3<&-
   case "$answer" in
     y|Y|yes|YES|Yes)
-      if "$bin" --ledger --checkpoint "$checkpoint" --project-root "$root" \
+      if "$bin" worktree-gate --ledger --checkpoint "$checkpoint" --project-root "$root" \
           --decide "{\"checkpoint\":\"$checkpoint\",\"kind\":\"opt-out\",\"choice\":\"continue\"}" >/dev/null 2>&1; then
         echo "${prefix}: opt-out recorded for ${checkpoint}; proceeding." >&2
         return 0
@@ -154,10 +133,21 @@ _ledger_grade() {
   # forwarded: Go resolves env, the witness-bound recipe config and the default.
   local checkpoint="$1" root="$2" prefix="$3"
   local bin
-  bin="$(_ledger_binary)" || return 0
+  [ -x "$cli_bin" ] || return 0
+  local bin="$cli_bin"
   local out rc
-  out="$("$bin" --ledger --checkpoint "$checkpoint" --project-root "$root" 2>/dev/null)"
+  out="$("$bin" worktree-gate --ledger --checkpoint "$checkpoint" --project-root "$root" 2>/dev/null)"
   rc=$?
+  if [ -z "$out" ] && [ "$rc" != 0 ]; then
+    local probe
+    probe="$("$bin" worktree-gate --selftest 2>&1)" || :
+    case "$probe" in
+      *"ai-specs: unknown command 'worktree-gate'"*)
+        echo "${prefix}: installed ai-specs CLI is too old to grade ${checkpoint}; run 'ai-specs upgrade'; blocking." >&2
+        return 2
+        ;;
+    esac
+  fi
   [ -n "$out" ] || return 0
   local decision reason active
   decision="$(printf '%s' "$out" | _ledger_field decision)" || return 0
@@ -216,10 +206,11 @@ central_root=""
 central_sub=""
 central_root_proof() {
   local bin out cand sub
-  bin="$(_ledger_binary)" || return 1
+  [ -x "$cli_bin" ] || return 1
+  bin="$cli_bin"
   # Go resolves upward from the current directory, so the query must run from
   # the probe directory (the target's nearest existing ancestor).
-  out="$(cd "$probe_dir" 2>/dev/null && "$bin" --resolve-central-root 2>/dev/null)" || return 1
+  out="$(cd "$probe_dir" 2>/dev/null && "$bin" worktree-gate --resolve-central-root 2>/dev/null)" || return 1
   [ -n "$out" ] || return 1
   [ -x "$cli_bin" ] || return 1
   cand="$(printf '%s' "$out" | "$cli_bin" hook field --string central_root 2>/dev/null)" || return 1

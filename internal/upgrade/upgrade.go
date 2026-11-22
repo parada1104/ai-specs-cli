@@ -18,6 +18,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 
 	"ai-specs.dev/ai-specs/internal/changelog"
@@ -411,7 +413,7 @@ func printReleaseReport(home, current, new string, stdout io.Writer) {
 //
 // Pinned both directions by TestUpgradeRunsNativelyAndSkipsTheShellPostSteps,
 // so an accidental reintroduction fails a test instead of passing silently.
-func realUpgrade(inst Install, o Options, git Git, stdout, stderr io.Writer) int {
+func realUpgrade(inst Install, o Options, env Env, git Git, stdout, stderr io.Writer) int {
 	if code := runStep(o, git, inst.Home, stdout, stderr, "fetching origin/main", "fetch", "origin", fetchRefspec); code != 0 {
 		return abort(stderr, "Failed to fetch from origin. Check your network connection.", ExitFetch)
 	}
@@ -435,6 +437,14 @@ func realUpgrade(inst Install, o Options, git Git, stdout, stderr io.Writer) int
 	if current == newVersion {
 		fmt.Fprintf(stdout, "Already up to date (version %s).\n", current)
 	} else {
+		// JD-A-005: this route runs inside the OLD binary, so the launcher copy
+		// it leaves behind is what keeps serving commands. Refresh it FIRST and
+		// only then claim completion; a failed refresh reports the checkout
+		// advance and the failure separately, never a success.
+		if err := refreshLegacyDistCopy(inst, env, newVersion, stdout); err != nil {
+			fmt.Fprintf(stdout, "Fast-forwarded the checkout: %s -> %s\n", current, newVersion)
+			return abort(stderr, fmt.Sprintf("could not refresh the launcher copy %s: %v. The checkout advanced; re-run install.sh or run 'ai-specs upgrade' again once it can be replaced.", distCopyPath(inst), err), ExitPostVerify)
+		}
 		fmt.Fprintf(stdout, "Upgraded: %s -> %s\n", current, newVersion)
 		printReleaseReport(inst.Home, current, newVersion, stdout)
 	}
@@ -449,22 +459,188 @@ func realUpgrade(inst Install, o Options, git Git, stdout, stderr io.Writer) int
 	return ExitOK
 }
 
+// canonicalDistHome resolves the HOME DIRECTORY a launcher copy lives under
+// (D-U2e-1): a symlinked home must receive dist/ under its real directory.
+func canonicalDistHome(inst Install) string {
+	home := inst.ExpectedHome
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolved
+	}
+	return home
+}
+
+// distCopyPath is the launcher copy bin/ai-specs execs after the flip.
+func distCopyPath(inst Install) string {
+	return filepath.Join(canonicalDistHome(inst), "dist", "ai-specs")
+}
+
+// distStampPath holds the version a launcher copy was acquired for. It is the
+// record the launcher compares against: mtimes are never used (JD-A-005),
+// because touching VERSION must not trigger a download.
+func distStampPath(inst Install) string {
+	return filepath.Join(canonicalDistHome(inst), "dist", "VERSION")
+}
+
+// distCacheKey is the cheap "<size>:<mtime>:<ctime>:<inode>" key the launcher
+// and install.sh also compute. It only decides whether a stamp's digest must be
+// recomputed; it is never version evidence (JD-A-005). The ctime and the inode
+// are what a swap cannot restore: size and mtime survive os.Chtimes, but any
+// write, rename or chmod moves the ctime.
+// shortcut: whole-second ctime (matches the launcher); a same-size in-place
+// rewrite with mtime restored within that second is not detected. The key is a
+// cache, not a security boundary (whoever can do that can rewrite the stamp).
+func distCacheKey(path string) (string, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	ctime, ino, ok := cacheKeyIdentity(fi)
+	if !ok {
+		return "", fmt.Errorf("could not read the file identity of %s", path)
+	}
+	return fmt.Sprintf("%d:%d:%d:%d", fi.Size(), fi.ModTime().Unix(), ctime, ino), nil
+}
+
+// cacheKeyIdentity reads the change time (whole seconds) and the inode out of
+// the platform's Stat_t. The field names differ (Ctimespec on Darwin, Ctim on
+// Linux, Ino on both), so they are resolved by name rather than with one
+// build-tagged file per platform. Either way the value matches stat(1), which
+// is what install.sh and bin/ai-specs compute for the same file: keeping the
+// three implementations on one format is what keeps the cache key a cache hit.
+func cacheKeyIdentity(fi os.FileInfo) (ctime int64, ino uint64, ok bool) {
+	v := reflect.ValueOf(fi.Sys())
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return 0, 0, false
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return 0, 0, false
+	}
+	// The first field that has an integer Sec, as int64.
+	seconds := func(structNames ...string) (int64, bool) {
+		for _, name := range structNames {
+			ts := v.FieldByName(name)
+			if !ts.IsValid() || ts.Kind() != reflect.Struct {
+				continue
+			}
+			sec := ts.FieldByName("Sec")
+			if !sec.IsValid() {
+				continue
+			}
+			switch sec.Kind() {
+			case reflect.Int, reflect.Int32, reflect.Int64:
+				return sec.Int(), true
+			}
+		}
+		return 0, false
+	}
+	ctime, ok = seconds("Ctimespec", "Ctim")
+	if !ok {
+		return 0, 0, false
+	}
+	inode := v.FieldByName("Ino")
+	switch inode.Kind() {
+	case reflect.Uint, reflect.Uint32, reflect.Uint64:
+		return ctime, inode.Uint(), true
+	case reflect.Int, reflect.Int32, reflect.Int64:
+		return ctime, uint64(inode.Int()), true
+	}
+	return 0, 0, false
+}
+
+// stampDistCopy records the version dist/ai-specs now holds AND the digest of
+// the bytes it holds: "<version> <sha256> <size>:<mtime>:<ctime>:<inode>". The
+// digest is what makes the stamp proof of the binary rather than of a string,
+// so a copy replaced later is treated as absent (JD-A-005).
+func stampDistCopy(inst Install, version string) error {
+	dist := distCopyPath(inst)
+	digest, err := Sha256File(dist)
+	if err != nil {
+		return fmt.Errorf("could not hash the launcher copy: %w", err)
+	}
+	key, err := distCacheKey(dist)
+	if err != nil {
+		return fmt.Errorf("could not read the launcher copy: %w", err)
+	}
+	if err := os.WriteFile(distStampPath(inst), []byte(version+" "+digest+" "+key+"\n"), 0o644); err != nil {
+		return fmt.Errorf("could not record the launcher copy version: %w", err)
+	}
+	return nil
+}
+
+// distStampProves reports whether the stamp is bound to the copy on disk and
+// names `version`. A stamp without a digest, or one whose digest no longer
+// matches the file, proves nothing (JD-A-005).
+func distStampProves(inst Install, version string) bool {
+	data, err := os.ReadFile(distStampPath(inst))
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) != 3 || fields[0] != version {
+		return false
+	}
+	dist := distCopyPath(inst)
+	if key, err := distCacheKey(dist); err == nil && key == fields[2] {
+		return true
+	}
+	digest, err := Sha256File(dist)
+	if err != nil || digest != fields[1] {
+		return false
+	}
+	// Same bytes, new cache key: refresh it so the next run is cheap.
+	return stampDistCopy(inst, version) == nil
+}
+
+// refreshLegacyDistCopy replaces a stale launcher copy with the verified
+// release asset of the version the checkout now declares (JD-A-005), so the
+// upgrade itself, not only the next launcher run, leaves a proven copy. A copy
+// whose stamp proves it (version + digest of its bytes, see distStampProves)
+// is left alone, and an absent one is left to the launcher's own self-heal.
+func refreshLegacyDistCopy(inst Install, env Env, version string, stdout io.Writer) error {
+	dist := distCopyPath(inst)
+	if _, err := os.Lstat(dist); err != nil {
+		return nil
+	}
+	if distStampProves(inst, version) {
+		return nil
+	}
+	asset := AssetName(runtime.GOOS, runtime.GOARCH)
+	root, err := LoadTrustRoot(filepath.Join(inst.Home, "bin", "SHA256SUMS"))
+	if err != nil {
+		return fmt.Errorf("could not read the committed digests: %w", err)
+	}
+	if _, ok := root[asset]; !ok {
+		return fmt.Errorf("no committed digest for %s, so the stale copy cannot be replaced", asset)
+	}
+	if _, err := Acquire(AcquireOptions{
+		TrustRoot: root,
+		BaseURL:   releaseBaseURL(env, version),
+		Asset:     asset,
+		Target:    dist,
+	}); err != nil {
+		return err
+	}
+	if err := stampDistCopy(inst, version); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Refreshed launcher copy: %s\n", dist)
+	return nil
+}
+
 // refreshDistCopy writes the just-installed LocalBin bytes to
 // $AI_SPECS_HOME/dist/ai-specs, the path the repo launcher bin/ai-specs execs
 // after the flip (GO-20 U2e). It reuses the installed file — never a rebuild —
-// and reports a failed write instead of swallowing it.
+// reports a failed write instead of swallowing it, and stamps the version it
+// copied so the launcher's version check needs no download (JD-A-005).
 func refreshDistCopy(inst Install) error {
 	data, err := os.ReadFile(inst.LocalBin)
 	if err != nil {
 		return fmt.Errorf("could not read the installed binary at %s: %w", inst.LocalBin, err)
 	}
-	// Canonicalize the HOME DIRECTORY (D-U2e-1), never the binary: a symlinked
-	// home still receives dist/ under its real directory.
-	home := inst.ExpectedHome
-	if resolved, err := filepath.EvalSymlinks(home); err == nil {
-		home = resolved
-	}
-	target := filepath.Join(home, "dist", "ai-specs")
+	target := distCopyPath(inst)
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("could not create %s: %w", filepath.Dir(target), err)
 	}
@@ -474,7 +650,7 @@ func refreshDistCopy(inst Install) error {
 	if err := os.Chmod(target, 0o755); err != nil {
 		return fmt.Errorf("could not make %s executable: %w", target, err)
 	}
-	return nil
+	return stampDistCopy(inst, readVersion(inst.Home))
 }
 
 // Run executes the upgrade and returns the process exit code.
@@ -522,5 +698,5 @@ func Run(args []string, env Env, stdout, stderr io.Writer) int {
 	if o.DryRun {
 		return dryRunReport(inst, o, git, stdout, stderr)
 	}
-	return realUpgrade(inst, o, git, stdout, stderr)
+	return realUpgrade(inst, o, env, git, stdout, stderr)
 }

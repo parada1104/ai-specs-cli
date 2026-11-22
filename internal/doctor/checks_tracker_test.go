@@ -42,29 +42,32 @@ func TestTrackerLedgerNotInPlay(t *testing.T) {
 	assertChecks(t, d, []Check{})
 }
 
-func TestTrackerLedgerNoVerifiedBinary(t *testing.T) {
+func TestTrackerLedgerMissingInstalledCLI(t *testing.T) {
 	root := t.TempDir()
 	writeOpenspecTrackingConfig(t, root)
-	t.Setenv("WORKTREE_GATE_BIN", "")
 
 	d := New(root, t.TempDir())
 	d.checkTrackerLedger()
 	assertChecks(t, d, []Check{
 		{ERROR, "tracker-ledger",
-			"no verified worktree-gate binary; the tracker ledger is failing open",
-			"run ai-specs sync or ai-specs sync --refresh-gates"},
+			"ai-specs CLI is missing or not executable; the tracker ledger is failing open",
+			"reinstall ai-specs via install.sh"},
 	})
 }
 
 func TestTrackerLedgerWarnFromBinary(t *testing.T) {
 	root := t.TempDir()
 	writeOpenspecTrackingConfig(t, root)
-	gate := filepath.Join(t.TempDir(), "gate.sh")
+	home := t.TempDir()
+	gate := filepath.Join(home, "dist", "ai-specs")
+	if err := os.MkdirAll(filepath.Dir(gate), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	writeExecutableFile(t, gate, "#!/bin/sh\n"+
+		"[ \"$1\" = worktree-gate ] && [ \"$2\" = --ledger ] || exit 2\n"+
 		"printf '%s' '{\"reason\":\"witness-missing\",\"doctor\":{\"severity\":\"WARN\",\"message\":\"witness missing; run ai-specs sync\"}}'\n")
-	t.Setenv("WORKTREE_GATE_BIN", gate)
 
-	d := New(root, t.TempDir())
+	d := New(root, home)
 	d.checkTrackerLedger()
 	assertChecks(t, d, []Check{
 		{WARN, "tracker-ledger", "witness missing; run ai-specs sync", "ai-specs sync"},
@@ -74,16 +77,19 @@ func TestTrackerLedgerWarnFromBinary(t *testing.T) {
 func TestTrackerLedgerUnreadableVerdict(t *testing.T) {
 	root := t.TempDir()
 	writeOpenspecTrackingConfig(t, root)
-	gate := filepath.Join(t.TempDir(), "gate.sh")
+	home := t.TempDir()
+	gate := filepath.Join(home, "dist", "ai-specs")
+	if err := os.MkdirAll(filepath.Dir(gate), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	writeExecutableFile(t, gate, "#!/bin/sh\nprintf '%s' 'not json'\n")
-	t.Setenv("WORKTREE_GATE_BIN", gate)
 
-	d := New(root, t.TempDir())
+	d := New(root, home)
 	d.checkTrackerLedger()
 	assertChecks(t, d, []Check{
 		{ERROR, "tracker-ledger",
 			"tracker ledger verdict was not machine-readable; failing open",
-			"run ai-specs sync or ai-specs sync --refresh-gates"},
+			"run ai-specs upgrade"},
 	})
 }
 
@@ -99,7 +105,7 @@ func TestTrackerLedgerGuidance(t *testing.T) {
 		{"conflict", WARN, "adjudicate at the next checkpoint"},
 		{"unbound", INFO, "enable one tracker recipe or ignore"},
 		{"something-else", WARN, ""},
-		{"witness-missing", ERROR, "run ai-specs sync or ai-specs sync --refresh-gates"},
+		{"witness-missing", ERROR, "run ai-specs sync"},
 	}
 	for _, tc := range cases {
 		if got := trackerLedgerGuidance(tc.reason, tc.severity); got != tc.want {
@@ -127,26 +133,20 @@ func TestLedgerSeverity(t *testing.T) {
 	}
 }
 
-func TestResolveVerifiedGateBinaryOverride(t *testing.T) {
+func TestTrackerLedgerUsesInstalledCLI(t *testing.T) {
 	home := t.TempDir()
-
-	missing := filepath.Join(t.TempDir(), "absent")
-	t.Setenv("WORKTREE_GATE_BIN", missing)
-	if got := resolveVerifiedGateBinary(home); got != "" {
-		t.Fatalf("missing override = %q, want empty", got)
+	want := filepath.Join(home, "dist", "ai-specs")
+	if got := installedCLIPath(home); got != want {
+		t.Fatalf("installedCLIPath = %q, want %q", got, want)
 	}
-
-	nonExec := filepath.Join(t.TempDir(), "gate")
-	writeFile(t, nonExec, "#!/bin/sh\n")
-	t.Setenv("WORKTREE_GATE_BIN", nonExec)
-	if got := resolveVerifiedGateBinary(home); got != "" {
-		t.Fatalf("non-executable override = %q, want empty", got)
+	if got := (&Doctor{Home: home}).trackerLedgerCLI(); got != "" {
+		t.Fatalf("missing installed CLI = %q, want empty", got)
 	}
-
-	gate := filepath.Join(t.TempDir(), "gate")
-	writeExecutableFile(t, gate, "#!/bin/sh\nexit 0\n")
-	t.Setenv("WORKTREE_GATE_BIN", gate)
-	if got := resolveVerifiedGateBinary(home); got != gate {
-		t.Fatalf("executable override = %q, want %q", got, gate)
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutableFile(t, want, "#!/bin/sh\nexit 0\n")
+	if got := (&Doctor{Home: home}).trackerLedgerCLI(); got != want {
+		t.Fatalf("installed CLI = %q, want %q", got, want)
 	}
 }

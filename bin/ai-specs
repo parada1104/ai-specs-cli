@@ -8,7 +8,8 @@
 # Binary resolution, in order:
 #   1. $AI_SPECS_GO_BIN  (exported by the Go CLI to the processes it starts,
 #      and by tests that pin a specific build). A pinned binary is never
-#      replaced: when it is missing this launcher fails loudly.
+#      replaced nor version-checked: when it is missing this launcher fails
+#      loudly.
 #   2. $AI_SPECS_HOME/dist/ai-specs  (produced by scripts/build-cli.sh)
 #
 # When nothing resolves and $AI_SPECS_GO_BIN is unset, the launcher self-heals
@@ -17,6 +18,20 @@
 # toolchain. That is what turns an `ai-specs upgrade` run from an old checkout
 # into a working CLI instead of a missing binary: the upgrade only fast-forwards
 # the git tree, so the first verb afterwards acquires dist/ai-specs itself.
+#
+# An existing copy is checked against the checkout too (JD-A-005). The launcher
+# keeps a stamp next to it, `dist/VERSION` =
+# `<version> <sha256> <size>:<mtime>:<ctime>:<inode>`, and treats the copy as
+# current only when the stamp's version is $AI_SPECS_HOME/VERSION AND the stamp
+# is bound to the bytes on disk (the digest re-hashed only when the cache key
+# changes; mtimes are never version evidence). The ctime and inode are in the
+# key because a user or tool can put a swapped binary's size and mtime back,
+# but not its ctime (any write/rename/chmod moves it) or its inode.
+# Otherwise it re-acquires the verified asset. If it cannot, it warns once — one
+# single stderr line naming the reason, never a version the copy does not prove
+# — and runs the existing binary, so no command is ever blocked by the check.
+# A developer running a local build should point AI_SPECS_GO_BIN at it: a pinned
+# binary is never checked nor replaced.
 # Progress goes to stderr; the verb's stdout is never written here. There is no
 # legacy Bash/Python fallback: that route was retired by GO-20 U2e (T2).
 set -e
@@ -58,23 +73,127 @@ _sha256_of() {
     fi
 }
 
+# The checkout's directory holding dist/, canonicalized (D-U2e-1).
+_dist_home() {
+    local home
+    home="$(cd -P "$AI_SPECS_HOME" 2>/dev/null && pwd -P)" || home="$AI_SPECS_HOME"
+    printf '%s' "$home"
+}
+
+_trimmed() {
+    tr -d '[:space:]' < "$1" 2>/dev/null || true
+}
+
+# The committed digest for a release asset (the trust root install.sh and the
+# Go CLI also use). Empty means no download is allowed.
+_expected_digest() {
+    awk -v asset="$1" '$2 == asset { print $1 }' \
+        "${AI_SPECS_TRUST_ROOT_FILE:-$AI_SPECS_HOME/bin/SHA256SUMS}" 2>/dev/null | head -n 1
+}
+
+# A cheap cache key for a binary file: "<size>:<mtime>:<ctime>:<inode>". It
+# only decides whether a stamp's digest must be recomputed; it is NEVER version
+# evidence, and an empty key just means the digest is checked every run
+# (JD-A-005). The ctime and the inode are what a swap cannot put back: size and
+# mtime survive os.utime, but any write/rename/chmod moves the ctime.
+# shortcut: whole-second ctime, so an in-place same-size rewrite with mtime
+# restored inside the same second is not detected. Anyone able to do that can
+# also rewrite the stamp, so the key is a cache, not a security boundary; use
+# nanosecond ctime if accidental same-second swaps ever matter.
+_file_key() {
+    local out
+    case "$(uname -s)" in
+        Darwin) out="$(stat -f '%z:%m:%c:%i' "$1" 2>/dev/null || true)" ;;
+        *)      out="$(stat -c '%s:%Y:%Z:%i' "$1" 2>/dev/null || true)" ;;
+    esac
+    printf '%s' "$out"
+}
+
+# Record the version AND the exact bytes an acquisition produced:
+# "<version> <sha256> <size>:<mtime>:<ctime>:<inode>". The digest is what makes
+# a stamp proof of the binary instead of proof of a string someone wrote in a
+# file; the key is only the cache that keeps re-hashing out of every invocation
+# (JD-A-005).
+_stamp_dist() {
+    local version="$1" digest="$2" key
+    [ -n "$digest" ] || return 0
+    key="$(_file_key "$(_dist_home)/dist/ai-specs")"
+    [ -n "$key" ] || return 0
+    printf '%s %s %s\n' "$version" "$digest" "$key" > "$(_dist_home)/dist/VERSION" 2>/dev/null || true
+}
+
+# True when the installed copy IS the version this checkout declares. The
+# stamp records the digest it was acquired for, so a stamp whose binary no
+# longer matches it is treated as absent: a matching version string proves
+# nothing (JD-A-005). A stamp without a digest — written by install.sh before
+# the binding, by an older launcher, or by a legacy upgrade — is proven against
+# the committed digest instead, the same trust root the acquisition uses, and
+# is then stamped so later invocations only compare the cache key.
+_dist_is_current() {
+    local want stamp sversion sdigest skey key got asset expected
+    want="$(_trimmed "$AI_SPECS_HOME/VERSION")"
+    [ -n "$want" ] || return 0
+    stamp="$(_dist_home)/dist/VERSION"
+    read -r sversion sdigest skey <<< "$(head -n 1 "$stamp" 2>/dev/null || true)"
+    if [ "${sversion:-}" = "$want" ] && [ -n "${sdigest:-}" ] && [ -n "${skey:-}" ]; then
+        key="$(_file_key "$NATIVE_BIN")"
+        if [ -n "$key" ] && [ "$key" = "$skey" ]; then
+            return 0
+        fi
+        # The binary changed since the stamp was written: re-hash it once. Same
+        # bytes under a new mtime just refreshes the key.
+        got="$(_sha256_of "$NATIVE_BIN" || true)"
+        if [ -n "$got" ] && [ "$got" = "$sdigest" ]; then
+            _stamp_dist "$want" "$got"
+            return 0
+        fi
+        return 1
+    fi
+    asset="$(_platform_asset 2>/dev/null || true)"
+    [ -n "$asset" ] || return 1
+    expected="$(_expected_digest "$asset")"
+    [ -n "$expected" ] || return 1
+    got="$(_sha256_of "$NATIVE_BIN" || true)"
+    [ "$got" = "$expected" ] || return 1
+    _stamp_dist "$want" "$got"
+    return 0
+}
+
+# Write the failure reason where `_self_heal`'s caller can read it. Its progress
+# is captured through a command substitution, so the variable cannot survive the
+# subshell (the reason is only ever a short diagnostic string).
+_heal_note_reason() {
+    [ -n "${1:-}" ] || return 0
+    printf '%s' "${_HEAL_REASON:-the refresh failed}" > "$1" 2>/dev/null || true
+}
+
 # Acquire dist/ai-specs once. Verify before installing and install atomically,
-# so a failure leaves neither a binary nor a temp file behind.
+# so a failure leaves neither a binary nor a temp file behind. The optional
+# arguments are the reason printed on the acquisition line ("no native binary
+# at" by default, an outdated copy after an upgrade) and a path that receives
+# the failure reason. On failure it leaves a short cause in _HEAL_REASON for the
+# single warning line the caller prints.
 _self_heal() {
+    local why="${1:-no native binary at}"
+    local reason_file="${2:-}"
     local version asset expected base dist_home dist_bin tmp got
+    _HEAL_REASON=""
     # A home without VERSION is not a checkout (typically a mistyped
     # AI_SPECS_HOME): create nothing and download nothing.
     if [ ! -f "$AI_SPECS_HOME/VERSION" ]; then
-        echo "ai-specs: $AI_SPECS_HOME is not an ai-specs checkout (no VERSION file); check AI_SPECS_HOME" >&2
+        _HEAL_REASON="$AI_SPECS_HOME is not an ai-specs checkout (no VERSION file)"
+        _heal_note_reason "$reason_file"
+        echo "ai-specs: $_HEAL_REASON; check AI_SPECS_HOME" >&2
         return 1
     fi
     version="$(cat "$AI_SPECS_HOME/VERSION" 2>/dev/null || true)"
     # Canonicalize the HOME DIRECTORY (D-U2e-1), never the binary, so a
     # symlinked home receives dist/ under its real directory.
-    dist_home="$(cd -P "$AI_SPECS_HOME" 2>/dev/null && pwd -P)" || dist_home="$AI_SPECS_HOME"
+    dist_home="$(_dist_home)"
     dist_bin="$dist_home/dist/ai-specs"
     if ! mkdir -p "$dist_home/dist"; then
-        echo "ai-specs: could not create $dist_home/dist" >&2
+        _HEAL_REASON="could not create $dist_home/dist"
+        echo "ai-specs: $_HEAL_REASON" >&2
         return 1
     fi
     tmp="$dist_home/dist/.ai-specs.heal.$$"
@@ -84,41 +203,85 @@ _self_heal() {
         # The network supplies only bytes; the checkout supplies the expected
         # digest. No committed digest means no download is attempted.
         base="${AI_SPECS_RELEASE_BASE:-https://github.com/parada1104/ai-specs-cli/releases/download/v$version}"
-        expected="$(awk -v asset="$asset" '$2 == asset { print $1 }' \
-            "${AI_SPECS_TRUST_ROOT_FILE:-$AI_SPECS_HOME/bin/SHA256SUMS}" 2>/dev/null | head -n 1)"
-        if [ -n "$expected" ] && command -v curl >/dev/null 2>&1; then
-            echo "ai-specs: no native binary at $dist_bin; fetching $asset from $base" >&2
+        expected="$(_expected_digest "$asset")"
+        if [ -z "$expected" ]; then
+            _HEAL_REASON="no committed digest for $asset"
+        elif ! command -v curl >/dev/null 2>&1; then
+            _HEAL_REASON="no curl to download $asset"
+        else
+            echo "ai-specs: $why $dist_bin; fetching $asset from $base" >&2
             if curl -fsSL "$base/$asset" -o "$tmp"; then
                 got="$(_sha256_of "$tmp" || true)"
                 if [ -n "$got" ] && [ "$got" = "$expected" ]; then
                     if chmod 0755 "$tmp" && mv -f "$tmp" "$dist_bin"; then
+                        _stamp_dist "$version" "$got"
                         echo "ai-specs: installed $asset at $dist_bin" >&2
                         return 0
                     fi
+                    _HEAL_REASON="could not replace $dist_bin"
                 else
-                    echo "ai-specs: warning: $asset did not match the committed digest; discarding the download" >&2
+                    _HEAL_REASON="$asset did not match the committed digest"
+                    echo "ai-specs: warning: $_HEAL_REASON; discarding the download" >&2
                 fi
                 rm -f "$tmp"
+            else
+                _HEAL_REASON="could not download $asset"
             fi
         fi
+    else
+        _HEAL_REASON="no release asset for this platform"
     fi
 
     if command -v go >/dev/null 2>&1; then
         echo "ai-specs: no verified asset for this platform; building locally with go" >&2
         if (cd "$AI_SPECS_HOME" && go build -trimpath -buildvcs=false -o "$tmp" ./cmd/ai-specs); then
             if chmod 0755 "$tmp" && mv -f "$tmp" "$dist_bin"; then
+                # The build comes from this checkout, so it IS this version.
+                _stamp_dist "$version" "$(_sha256_of "$dist_bin" || true)"
                 echo "ai-specs: built and installed $dist_bin" >&2
                 return 0
             fi
+            _HEAL_REASON="could not replace $dist_bin"
+        elif [ -z "$_HEAL_REASON" ]; then
+            _HEAL_REASON="the local go build failed"
         fi
+    elif [ -z "$_HEAL_REASON" ]; then
+        _HEAL_REASON="no verified asset for this platform and no Go toolchain"
     fi
 
     rm -f "$tmp"
+    _heal_note_reason "$reason_file"
     return 1
 }
 
-if [ -z "${AI_SPECS_GO_BIN:-}" ] && [ ! -x "$NATIVE_BIN" ]; then
-    _self_heal || true
+if [ -z "${AI_SPECS_GO_BIN:-}" ]; then
+    if [ ! -x "$NATIVE_BIN" ]; then
+        _self_heal || true
+    elif [ -f "$AI_SPECS_HOME/VERSION" ] && ! _dist_is_current; then
+        # JD-A-005: the copy on disk is not the version this checkout declares.
+        # Re-acquire the verified asset (same trust root); when that is
+        # impossible (offline, digest mismatch, no Go) warn once and run the
+        # existing binary, so no command is ever blocked by the check.
+        # A failed refresh leaves exactly ONE line on stderr — the warning
+        # below — so the fetch progress and curl's own error are captured and
+        # replayed only when the refresh actually worked, and the reason is
+        # handed back through a file (a command substitution is a subshell).
+        # The warning names the version the checkout WANTS and why the copy
+        # could not be verified; it never repeats a version the copy merely
+        # claims, because an unproven binary can claim anything.
+        want="$(_trimmed "$AI_SPECS_HOME/VERSION")"
+        reason_file="$(_dist_home)/dist/.ai-specs.verify.$$"
+        if progress="$(_self_heal "outdated launcher copy at" "$reason_file" 2>&1 >/dev/null)"; then
+            rm -f "$reason_file"
+            if [ -n "$progress" ]; then
+                printf '%s\n' "$progress" >&2
+            fi
+        else
+            reason="$(cat "$reason_file" 2>/dev/null || true)"
+            rm -f "$reason_file"
+            echo "ai-specs: warning: could not verify the installed binary for version $want (${reason:-the refresh failed}); re-run install.sh or run 'ai-specs upgrade' to reinstall it" >&2
+        fi
+    fi
 fi
 
 if [ ! -x "$NATIVE_BIN" ]; then

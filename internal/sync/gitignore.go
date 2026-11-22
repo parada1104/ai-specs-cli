@@ -73,6 +73,11 @@ func WriteAiSpecsGitignore(tomlPath, outputPath string) (int, error) {
 		return 0, err
 	}
 	deps, _ := root.Tables("deps")
+	// Containment (T6d): a symlinked ai-specs/ or .gitignore must not redirect
+	// this write outside the project.
+	if err := projectWriteGuard(filepath.Dir(filepath.Dir(tomlPath)), outputPath, true); err != nil {
+		return 0, err
+	}
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return 0, err
 	}
@@ -98,6 +103,12 @@ const (
 // parity-gated. The Python authority raises an unhandled ValueError (traceback
 // on stderr); this port prints a one-line error and returns 1.
 func RefreshRootGitignore(root, templatePath string, stdout, stderr io.Writer) int {
+	// Containment (T6d): a symlinked root .gitignore must not redirect the
+	// refresh outside the project.
+	if err := projectWriteGuard(root, filepath.Join(root, ".gitignore"), true); err != nil {
+		fmt.Fprintf(stderr, "    ✗ %s\n", err)
+		return 1
+	}
 	if fi, err := os.Stat(templatePath); err != nil || !fi.Mode().IsRegular() {
 		fmt.Fprintf(stderr, "ERROR: template not found: %s\n", templatePath)
 		return 1

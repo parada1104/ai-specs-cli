@@ -54,7 +54,9 @@ from tests.test_worktree_gate_parity import (
 
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
-BINARY = ROOT / "dist" / "worktree-gate-current"
+from tests.gate_cli import gate_command, install_cli
+
+BINARY = gate_command()
 
 REAL_GIT = shutil.which("git")
 if REAL_GIT is None:  # pragma: no cover
@@ -244,6 +246,11 @@ class WorktreeGateGitCountTests(unittest.TestCase):
 
 
 class WorktreeGateNoHashHotPathTests(unittest.TestCase):
+    def _install_cli(self, home: Path) -> None:
+        cli = home / "dist" / "ai-specs"
+        cli.parent.mkdir(parents=True, exist_ok=True)
+        install_cli(home)
+
     """Spec 'No hashing on the hot path by default' (launcher contract 3.x)."""
 
     def _stamp_launcher(self, dest: Path, *, impl: str = "go",
@@ -278,13 +285,9 @@ class WorktreeGateNoHashHotPathTests(unittest.TestCase):
             subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-B", "main"],
                            check=True)
 
-            # Launcher resolves the binary from the project-local pin.
             launcher = self._stamp_launcher(
                 root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh")
-            pin = root / "ai-specs" / "recipes" / "worktree-flow" / "bin" / "worktree-gate"
-            pin.parent.mkdir(parents=True, exist_ok=True)
-            pin.write_bytes(BINARY.read_bytes())
-            pin.chmod(pin.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            self._install_cli(root / "home")
 
             # A shim that records every utility the launcher might shell out
             # to for digest computation; the shim does NOT delegate, so if
@@ -332,10 +335,7 @@ class WorktreeGateNoHashHotPathTests(unittest.TestCase):
                            check=True)
             launcher = self._stamp_launcher(
                 root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh")
-            pin = root / "ai-specs" / "recipes" / "worktree-flow" / "bin" / "worktree-gate"
-            pin.parent.mkdir(parents=True, exist_ok=True)
-            pin.write_bytes(BINARY.read_bytes())
-            pin.chmod(pin.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            self._install_cli(root / "home")
             env = dict(os.environ)
             env["AI_SPECS_HOME"] = str(root / "home")
             env.pop("WORKTREE_GATE_BIN", None)

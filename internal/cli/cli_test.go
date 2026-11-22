@@ -3,9 +3,13 @@ package cli
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"ai-specs.dev/worktree-gate/ledger"
 )
 
 // TestRouteTableCoversEveryVerb checks the full dispatcher table — the native
@@ -214,6 +218,207 @@ func TestRunBareInvocationRoutesToHub(t *testing.T) {
 	if !strings.Contains(strings.ToLower(stderr.String()), "no ai-specs project at") {
 		t.Errorf("stderr = %q, want the hub's uninitialized message", stderr.String())
 	}
+}
+
+func TestWorktreeGateRoutePinnedContracts(t *testing.T) {
+	t.Setenv("WORKTREE_GATE_MODE", "")
+	t.Setenv("WORKTREE_GATE_SCOPE", "")
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "VERSION"), []byte("dev\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("basic", func(t *testing.T) {
+		repo := t.TempDir()
+		for _, tc := range []struct {
+			name string
+			args []string
+			code int
+			out  string
+			err  string
+		}{
+			{"version", []string{"--version"}, 0, "dev\n", ""},
+			{"selftest", []string{"--selftest"}, 0, "ok\n", ""},
+			{"help", []string{"--help"}, 0, "", "usage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain] [--resolve-central-root]\nworktree-gate: warning: flag: help requested (failing open)\n"},
+			{"explain", []string{"--explain"}, 0, "{\"mode\":\"\",\"tool\":\"\",\"cwd\":\"\",\"gate_mode\":\"\",\"gate_scope\":\"\",\"repo_topology\":\"\",\"candidates\":null,\"cwd_source\":\"\",\"decision\":\"allow\",\"branch\":\"\",\"reason\":\"no-blocking-candidate\"}\n", ""},
+			{"topology-fail-closed", []string{"--resolve-central-root"}, 1, "", "worktree-gate: resolve-central-root: unproven submodule topology\n"},
+			{"gate-parse-fail-open", []string{"--bad-gate-flag"}, 0, "", "flag provided but not defined: -bad-gate-flag\nusage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain] [--resolve-central-root]\nworktree-gate: warning: flag provided but not defined: -bad-gate-flag (failing open)\n"},
+			{"cleanup-parse-fail-closed", []string{"--cleanup", "--bad-cleanup-flag"}, 2, "", "flag provided but not defined: -bad-cleanup-flag\nusage: worktree-gate [--gate-mode M] [--gate-scope S] [--repo-topology T] [--protected \"b1 b2\"] [--version] [--selftest] [--explain] [--resolve-central-root]\nworktree-cleanup: flag provided but not defined: -bad-cleanup-flag (refusing destructive run)\n"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				code, out, errOut := runGateCLI(t, repo, home, "", tc.args)
+				assertGatePinned(t, repo, code, out, errOut, tc.code, tc.out, tc.err)
+			})
+		}
+	})
+
+	gateRepo := newGateFixture(t)
+	eventCases := []struct {
+		name, file string
+		args       []string
+		code       int
+		out, err   string
+	}{
+		{"event-allow", filepath.Join(t.TempDir(), "outside", "x"), []string{"--gate-mode", "always", "--gate-scope", "auto", "--repo-topology", "standalone", "--protected", "main development"}, 0, "", ""},
+		{"event-block", "README.md", []string{"--gate-mode", "always", "--gate-scope", "auto", "--repo-topology", "auto", "--protected", "main development"}, 2, "", "worktree-gate: refusing to Write 'README.md' on protected branch 'main' in the main worktree (<repo>). Create a dedicated worktree first (e.g. /worktree-new) and edit there — exploration ends at the first write.\n"},
+	}
+	for _, tc := range eventCases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := `{"tool_name":"Write","cwd":"` + gateRepo + `","tool_input":{"file_path":"` + tc.file + `"}}`
+			code, out, errOut := runGateCLI(t, gateRepo, home, input, tc.args)
+			assertGatePinned(t, gateRepo, code, out, errOut, tc.code, tc.out, tc.err)
+		})
+	}
+
+	ledgerRepo := newGateFixture(t)
+	commonRel := gitOutput(t, ledgerRepo, "rev-parse", "--git-common-dir")
+	common := commonRel
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(ledgerRepo, commonRel)
+	}
+	witness := filepath.Join(common, "ai-specs", "ledger", "witness.json")
+	if err := os.MkdirAll(filepath.Dir(witness), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(witness, []byte(`{"v":1,"capability":"tracker","state":"bound","recipe_id":"trello-mcp-workflow","candidates":[],"written_at":"2026-09-13T00:00:00Z"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	storePath := filepath.Join(filepath.Dir(witness), "state.json")
+	identity := ledger.DeriveIdentity(ledger.IdentityOptions{Dir: ledgerRepo})
+	store := ledger.Store{V: ledger.StoreVersion}
+	item := store.OpenItem(ledger.ItemIdentity{CommonDir: identity.CommonDir, Branch: identity.Branch}, "trello-mcp-workflow", time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC))
+	item.ID = "fixture-item"
+	item.ItemID = "card-local"
+	item.Decisions = append(item.Decisions, ledger.Decision{
+		At: "2026-09-13T12:30:00Z", Checkpoint: "pre-merge",
+		Kind: ledger.DecisionAdjudicate, Choice: "local",
+	})
+	store.Items[len(store.Items)-1] = item
+	if err := ledger.SaveStore(storePath, store); err != nil {
+		t.Fatal(err)
+	}
+	evidence := filepath.Join(t.TempDir(), "evidence.json")
+	if err := os.WriteFile(evidence, []byte(`{"remote":"card-remote"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ledgerArgs := []string{"--ledger", "--checkpoint", "pre-merge", "--project-root", ledgerRepo, "--ledger-mode", "ask", "--witness", witness, "--store", storePath, "--evidence", evidence}
+	code, out, errOut := runGateCLI(t, ledgerRepo, home, "", ledgerArgs)
+	assertGatePinned(t, ledgerRepo, code, out, errOut, 0, `{"capability":"tracker","active":true,"checkpoint":"pre-merge","mode":"ask","decision":"allow","reason":"adjudicated","identity":{"common_dir":"<repo>/.git","branch":"main","change":null,"key":"<repo>/.git\u001fmain"},"item":{"id":"fixture-item","identity":{"common_dir":"<repo>/.git","branch":"main","change":""},"status":"open","item_id":"card-local","provider_id":"trello-mcp-workflow","native_type":"","url":"","state":"","provider":null,"exemption":"","conflict":null,"decisions":[{"at":"2026-09-13T12:00:00Z","checkpoint":"","kind":"open","choice":"","note":""},{"at":"2026-09-13T12:30:00Z","checkpoint":"pre-merge","kind":"adjudicate","choice":"local","note":""}]},"conflict":null,"prompt":null,"doctor":{"severity":"OK","name":"tracker-ledger","message":""}}`+"\n", "")
+
+	cleanupRepo := newGateFixture(t)
+	enableWorktreeFlow(t, cleanupRepo)
+	wt := filepath.Join(cleanupRepo, ".worktrees", "feat-unmerged")
+	gitTest(t, cleanupRepo, "worktree", "add", "-b", "feat-unmerged", wt)
+	if err := os.WriteFile(filepath.Join(wt, "change"), []byte("unmerged\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, wt, "add", ".")
+	gitTest(t, wt, "commit", "-m", "unmerged")
+	cleanupArgs := []string{"--cleanup", "--dir", ".worktrees", "--base", "main", "--integration-branch", "integration", "--topology", "standalone", "--dry-run"}
+	code, out, errOut = runGateCLI(t, cleanupRepo, home, "", cleanupArgs)
+	assertGatePinned(t, cleanupRepo, code, out, errOut, 0, "skipped feat-unmerged (unmerged)\n", "")
+
+	dirtyRepo := newGateFixture(t)
+	enableWorktreeFlow(t, dirtyRepo)
+	dirtyWT := filepath.Join(dirtyRepo, ".worktrees", "feat-dirty")
+	gitTest(t, dirtyRepo, "worktree", "add", "-b", "feat-dirty", dirtyWT)
+	if err := os.WriteFile(filepath.Join(dirtyWT, "landed"), []byte("landed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, dirtyWT, "add", ".")
+	gitTest(t, dirtyWT, "commit", "-m", "landed")
+	gitTest(t, dirtyRepo, "merge", "--no-ff", "-m", "merge dirty", "feat-dirty")
+	if err := os.WriteFile(filepath.Join(dirtyWT, "dirty"), []byte("dirty\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut = runGateCLI(t, dirtyRepo, home, "", cleanupArgs)
+	assertGatePinned(t, dirtyRepo, code, out, errOut, 0, "skipped feat-dirty (dirty)\n", "")
+
+	detachedRepo := newGateFixture(t)
+	enableWorktreeFlow(t, detachedRepo)
+	detachedWT := filepath.Join(detachedRepo, ".worktrees", "detached")
+	if err := os.MkdirAll(filepath.Dir(detachedWT), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, detachedRepo, "worktree", "add", "--detach", detachedWT, "main")
+	code, out, errOut = runGateCLI(t, detachedRepo, home, "", cleanupArgs)
+	assertGatePinned(t, detachedRepo, code, out, errOut, 0, "skipped detached (detached)\n", "")
+}
+
+// enableWorktreeFlow authorizes destructive cleanup in a fixture repo: cleanup
+// runs only where the main checkout's manifest enables the recipe.
+func enableWorktreeFlow(t *testing.T, root string) {
+	t.Helper()
+	dir := filepath.Join(root, "ai-specs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ai-specs.toml"), []byte("[recipes.worktree-flow]\nenabled = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func newGateFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	gitTest(t, root, "init", "-b", "main")
+	gitTest(t, root, "config", "user.email", "test@example.invalid")
+	gitTest(t, root, "config", "user.name", "test")
+	gitTest(t, root, "commit", "--allow-empty", "-m", "initial")
+	return root
+}
+
+func normalizeGateOutput(repo, output string) string {
+	if resolved, err := filepath.EvalSymlinks(repo); err == nil {
+		output = strings.ReplaceAll(output, resolved, "<repo>")
+	}
+	return strings.ReplaceAll(output, repo, "<repo>")
+}
+
+func assertGatePinned(t *testing.T, repo string, code int, stdout, stderr string, wantCode int, wantStdout, wantStderr string) {
+	t.Helper()
+	stdout = normalizeGateOutput(repo, stdout)
+	stderr = normalizeGateOutput(repo, stderr)
+	if code != wantCode || stdout != wantStdout || stderr != wantStderr {
+		t.Fatalf("got (%d,%q,%q); want (%d,%q,%q)", code, stdout, stderr, wantCode, wantStdout, wantStderr)
+	}
+}
+
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return strings.TrimSpace(string(output))
+}
+
+func gitTest(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, output)
+	}
+}
+
+func TestExistingVersionVerbUnchanged(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "VERSION"), []byte("0.25.2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"version"}, home, nil, &stdout, &stderr); code != 0 || stdout.String() != "0.25.2\n" || stderr.Len() != 0 {
+		t.Fatalf("version = (%d,%q,%q)", code, stdout.String(), stderr.String())
+	}
+}
+
+func runGateCLI(t *testing.T, cwd, home, input string, args []string) (int, string, string) {
+	t.Helper()
+	t.Chdir(cwd)
+	var stdout, stderr bytes.Buffer
+	code := Run(append([]string{"worktree-gate"}, args...), home, strings.NewReader(input), &stdout, &stderr)
+	return code, stdout.String(), stderr.String()
 }
 
 func TestRouteUnknownCommand(t *testing.T) {

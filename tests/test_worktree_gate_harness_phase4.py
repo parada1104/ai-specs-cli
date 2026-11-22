@@ -36,10 +36,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _blackbox import invoke, isolated_home  # noqa: E402
+from tests.gate_cli import install_cli  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
-GO_BINARY = ROOT / "dist" / "worktree-gate-current"
 RECIPE_TOML = ROOT / "catalog" / "recipes" / "worktree-flow" / "recipe.toml"
 
 AGENTS = ("claude", "cursor", "opencode", "pi", "omp")
@@ -110,29 +110,22 @@ def _materialize_launcher(dest: Path, *, mode: str = "always",
 
 
 def _install_binary_in(project: Path) -> Path:
-    """Place the built binary at the launcher's project-local pin path."""
-    if not GO_BINARY.exists():
-        raise unittest.SkipTest("no Go gate binary in dist/; launcher smoke requires the Go pin")
-    pin = project / "ai-specs" / "recipes" / "worktree-flow" / "bin" / "worktree-gate"
-    pin.parent.mkdir(parents=True, exist_ok=True)
-    pin.write_bytes(GO_BINARY.read_bytes())
-    pin.chmod(0o755)
-    return pin
+    """Install the CLI where the launcher resolves AI_SPECS_HOME."""
+    return install_cli(project / ".ai-specs-home")
 
 
 def _project_launcher(root: Path) -> Path:
-    """Materialize the launcher + binary pin in the real project layout.
+    """Materialize the launcher and installed CLI in the real project layout.
 
     Mirrors a synced project: launcher at
-    ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh and the project
-    pin at ai-specs/recipes/worktree-flow/bin/worktree-gate. The launcher
-    resolves the pin from $PWD, so processes must run with cwd=root (the
-    project root), exactly like every harness spawns the hook.
+    ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh. The launcher
+    resolves the CLI from AI_SPECS_HOME, while processes run with cwd=root
+    (the project root), exactly like every harness spawns the hook.
     """
     hook = root / MATERIALIZED_SCRIPT
     hook.parent.mkdir(parents=True, exist_ok=True)
     _materialize_launcher(hook)
-    _install_binary_in(root)
+    install_cli(root / ".ai-specs-home")
     return hook
 
 
@@ -210,8 +203,8 @@ class CursorLauncherWrapperTests(unittest.TestCase):
         _git(self.repo, "add", "-A")
         _git(self.repo, "commit", "-qm", "init")
         _git(self.repo, "checkout", "-q", "-B", "main")
-        # sync materialized the launcher; the launcher resolves the verified
-        # binary from the project-local pin, so install it now.
+        # sync materialized the launcher; install the CLI at its configured
+        # AI_SPECS_HOME location for the live launcher checks.
         _install_binary_in(self.project)
 
     def _wrapper(self) -> Path:
@@ -381,10 +374,10 @@ class LauncherLiveSmokeTests(unittest.TestCase):
         self.assertEqual(r.stderr, "")
 
     def test_missing_binary_fails_open_without_legacy_exec(self):
-        # No binary anywhere: fail open with one warning. A planted leftover
+        # No CLI anywhere: fail open with one warning. A planted leftover
         # worktree-gate-legacy.sh must not run.
-        pin = self.root / "ai-specs" / "recipes" / "worktree-flow" / "bin" / "worktree-gate"
-        pin.unlink(missing_ok=True)
+        cli = self.root / ".ai-specs-home" / "dist" / "ai-specs"
+        cli.unlink(missing_ok=True)
         sentinel = "SENTINEL-HARNESS-LEGACY-MUST-NOT-EXEC"
         leftover = (
             self.root / "ai-specs" / "recipes" / "worktree-flow"

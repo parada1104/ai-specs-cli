@@ -17,7 +17,7 @@ import unittest
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "catalog" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
-GO_BINARY = ROOT / "dist" / "worktree-gate-current"
+from tests.gate_cli import gate_command
 
 
 def _git(cwd: Path, *args: str) -> None:
@@ -52,11 +52,7 @@ class WorktreeGateHookTests(unittest.TestCase):
     impl = "go"
 
     def setUp(self):
-        if self.impl == "go" and not GO_BINARY.exists():
-            self.skipTest(
-                "no Go gate binary in dist/ (run scripts/build-gate.sh); "
-                "does not skip because a Bash reference is missing"
-            )
+        self.go_binary = gate_command()
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.repo = Path(self.tmp.name) / "repo"
@@ -91,7 +87,7 @@ class WorktreeGateHookTests(unittest.TestCase):
         if gate is None:
             gate = _GoGate()
         return [
-            str(GO_BINARY),
+            str(self.go_binary),
             "--gate-mode", gate.mode,
             "--gate-scope", gate.scope,
             "--repo-topology", gate.topology,
@@ -927,6 +923,20 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         self._write_marker(self.bin_marker, "MARKER:project-local")
         # A scratch AI_SPECS_HOME so cache lookups are hermetic.
         self.home = self.install / "home"
+        self.cli = self.home / "dist" / "ai-specs"
+
+    def _write_cli(self, *, status: int = 0, stdout: str = "CLI-OUT\n", stderr: str = "CLI-ERR\n", supports_version: bool = True) -> None:
+        self.cli.parent.mkdir(parents=True, exist_ok=True)
+        self.cli.write_text("\n".join([
+            "#!/usr/bin/env bash",
+            "printf '%s\\n' \"$*\" > \"$CLI_LOG\"",
+            *(["[ \"$*\" = 'worktree-gate --version' ] && exit 0"] if supports_version else []),
+            f"printf '%s' {stdout!r}",
+            f"printf '%s' {stderr!r} >&2",
+            f"exit {status}",
+            "",
+        ]))
+        self.cli.chmod(0o755)
 
     def _stamped_launcher(self, **overrides) -> str:
         content = (ROOT / "catalog" / "recipes" / "worktree-flow" /
@@ -960,40 +970,74 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         d.mkdir(exist_ok=True)
         return d
 
-    def test_relative_invocation_selects_project_local_bin_from_physical_root(self):
+    def test_routes_gate_args_and_streams_through_installed_cli(self):
+        self._write_cli(status=2)
+        env = self._gate_env(CLI_LOG=str(self.install / "cli.log"))
+        r = self._run(self.launcher, self._elsewhere(), stdin="payload", env=env)
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(r.stdout, "CLI-OUT\\n")
+        self.assertEqual(r.stderr, "CLI-ERR\\n")
+        self.assertEqual((self.install / "cli.log").read_text().strip(),
+                         "worktree-gate --gate-mode always --gate-scope auto --repo-topology auto --protected main")
+
+    def test_routes_success_output_through_installed_cli(self):
+        self._write_cli(status=0, stdout="allowed", stderr="diagnostic")
+        r = self._run(self.launcher, self._elsewhere(), env=self._gate_env(CLI_LOG=str(self.install / "cli.log")))
+        self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "allowed", "diagnostic"))
+
+    def test_missing_cli_fails_open_with_existing_warning(self):
+        r = self._run(self.launcher, self._elsewhere())
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("no usable gate", r.stderr)
+
+    def test_relative_invocation_ignores_retired_project_local_bin(self):
         cwd = self._elsewhere()
         rel = os.path.relpath(self.launcher, cwd)
         r = self._run(Path(rel), cwd)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("MARKER:project-local", r.stderr)
-        self.assertNotIn("MARKER:legacy", r.stderr)
+        self.assertNotIn("MARKER:project-local", r.stderr)
+        self.assertIn("no usable gate", r.stderr)
 
-    def test_symlink_invocation_resolves_physical_installation(self):
+    def test_symlink_invocation_ignores_retired_project_local_bin(self):
         link_dir = self.install / "linked"
         link_dir.mkdir()
         link = link_dir / "gate-link.sh"
         link.symlink_to(self.launcher)
         r = self._run(link, self._elsewhere())
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("MARKER:project-local", r.stderr,
-                      "symlinked invocation must resolve to the physical install")
+        self.assertNotIn("MARKER:project-local", r.stderr)
+        self.assertIn("no usable gate", r.stderr)
 
-    def test_unrelated_process_cwd_finds_launcher_beside_itself(self):
+    def test_unrelated_process_cwd_does_not_enable_retired_project_local_bin(self):
         r = self._run(self.launcher, self._elsewhere())
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("MARKER:project-local", r.stderr)
-
-    def test_worktree_gate_bin_override_wins(self):
-        override = self.install / "override-bin"
-        self._write_marker(override, "MARKER:override")
-        r = self._run(self.launcher, self._elsewhere(),
-                      env=self._gate_env(WORKTREE_GATE_BIN=str(override)))
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("MARKER:override", r.stderr)
         self.assertNotIn("MARKER:project-local", r.stderr)
-        self.assertNotIn("no usable gate", r.stderr)
+        self.assertIn("no usable gate", r.stderr)
 
-    def test_cache_precedence_when_project_local_missing(self):
+    def test_worktree_gate_bin_override_wins_without_cli(self):
+        self.bin_marker.unlink()
+        override = self.install / "override-bin"
+        args_file = self.install / "override.args"
+        override.write_text("\n".join(["#!/usr/bin/env bash", "printf '%s\\n' \"$*\" > \"$OVERRIDE_ARGS\"", ""]))
+        override.chmod(0o755)
+        r = self._run(self.launcher, self._elsewhere(), env=self._gate_env(
+            WORKTREE_GATE_BIN=str(override), OVERRIDE_ARGS=str(args_file)))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(args_file.read_text().strip(),
+                         "--gate-mode always --gate-scope auto --repo-topology auto --protected main")
+        self.assertNotIn("worktree-gate ", args_file.read_text())
+
+    def test_old_cli_fails_open_before_gate_exec(self):
+        self._write_cli(status=2, supports_version=False)
+        r = self._run(self.launcher, self._elsewhere(), env=self._gate_env(
+            CLI_LOG=str(self.install / "cli.log")))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("too old", r.stderr)
+        self.assertIn("ai-specs upgrade", r.stderr)
+        self.assertEqual((self.install / "cli.log").read_text().strip(),
+                         "worktree-gate --version")
+
+    def test_retired_cache_bin_is_ignored(self):
         self.bin_marker.unlink()
         platform = self._host_platform()
         cache_bin = (self.home / "cache" / "bin" / "worktree-gate" / "1.0.0" /
@@ -1002,14 +1046,14 @@ class WorktreeGateLauncherRootTests(unittest.TestCase):
         self._write_marker(cache_bin, "MARKER:cache")
         r = self._run(self.launcher, self._elsewhere())
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("MARKER:cache", r.stderr)
-        self.assertNotIn("no usable gate", r.stderr)
+        self.assertNotIn("MARKER:cache", r.stderr)
+        self.assertIn("no usable gate", r.stderr)
 
-    def test_project_local_resolves_with_no_fail_open_warning(self):
+    def test_retired_project_local_bin_is_ignored(self):
         r = self._run(self.launcher, self._elsewhere())
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("MARKER:project-local", r.stderr)
-        self.assertNotIn("no usable gate", r.stderr)
+        self.assertNotIn("MARKER:project-local", r.stderr)
+        self.assertIn("no usable gate", r.stderr)
 
     def test_unresolved_binary_fails_open_one_warning_never_execs_legacy(self):
         """No env, pin, or cache: fail open with one warning; planted legacy is inert."""

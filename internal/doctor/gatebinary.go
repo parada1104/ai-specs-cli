@@ -1,91 +1,46 @@
 package doctor
 
-// The gate doctor checks' read-only view of lib/_internal/gate_binary.py. The
-// version-keyed cache layout, the committed digest trust root, verified-binary
-// resolution and the --version/--selftest probes all delegate to
-// internal/gatebinary, the single grader shared with acquisition; this file
-// keeps only thin names for the checks plus the doctor-only cache-size report.
-// It also carries the native managed-override classifier (the decision the
-// gate binary would otherwise own through --plan-classify) so no other doctor
-// file keeps a second copy and no host shells out for the decision.
-//
-// Delegating resolution is a deliberate divergence from doctor.py: a receipt
-// without a committed digest, or a cache that breaks the same-user boundary,
-// fails closed here (see the internal/gatebinary trust model).
-//
-// Acquisition is deliberately absent: doctor is read-only and must never
-// download, build, chmod, quarantine or write a receipt.
+// Shared read-only helpers for the installed CLI and managed hook overrides.
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
 
-	"ai-specs.dev/ai-specs/internal/gatebinary"
 	"ai-specs.dev/ai-specs/internal/lock"
 )
 
-// detectGatePlatform is the host (goos, goarch) pair; "" for anything outside
-// darwin/linux + arm64/amd64.
-func detectGatePlatform() (string, string) { return gatebinary.DetectHostPlatform() }
+func installedCLIPath(home string) string { return filepath.Join(home, "dist", "ai-specs") }
 
-// gateCacheBinPath is the version-keyed cache path for the installed CLI.
-func gateCacheBinPath(home, goos, goarch string) string {
-	return gatebinary.CacheBinPath(home, "", goos, goarch)
-}
-
-// gateDigestMismatchRecordPath is the last recorded acquisition mismatch.
-func gateDigestMismatchRecordPath(home string) string {
-	return gatebinary.DigestMismatchRecordPath(home, "")
-}
-
-// loadExpectedGateDigests parses the committed SHA256SUMS trust root; ok is
-// false when it exists but cannot be read or decoded.
-func loadExpectedGateDigests(home string) (map[string]string, bool) {
-	return gatebinary.LoadExpectedDigests(home)
-}
-
-// isExecutable mirrors os.access(path, os.X_OK) via the mode bits.
 func isExecutable(path string) bool {
 	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return info.Mode().Perm()&0o111 != 0
+	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
 }
 
-// resolveVerifiedGateBinary is the shared verified-binary resolution, or "".
-func resolveVerifiedGateBinary(home string) string { return gatebinary.ResolveVerifiedBinary(home) }
-
-// gateBinaryVersion is the stripped --version stdout, "" on any failure.
-func gateBinaryVersion(binary string) string { return gatebinary.BinaryVersion(binary) }
-
-// gateSelftest is "" on a passing --selftest, else the failure text.
-func gateSelftest(binary string) string { return gatebinary.Selftest(binary) }
-
-// gateCacheSize mirrors gate_binary.cache_size: the total regular-file bytes
-// under the whole version-keyed cache root (all versions), following symlinks
-// like Path.is_file()/stat().
-func gateCacheSize(home string) int64 {
-	root := filepath.Join(home, "cache", "bin", "worktree-gate")
-	if !isDir(root) {
-		return 0
+// cliWorktreeGateSelftest runs the same subcommand used by the installed
+// launchers and returns diagnostic output on failure.
+func cliWorktreeGateSelftest(binary string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, "worktree-gate", "--selftest")
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err == nil {
+		return ""
 	}
-	var total int64
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			return nil
-		}
-		info, statErr := os.Stat(path)
-		if statErr != nil || !info.Mode().IsRegular() {
-			return nil
-		}
-		total += info.Size()
-		return nil
-	})
-	return total
+	if ctx.Err() != nil {
+		return ctx.Err().Error()
+	}
+	if detail := strings.TrimSpace(stderr.String()); detail != "" {
+		return detail
+	}
+	if detail := strings.TrimSpace(stdout.String()); detail != "" {
+		return detail
+	}
+	return "selftest failed"
 }
 
 // classifyManagedOverride is the native managed-override decision, the same one
@@ -101,9 +56,6 @@ func classifyManagedOverride(dest string, managed map[string]any, wouldWrite []b
 	}
 	disk, err := os.ReadFile(dest)
 	if err != nil {
-		// The legacy authority would fail to read and abort; doctor only calls
-		// this after is_file(), so an unreadable regular file is unreachable in
-		// practice. Degrade to "missing" rather than fabricating ownership.
 		return "missing"
 	}
 	diskSHA := lock.Sha256Bytes(disk)

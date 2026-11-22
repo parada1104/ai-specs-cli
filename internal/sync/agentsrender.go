@@ -1359,6 +1359,17 @@ func RenderAgentsFile(tomlPath, outputPath string, opts RenderAgentsOptions, std
 		return "current", false, 0
 	}
 
+	// A target outside the project (a dangling AGENTS.md symlink included) is
+	// refused BEFORE anything is created: WriteFile would follow the link and
+	// create the outside file, then report the refusal (T6d).
+	if err := projectWriteGuard(filepath.Dir(filepath.Dir(tomlPath)), outputPath, true); err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return "", false, 1
+	}
+	if _, err := briefLockKey(tomlPath, outputPath); err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return "", false, 1
+	}
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return "", false, 1

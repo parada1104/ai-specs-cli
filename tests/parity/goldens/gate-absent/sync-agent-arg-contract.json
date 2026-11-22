@@ -8,9 +8,9 @@
     "sync-agent",
     "--all"
    ],
-   "rc": 0,
-   "stderr": "  \u2717 unknown agent: laude2\n  \u2717 unknown agent: x\n  \u2717 unknown agent: y\n",
-   "stdout": "  syncing flatten resolved skills\n  syncing merge commands\n\nai-specs sync-agent\n  source root: <TEMP>\n  target:      <TEMP>\n  agents:      claude pi laude2 x y\n  enabled:     claude pi laude2 x y\n  mcp:         0 server(s)\n\n  derived artifacts: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n  syncing claude\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing laude2\n  syncing x\n  syncing y\n\n\u2713 sync-agent complete\n",
+   "rc": 1,
+   "stderr": "  \u2717 unknown agent: laude2\n  \u2717 unknown agent: x\n  \u2717 unknown agent: y\nERROR: 3 unknown agent(s) in the agent list; the others were synced.\n",
+   "stdout": "  syncing flatten resolved skills\n  syncing merge commands\n\nai-specs sync-agent\n  source root: <TEMP>\n  target:      <TEMP>\n  agents:      claude pi laude2 x y\n  enabled:     claude pi laude2 x y\n  mcp:         0 server(s)\n\n  derived artifacts: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n  syncing claude\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing pi\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n  syncing laude2\n  syncing x\n  syncing y\n",
    "tree": [
     [
      ".claude",

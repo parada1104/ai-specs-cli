@@ -91,8 +91,9 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         result = self._sync(proj)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         content = self._hook(proj).read_text()
-        self.assertIn('stamped_gate_impl="auto"', content)
-        self.assertIn('stamped_gate_version="0.21.0"', content)
+        self.assertIn('cli_bin="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"', content)
+        self.assertNotIn('stamped_gate_impl="', content)
+        self.assertNotIn('stamped_gate_version="', content)
         self.assertNotIn("__WORKTREE_GATE_IMPL__", content)
         self.assertNotIn("__WORKTREE_GATE_VERSION__", content)
 
@@ -118,9 +119,8 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         )
         result = self._sync(proj)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(
-            'stamped_gate_impl="go"', self._hook(proj).read_text()
-        )
+        content = self._hook(proj).read_text()
+        self.assertIn('worktree-gate --gate-mode', content)
         self.assertFalse(
             self._legacy_hook(proj).exists(),
             "ordinary sync must not write LEGACY_HOOK_REL",
@@ -193,7 +193,8 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         self.assertIn("--gate-mode", content, "must be replaced by the launcher")
         self.assertNotIn("_resolve_gate_mode", content,
                          "mode resolution is Go-owned; the launcher must not resolve")
-        self.assertIn("stamped_gate_impl=", content, "launcher must carry gate_impl")
+        self.assertNotIn("_resolve_binary", content, "legacy binary resolution must be gone")
+        self.assertIn("/dist/ai-specs", content, "launcher must route through installed CLI")
 
     def test_launcher_forwards_the_raw_stamped_mode_to_go(self):
         # The launcher is transport only: env/stamp precedence and fallback are
@@ -235,7 +236,8 @@ class WorktreeGateLauncherResolutionTests(unittest.TestCase):
     fails loudly.
     """
 
-    GO_BINARY = ROOT / "dist" / "worktree-gate-current"
+    from tests.gate_cli import gate_command
+    GO_BINARY = gate_command()
 
     def _stamp(self, dest: Path, *, impl: str = "auto",
                version: str = "0.21.0") -> Path:
@@ -302,8 +304,6 @@ class WorktreeGateLauncherResolutionTests(unittest.TestCase):
 
     def test_bin_override_wins_over_project_pin(self):
         """Spec 'Explicit binary override wins' (F5)."""
-        if not self.GO_BINARY.exists():
-            self.skipTest("no Go gate binary in dist/")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             launcher = self._launcher(root)
@@ -323,62 +323,14 @@ class WorktreeGateLauncherResolutionTests(unittest.TestCase):
                              "WORKTREE_GATE_BIN must win over the project pin")
             self.assertIn("refusing", proc.stderr)
 
-    def test_project_pin_wins_over_cache(self):
-        """Project-local pin outranks the version-keyed cache."""
-        if not self.GO_BINARY.exists():
-            self.skipTest("no Go gate binary in dist/")
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            launcher = self._launcher(root)
-            repo, event = self._fixture(root)
-            # Cache binary that would ALLOW (exit 0) if wrongly consulted.
-            cache_bin = (root / "home" / "cache" / "bin" / "worktree-gate" / "0.21.0" /
-                         _cache_platform() / "worktree-gate")
-            cache_bin.parent.mkdir(parents=True, exist_ok=True)
-            cache_bin.write_bytes(b"#!/usr/bin/env bash\nexit 0\n")
-            cache_bin.chmod(0o755)
-            # Project pin = the real gate (blocks).
-            pin = root / "ai-specs" / "recipes" / "worktree-flow" / "bin" / "worktree-gate"
-            pin.parent.mkdir(parents=True, exist_ok=True)
-            pin.write_bytes(self.GO_BINARY.read_bytes())
-            pin.chmod(0o755)
-            proc = self._run(launcher, event, root, self._env(root))
-            self.assertEqual(proc.returncode, 2,
-                             "project pin must win over the cache")
-            self.assertIn("refusing", proc.stderr)
-
-    def test_cache_binary_used_when_no_pin_or_override(self):
-        """Version-keyed cache serves when neither override nor pin exists."""
-        if not self.GO_BINARY.exists():
-            self.skipTest("no Go gate binary in dist/")
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            launcher = self._launcher(root)
-            repo, event = self._fixture(root)
-            cache_bin = (root / "home" / "cache" / "bin" / "worktree-gate" / "0.21.0" /
-                         _cache_platform() / "worktree-gate")
-            cache_bin.parent.mkdir(parents=True, exist_ok=True)
-            cache_bin.write_bytes(self.GO_BINARY.read_bytes())
-            cache_bin.chmod(0o755)
-            proc = self._run(launcher, event, root, self._env(root))
-            self.assertEqual(proc.returncode, 2,
-                             "cache binary must serve when no pin/override")
-            self.assertIn("refusing", proc.stderr)
-
     def test_non_executable_override_ignored(self):
-        """A WORKTREE_GATE_BIN that is not executable is ignored with a warning."""
-        if not self.GO_BINARY.exists():
-            self.skipTest("no Go gate binary in dist/")
+        """A non-executable WORKTREE_GATE_BIN warns and falls through to the installed CLI."""
+        from tests.gate_cli import install_cli
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             launcher = self._launcher(root)
             repo, event = self._fixture(root)
-            # Project pin = real gate so the launcher still enforces after
-            # ignoring the broken override.
-            pin = root / "ai-specs" / "recipes" / "worktree-flow" / "bin" / "worktree-gate"
-            pin.parent.mkdir(parents=True, exist_ok=True)
-            pin.write_bytes(self.GO_BINARY.read_bytes())
-            pin.chmod(0o755)
+            install_cli(root / "home")
             broken = root / "broken"
             broken.write_text("#!/usr/bin/env bash\nexit 0\n")
             env = self._env(root, WORKTREE_GATE_BIN=str(broken))

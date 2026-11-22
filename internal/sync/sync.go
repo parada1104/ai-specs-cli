@@ -34,6 +34,7 @@ Reconcile a project's ai-specs/ with its root manifest:
   - vendor [[deps]] once in the root workspace
   - regenerate AGENTS.md auto-invoke table
   - fan out local derived artifacts to every resolved target
+  - remove retired recipe commands when ai-specs recorded their ownership
 
 Arguments:
   path      Project root (default: current directory)
@@ -217,6 +218,37 @@ func (r *runner) run(opts options) int {
 		return rc
 	}
 
+	paths := make([]string, len(p.Targets))
+	labels := make([]string, len(p.Targets))
+	for i, t := range p.Targets {
+		paths[i] = t.Path
+		labels[i] = t.Kind + ":" + t.Rel
+	}
+
+	// Read-only preflights run BEFORE the sync lock, which itself creates the
+	// CLI-home cache dir and `sync.lock`: a refusal must write nothing at all,
+	// including the cache. Both checks only resolve paths, and every actual
+	// write and delete is contained again at its own site under the lock, so
+	// ordering them first costs no safety (T6f follow-up).
+	//
+	// Agent-path ownership preflight (S1, parity contract §4) for EVERY fan-out
+	// target and selected agent, before the first write of any step: the child
+	// runs repeat this check, but they run after the gitignore/env/lock steps,
+	// so a refusal there would already have changed the project (T6 follow-up).
+	fanoutAgents := selectedAgentsFor(tomlPath, agentOptions{selectAll: true})
+	for _, path := range paths {
+		if rc := preflightAgentPaths(root, path, fanoutAgents, r.stderr); rc != 0 {
+			return 1
+		}
+	}
+
+	// Project-tree containment preflight (T6d): a symlinked .gitignore, env rc
+	// file, env example, AGENTS.md or target ai-specs/ mirror is refused before
+	// the first step writes anything, so a refusal is write-free.
+	if rc := projectTreePreflight(root, r.home, paths, r.stderr); rc != 0 {
+		return rc
+	}
+
 	unlock, lockErr := acquireSyncLock(root, r.home)
 	if lockErr != nil {
 		if errors.Is(lockErr, errSyncLockTimeout) {
@@ -236,13 +268,6 @@ func (r *runner) run(opts options) int {
 	}
 	if rc != 0 {
 		return 1
-	}
-
-	paths := make([]string, len(p.Targets))
-	labels := make([]string, len(p.Targets))
-	for i, t := range p.Targets {
-		paths[i] = t.Path
-		labels[i] = t.Kind + ":" + t.Rel
 	}
 
 	fmt.Fprintln(r.stdout, "")
@@ -275,6 +300,47 @@ func (r *runner) run(opts options) int {
 			return 1
 		}
 	}
+	// Plan all prunes before project writes, including bundled refresh of the lock.
+	enabled, hooks, commands, inputErr := loadPruneInputs(root, r.home)
+	var applyRecipePrune func() error
+	var applyCommandPrune func(io.Writer) (map[string]bool, error)
+	var applyAgentPrune func(io.Writer, io.Writer) error
+	retired := map[string]bool{}
+	applyRuntimePrunes := make([]func(io.Writer) error, len(paths))
+	// If the inputs are invalid, leave their diagnostics to materialization.
+	if inputErr == nil {
+		// T7: the agents [agents].enabled no longer names are retired — their
+		// links, recorded command copies, MCP records and hook wiring/shim
+		// records are planned with every other prune, before the first delete
+		// (internal/sync/agentprune.go).
+		removed, agentApply, planErr := planRetiredAgentLeftovers(root, r.home, paths)
+		if planErr != nil {
+			fmt.Fprintf(r.stderr, "ERROR: cannot prune agent leftovers: %v\n", planErr)
+			return 1
+		}
+		applyAgentPrune = agentApply
+		for _, agent := range removed {
+			retired[agent] = true
+		}
+		applyRecipePrune, err = planRecipeArtifactPrune(root, enabled, hooks)
+		if err != nil {
+			fmt.Fprintf(r.stderr, "ERROR: cannot prune recipe artifacts: %v\n", err)
+			return 1
+		}
+		applyCommandPrune, err = planCommandPrune(root, r.home, paths, commands)
+		if err != nil {
+			fmt.Fprintf(r.stderr, "ERROR: cannot prune recipe commands: %v\n", err)
+			return 1
+		}
+		for i, path := range paths {
+			applyRuntimePrunes[i], err = planRuntimeHookPrune(root, path, hooks, retired)
+			if err != nil {
+				fmt.Fprintf(r.stderr, "ERROR: cannot prune runtime hooks: %v\n", err)
+				return 1
+			}
+		}
+	}
+
 	rootTemplate := filepath.Join(r.home, "templates", "gitignore-root.tmpl")
 	if rc := r.runStep("ai-specs/.gitignore", func(out, errW io.Writer) int {
 		return RenderAiSpecsGitignore(tomlPath, aiGitignore, out)
@@ -395,6 +461,24 @@ func (r *runner) run(opts options) int {
 	removeIfSet(recipeOutFile)
 	removeIfSet(recipeErrFile)
 
+	if inputErr != nil { // Inputs changed during sync; there is no safe plan to apply.
+		fmt.Fprintf(r.stderr, "ERROR: cannot plan prune: %v\n", inputErr)
+		return 1
+	}
+	if err := applyRecipePrune(); err != nil {
+		fmt.Fprintf(r.stderr, "ERROR: cannot prune recipe artifacts: %v\n", err)
+		return 1
+	}
+	warned, err := applyCommandPrune(r.stderr)
+	if err != nil {
+		fmt.Fprintf(r.stderr, "ERROR: cannot prune recipe commands: %v\n", err)
+		return 1
+	}
+	if err := applyAgentPrune(r.stdout, r.stderr); err != nil {
+		fmt.Fprintf(r.stderr, "ERROR: cannot prune agent leftovers: %v\n", err)
+		return 1
+	}
+
 	// AGENTS.md: policy gate then render, both native since T3 of U2a. D3 is
 	// preserved, not fixed: the policy's failure status is ignored and the gate
 	// is its verdict alone, so a manifest the policy cannot read skips the brief
@@ -416,6 +500,8 @@ func (r *runner) run(opts options) int {
 			sourceRoot:     root,
 			target:         target,
 			selectAll:      true,
+			syncHookEvents: true,
+			commands:       commandSync{owners: commands, warned: warned},
 			recipeMCP:      recipeMcpTemp,
 			resolvedConfig: resolvedConfigTemp,
 			resolvedHooks:  resolvedHooksTemp,
@@ -423,6 +509,10 @@ func (r *runner) run(opts options) int {
 			verbose:        opts.verbose,
 		}
 		rc := r.runStep(label+" → "+target, func(out, errW io.Writer) int {
+			if err := applyRuntimePrunes[i](errW); err != nil {
+				fmt.Fprintf(errW, "ERROR: cannot prune runtime hooks: %v\n", err)
+				return 1
+			}
 			return runAgentSingle(r, agentOpts, agentStreams{out: out, errW: errW}, true)
 		})
 		if rc != 0 {

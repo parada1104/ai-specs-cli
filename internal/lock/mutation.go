@@ -40,6 +40,51 @@ func SetBriefBaseline(lock *Lock, path, sha256 string) {
 	SetManagedOverride(lock, path, sha256, nil, nil, strPtr("runtime-brief"), strPtr("never-force"))
 }
 
+// SetMCPOwnership replaces the MCP server ownership record for one target. An
+// empty record keeps a marker entry only when notice is set (the target still
+// holds servers ai-specs never recorded, so the upgrade notice is not repeated);
+// otherwise the target leaves no trace in the lock.
+func SetMCPOwnership(lock *Lock, target string, servers map[string]string, notice bool) {
+	if lock.MCP == nil {
+		lock.MCP = map[string]map[string]any{}
+	}
+	if len(servers) == 0 && !notice {
+		delete(lock.MCP, target)
+		return
+	}
+	entry := make(map[string]any, len(servers))
+	for name, hash := range servers {
+		entry[name] = hash
+	}
+	lock.MCP[target] = entry
+}
+
+// SetMCPBlockHash records the sha256 of the exact managed-block bytes ai-specs
+// last wrote for a target; an empty hash drops the entry.
+func SetMCPBlockHash(lock *Lock, target, sha string) {
+	if lock.MCPBlock == nil {
+		lock.MCPBlock = map[string]string{}
+	}
+	if sha == "" {
+		delete(lock.MCPBlock, target)
+		return
+	}
+	lock.MCPBlock[target] = sha
+}
+
+// SetHookShim records that the generated hook shim at path belongs to owner
+// (the hook's managed id); an empty owner drops the record.
+func SetHookShim(lock *Lock, path, owner string) {
+	if lock.Hooks == nil {
+		lock.Hooks = map[string]string{}
+	}
+	if owner == "" {
+		delete(lock.Hooks, path)
+		return
+	}
+	lock.Hooks[path] = owner
+}
+
 // SetRecipeSkillHashes is set_recipe_skill_hashes: recipes.setdefault(
 // recipe_id, {})[skill_name] = dict(hashes). The hashes map is copied.
 func SetRecipeSkillHashes(lock *Lock, recipeID, skillName string, hashes map[string]string) {
@@ -103,3 +148,20 @@ func RemoveDepLockEntries(lock *Lock, depID string) bool {
 }
 
 func strPtr(s string) *string { return &s }
+
+// LinkMarker is the constant value a [links] record carries: the path itself
+// says which link it is, and the expected target is recomputed at sync time.
+const LinkMarker = "ai-specs:link"
+
+// SetLink records that the link at path was created or replaced by sync; an
+// empty marker drops the record.
+func SetLink(lock *Lock, path, marker string) {
+	if lock.Links == nil {
+		lock.Links = map[string]string{}
+	}
+	if marker == "" {
+		delete(lock.Links, path)
+		return
+	}
+	lock.Links[path] = marker
+}

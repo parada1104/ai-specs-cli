@@ -6,15 +6,14 @@ package sync
 // per-recipe frame; this file owns everything the Python authority performs
 // inside that frame after the config merge: the project-owned config pass, the
 // bundled/dep skills, the commands, the governed templates and docs, the
-// sync-time hooks, the runtime-hook collection with the resolved-hooks entries,
-// and the worktree-flow gate-binary acquisition.
+// sync-time hooks and the runtime-hook collection with the resolved-hooks
+// entries.
 //
 // Every decision stays in the merged native authority (shared actuators, the
 // copy authority, lock mutation helpers, RunRecipeHooks, MaterializeHook); this
 // file only sequences those calls, prints their messages verbatim and writes
-// the lock through ONE shared helper (applyLockRecord). One step is the
-// deliberate, documented, single non-native delegation (the gate-binary
-// acquisition runs natively through internal/gatebinary):
+// the lock through ONE shared helper (applyLockRecord). The deliberate
+// delegation is dependency-skill vendoring:
 //
 //   - materializeDepSkill: dependency-skill vendoring runs natively through
 //     internal/sync/vendorskills.go (the vendor-skills.py port).
@@ -34,7 +33,6 @@ import (
 	"unicode"
 
 	"ai-specs.dev/ai-specs/internal/cliversion"
-	"ai-specs.dev/ai-specs/internal/gatebinary"
 	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/projectcache"
 	"ai-specs.dev/ai-specs/internal/schema"
@@ -76,12 +74,14 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 		ProjectRoot:      req.ProjectRoot,
 	}
 
+	ownedSkills := []string{}
 	for _, skill := range recipe.Skills {
 		switch skill.Source {
 		case "bundled":
 			if err := materializeBundledSkill(req, recipeDir, lockPath, roots, skill); err != nil {
 				return nil, err
 			}
+			ownedSkills = append(ownedSkills, skill.ID)
 		case "dep":
 			if err := materializeDepSkill(req.ProjectRoot, req.AISpecsHome, skill, req.Stdout, req.Stderr); err != nil {
 				return nil, err
@@ -90,6 +90,12 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 		default:
 			return nil, fmt.Errorf("unknown skill source '%s' for skill '%s'", skill.Source, skill.ID)
 		}
+	}
+
+	// Record the skill copies this run materialized so the per-skill orphan
+	// prune only ever deletes ai-specs' own output (T7, S3).
+	if err := recordOwnedRecipeSkills(req.AISpecsHome, roots.RecipeSkillsRoot, req.Recipe.ID, ownedSkills); err != nil {
+		return nil, err
 	}
 
 	for _, cmd := range recipe.Commands {
@@ -128,9 +134,6 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 		resolvedHooks = append(resolvedHooks, entry)
 	}
 
-	if err := materializeWorktreeGateAcquisition(req, mergedCfg); err != nil {
-		return nil, err
-	}
 	return resolvedHooks, nil
 }
 
@@ -204,6 +207,11 @@ func materializeDocManagedEntry(lockPath, target string) (*DocManagedEntry, erro
 func materializeBundledSkill(req materializeArtifactRequest, recipeDir, lockPath string, roots CopyRoots, skill *schema.SkillRef) error {
 	src := filepath.Join(recipeDir, "skills", skill.ID)
 	dest := filepath.Join(roots.RecipeSkillsRoot, req.Recipe.ID, "skills", skill.ID)
+	// The copier RemoveAll's the destination: a redirected skills directory
+	// below the CLI home would delete and replace the link target (JD-A-002).
+	if err := cachePathGuard(req.AISpecsHome, dest); err != nil {
+		return err
+	}
 	results, err := ApplyCopyItems([]shared.CopyItem{{
 		Kind: "bundled-skill",
 		ID:   skill.ID,
@@ -271,6 +279,11 @@ func materializeSkillFileHashes(dest string) (map[string]string, error) {
 func materializeCommandArtifact(req materializeArtifactRequest, recipeDir string, roots CopyRoots, cmd *schema.CommandRef) error {
 	src := filepath.Join(recipeDir, cmd.Path)
 	dest := filepath.Join(roots.CommandsDir, cmd.ID+".md")
+	// The shared copier writes and chmods through a destination symlink: a
+	// redirected live command entry below the CLI home must refuse (JD-A-001).
+	if err := cachePathGuard(req.AISpecsHome, dest); err != nil {
+		return err
+	}
 	results, err := ApplyCopyItems([]shared.CopyItem{{
 		Kind:        "command",
 		ID:          cmd.ID,
@@ -440,7 +453,13 @@ func materializeGateBackupPath(req materializeArtifactRequest, rel string) (stri
 	if err != nil {
 		return "", err
 	}
-	return projectcache.GateBackupPath(req.ProjectRoot, rel, lock.Sha256Bytes(data), req.AISpecsHome), nil
+	backup := projectcache.GateBackupPath(req.ProjectRoot, rel, lock.Sha256Bytes(data), req.AISpecsHome)
+	// The actuator mkdirs and writes the snapshot: a redirected backups entry
+	// below the CLI home must refuse instead of writing outside it (JD-A-003).
+	if err := cachePathGuard(req.AISpecsHome, backup); err != nil {
+		return "", err
+	}
+	return backup, nil
 }
 
 // materializeResolvedHookEntry builds the dict hooks-render.py consumes:
@@ -523,31 +542,6 @@ func materializePyStr(value any) string {
 	}
 }
 
-// materializeWorktreeGateAcquisition mirrors the Phase 3 distribution branch of
-// the loop (:4087-4103): only worktree-flow with gate_impl auto|go acquires,
-// acquisition never fails the sync, and a status warning prints verbatim.
-func materializeWorktreeGateAcquisition(req materializeArtifactRequest, mergedCfg map[string]any) error {
-	if req.Recipe.ID != legacyTopologyRecipeID {
-		return nil
-	}
-	impl := "auto"
-	if value, ok := mergedCfg["gate_impl"]; ok && materializeConfigTruthy(value) {
-		impl = materializePyStr(value)
-	}
-	if impl != "auto" && impl != "go" {
-		return nil
-	}
-	warning, err := acquireGateBinary(req.AISpecsHome, impl)
-	if err != nil {
-		warnf(req.Stderr, "worktree-flow: gate binary acquisition failed (%s); gate degrades per gate_impl (see 'ai-specs doctor')", err.Error())
-		return nil
-	}
-	if warning != "" {
-		warnf(req.Stderr, "worktree-flow: %s", warning)
-	}
-	return nil
-}
-
 // materializeConfigTruthy mirrors Python truthiness over the merged-config
 // value domain for the `merged_cfg.get("gate_impl") or "auto"` fallback: an
 // absent, null, empty, false or zero value falls back.
@@ -570,28 +564,4 @@ func materializeConfigTruthy(value any) bool {
 		return typed != nil && len(typed.Keys()) > 0
 	}
 	return true
-}
-
-// --- the deliberate delegation ----------------------------------------------
-
-// acquireGateBinary runs the native gatebinary.Acquire with the arguments the
-// Python loop passes (gate_impl, the CLI home, AI_SPECS_GATE_OFFLINE) and
-// returns the status warning ("" when none). Acquire never errors; a panic is
-// the only failure left, reported as "<Type>: <message>" so the caller prints
-// the frozen degradation warning instead of failing the sync.
-func acquireGateBinary(aiSpecsHome, impl string) (warning string, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("RuntimeError: %v", r)
-		}
-	}()
-	status := gatebinary.Acquire(gatebinary.AcquireOptions{
-		GateImpl: impl,
-		Home:     aiSpecsHome,
-		Offline:  os.Getenv("AI_SPECS_GATE_OFFLINE") == "1",
-	})
-	if status.Warn != nil {
-		return *status.Warn, nil
-	}
-	return "", nil
 }

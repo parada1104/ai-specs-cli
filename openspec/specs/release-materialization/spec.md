@@ -81,34 +81,26 @@ the temporary `ai-specs/skills/`.
   `harness-lifecycle` or `skill-creator`
 - **AND** those ids MUST resolve from the cache / bundled-skill tier
 
-### Requirement: Gate release evidence matches VERSION and SHA256SUMS
+### Requirement: Worktree gate evidence comes from the candidate CLI
 
-The candidate's committed `catalog/recipes/worktree-flow/bin/SHA256SUMS`
-SHALL name the same version as repository `VERSION`. Isolated
-`worktree-flow` sync SHALL materialize the launcher and SHALL treat
-those committed digests as the trust root. The gate MUST NOT require a
-already-published GitHub release.
-
-#### Scenario: SHA256SUMS tracks the candidate version
-
-- **GIVEN** repository `VERSION` is `0.22.0`
-- **WHEN** the clean-materialization gate inspects
-  `catalog/recipes/worktree-flow/bin/SHA256SUMS`
-- **THEN** the file MUST declare the `v0.22.0` asset set
-- **AND** it MUST contain the four platform digest lines
+The worktree gate SHALL ship within the candidate CLI and use the CLI's
+`bin/SHA256SUMS` release trust root. Isolated materialization SHALL NOT
+require a separate gate asset, digest manifest, or published GitHub release.
 
 #### Scenario: Isolated worktree-flow sync materializes the launcher
 
-- **GIVEN** the isolated manifest enables `worktree-flow`
+- **GIVEN** the isolated manifest enables `worktree-flow` and the candidate
+  CLI is available at `$AI_SPECS_HOME/dist/ai-specs`
 - **WHEN** isolated `sync` completes with `AI_SPECS_GATE_OFFLINE=1`
 - **THEN**
   `ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh` MUST exist
-- **AND** acquisition MUST NOT be required to pass the gate
+- **AND** the candidate CLI's `worktree-gate --selftest` MUST pass
+- **AND** sync MUST NOT acquire a separate gate binary
 
 ### Requirement: Drift is a product defect
 
-If isolated materialization, doctor, adapter, cache, lock, or
-SHA256SUMS evidence fails, the failure SHALL be fixed in product
+If isolated materialization, doctor, adapter, cache, lock, gate selftest, or
+CLI SHA256SUMS evidence fails, the failure SHALL be fixed in product
 code, catalog, or tests. Refreshing this repository's dogfood lock
 or generated files SHALL NOT be used to make the gate pass.
 

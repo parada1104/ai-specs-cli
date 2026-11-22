@@ -34,6 +34,15 @@ func Flatten(projectRoot, destDir, cliHome string, stdout, stderr io.Writer) int
 		fmt.Fprintln(stderr, "error: AI_SPECS_HOME is not set")
 		return 1
 	}
+	// Containment (S1): the wipe below removes the destination itself, so a
+	// destination that IS a symlink is refused before anything is removed —
+	// rmtree would delete the link target's contents (outside the CLI home for
+	// a redirected `resolved-skills`). No frozen differential case has one: a
+	// symlinked PARENT keeps the legacy behavior.
+	if info, err := os.Lstat(destDir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		fmt.Fprintf(stderr, "error: refuse to write %s: destination is a symlink\n", destDir)
+		return 1
+	}
 	root := projectcache.ResolvePath(projectRoot)
 	dest := projectcache.ResolvePath(destDir)
 

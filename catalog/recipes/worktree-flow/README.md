@@ -9,7 +9,7 @@ post-merge cleanup.
   stay outside one (pure exploration), naming conventions, and cleanup rules.
 - **Commands `/worktree-new`, `/worktree-clean`** — agent-facing flows to create
   a worktree for a change and to reclaim merged worktrees.
-- **Script `bin/worktree-cleanup.sh`** — verified Go cleanup launcher: removes
+- **Script `worktree-cleanup.sh`** — launcher for the CLI's Go cleanup: removes
   only merged + clean worktrees, preserves dirty and unmerged ones, never touches
   protected heads, deletes merged remote branches from the main worktree, verifies
   remote absence with `git ls-remote --heads`, and closes the matching tracker-ledger
@@ -47,10 +47,12 @@ alias for one migration window (the project field wins; a recipe-only value is
 reported with a deprecation marker), and it is never written by new flows.
 
 Then run `ai-specs sync`. The cleanup launcher materializes to
-`ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh` and uses the
-same version-keyed, digest-verified Go binary as the worktree gate. Cleanup
-fails closed when no verified binary is available; it never silently falls back
-to an unverified or legacy destructive implementation.
+`ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh` and invokes
+`worktree-gate --cleanup` through the installed CLI at
+`${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs`. Cleanup fails closed if the
+CLI cannot serve the gate; a set `WORKTREE_CLEANUP_BIN` is rejected — the
+launcher aborts with exit 2 and a one-line error instead of running the override
+or falling back to the installed CLI. Unset it to run cleanup.
 
 ## Worktree-gate modes
 
@@ -67,57 +69,32 @@ Default: `always`.
 
 ## Gate implementation (`gate_impl`)
 
-The gate ships as a **single zero-dependency Go binary**. `ai-specs sync`
+The gate ships inside the **single zero-dependency Go CLI**. `ai-specs sync`
 materializes a thin bash-3.2 launcher at the unchanged path
-`ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh` and acquires the binary
-into the version-keyed cache:
+`ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh`; there are no separate
+gate release assets, cache downloads, or gate checksum trust root. `gate_impl`
+accepts `auto` (default) or `go`, both selecting the CLI-provided gate.
+`gate_impl = bash` is rejected at sync.
 
-```
-$AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/worktree-gate
-```
-
-| `gate_impl` | Behavior |
-|---|---|
-| `auto` (default) | Acquire the Go binary when the CLI can provide it. |
-| `go` | Explicit Go pin; same acquisition path as `auto`. |
-
-When no binary is usable, the launcher fails open with **exactly one** stderr
-warning (`ai-specs sync` / `ai-specs sync --refresh-gates` / `ai-specs doctor`)
-and `ai-specs doctor` reports ERROR. `gate_impl = bash` is rejected at sync.
-
-The launcher resolves an implementation in order: `$WORKTREE_GATE_BIN` →
-project-local `bin/worktree-gate` under the launcher's own `BASH_SOURCE[0]`
-physical installation root (the `hooks/../bin` layout, so relative and
-symlinked invocation resolve to the target installation) → version-keyed
-cache → one stderr warning and exit `0` (fail open). The process `$PWD` is the
-gate's invalid-event-cwd fallback, never a project-local asset root; an
-unresolvable `BASH_SOURCE[0]` root skips project-local lookup and continues
-through the explicit override or cache. Handoff is `exec`, so stdin and the
-exit code pass through untouched; the gate never computes a digest on the
-invocation path unless `WORKTREE_GATE_VERIFY=1` requests it.
-
-**Offline behavior:** with `gate_impl = auto` or `go` and no cached binary,
-`ai-specs sync` warns, the launcher fails open, and doctor reports ERROR. With
-a Go toolchain present, set `AI_SPECS_GATE_BUILD=1 ai-specs sync` (or run
-offline with `go` installed) to build the binary from the in-repo source into
-the same cache layout; a Go toolchain is a contributor prerequisite only, never
-a user prerequisite.
+The launcher accepts an executable `WORKTREE_GATE_BIN` per invocation. With
+`WORKTREE_GATE_VERIFY=1`, an override that fails `--selftest` is ignored and
+falls through to the installed CLI. The old project-local pin and cached
+standalone binary are no longer used. Handoff is `exec`, so stdin and the exit
+code pass through untouched. If the CLI route is unavailable, the launcher
+warns and fails open. The process `$PWD` remains the gate's fallback for an
+invalid event cwd.
 
 **Doctor severities (worktree-gate):** `gate_impl = bash` (manifest or stamp) is
 ERROR — set `auto` or `go`, then `ai-specs sync`. A leftover
 `hooks/worktree-gate-legacy.sh` on disk is INFO (inert; `rm
-ai-specs/recipes/worktree-flow/hooks/worktree-gate-legacy.sh`). Missing binary
-for `auto` or `go` is ERROR. Doctor is read-only.
+ai-specs/recipes/worktree-flow/hooks/worktree-gate-legacy.sh`). A missing or
+non-executable CLI is ERROR — reinstall ai-specs via `install.sh`. A failing
+CLI selftest is ERROR — run `ai-specs upgrade`. Doctor is read-only.
 
 **Recovery:** per invocation, `WORKTREE_GATE_MODE=off` or
-`WORKTREE_GATE_BIN=/path/to/binary`. Per install, `rm -rf
-$AI_SPECS_HOME/cache/bin/worktree-gate` then `ai-specs sync`. Full revert is
-install the previous CLI and `ai-specs sync`.
-
-**Digest trust root:** the expected SHA-256 of every published asset is
-committed at `catalog/recipes/worktree-flow/bin/SHA256SUMS`; a downloaded
-binary is verified against it before install and is deleted (never executed) on
-mismatch. Binaries are never committed to the repository.
+`WORKTREE_GATE_BIN=/path/to/binary`. Full revert is install the previous CLI
+and run `ai-specs sync`. The gate ships inside the CLI release and is covered
+by the CLI trust root; no separate gate binaries are published.
 
 ## Topology-aware gate scope
 

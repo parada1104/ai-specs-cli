@@ -1,0 +1,908 @@
+package runner
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"ai-specs.dev/worktree-gate/ledger"
+)
+
+// cleanupConfig is intentionally independent from the pre-tool-use gate config.
+// The cleanup command is destructive and therefore defaults to a fail-closed
+// implementation when its verified binary is unavailable at the launcher.
+type cleanupConfig struct {
+	worktreesDir      string
+	baseBranch        string
+	integrationBranch string
+	protected         map[string]struct{}
+	dryRun            bool
+	topology          string
+	scopes            []string
+}
+
+type repoPass struct {
+	root       string
+	modulePath string
+}
+
+type worktreeRecord struct {
+	path   string
+	sha    string
+	branch string
+}
+
+// protectedBranchSet returns the hard-coded names plus all configured branch
+// names. A map makes membership checks cheap and removes duplicate aliases.
+func protectedBranchSet(baseBranch, integrationBranch string) map[string]struct{} {
+	protected := map[string]struct{}{
+		"main":        {},
+		"master":      {},
+		"development": {},
+		"staging":     {},
+	}
+	for _, name := range []string{baseBranch, integrationBranch} {
+		if name = strings.TrimSpace(name); name != "" {
+			protected[name] = struct{}{}
+		}
+	}
+	return protected
+}
+
+func newCleanupConfig(superRoot string, worktreesDir, base, integration, topology string, dryRun bool, scopes []string) cleanupConfig {
+	if worktreesDir == "" {
+		worktreesDir = ".worktrees"
+	}
+	if topology == "" {
+		topology = "auto"
+	}
+	if base == "" {
+		base = integration
+	}
+	if integration == "" {
+		integration = base
+	}
+	return cleanupConfig{
+		worktreesDir:      filepath.Clean(worktreesDir),
+		baseBranch:        base,
+		integrationBranch: integration,
+		protected:         protectedBranchSet(base, integration),
+		dryRun:            dryRun,
+		topology:          topology,
+		scopes:            append([]string(nil), scopes...),
+	}
+}
+
+func isProtectedBranch(protected map[string]struct{}, branch string) bool {
+	_, ok := protected[strings.TrimSpace(branch)]
+	return ok
+}
+
+func refuseProtected(kind, branch string) error {
+	return fmt.Errorf("worktree-cleanup: refusing destructive cleanup of protected branch %q before %s", branch, kind)
+}
+
+// assertDeletable is called immediately before each destructive wrapper. Do
+// not move this check to classification: callers can observe repository state
+// between classification and deletion, and protected heads must stay protected
+// even under that race.
+func assertDeletable(kind, branch string, protected map[string]struct{}) error {
+	if isProtectedBranch(protected, branch) {
+		return refuseProtected(kind, branch)
+	}
+	return nil
+}
+
+func formatCleanupStatus(w io.Writer, format string, args ...interface{}) {
+	fmt.Fprintf(w, format+"\n", args...)
+}
+
+func cleanupPath(root, dir string) string {
+	if filepath.IsAbs(dir) {
+		return filepath.Clean(dir)
+	}
+	return filepath.Join(root, filepath.Clean(dir))
+}
+
+// parseWorktreePorcelain preserves branch names and paths exactly as Git emits
+// them. Git worktree porcelain records are line-oriented for metadata; paths
+// are only used after Git has already delimited the record.
+func parseWorktreePorcelain(text string) []worktreeRecord {
+	var records []worktreeRecord
+	var current worktreeRecord
+	flush := func() {
+		if current.path != "" {
+			records = append(records, current)
+		}
+		current = worktreeRecord{}
+	}
+	for _, line := range strings.Split(text, "\n") {
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			flush()
+			current.path = strings.TrimPrefix(line, "worktree ")
+		case strings.HasPrefix(line, "HEAD "):
+			current.sha = strings.TrimPrefix(line, "HEAD ")
+		case strings.HasPrefix(line, "branch refs/heads/"):
+			current.branch = strings.TrimPrefix(line, "branch refs/heads/")
+		case line == "detached":
+			current.branch = ""
+		}
+	}
+	flush()
+	return records
+}
+
+func worktreeRecords(root string) []worktreeRecord {
+	return parseWorktreePorcelain(git(root, "worktree", "list", "--porcelain"))
+}
+
+func resolveBaseCandidatesCleanup(repoRoot, base string) []string {
+	var candidates []string
+	seen := map[string]struct{}{}
+	emit := func(ref string) {
+		if ref == "" {
+			return
+		}
+		if _, ok := seen[ref]; ok {
+			return
+		}
+		if gitMemo(repoRoot, "rev-parse", "--verify", "--quiet", ref) == "" {
+			return
+		}
+		seen[ref] = struct{}{}
+		candidates = append(candidates, ref)
+	}
+
+	emit(base)
+	upstream := git(repoRoot, "rev-parse", "--verify", "--quiet", "--symbolic-full-name", base+"@{u}")
+	emit(upstream)
+	configuredRemote := git(repoRoot, "config", "--get", "branch."+base+".remote")
+	configuredResolved := false
+	if configuredRemote != "" {
+		ref := "refs/remotes/" + configuredRemote + "/" + base
+		if gitMemo(repoRoot, "rev-parse", "--verify", "--quiet", ref) != "" {
+			configuredResolved = true
+			emit(ref)
+		}
+	}
+	if !configuredResolved && git(repoRoot, "config", "--get", "remote.origin.url") != "" {
+		emit("refs/remotes/origin/" + base)
+	}
+	return candidates
+}
+
+func candidateHasMergedTipCleanup(repoRoot, sha, candidate string) bool {
+	return runGit(repoRoot, "merge-base", "--is-ancestor", sha, candidate) == nil
+}
+
+func candidateHasPatchEquivalenceCleanup(repoRoot, sha, candidate string) bool {
+	if strings.TrimSpace(git(repoRoot, "rev-list", candidate+".."+sha)) == "" {
+		return false
+	}
+	cherry := git(repoRoot, "cherry", candidate, sha)
+	if cherry == "" {
+		return false
+	}
+	for _, line := range strings.Split(cherry, "\n") {
+		if strings.HasPrefix(line, "+") {
+			return false
+		}
+	}
+	// Matches the Bash reference exactly: the per-commit `git cherry` proof
+	// stands on its own here. A reverted squash is already rejected at the
+	// cherry step, because the individual commits' patch-ids no longer match
+	// anything reachable. Standalone tree equivalence remains the third,
+	// independent term of the local-proof chain in isMergedWithCandidates, as in
+	// the reference.
+	return true
+}
+
+func candidateHasCombinedPatchEquivalenceCleanup(repoRoot, sha, candidate string) bool {
+	common := git(repoRoot, "merge-base", candidate, sha)
+	if common == "" {
+		return false
+	}
+	branchPatch := directPatchID(repoRoot, common, sha)
+	candidatePatch := directPatchID(repoRoot, common, candidate)
+	return branchPatch != "" && branchPatch == candidatePatch
+}
+
+func directPatchID(repoRoot, from, to string) string {
+	// Use an OS pipe rather than a shell so repository paths and Git output are
+	// never re-parsed by a command interpreter.
+	cmd := newGitCommand(repoRoot, "diff", "--no-ext-diff", "--binary", from, to)
+	patch, err := cmd.StdoutPipe()
+	if err != nil {
+		return ""
+	}
+	if err := cmd.Start(); err != nil {
+		return ""
+	}
+	patchBytes, readErr := io.ReadAll(patch)
+	waitErr := cmd.Wait()
+	if readErr != nil || waitErr != nil {
+		return ""
+	}
+	pid := execPatchID(patchBytes)
+	return pid
+}
+
+func candidateHasCombinedTreeEquivalenceCleanup(repoRoot, sha, candidate string) bool {
+	common := git(repoRoot, "merge-base", candidate, sha)
+	if common == "" {
+		return false
+	}
+	paths := gitRawBytes(repoRoot, "diff", "--no-ext-diff", "--name-only", "-z", "--no-renames", common, sha)
+	if len(paths) == 0 {
+		return false
+	}
+	count := 0
+	for _, path := range bytes.Split(paths, []byte{0}) {
+		if len(path) == 0 {
+			continue
+		}
+		count++
+		branchEntry, ok := treeEntry(repoRoot, sha, string(path))
+		if !ok {
+			return false
+		}
+		candidateEntry, ok := treeEntry(repoRoot, candidate, string(path))
+		if !ok || branchEntry != candidateEntry {
+			return false
+		}
+	}
+	return count > 0
+}
+
+// isMergedWithCandidates runs the local proofs against every already-resolved
+// base candidate. The candidate list is passed in so a single pass resolves the
+// base spellings once and evaluates both the local proofs and the provider merge
+// evidence against the same set.
+func isMergedWithCandidates(repoRoot, sha string, candidates []string) bool {
+	for _, candidate := range candidates {
+		if candidateHasMergedTipCleanup(repoRoot, sha, candidate) {
+			return true
+		}
+	}
+	for _, candidate := range candidates {
+		if candidateHasPatchEquivalenceCleanup(repoRoot, sha, candidate) ||
+			candidateHasCombinedPatchEquivalenceCleanup(repoRoot, sha, candidate) ||
+			candidateHasCombinedTreeEquivalenceCleanup(repoRoot, sha, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func treeEntry(repoRoot, revision, path string) (string, bool) {
+	cmd := newGitCommand(repoRoot, "ls-tree", revision, "--", path)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	entry := bytes.TrimSpace(out)
+	if len(entry) == 0 {
+		return "", false
+	}
+	return string(entry), true
+}
+
+func branchHeldByWorktree(records []worktreeRecord, branch, except string) bool {
+	for _, record := range records {
+		if record.branch == branch && filepath.Clean(record.path) != filepath.Clean(except) {
+			return true
+		}
+	}
+	return false
+}
+
+// closeLedgerBeforeRemoval closes the single open ledger item matching the
+// repository's common dir and the candidate branch, at archive-close.
+//
+// This is the automatic VCS-boundary close: it is independent of SDD, ODD, or a
+// named agent workflow, and it makes no provider or network call. Cleanup knows
+// only the common dir and the branch, so the ledger matches on those two fields
+// and ignores any stored change slug. A missing or already-closed item is a
+// no-op. An identity, store, or write failure returns an error so the caller
+// preserves the candidate: fail closed for destructive cleanup. Dry-run never
+// mutates the ledger, and a protected branch is never a cleanup candidate, so
+// neither is closed here.
+func closeLedgerBeforeRemoval(repoRoot, branch string, cfg cleanupConfig, out io.Writer) error {
+	if cfg.dryRun || branch == "" || isProtectedBranch(cfg.protected, branch) {
+		return nil
+	}
+	common := RealPath(gitCommon(repoRoot))
+	if common == "" {
+		return fmt.Errorf("worktree-cleanup: ledger identity unavailable for %q; refusing removal", branch)
+	}
+	outcome, err := ledger.CloseBranchItem(ledger.StorePath(common), common, branch, ledger.CheckpointArchiveClose, time.Now())
+	if err != nil {
+		return fmt.Errorf("worktree-cleanup: ledger close for %q failed: %w", branch, err)
+	}
+	if outcome.Applied {
+		formatCleanupStatus(out, "closed ledger item for %s", branch)
+	}
+	return nil
+}
+
+func removeWorktreeCleanup(repoRoot string, record worktreeRecord, displayName string, cfg cleanupConfig, all []worktreeRecord, out io.Writer) error {
+	if err := assertDeletable("worktree removal", record.branch, cfg.protected); err != nil {
+		return err
+	}
+	if branchHeldByWorktree(all, record.branch, record.path) {
+		return fmt.Errorf("worktree-cleanup: refusing worktree removal for branch %q: another worktree still holds it", record.branch)
+	}
+	if cfg.dryRun {
+		formatCleanupStatus(out, "would remove %s", displayName)
+		return nil
+	}
+	if err := runGit(repoRoot, "worktree", "remove", record.path); err != nil {
+		return fmt.Errorf("worktree-cleanup: worktree remove %q failed: %w", record.path, err)
+	}
+	return nil
+}
+
+func removeLocalBranchCleanup(repoRoot string, record worktreeRecord, cfg cleanupConfig, out io.Writer) error {
+	if err := assertDeletable("local branch deletion", record.branch, cfg.protected); err != nil {
+		return err
+	}
+	if branchHeldByWorktree(worktreeRecords(repoRoot), record.branch, "") {
+		return fmt.Errorf("worktree-cleanup: refusing local deletion for branch %q: a worktree still holds it", record.branch)
+	}
+	if cfg.dryRun {
+		return nil
+	}
+	if err := assertDeletable("local branch deletion", record.branch, cfg.protected); err == nil {
+		if err := runGit(repoRoot, "branch", "-d", record.branch); err == nil {
+			return nil
+		}
+	} else {
+		return err
+	}
+	if err := assertDeletable("forced local branch deletion", record.branch, cfg.protected); err != nil {
+		return err
+	}
+	if err := runGit(repoRoot, "branch", "-D", record.branch); err != nil {
+		return fmt.Errorf("worktree-cleanup: local branch deletion %q failed: %w", record.branch, err)
+	}
+	return nil
+}
+
+func remoteForBranch(repoRoot, branch string) string {
+	if remote := git(repoRoot, "config", "--get", "branch."+branch+".remote"); remote != "" && remote != "." {
+		return remote
+	}
+	if git(repoRoot, "config", "--get", "remote.origin.url") != "" {
+		return "origin"
+	}
+	return ""
+}
+
+func requirePrimaryCleanupCheckout(root string) error {
+	if root == "" {
+		return fmt.Errorf("worktree-cleanup: current repository root is unavailable")
+	}
+	gitDir := git(root, "rev-parse", "--absolute-git-dir")
+	common := gitCommon(root)
+	if gitDir == "" || common == "" || RealPath(gitDir) != common {
+		return fmt.Errorf("worktree-cleanup: run cleanup from the main repository worktree; linked worktrees are not allowed")
+	}
+	return nil
+}
+
+func remoteRefExists(repoRoot, remote, branch string) (bool, error) {
+	cmd := newGitCommand(repoRoot, "ls-remote", "--heads", remote, branch)
+	out, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(out)) != "", nil
+}
+
+type localBranchRecord struct {
+	branch string
+	sha    string
+}
+
+// localBranchRecordsCleanup enumerates every local branch explicitly. The NUL
+// delimiters keep branch names and object ids independent of line splitting.
+func localBranchRecordsCleanup(repoRoot string) []localBranchRecord {
+	raw := gitRawBytes(repoRoot, "for-each-ref", "--format=%(refname:short)%00%(objectname)%00", "refs/heads/")
+	fields := bytes.Split(raw, []byte{0})
+	var records []localBranchRecord
+	for i := 0; i+1 < len(fields); i += 2 {
+		branch := strings.TrimSpace(string(fields[i]))
+		sha := strings.TrimSpace(string(fields[i+1]))
+		if branch == "" || sha == "" {
+			continue
+		}
+		records = append(records, localBranchRecord{branch: branch, sha: sha})
+	}
+	return records
+}
+
+// ghPRRecord is the minimal shape read from
+// `gh pr list --json headRefOid,mergeCommit`.
+type ghPRRecord struct {
+	HeadRefOID  string `json:"headRefOid"`
+	MergeCommit *struct {
+		OID string `json:"oid"`
+	} `json:"mergeCommit"`
+}
+
+// ghMergeCommitsCleanup reads the provider merge commits recorded for a branch.
+// Acquisition is read-only and fails closed: a missing, failing, or malformed
+// `gh` yields no evidence, and the caller then preserves the candidate.
+//
+// Each record is bound to the candidate's current tip: a merge commit is
+// accepted only for the pull request whose recorded head is exactly sha. A
+// branch can be reused after a merged pull request — the old merge commit stays
+// reachable from base while the reused tip carries unmerged work — so an
+// unbound or mismatched head proves nothing about sha and is discarded.
+//
+// The owning repository is passed explicitly and pinned as the command dir.
+// Under monorepo-submodules the process cwd is the superproject while a pass is
+// bound to a submodule, and the provider resolves `pr list` from cwd: without
+// this the evidence describes the wrong repository.
+func ghMergeCommitsCleanup(repoRoot, branch, sha string) []string {
+	cmd := exec.Command("gh", "pr", "list", "--head", branch, "--state", "all", "--json", "headRefOid,mergeCommit")
+	cmd.Dir = repoRoot
+	output, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var prs []ghPRRecord
+	if err := json.Unmarshal(output, &prs); err != nil {
+		return nil
+	}
+	// Scan EVERY pull request for this head. Returning on the first entry that
+	// lacks a merge commit misses the case of a branch closed unmerged once and
+	// later reused for a pull request that did merge.
+	var oids []string
+	for _, pr := range prs {
+		if pr.MergeCommit == nil || pr.MergeCommit.OID == "" {
+			continue
+		}
+		// Fail closed: a head the provider did not report, or one that is not the
+		// candidate's current tip, cannot bind this merge commit to sha.
+		if pr.HeadRefOID == "" || pr.HeadRefOID != sha {
+			continue
+		}
+		oids = append(oids, pr.MergeCommit.OID)
+	}
+	return oids
+}
+
+// mergeCommitInCandidates proves one provider merge commit is reachable from any
+// already-resolved base candidate. An unknown or unrelated revision proves
+// nothing.
+func mergeCommitInCandidates(repoRoot, oid string, candidates []string) bool {
+	for _, candidate := range candidates {
+		if candidateHasMergedTipCleanup(repoRoot, oid, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+// mergeEvidenceWorktreeObservation fills the merge fields of a normalized
+// observation. It short-circuits before provider acquisition whenever the port
+// can already decide, so a detached or dirty candidate — and a locally-proven
+// merge — never reaches the network.
+//
+// There is deliberately no path-presence fallback. Proving that a same-named
+// file exists on the base is not proof that this branch's work landed: two
+// commits can touch the same path with entirely different content and never
+// meet. A sound version of that check is exactly
+// candidateHasCombinedTreeEquivalenceCleanup, already run above. A merge that
+// cannot be proven is preserved: refuse rather than guess.
+func mergeEvidenceWorktreeObservation(repoRoot, branch, sha string, candidates []string, obs ledger.WorktreeObservation) ledger.WorktreeObservation {
+	if obs.Detached || obs.Dirty {
+		return obs
+	}
+	obs.LocalMerged = isMergedWithCandidates(repoRoot, sha, candidates)
+	if obs.LocalMerged {
+		return obs
+	}
+	// Every returned commit is already bound to this candidate's tip, so the
+	// first reported commit is recorded even when it is not in base; the port
+	// then evaluates the observed evidence rather than a pre-digested boolean.
+	for _, oid := range ghMergeCommitsCleanup(repoRoot, branch, sha) {
+		if mergeCommitInCandidates(repoRoot, oid, candidates) {
+			obs.PRMergeCommit, obs.MergeCommitInBase = oid, true
+			return obs
+		}
+		if obs.PRMergeCommit == "" {
+			obs.PRMergeCommit = oid
+		}
+	}
+	return obs
+}
+
+// linkedWorktreeObservationCleanup gathers the facts the Worktree port needs for
+// a linked worktree candidate: detached, then dirty, then merge evidence. The
+// order is the evaluation order, so the expensive proofs and the provider call
+// only run for a candidate that could actually be cleaned.
+func linkedWorktreeObservationCleanup(repoRoot string, record worktreeRecord, candidates []string) ledger.WorktreeObservation {
+	obs := ledger.WorktreeObservation{Detached: record.branch == ""}
+	if obs.Detached {
+		return obs
+	}
+	obs.Dirty = strings.TrimSpace(git(record.path, "status", "--porcelain")) != ""
+	return mergeEvidenceWorktreeObservation(repoRoot, record.branch, record.sha, candidates, obs)
+}
+
+// staleBranchObservationCleanup gathers the facts for a local branch with no
+// worktree. Such a branch is never detached and has no working tree to dirty,
+// so it goes straight to the merge evidence.
+func staleBranchObservationCleanup(repoRoot string, record localBranchRecord, candidates []string) ledger.WorktreeObservation {
+	return mergeEvidenceWorktreeObservation(repoRoot, record.branch, record.sha, candidates, ledger.WorktreeObservation{})
+}
+
+func removeRemoteBranchCleanup(repoRoot string, record worktreeRecord, remote string, cfg cleanupConfig, out io.Writer) error {
+	if err := assertDeletable("remote branch deletion", record.branch, cfg.protected); err != nil {
+		return err
+	}
+	if branchHeldByWorktree(worktreeRecords(repoRoot), record.branch, "") {
+		return fmt.Errorf("worktree-cleanup: refusing remote deletion for branch %q: a worktree still holds it", record.branch)
+	}
+	if remote == "" {
+		formatCleanupStatus(out, "skipped %s (no remote)", record.branch)
+		return nil
+	}
+	if cfg.dryRun {
+		formatCleanupStatus(out, "would delete remote %s/%s", remote, record.branch)
+		return nil
+	}
+	if err := assertDeletable("remote branch deletion", record.branch, cfg.protected); err != nil {
+		return err
+	}
+	// A remote branch that is already gone is the goal state, not a failure.
+	// Someone deleting it through the host's UI is ordinary, and treating that
+	// as an error used to abort the entire cleanup pass.
+	if exists, err := remoteRefExists(repoRoot, remote, record.branch); err == nil && !exists {
+		formatCleanupStatus(out, "remote %s/%s already absent", remote, record.branch)
+		return nil
+	}
+	if err := runGit(repoRoot, "push", remote, "--delete", record.branch); err != nil {
+		return fmt.Errorf("worktree-cleanup: remote deletion %s/%s failed: %w", remote, record.branch, err)
+	}
+	if err := assertDeletable("remote deletion verification", record.branch, cfg.protected); err != nil {
+		return err
+	}
+	exists, err := remoteRefExists(repoRoot, remote, record.branch)
+	if err != nil {
+		return fmt.Errorf("worktree-cleanup: remote verification %s/%s failed: %w", remote, record.branch, err)
+	}
+	if exists {
+		return fmt.Errorf("worktree-cleanup: remote verification found surviving ref %s/%s", remote, record.branch)
+	}
+	formatCleanupStatus(out, "verified remote %s/%s absent", remote, record.branch)
+	return nil
+}
+
+func cleanupOnePass(repoRoot, superRoot string, cfg cleanupConfig, out io.Writer) error {
+	prefix := filepath.Clean(cleanupPath(superRoot, cfg.worktreesDir)) + string(filepath.Separator)
+	records := worktreeRecords(repoRoot)
+	base := cfg.baseBranch
+	if base == "" {
+		base = git(repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD")
+	}
+	// The base spellings are resolved once for the whole pass: the Worktree port
+	// evaluates local proofs and provider merge-commit evidence against the same
+	// already-resolved candidate set.
+	candidates := resolveBaseCandidatesCleanup(repoRoot, base)
+	var failures []error
+	for _, record := range records {
+		recordPath := filepath.Clean(record.path)
+		if !strings.HasPrefix(recordPath+string(filepath.Separator), prefix) {
+			continue
+		}
+		name := strings.TrimPrefix(recordPath, prefix)
+		outcome := ledger.EvaluateWorktree(linkedWorktreeObservationCleanup(repoRoot, record, candidates))
+		if !outcome.Merged {
+			formatCleanupStatus(out, "skipped %s (%s)", name, outcome.Reason)
+			continue
+		}
+		// The VCS-boundary close runs before the destructive removal: a ledger
+		// store or write failure must preserve the candidate, not delete the work
+		// the ledger just failed to record (fail closed for destructive cleanup).
+		if err := closeLedgerBeforeRemoval(repoRoot, record.branch, cfg, out); err != nil {
+			formatCleanupStatus(out, "failed %s (%v)", name, err)
+			failures = append(failures, err)
+			continue
+		}
+		remote := remoteForBranch(repoRoot, record.branch)
+		// One candidate's failure must never abandon the rest of the pass.
+		// spec.md: "it MUST not stop after the first candidate". Returning here
+		// left every remaining eligible worktree unattempted and unreported —
+		// no output line, no status, nothing to tell the caller they were
+		// skipped. Record the failure, say so, and move on.
+		if err := removeWorktreeCleanup(repoRoot, record, name, cfg, records, out); err != nil {
+			formatCleanupStatus(out, "failed %s (%v)", name, err)
+			failures = append(failures, err)
+			continue
+		}
+		if cfg.dryRun {
+			continue
+		}
+		// Remote deletion runs before local deletion, and the order is load
+		// bearing. The remote step is the one that fails for reasons outside
+		// this machine — an outage, a revoked token, a protected-branch rule.
+		// Deleting the local branch first would destroy the only handle a
+		// rerun has: worktree gone, branch gone, and the surviving remote
+		// branch invisible to every later pass. Keeping the local branch
+		// until the remote is provably gone makes the failure recoverable —
+		// the stale-branch sweep below rediscovers it on the next run.
+		if err := removeRemoteBranchCleanup(repoRoot, record, remote, cfg, out); err != nil {
+			formatCleanupStatus(out, "failed %s (%v)", name, err)
+			failures = append(failures, err)
+			continue
+		}
+		if err := removeLocalBranchCleanup(repoRoot, record, cfg, out); err != nil {
+			formatCleanupStatus(out, "failed %s (%v)", name, err)
+			failures = append(failures, err)
+			continue
+		}
+		formatCleanupStatus(out, "removed %s", name)
+	}
+	// A local branch can outlive its linked worktree (for example after a
+	// manually removed worktree). Reconcile those branches in the same pass,
+	// but only after the linked candidates have been handled.
+	held := worktreeRecords(repoRoot)
+	for _, local := range localBranchRecordsCleanup(repoRoot) {
+		// The base itself is never a stale feature candidate, even when the
+		// configured protected set is incomplete.
+		if local.branch == base {
+			continue
+		}
+		if isProtectedBranch(cfg.protected, local.branch) || branchHeldByWorktree(held, local.branch, "") {
+			continue
+		}
+		outcome := ledger.EvaluateWorktree(staleBranchObservationCleanup(repoRoot, local, candidates))
+		if !outcome.Merged {
+			formatCleanupStatus(out, "skipped %s (%s)", local.branch, outcome.Reason)
+			continue
+		}
+		if cfg.dryRun {
+			formatCleanupStatus(out, "would remove %s", local.branch)
+			continue
+		}
+		if err := closeLedgerBeforeRemoval(repoRoot, local.branch, cfg, out); err != nil {
+			formatCleanupStatus(out, "failed %s (%v)", local.branch, err)
+			failures = append(failures, err)
+			continue
+		}
+		record := worktreeRecord{branch: local.branch, sha: local.sha}
+		remote := remoteForBranch(repoRoot, local.branch)
+		// Same ordering rule as the linked-worktree loop above: the local
+		// branch is the retry handle, so it outlives the remote deletion.
+		if err := removeRemoteBranchCleanup(repoRoot, record, remote, cfg, out); err != nil {
+			formatCleanupStatus(out, "failed %s (%v)", local.branch, err)
+			failures = append(failures, err)
+			continue
+		}
+		if err := removeLocalBranchCleanup(repoRoot, record, cfg, out); err != nil {
+			formatCleanupStatus(out, "failed %s (%v)", local.branch, err)
+			failures = append(failures, err)
+			continue
+		}
+		formatCleanupStatus(out, "removed %s", local.branch)
+	}
+	if len(failures) > 0 {
+		msgs := make([]string, 0, len(failures))
+		for _, err := range failures {
+			msgs = append(msgs, err.Error())
+		}
+		return fmt.Errorf("%s", strings.Join(msgs, "; "))
+	}
+	return nil
+}
+
+// syncBaseCleanup is intentionally separate from candidate deletion. It is
+// called only after every pass completes successfully, making base sync the
+// final operation in the post-merge sequence.
+func syncBaseCleanup(repoRoot string, cfg cleanupConfig, out io.Writer) error {
+	if cfg.dryRun {
+		return nil
+	}
+	base := cfg.baseBranch
+	if base == "" {
+		base = git(repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD")
+	}
+	if base == "" {
+		return fmt.Errorf("worktree-cleanup: base branch is unavailable; refusing final sync")
+	}
+	current := git(repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if current != base {
+		return fmt.Errorf("worktree-cleanup: base branch %q is not checked out in the primary worktree; refusing final sync", base)
+	}
+	remote := remoteForBranch(repoRoot, base)
+	if remote == "" {
+		formatCleanupStatus(out, "skipped base sync %s (no remote)", base)
+		return nil
+	}
+	exists, err := remoteRefExists(repoRoot, remote, base)
+	if err != nil {
+		return fmt.Errorf("worktree-cleanup: base remote verification %s/%s failed: %w", remote, base, err)
+	}
+	if !exists {
+		formatCleanupStatus(out, "skipped base sync %s (remote ref absent)", base)
+		return nil
+	}
+	if err := runGit(repoRoot, "pull", "--ff-only", remote, base); err != nil {
+		return fmt.Errorf("worktree-cleanup: final base sync %s/%s failed: %w", remote, base, err)
+	}
+	formatCleanupStatus(out, "synced base %s/%s", remote, base)
+	return nil
+}
+
+// cleanupModulePaths mirrors the cleanup script's submodule enumeration. It
+// intentionally does not reuse the gate's stricter moduleRecords proof: cleanup
+// must scan initialized submodules with custom gitmodule names too (for example
+// name=web at path=apps/web), while the gate's ownership proof correctly uses a
+// different `.git/modules/<registration>` invariant.
+func cleanupModulePaths(superRoot string, scopes []string) []string {
+	raw := strings.TrimRight(gitRaw(superRoot, "submodule", "status"), "\n")
+	var paths []string
+	for _, line := range strings.Split(raw, "\n") {
+		if line == "" || line[0] == '-' {
+			continue
+		}
+		fields := strings.Fields(line[1:])
+		if len(fields) < 2 {
+			continue
+		}
+		rel := fields[1]
+		module := RealPath(filepath.Join(superRoot, rel))
+		if len(scopes) > 0 && !containsString(scopes, rel) && !containsString(scopes, module) {
+			continue
+		}
+		paths = append(paths, module)
+	}
+	return paths
+}
+
+// enumerateCleanupPasses mirrors the Bash topology contract, but returns a
+// slice so every module is necessarily visited by a Go range loop.
+func enumerateCleanupPasses(superRoot string, topology string, scopes []string) []repoPass {
+	if topology == "standalone" || topology == "monorepo-apps" {
+		return []repoPass{{root: superRoot}}
+	}
+	modules := cleanupModulePaths(superRoot, scopes)
+	if len(modules) == 0 {
+		return []repoPass{{root: superRoot}}
+	}
+	var passes []repoPass
+	for _, module := range modules {
+		rel, err := filepath.Rel(superRoot, module)
+		if err != nil {
+			continue
+		}
+		passes = append(passes, repoPass{root: module, modulePath: rel})
+	}
+	return passes
+}
+
+// worktreeFlowRecipeID is the recipe that owns the cleanup launcher and the
+// post-merge hook. Cleanup is destructive, so it runs only where the project
+// manifest still enables that recipe.
+const worktreeFlowRecipeID = "worktree-flow"
+
+// mainCheckoutRoot resolves the repository's main checkout from the git common
+// dir. The hooks are shared by every worktree, so the manifest that authorizes
+// cleanup is always the main checkout's, wherever the hook fired.
+func mainCheckoutRoot(root string) string {
+	common := RealPath(gitCommon(root))
+	if common == "" {
+		return ""
+	}
+	if filepath.Base(common) == ".git" {
+		return filepath.Dir(common)
+	}
+	// A separate git dir or a bare layout: Git lists the main worktree first.
+	if records := worktreeRecords(root); len(records) > 0 {
+		return filepath.Clean(records[0].path)
+	}
+	return ""
+}
+
+// worktreeFlowEnabled reads the recipe's [recipes.worktree-flow] table. A false
+// value, an absent table, and an absent enabled key all grant no authority.
+func worktreeFlowEnabled(manifest string) (bool, error) {
+	recipes, err := readManifestRecipes(manifest)
+	if err != nil {
+		return false, err
+	}
+	recipe, ok := recipes[worktreeFlowRecipeID]
+	if !ok || recipe.Enabled == nil {
+		return false, nil
+	}
+	return *recipe.Enabled, nil
+}
+
+// isBareRepository reports whether root is a bare repository record. A bare
+// repository has no main working tree, so it can never authorize cleanup.
+func isBareRepository(root string) bool {
+	return gitMemo(root, "rev-parse", "--is-bare-repository") == "true"
+}
+
+// cleanupRecipeGate reports whether the pass may run. When it may not, it prints
+// the single reason line and returns the exit code: a disabled recipe is a clean
+// no-op, while a missing or unreadable manifest fails closed because destructive
+// cleanup never guesses whether the user disabled it.
+func cleanupRecipeGate(superRoot string, errOut io.Writer) (int, bool) {
+	mainRoot := mainCheckoutRoot(superRoot)
+	if mainRoot == "" {
+		fmt.Fprintln(errOut, "worktree-cleanup: the main repository worktree could not be resolved; no destructive action taken")
+		return 2, false
+	}
+	// A bare repository never authorizes cleanup: it has no main working tree,
+	// so its manifest cannot be the project's, and acting on it deletes before
+	// the base sync can fail.
+	if isBareRepository(mainRoot) {
+		fmt.Fprintln(errOut, "worktree-cleanup: the repository is bare and has no main worktree to authorize cleanup; no destructive action taken")
+		return 2, false
+	}
+	manifest := manifestPath(mainRoot)
+	enabled, err := worktreeFlowEnabled(manifest)
+	if err != nil {
+		fmt.Fprintf(errOut, "worktree-cleanup: project manifest %s is missing or unreadable (%v); no destructive action taken\n", manifest, err)
+		return 2, false
+	}
+	if !enabled {
+		fmt.Fprintf(errOut, "worktree-cleanup: worktree-flow is not enabled in %s; nothing to clean\n", manifest)
+		return 0, false
+	}
+	return 0, true
+}
+
+func runCleanup(superRoot string, cfg cleanupConfig, out, errOut io.Writer) int {
+	if superRoot != "" {
+		superRoot = RealPath(superRoot)
+	}
+	if superRoot == "" {
+		fmt.Fprintln(errOut, "worktree-cleanup: repository root could not be resolved; no destructive action taken")
+		return 2
+	}
+	// The recipe gate runs first: whatever worktree the shared hook fired from,
+	// a disabled main manifest is a clean no-op, and only an enabled one is
+	// subject to the primary-worktree requirement below.
+	if code, ok := cleanupRecipeGate(superRoot, errOut); !ok {
+		return code
+	}
+	if err := requirePrimaryCleanupCheckout(superRoot); err != nil {
+		fmt.Fprintln(errOut, err)
+		return 2
+	}
+	passes := enumerateCleanupPasses(superRoot, cfg.topology, cfg.scopes)
+	if len(passes) == 0 {
+		return 0
+	}
+	var failures []string
+	for _, pass := range passes {
+		if err := cleanupOnePass(pass.root, superRoot, cfg, out); err != nil {
+			failures = append(failures, err.Error())
+		}
+	}
+	if len(failures) == 0 && !cfg.dryRun {
+		for _, pass := range passes {
+			if err := syncBaseCleanup(pass.root, cfg, out); err != nil {
+				failures = append(failures, err.Error())
+			}
+		}
+	}
+	if len(failures) > 0 {
+		for _, failure := range failures {
+			fmt.Fprintln(errOut, failure)
+		}
+		return 2
+	}
+	return 0
+}

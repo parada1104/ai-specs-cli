@@ -233,6 +233,28 @@ def _norm_gate_cache_size(text: str, ctx: dict) -> str:
     return _GATE_CACHE_KB_RE.sub(r"\1<CACHE_KB>\2", text)
 
 
+# gate-into-cli: the gate is served by the CLI itself. The Go help lists the new
+# verb and doctor's tracker-ledger probe reports on the installed CLI instead of
+# a separately acquired binary (contract: "Worktree-gate doctor probe").
+_GATE_HELP_LINE = ("  worktree-gate [gate args...]  Run the worktree gate "
+                   "(arguments passed through unchanged)\n")
+_TRACKER_LEDGER_ERROR_RE = re.compile(
+    r"^(  ERROR  tracker-ledger   ).*the tracker ledger is failing open.*$",
+    re.MULTILINE)
+
+
+def _norm_gate_help_line(text: str, ctx: dict) -> str:
+    if tuple(ctx.get("argv") or ())[:1] != ("help",):
+        return text
+    return text.replace(_GATE_HELP_LINE, "")
+
+
+def _norm_tracker_ledger_probe(text: str, ctx: dict) -> str:
+    if tuple(ctx.get("argv") or ())[:1] != ("doctor",):
+        return text
+    return _TRACKER_LEDGER_ERROR_RE.sub(r"\1<TRACKER_LEDGER_FAIL_OPEN>", text)
+
+
 # GO-20 U2e T5 (v0.25.0 merge): CLI version stamps move with every release.
 # The frozen goldens were captured at 0.24.0; after the bump the live legs
 # legitimately print 0.25.0 in doctor lines, the version verb, the hub banner
@@ -246,11 +268,16 @@ _VERSION_STAMP_CONTEXTUAL_RES = (
     (re.compile(r'"cli_version": "\d+\.\d+\.\d+"'), '"cli_version": "<CLI_VERSION>"'),
     (re.compile(r'stamped_gate_version="\d+\.\d+\.\d+"'), 'stamped_gate_version="<CLI_VERSION>"'),
 )
+_GATE_VERSION_STAMP_RE = re.compile(
+    r"(?m)^(  OK +worktree-gate +Go binary )(\d+\.\d+\.\d+)"
+    r"( at <TEMP>/cache/bin/worktree-gate/)\2(?=/[^/\n]+/worktree-gate; selftest passed )")
 
 
 def _norm_version_stamps(text: str, ctx: dict) -> str:
     for pat, repl in _VERSION_STAMP_CONTEXTUAL_RES:
         text = pat.sub(repl, text)
+    if (ctx.get("argv") or ())[:1] == ("doctor",):
+        text = _GATE_VERSION_STAMP_RE.sub(r"\1<CLI_VERSION>\3<CLI_VERSION>", text)
     return text
 
 
@@ -466,7 +493,9 @@ NORMALIZATIONS = (
         description="Canonicalize CLI version stamps (doctor 'installed'/'last "
                     "sync' lines, the hub 'version:' banner, and lock "
                     "cli_version stamps in both TOML and JSON shapes) to "
-                    "<CLI_VERSION> on both legs.",
+                    "<CLI_VERSION> on both legs. On doctor's successful "
+                    "worktree-gate line, also canonicalize the version of the "
+                    "cached binary and its matching cache directory segment.",
         justification="GO-20 U2e T5 (v0.25.0 release merge), Robert's approved "
                       "release model: the frozen goldens were captured at "
                       "0.24.0 and every version bump legitimately moves these "
@@ -487,6 +516,25 @@ NORMALIZATIONS = (
                       "fixture). Scoped to a whole-line exact semver so no "
                       "embedded literal is touched.",
         fn=_norm_bare_version_line,
+    ),
+    Normalization(
+        rule_id="N14-gate-help-verb",
+        surfaces=("stdout",),
+        description="Drop the `worktree-gate` verb line from `ai-specs help`.",
+        justification="gate-into-cli: the gate is now a CLI verb the legacy "
+                      "help never listed. Scoped to that exact line.",
+        fn=_norm_gate_help_line,
+    ),
+    Normalization(
+        rule_id="N15-tracker-ledger-probe",
+        surfaces=("stdout",),
+        description="Canonicalize the text of doctor's fail-open "
+                    "`ERROR tracker-ledger` line.",
+        justification="Accepted divergence 'Worktree-gate doctor probe' "
+                      "(T6, Robert L5): the probe checks the installed CLI, "
+                      "so its wording and remedy differ. Severity and "
+                      "line identity stay compared.",
+        fn=_norm_tracker_ledger_probe,
     ),
 )
 
@@ -1564,20 +1612,33 @@ class LegResult:
     steps: list[StepResult] = field(default_factory=list)
 
 
+def _stage_install_entry(src: Path, dest: Path) -> None:
+    if src.is_symlink():
+        dest.symlink_to(src.readlink())
+    elif src.is_dir():
+        dest.mkdir()
+        dest.chmod(0o755)
+        for child in src.iterdir():
+            _stage_install_entry(child, dest / child.name)
+    else:
+        shutil.copyfile(src, dest)
+        dest.chmod(0o755 if src.stat().st_mode & 0o100 else 0o644)
+
+
 def make_home(base: Path) -> Path:
-    """Isolated install root that carries NO lib/ at all.
+    """Stage the black-box install entries without lib/ or live checkout modes.
 
-    Reuses _blackbox.isolated_home (symlinked install entries + local cache/)
-    and drops the lib/ symlink it creates while this checkout still has lib/,
-    the same fixture shape the black-box suites use (GO-20 U2e T5 PR4a S7).
-    The native binary needs no Python implementation in the install root: the
-    legacy side of the comparison is the frozen golden, never a live run.
-
-    Tolerant of absence on purpose: PR4b deletes lib/, and then there is no
-    symlink to remove (`missing_ok=True` is a no-op instead of a crash).
+    Sync copies modes from shipped assets. Canonicalize the install inputs to
+    0755 directories and 0644 files (0755 for executables), so output mode
+    differences measure CLI behavior and not checkout permissions.
     """
     home = bb.isolated_home(base, catalog=True)
     (home / "lib").unlink(missing_ok=True)
+    for entry in home.iterdir():
+        if entry.is_symlink():
+            src = entry.readlink()
+            entry.unlink()
+            _stage_install_entry(src, entry)
     return home
 
 
@@ -1600,6 +1661,8 @@ def run_leg(label: str, cli_path: Path, fixture: Fixture, scratch: Path,
            "AI_SPECS_HOME": home_str}
     if gate_bin is not None:
         env["WORKTREE_GATE_BIN"] = str(gate_bin)
+        (home / "dist").mkdir()
+        (home / "dist" / "ai-specs").symlink_to(gate_bin)
     if cli_path.name == "ai-specs" and cli_path.parent.name == "bin":
         # The launcher self-heals a missing binary (download/go build); the
         # self-test shim must keep failing instantly and identically instead.
@@ -1707,10 +1770,15 @@ def build_gate_binary(dest_dir: Path) -> Path | None:
            "GOPATH": os.environ.get("GOPATH", str(dest_dir / "gopath")),
            "GOCACHE": str(dest_dir / "gocache")}
     proc = subprocess.run(
-        ["go", "-C", str(GATE_MODULE_DIR), "build", "-o", str(dest), "."],
-        env=env, text=True, capture_output=True, check=False)
+        ["go", "build", "-o", str(dest), "./cmd/ai-specs"],
+        cwd=ROOT, env=env, text=True, capture_output=True, check=False)
     if proc.returncode != 0:
         sys.stderr.write(f"parity: worktree-gate build failed\n{proc.stderr}\n")
+        return None
+    probe = subprocess.run([str(dest), "worktree-gate", "--selftest"],
+                           env=env, text=True, capture_output=True, check=False)
+    if probe.returncode != 0:
+        sys.stderr.write(f"parity: worktree-gate CLI probe failed\n{probe.stderr}\n")
         return None
     return dest
 
@@ -1769,13 +1837,9 @@ def load_golden_leg(fixture: Fixture, gate_mode: str) -> LegResult:
     data = json.loads(path.read_text(encoding="utf-8"))
     steps = []
     for item in data["steps"]:
-        # Both legs go through the same normalizations (N10 states the rule; the
-        # frozen text was captured WITH the normalizations of its time applied, so
-        # re-applying them is idempotent — measured over all 35 fixtures in both
-        # gate modes: only N12-gate-cache-size changes anything, and only the two
-        # doctor-healthy goldens, whose stored byte count the frozen capture could
-        # not mark). Harness artifacts and permanently unstable metrics are
-        # canonicalized on both sides; no golden byte is rewritten.
+        # The frozen text already carries the normalizations of its time.
+        # Reapply the current rules on both sides: N12 and N13 can canonicalize
+        # values the capture could not mark, without rewriting golden bytes.
         ctx = {"argv": tuple(item["argv"])}
         steps.append(StepResult(
             argv=tuple(item["argv"]), rc=item["rc"],

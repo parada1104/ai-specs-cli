@@ -109,32 +109,26 @@ from `ai-specs/ai-specs.toml` at runtime (falling back to `gate_mode`), and
 `worktree-flow`'s `worktree-gate.sh` is a **thin launcher** (bash 3.2 only) that
 resolves the gate implementation and `exec`s it, so stdin and the exit code pass
 through untouched. The only implementation is a single zero-dependency Go
-binary. `gate_impl` accepts `auto | go` only; both acquire the verified binary
-and fail open when none resolves (`ai-specs doctor` reports ERROR).
+binary. `gate_impl` accepts `auto | go` only; both use the worktree-gate route provided
+by the CLI and fail open if that route is unavailable (`ai-specs doctor` reports ERROR).
 
 Resolution order (first hit wins):
 
-1. `$WORKTREE_GATE_BIN` — explicit per-invocation override (debugging/pinning).
-2. Project-local pin `bin/worktree-gate` under the launcher's `BASH_SOURCE[0]`
-   physical installation root (the `hooks/../bin` layout) — never `$PWD`.
-3. Version-keyed cache
-   `$AI_SPECS_HOME/cache/bin/worktree-gate/<cli-version>/<goos>-<goarch>/worktree-gate`,
-   populated by `ai-specs sync` (digest-verified against the committed
-   `SHA256SUMS` trust root, mode 0755, self-tested, atomic install).
-4. Otherwise one stderr warning naming the missing path and the
-   `ai-specs sync` / `ai-specs sync --refresh-gates` / `ai-specs doctor`
-   remedy, then exit `0` (fail open).
+1. An executable `WORKTREE_GATE_BIN` override; with `WORKTREE_GATE_VERIFY=1`,
+   an override that fails `--selftest` is ignored.
+2. The `worktree-gate` route in `${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs`.
+3. If the CLI route is unavailable, warn on stderr and exit `0` (fail open).
+   Use `ai-specs doctor` to diagnose the install; upgrade an old or failing
+   CLI with `ai-specs upgrade`, or reinstall via `install.sh` if it is missing
+   or not executable.
 
-The build matrix is `darwin/arm64`, `darwin/amd64`, `linux/amd64`,
-`linux/arm64` (reproducible: `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false`,
-version stamped at link time). The gate never computes a digest on the
-invocation path unless `WORKTREE_GATE_VERIFY=1` requests it.
+The gate ships inside the CLI release; the project-local pin and version-keyed
+cache are ignored, and there are no separate gate assets or checksum trust root.
 
 **Recovery (no Bash rollback path):** per invocation, set
-`WORKTREE_GATE_MODE=off` or `WORKTREE_GATE_BIN=<path>`. Per install, `rm -rf
-$AI_SPECS_HOME/cache/bin/worktree-gate` then `ai-specs sync`. Full revert is
-install the previous CLI release and run `ai-specs sync`. `gate_impl = auto`
-with no usable binary is a doctor ERROR, not a silent fallback.
+`WORKTREE_GATE_MODE=off` or `WORKTREE_GATE_BIN=<path>`. Full revert is install
+the previous CLI release and run `ai-specs sync`. `gate_impl = auto` with an
+unavailable CLI route is a doctor ERROR, not a silent fallback.
 
 Because every renderer references only `hook["script_path"]`, all five harnesses
 keep working without re-render churn: the launcher materializes at the unchanged
@@ -151,7 +145,7 @@ them:
 | Context | Producer | Meaning | Fallback |
 |---------|----------|---------|----------|
 | Event cwd | Runtime adapter + normalized event | Directory whose repository/worktree context the gate evaluates | Gate process cwd when the event value is unusable |
-| Installation root | Materialized launcher / generated module | Root used to find project-local hook assets | No process-cwd substitution for project-local assets |
+| Project root for launcher lookup | Generated adapter | Root used to find the materialized launcher | No process-cwd substitution |
 | Process cwd | Actual hook child process | Fallback context when the event cwd is unusable | The OS/runtime process cwd |
 
 - **Adapter launcher paths are module-derived.** The generated OpenCode plugin
@@ -166,12 +160,6 @@ them:
   Absent, non-string, whitespace-only, relative, nonexistent, or non-directory
   values fall back to the process cwd for both. Child `spawnSync` errors and
   thrown child-process exceptions fail open; status `2` remains the only block.
-- **The launcher derives its installation root from `BASH_SOURCE[0]`.** A
-  relative reference is anchored to the invocation cwd exactly once, the final
-  launcher symlink (and parent symlinks) resolve to the physical launcher, and
-  project-local assets resolve as `hooks/../bin` under that root —
-  never from `$PWD`. An unresolvable root skips project-local lookup
-  and continues through the explicit override or cache, or fails open.
 - **Pi/OMP keep process-cwd-only events** and claim no workspace root; Cursor's
   missing pre-file-write hook and OpenCode's subagent/MCP coverage gap are
   unchanged (see below).
@@ -220,13 +208,15 @@ intercepts MCP tool calls.
 
 `plan-build-flow` and `trello-mcp-workflow` path/shell hooks, plus
 `tracker-card-gate.sh`'s direct host mode, are **acquisition + JSON bridges** to one
-verified Go predicate. They resolve the `worktree-gate` binary (project-local pin,
-then version-keyed cache with its `.verified` receipt, then the
-explicit `WORKTREE_GATE_BIN` override), invoke it as
-`worktree-gate --ledger --checkpoint <name> --ledger-mode <mode>`, and map the
-JSON verdict to the hook exit contract (`0` allow/ask/dormant/unevaluable, `2`
-only for `block`). Hosts never compile or download on the hot path, and a missing
-or unverified binary fails open with one stderr line.
+Go predicate. They invoke `ai-specs worktree-gate --ledger --checkpoint <name>`
+through the installed `dist/ai-specs`, not through the project-local pin, the
+cache, or `WORKTREE_GATE_BIN`. Plan Build uses `AI_SPECS_HOME` (default
+`$HOME/.ai-specs`); the Tracker host uses the CLI home stamped by sync. Go
+resolves the effective ledger mode. Neither host compiles or downloads a binary.
+Tracker verdicts are advisory and exit `0`; when a checkpoint reaches the
+Tracker grader but the CLI is missing or does not recognize `worktree-gate`,
+the host warns and still exits `0`. Plan Build can exit `2` for a blocking
+verdict or when an old CLI cannot grade the checkpoint.
 
 The domain is Tracker, not a provider. One pure Go grader compares neutral
 expectations against neutral observations; a provider recipe extends that domain
@@ -255,12 +245,12 @@ provider write, no network, no second grader).
 writes on the same dispatcher:
 
 ```bash
-worktree-gate --ledger --checkpoint apply-start --ledger-mode warn \
+ai-specs worktree-gate --ledger --checkpoint apply-start --ledger-mode warn \
   --project-root . --write '{"kind":"open"}'
-worktree-gate --ledger --checkpoint apply-start --ledger-mode warn --project-root . \
+ai-specs worktree-gate --ledger --checkpoint apply-start --ledger-mode warn --project-root . \
   --write '{"kind":"link","item_id":"<native-id>","url":"<url>","native_type":"card","state":"in-progress"}'
 # Generic, workflow-agnostic: open-if-absent + link in one locked transaction.
-worktree-gate --ledger --checkpoint apply-start --ledger-mode warn --project-root . \
+ai-specs worktree-gate --ledger --checkpoint apply-start --ledger-mode warn --project-root . \
   --write '{"kind":"bind","item_id":"<native-id>","url":"<url>","native_type":"card","state":"in-progress"}'
 ```
 

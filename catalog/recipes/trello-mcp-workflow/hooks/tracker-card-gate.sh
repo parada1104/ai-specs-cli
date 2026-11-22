@@ -2,7 +2,7 @@
 # tracker-card-gate.sh — pre-tool-use guard distributed by trello-mcp-workflow.
 #
 # Semantic model: the ledger is the only grader. This script is the one shell
-# host: a thin acquisition/JSON bridge to the verified Go `--ledger` predicate.
+# host: a thin acquisition/JSON bridge to the installed CLI's Go `worktree-gate`
 # Mode resolution is Go-owned too (`ResolveLedgerMode`): this host forwards the
 # raw stamped legacy gate hint as `--ledger-gate-mode` and never resolves or
 # skips a checkpoint itself. As a pre-tool-use hook it maps a production path
@@ -23,7 +23,7 @@
 #     blocks a source change or a Tracker lifecycle boundary.
 #   exit 2 → reserved for a usage error (bad/missing --root, --checkpoint, or
 #     --stage), never for a ledger verdict.
-# Fail-open: a missing/unverified binary, an unstamped/missing evidence bridge,
+# Fail-open: a missing or outdated CLI, an unstamped/missing evidence bridge,
 # any parse/lookup/git error, or an ambiguous event allows the action.
 # Fail-closed (Go binary, not this host): a `--write` that cannot be recorded
 # (validation, lock timeout, ambiguous identity, store IO) exits 2 with no verdict
@@ -31,7 +31,7 @@
 #
 # Tokens stamped at sync (gitignored project copy):
 #   __TRACKER_CARD_GATE_MODE__   (raw legacy gate_mode hint; default warn)
-#   __TRACKER_CLI_HOME__         (CLI install home for binary resolution)
+#   __TRACKER_CLI_HOME__         (CLI install home)
 #
 # Config / env (all read by Go's ledger-mode resolver, never by this host):
 #   TRACKER_LEDGER_MODE       strongest mode env (always|ask|warn)
@@ -39,8 +39,7 @@
 # Host-only env:
 #   TRACKER_CARD_GATE_PATHS   space-separated production dirs
 #                             (default: "lib catalog bin src")
-#   AI_SPECS_HOME             preferred over stamped CLI home for the binary
-#   WORKTREE_GATE_BIN         explicit verified-binary override (debugging/tests)
+
 
 stamped_gate_mode="__TRACKER_CARD_GATE_MODE__"
 stamped_cli_home="__TRACKER_CLI_HOME__"
@@ -62,7 +61,7 @@ _tracker_cli_bridge() {
 #   tracker-card-gate.sh --root <project-root> --stage pre-merge|pre-archive [slug]
 # The mode is selected by argv only, so a piped hook payload can never choose a
 # checkpoint, and the stdin contract below is untouched. Like hook mode this is
-# acquisition/JSON transport to the verified Go predicate: no predicate, no
+# CLI/JSON transport to the Go predicate: no predicate, no
 # write, no network.
 host_mode=0
 for _host_arg in "$@"; do
@@ -95,43 +94,15 @@ cwd="${rest_kl#*$'\t'}"
 
 fi  # end hook-payload parsing (skipped in direct host mode)
 # --- Ledger checkpoint bridge (acquisition + JSON only; no predicate) ---------
-# The five ledger checkpoints are graded by the verified Go `--ledger` mode on
-# the shared worktree-gate binary (one predicate, one trust root). This host
-# only acquires a verified binary, forwards the raw stamped legacy gate hint,
-# and maps the JSON verdict; Go resolves the effective mode from env, the
-# witness-bound recipe config, that hint and the warn default. A
-# missing/unverified binary, a parse error, or an IO failure fails open (exit 0).
+# The shared Go predicate runs through the stamped installed-CLI bridge. Missing
+# CLI, parse errors, and IO failures fail open.
 
 # The evidence and classify bridge is the native CLI (`ai-specs tracker
 # slug|evidence|classify`) at the stamped CLI home. An empty or unstamped home, or
-# a missing/non-executable binary, means the bridge is unavailable, so both the
-# event classification and the evidence file are skipped (fail open), exactly
-# like a missing/unverified binary. The bridge is acquisition only: no host
+# a missing/non-executable CLI, means the bridge is unavailable, so both the
+# event classification and the evidence file are skipped (fail open).
+# The bridge is acquisition only: no host
 # derives a ledger write from a planning-tree artifact (R1).
-_ledger_binary() {
-  if [ -n "${WORKTREE_GATE_BIN:-}" ] && [ -x "$WORKTREE_GATE_BIN" ]; then
-    printf '%s\n' "$WORKTREE_GATE_BIN"
-    return 0
-  fi
-  local home="${AI_SPECS_HOME:-}"
-  if [ -z "$home" ]; then
-    case "$stamped_cli_home" in
-      ""|__*) home="$HOME/.ai-specs" ;;
-      *) home="$stamped_cli_home" ;;
-    esac
-  fi
-  local version=""
-  if [ -f "$home/VERSION" ]; then version="$(tr -d '[:space:]' < "$home/VERSION")"; fi
-  [ -n "$version" ] || version="dev"
-  local goos goarch
-  case "$(uname -s)" in Darwin) goos=darwin ;; Linux) goos=linux ;; *) return 1 ;; esac
-  case "$(uname -m)" in arm64|aarch64) goarch=arm64 ;; x86_64|amd64) goarch=amd64 ;; *) return 1 ;; esac
-  local candidate="$home/cache/bin/worktree-gate/$version/$goos-$goarch/worktree-gate"
-  [ -x "$candidate" ] || return 1
-  [ -f "$candidate.verified" ] || return 1
-  printf '%s\n' "$candidate"
-}
-
 _ledger_field() {
   # stdin: verdict JSON. $1: dotted path in that object. Read through the native
   # `tracker field` verb; without the bridge there is no verdict to report.
@@ -167,7 +138,7 @@ _ledger_ask() {
   exec 3<&-
   case "$answer" in
     y|Y|yes|YES|Yes)
-      if "$bin" --ledger --checkpoint "$checkpoint" --ledger-gate-mode "$stamped_gate_mode" \
+      if "$bin" worktree-gate --ledger --checkpoint "$checkpoint" --ledger-gate-mode "$stamped_gate_mode" \
           --project-root "$root" \
           --decide "{\"checkpoint\":\"$checkpoint\",\"kind\":\"opt-out\",\"choice\":\"continue\"}" >/dev/null 2>&1; then
         echo "${prefix}: opt-out recorded for ${checkpoint}; proceeding." >&2
@@ -190,10 +161,9 @@ _ledger_grade() {
   # evidence. The raw stamped legacy hint is forwarded and Go resolves the mode.
   local checkpoint="$1" root="$2" prefix="$3" explicit_slug="${4:-}"
   local bin
-  if ! bin="$(_ledger_binary)"; then
-    # Missing/unverified binary fails open rather than blocking a merge; say so,
-    # because a silent skip looks identical to a passing checkpoint.
-    echo "${prefix}: tracker-ledger: no verified gate binary resolved; failing open (run ai-specs sync / ai-specs doctor)" >&2
+  if ! bin="$(_tracker_cli_bridge)"; then
+    # Say why the checkpoint was skipped: a silent skip looks like a pass.
+    echo "${prefix}: tracker-ledger: no installed ai-specs CLI resolved; failing open (see ai-specs doctor; reinstall via install.sh if missing)." >&2
     return 0
   fi
   local extra=() evidence="" cli=""
@@ -215,10 +185,19 @@ _ledger_grade() {
     fi
   fi
   local out rc
-  out="$("$bin" --ledger --checkpoint "$checkpoint" --ledger-gate-mode "$stamped_gate_mode" \
+  out="$("$bin" worktree-gate --ledger --checkpoint "$checkpoint" --ledger-gate-mode "$stamped_gate_mode" \
       --project-root "$root" "${extra[@]}" 2>/dev/null)"
   rc=$?
   [ -z "$evidence" ] || rm -f "$evidence"
+  if [ -z "$out" ] && [ "$rc" != 0 ]; then
+    local probe
+    probe="$("$bin" worktree-gate --selftest 2>&1)" || :
+    case "$probe" in
+      *"ai-specs: unknown command 'worktree-gate'"*)
+        echo "${prefix}: installed ai-specs CLI is too old to grade ${checkpoint}; run 'ai-specs upgrade'; failing open." >&2
+        ;;
+    esac
+  fi
   [ -n "$out" ] || return 0
   local decision reason active
   decision="$(printf '%s' "$out" | _ledger_field decision)" || return 0

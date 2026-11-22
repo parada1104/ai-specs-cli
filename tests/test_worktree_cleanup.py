@@ -18,11 +18,11 @@ ROOT = Path(__file__).resolve().parents[1]
 CLEANUP_SCRIPT = (
     ROOT / "catalog" / "recipes" / "worktree-flow" / "templates" / "worktree-cleanup.sh"
 )
-CLEANUP_MODULE = ROOT / "catalog" / "recipes" / "worktree-flow" / "gate"
-
+ENABLED_WORKTREE_FLOW_MANIFEST = "[recipes.worktree-flow]\nenabled = true\n"
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parent))
+from gate_cli import gate_command
 from test_repo_topology import make_super_with_submodule
 
 
@@ -51,24 +51,13 @@ class WorktreeCleanupTests(unittest.TestCase):
     def setUpClass(cls):
         if shutil.which("go") is None:
             raise unittest.SkipTest("Go toolchain is required for Go cleanup integration tests")
-        cls._cleanup_binary_tmp = tempfile.TemporaryDirectory()
-        cls.CLEANUP_BINARY = Path(cls._cleanup_binary_tmp.name) / "worktree-gate"
-        subprocess.run(
-            ["go", "build", "-trimpath", "-buildvcs=false", "-o", str(cls.CLEANUP_BINARY), "."],
-            cwd=CLEANUP_MODULE,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        cls.CLEANUP_BINARY.chmod(0o755)
-        cls.CLEANUP_BINARY.with_name(cls.CLEANUP_BINARY.name + ".verified").write_text(
-            "status=verified\nversion=test\ndigest=test\nselftest=passed\n"
-        )
+        cls.CLEANUP_BINARY = gate_command()
 
-    @classmethod
-    def tearDownClass(cls):
-        cls._cleanup_binary_tmp.cleanup()
-        super().tearDownClass()
+    def _write_manifest(self, repo: Path, body: str) -> Path:
+        path = repo / "ai-specs" / "ai-specs.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body)
+        return path
 
     def _make_repo(self) -> Path:
         tmp = tempfile.TemporaryDirectory()
@@ -78,6 +67,9 @@ class WorktreeCleanupTests(unittest.TestCase):
         git(repo, "init", "-q", "-b", "main")
         (repo / "README.md").write_text("base\n")
         (repo / ".gitignore").write_text(".worktrees/\n")
+        # Cleanup is destructive, so it runs only where the main checkout's
+        # manifest enables the worktree-flow recipe.
+        self._write_manifest(repo, ENABLED_WORKTREE_FLOW_MANIFEST)
         git(repo, "add", "-A")
         git(repo, "commit", "-qm", "init")
         return repo
@@ -87,17 +79,268 @@ class WorktreeCleanupTests(unittest.TestCase):
         git(repo, "worktree", "add", "-q", "-b", branch, str(wt), "main")
         return wt
 
-    def _run_cleanup(self, repo: Path, *extra: str):
+    def _cli_home(self, script: str | None = None) -> Path:
+        home = Path(tempfile.mkdtemp(prefix="cleanup-cli-home-"))
+        self.addCleanup(lambda: shutil.rmtree(home))
+        dist = home / "dist"
+        dist.mkdir()
+        if script is None:
+            script = "\n".join([
+                "#!/usr/bin/env bash", '[ "$1" = worktree-gate ] || exit 91',
+                'if [ "$2" = --version ]; then echo dev; exit 0; fi',
+                "shift", f'exec {self.CLEANUP_BINARY} "$@"', "",
+            ])
+        cli = dist / "ai-specs"
+        cli.write_text(script)
+        cli.chmod(0o755)
+        return home
+
+    def _run_cleanup(self, repo: Path, *extra: str, check: bool = True):
         env = dict(os.environ)
-        env["WORKTREE_CLEANUP_BIN"] = str(self.CLEANUP_BINARY)
+        env["AI_SPECS_HOME"] = str(self._cli_home())
+        env["TOPOLOGY"] = "auto"
+        env.pop("WORKTREE_CLEANUP_BIN", None)
         return subprocess.run(
             ["bash", str(CLEANUP_SCRIPT), "--base", "main", *extra],
             cwd=repo,
             env=env,
-            check=True,
+            check=check,
             capture_output=True,
             text=True,
         )
+
+    def _merged_candidate(self, repo: Path, branch: str) -> Path:
+        """Leave one merged linked worktree whose branch still exists."""
+        wt = self._add_worktree(repo, branch)
+        (wt / f"{branch}.txt").write_text("work\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", branch)
+        git(repo, "merge", "-q", "--no-ff", "-m", f"merge {branch}", branch)
+        return wt
+
+    def _assert_candidate_preserved(self, repo: Path, wt: Path, branch: str) -> None:
+        self.assertTrue(wt.exists(), f"cleanup must not remove {branch}")
+        self.assertIn(
+            branch,
+            git(repo, "branch", "--format=%(refname:short)").split(),
+            "cleanup must not delete a local branch",
+        )
+
+    # ── JD-A-004: a disabled worktree-flow never cleans up ──
+
+    def test_disabled_recipe_cleans_nothing(self):
+        """The surviving post-merge hook calls this launcher after the recipe
+        was disabled; cleanup must report why and delete nothing."""
+        for body in (
+            "[recipes.worktree-flow]\nenabled = false\n",
+            '[project]\nname = "demo"\n',
+            '[recipes.worktree-flow]\nworktrees_dir = ".worktrees"\n',
+        ):
+            with self.subTest(body=body):
+                repo = self._make_repo()
+                manifest = self._write_manifest(repo, body)
+                before = manifest.read_bytes()
+                wt = self._merged_candidate(repo, "feat-disabled")
+
+                result = self._run_cleanup(repo, check=False)
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(
+                    result.stderr,
+                    "worktree-cleanup: worktree-flow is not enabled in "
+                    f"{manifest.resolve()}; nothing to clean\n",
+                )
+                self._assert_candidate_preserved(repo, wt, "feat-disabled")
+                self.assertEqual(
+                    manifest.read_bytes(), before, "cleanup must not rewrite the manifest"
+                )
+
+    def test_missing_manifest_fails_closed(self):
+        repo = self._make_repo()
+        shutil.rmtree(repo / "ai-specs")
+        wt = self._merged_candidate(repo, "feat-nomanifest")
+
+        result = self._run_cleanup(repo, check=False)
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stdout, "")
+        manifest = (repo / "ai-specs" / "ai-specs.toml").resolve()
+        self.assertTrue(
+            result.stderr.startswith(
+                f"worktree-cleanup: project manifest {manifest} is missing or unreadable ("
+            ),
+            result.stderr,
+        )
+        self.assertTrue(
+            result.stderr.endswith("); no destructive action taken\n"), result.stderr
+        )
+        self._assert_candidate_preserved(repo, wt, "feat-nomanifest")
+
+    def test_unreadable_manifest_fails_closed(self):
+        repo = self._make_repo()
+        self._write_manifest(repo, "[recipes.worktree-flow\nenabled = true\n")
+        wt = self._merged_candidate(repo, "feat-badmanifest")
+
+        result = self._run_cleanup(repo, check=False)
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertTrue(
+            result.stderr.startswith(
+                "worktree-cleanup: project manifest "
+                f"{(repo / 'ai-specs' / 'ai-specs.toml').resolve()} is missing or unreadable ("
+            ),
+            result.stderr,
+        )
+        self.assertTrue(
+            result.stderr.endswith("); no destructive action taken\n"), result.stderr
+        )
+        self._assert_candidate_preserved(repo, wt, "feat-badmanifest")
+
+    def test_enabled_recipe_cleans_and_prints_no_notice(self):
+        repo = self._make_repo()
+        wt = self._merged_candidate(repo, "feat-enabled")
+
+        result = self._run_cleanup(repo)
+
+        self.assertFalse(wt.exists(), "an enabled worktree-flow still cleans up")
+        self.assertIn("removed feat-enabled", result.stdout)
+        self.assertNotIn("not enabled", result.stderr)
+
+    def test_disabled_main_manifest_wins_from_linked_checkout(self):
+        """The shared hook can fire from a linked worktree; the recipe gate is
+        the main checkout's manifest, and it must be consulted before the
+        primary-worktree boundary rejects the invocation."""
+        repo = self._make_repo()
+        merged = self._merged_candidate(repo, "eligible")
+        linked = self._add_worktree(repo, "caller")
+        manifest = self._write_manifest(
+            repo, "[recipes.worktree-flow]\nenabled = false\n"
+        )
+        before = manifest.read_bytes()
+        result = self._run_cleanup(linked, check=False)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (
+            0, "", f"worktree-cleanup: worktree-flow is not enabled in "
+            f"{manifest.resolve()}; nothing to clean\n",
+        ))
+        self._assert_candidate_preserved(repo, merged, "eligible")
+        self.assertEqual(manifest.read_bytes(), before)
+
+    def test_bare_repo_cannot_authorize_cleanup(self):
+        """A bare repository has no main working tree, so it can never
+        authorize a destructive cleanup, even with an enabled manifest."""
+        repo = self._make_repo()
+        git(repo, "branch", "eligible")
+        remote = repo.parent / "remote.git"
+        bare = repo.parent / "bare"
+        git(repo, "clone", "--bare", str(repo), str(remote))
+        git(repo, "clone", "--bare", str(remote), str(bare))
+        wt = bare / ".worktrees" / "eligible"
+        git(bare, "worktree", "add", str(wt), "eligible")
+        self._write_manifest(bare, ENABLED_WORKTREE_FLOW_MANIFEST)
+        result = self._run_cleanup(bare, check=False)
+        self.assertEqual(result.returncode, 2)
+        self._assert_candidate_preserved(bare, wt, "eligible")
+        self.assertIn("refs/heads/eligible", git(remote, "show-ref"))
+        result = self._run_cleanup(wt, check=False)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (
+            2, "", "worktree-cleanup: the repository is bare and has no main "
+            "worktree to authorize cleanup; no destructive action taken\n",
+        ))
+        self._assert_candidate_preserved(bare, wt, "eligible")
+        self.assertIn("refs/heads/eligible", git(remote, "show-ref"))
+
+    def test_cli_route_preserves_arguments_output_and_exit(self):
+        repo = self._make_repo()
+        home = self._cli_home("\n".join([
+            "#!/usr/bin/env bash", 'if [ "$2" = --version ]; then exit 0; fi',
+            "printf '%s\\n' \"$*\" > \"$CLI_ARGS\"",
+            "printf 'cleanup-out\\n'", "printf 'cleanup-err\\n' >&2", "exit 0", "",
+        ]))
+        env = dict(os.environ, AI_SPECS_HOME=str(home), CLI_ARGS=str(repo.parent / "args"), TOPOLOGY="auto")
+        result = subprocess.run(
+            ["bash", str(CLEANUP_SCRIPT), "--base", "main", "--dry-run"],
+            cwd=repo, env=env, capture_output=True, text=True,
+        )
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, "cleanup-out\n", "cleanup-err\n"))
+        self.assertEqual(Path(env["CLI_ARGS"]).read_text().strip(),
+                         "worktree-gate --cleanup --topology auto --base main --dry-run")
+
+    def test_old_cli_fails_closed_before_cleanup(self):
+        repo = self._make_repo()
+        log = repo.parent / "cli.log"
+        home = self._cli_home("#!/usr/bin/env bash\n"
+                              'if [ "$2" = --version ]; then exit 2; fi\n'
+                              'echo "$*" >> "$CLI_LOG"\n')
+        result = subprocess.run(
+            ["bash", str(CLEANUP_SCRIPT), "--base", "main"], cwd=repo,
+            env=dict(os.environ, AI_SPECS_HOME=str(home), CLI_LOG=str(log)),
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr,
+                         "worktree-cleanup: installed ai-specs CLI is too old (no worktree-gate verb); no destructive action taken\n"
+                         f"worktree-cleanup: run 'ai-specs upgrade' (expected at {home / 'dist' / 'ai-specs'})\n")
+        self.assertFalse(log.exists(), "old CLI must not receive --cleanup")
+
+    def _logging_cli_home(self, log: Path) -> Path:
+        return self._cli_home("\n".join([
+            "#!/usr/bin/env bash",
+            'if [ "$2" = --version ]; then echo dev; exit 0; fi',
+            f'printf \'%s\\n\' "$*" > "{log}"', "",
+        ]))
+
+    def _assert_override_rejected(self, override: Path) -> None:
+        repo = self._make_repo()
+        wt = self._add_worktree(repo, "feat-pinned")
+        (wt / "f.txt").write_text("x\n")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-qm", "work")
+        git(repo, "merge", "-q", "--no-ff", "-m", "merge", "feat-pinned")
+        log = override.parent / "cli.log"
+        override_log = override.parent / "override.log"
+        result = subprocess.run(
+            ["bash", str(CLEANUP_SCRIPT), "--base", "main"], cwd=repo,
+            env=dict(os.environ, AI_SPECS_HOME=str(self._logging_cli_home(log)), TOPOLOGY="auto",
+                     WORKTREE_CLEANUP_BIN=str(override), OVERRIDE_LOG=str(override_log)),
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr,
+                         "worktree-cleanup: WORKTREE_CLEANUP_BIN is no longer supported; "
+                         "unset it to run cleanup through the installed ai-specs CLI\n")
+        self.assertFalse(override_log.exists(), "a rejected override must never run")
+        self.assertFalse(log.exists(), "a rejected pin must not fall back to the installed CLI")
+        self.assertTrue(wt.exists(), "a rejected pin must delete nothing")
+        self.assertIn("feat-pinned", git(repo, "branch", "--format=%(refname:short)"))
+
+    def test_executable_cleanup_override_is_rejected_before_cleanup(self):
+        override = Path(tempfile.mkdtemp(prefix="cleanup-override-")) / "bin"
+        self.addCleanup(lambda: shutil.rmtree(override.parent))
+        override.write_text("#!/usr/bin/env bash\necho ran > \"$OVERRIDE_LOG\"\n")
+        override.chmod(0o755)
+        self._assert_override_rejected(override)
+
+    def test_non_executable_cleanup_override_is_rejected_before_cleanup(self):
+        override = Path(tempfile.mkdtemp(prefix="cleanup-invalid-pin-")) / "not-executable"
+        self.addCleanup(lambda: shutil.rmtree(override.parent))
+        override.write_text("not executable")
+        self._assert_override_rejected(override)
+
+    def test_missing_cli_fails_closed_without_running_cleanup(self):
+        repo = self._make_repo()
+        home = Path(tempfile.mkdtemp(prefix="cleanup-no-cli-"))
+        self.addCleanup(lambda: shutil.rmtree(home))
+        result = subprocess.run(
+            ["bash", str(CLEANUP_SCRIPT), "--base", "main"], cwd=repo,
+            env=dict(os.environ, AI_SPECS_HOME=str(home)), capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("no verified Go implementation available", result.stderr)
 
     def test_removes_merged_worktree(self):
         repo = self._make_repo()
@@ -517,7 +760,9 @@ class WorktreeCleanupTests(unittest.TestCase):
         # would violate the bounded-candidate requirement.
         env = dict(os.environ)
         env["GIT_TRACE"] = "1"
-        env["WORKTREE_CLEANUP_BIN"] = str(self.CLEANUP_BINARY)
+        env["AI_SPECS_HOME"] = str(self._cli_home())
+        env["TOPOLOGY"] = "auto"
+        env.pop("WORKTREE_CLEANUP_BIN", None)
 
         result = subprocess.run(
             ["bash", str(CLEANUP_SCRIPT), "--base", "main", "--dry-run"],
@@ -796,6 +1041,7 @@ class WorktreeCleanupTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         super_repo = make_super_with_submodule(Path(tmp.name), path="apps/api")
+        self._write_manifest(super_repo, ENABLED_WORKTREE_FLOW_MANIFEST)
         wt = self._add_submodule_worktree(super_repo, "apps/api", "feat-done")
         (wt / "f.txt").write_text("x\n")
         git(wt, "add", "-A")
@@ -815,6 +1061,7 @@ class WorktreeCleanupTests(unittest.TestCase):
             path="apps/api",
             second={"path": "apps/web", "name": "web"},
         )
+        self._write_manifest(super_repo, ENABLED_WORKTREE_FLOW_MANIFEST)
         wt_api = self._add_submodule_worktree(super_repo, "apps/api", "feat-api")
         wt_web = self._add_submodule_worktree(super_repo, "apps/web", "feat-web")
         for wt, mod, br in (
@@ -838,6 +1085,7 @@ class WorktreeCleanupTests(unittest.TestCase):
             path="apps/api",
             second={"path": "apps/web", "name": "web"},
         )
+        self._write_manifest(super_repo, ENABLED_WORKTREE_FLOW_MANIFEST)
         wt_api = self._add_submodule_worktree(super_repo, "apps/api", "feat-api")
         wt_web = self._add_submodule_worktree(super_repo, "apps/web", "feat-web")
         for wt, mod, br in (
@@ -869,6 +1117,7 @@ class WorktreeCleanupTests(unittest.TestCase):
             path="apps/api",
             second={"path": "apps/web", "name": "web", "initialized": False},
         )
+        self._write_manifest(super_repo, ENABLED_WORKTREE_FLOW_MANIFEST)
         wt = self._add_submodule_worktree(super_repo, "apps/api", "feat-done")
         (wt / "f.txt").write_text("x\n")
         git(wt, "add", "-A")
@@ -897,6 +1146,7 @@ class WorktreeCleanupTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         super_repo = make_super_with_submodule(Path(tmp.name), path="apps/api")
+        self._write_manifest(super_repo, ENABLED_WORKTREE_FLOW_MANIFEST)
         wt = self._add_submodule_worktree(super_repo, "apps/api", "feat-done")
         (wt / "f.txt").write_text("x\n")
         git(wt, "add", "-A")

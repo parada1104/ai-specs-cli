@@ -351,12 +351,10 @@ func worktreeFlowEnabled(manifest *toml.Table) bool {
 	return isBool && b
 }
 
-// delegateArgv is hub.py's DelegateRunner argv: the verb, then any extra words,
-// then the target. The interactive hub is its caller; the argv shape is also
-// pinned directly by TestDelegateArgvShape so it cannot drift.
+// delegateArgv puts extra words before the target. Help takes topics, not a project path.
 func delegateArgv(cli string, action Action, extra []string, target string) []string {
 	argv := append([]string{cli, string(action)}, extra...)
-	if target != "" {
+	if target != "" && action != ActionHelp {
 		argv = append(argv, target)
 	}
 	return argv

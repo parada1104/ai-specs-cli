@@ -7,6 +7,139 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] — 2026-11-20
+
+### Upgrade notes
+After upgrading, run `ai-specs sync` in each project to refresh hook launchers.
+Until then, `worktree-cleanup.sh` fails closed with `no verified Go implementation available`;
+the gate enforces only while its old cached gate exists, otherwise it warns and does
+not enforce. Upgrade the CLI across the team together: an older CLI re-renders old
+launchers and the tracked cleanup override flips between versions; the gate warns
+and does not block when the CLI is too old. Customized `worktree-gate.sh` files
+are preserved; refresh them with `ai-specs sync --refresh-gates`. Delete a
+customized `worktree-cleanup.sh` override and run `ai-specs sync` to refresh it.
+If you set `WORKTREE_CLEANUP_BIN`, unset it: the cleanup launcher now refuses to
+run while it is set (exit 2, nothing deleted).
+
+Upgrading from a pre-0.26 install takes two commands. The `ai-specs upgrade` you
+run first is the older program: it fast-forwards the checkout and prints
+`Upgraded: <old> -> 0.26.0`, but it cannot replace `$AI_SPECS_HOME/dist/ai-specs`.
+Run any `ai-specs` command once more: the launcher checks the installed copy
+against this checkout and, if it is not proven current, downloads the verified
+0.26.0 binary (or rebuilds it with Go) and records
+`<version> <sha256> <size>:<mtime>:<ctime>:<inode>` in `dist/VERSION`. If it
+cannot (offline, no committed digest, no Go) it prints one line,
+`ai-specs: warning: could not verify the installed binary for version <want> (<reason>); re-run install.sh or run 'ai-specs upgrade' to reinstall it`,
+and keeps running the existing binary. `ai-specs version` after that second run
+is the proof, not the `Upgraded:` line. A locally built CLI belongs in
+`AI_SPECS_GO_BIN`, which the launcher never checks or replaces.
+
+Agent links (`CLAUDE.md`, `.claude/skills`, ...) created before 0.26 are not
+recorded as ai-specs'; when their agent is retired, sync keeps them and prints
+one notice. Delete them yourself if ai-specs wrote them. MCP servers a pre-0.26
+sync generated are adopted automatically when they still match what sync
+renders; an edited one is kept and reported. Delete that entry and run `sync`
+to regenerate it.
+
+### Changed
+- **The worktree gate ships inside the CLI.** Separate `worktree-gate` release
+  assets, their checksum trust root, the standalone gate adapter, and
+  `scripts/build-gate.sh` are retired. The launcher no longer uses the
+  project-local pin or cached gate binary. `WORKTREE_GATE_BIN` remains available
+  for the write gate; a set `WORKTREE_CLEANUP_BIN` no longer runs anything — the
+  cleanup launcher aborts (exit 2, nothing deleted) and asks the caller to unset
+  it to run cleanup through the installed CLI.
+- **`sync` now removes what it generated when the source disappears.** A recipe
+  removed or disabled in `ai-specs/ai-specs.toml` is unwired from every agent
+  runtime (`.claude/settings.json`, `.cursor/hooks.json` and `.cursor/hooks/*.sh`,
+  `.opencode/plugin/*.ts`, `.pi/extensions/*.ts`, `.omp/extensions/*.ts`), its
+  files under `ai-specs/recipes/<id>/` (except `overrides/`) and its command
+  copies are deleted. A hook dropped from a still-enabled recipe, or one whose
+  event changed, is unwired and its shim replaced. An agent removed from
+  `[agents].enabled` loses the instruction and skills links, command copies, MCP
+  servers, hook wiring and shims ai-specs generated for it, and a skill dropped
+  from a still-enabled recipe's `[provides].skills` is pruned from the recipe
+  cache when the cache records it as copied by ai-specs (an existing cache
+  records first and prunes from the next run; a hand-made copy is kept). Only what the lock records as ai-specs' is touched: user files and
+  untracked copies survive (an untracked legacy command copy stays with one
+  warning).
+- **MCP servers merge per server.** `sync` adds, updates and removes only the
+  servers it recorded for each target, so a user-added server survives and a
+  server dropped from the manifest is removed even when no server remains. Codex
+  `.codex/config.toml` gets its MCP tables inside one managed block; bytes
+  outside the markers, and every comment, ordering and formatting choice, are
+  left exactly as written. A block ai-specs did not record is refused instead of
+  rewritten.
+- **Recipe configuration is no longer replaced by a reconcile stamp.** When a
+  recipe's declared value differs from the project's own
+  `[recipes.<id>.config]` value, `sync` keeps the project value and exits 0 with
+  one notice naming the recipe and the differing key and pointing at
+  `ai-specs configure-recipes`. The notice repeats while the values differ. The
+  configuration wizard that offers the change is a separate feature.
+- **Stale lock records are pruned.** `sync` drops `[hooks]` records whose shim is
+  gone, `[deps.*]` entries the manifest no longer declares, and `[managed.*]`
+  entries whose recipe is retired and whose artifact is already absent.
+
+### Added
+- **Ownership records in `ai-specs/.ai-specs.lock`.** `[managed.*]` with
+  `kind = "recipe-command"` (path → sha256 of the generated copy), `[hooks]`
+  (generated shim → owning hook), `[mcp."<target>"]` (managed server name →
+  rendered entry hash), `[mcp-block."<target>"]` (hash of the Codex managed
+  block) and the existing `[deps.*]` hashes. These records, not file content, are
+  what licenses a later deletion; the `[recipes.*]` and `[skills]` tables are
+  read but never written.
+
+### Fixed
+- **`vault-canonical-store` sync vendors its kepano Obsidian skills again.** Upstream
+  moved them to `plugins/obsidian/skills/<id>`, so the recipe's dep paths follow and
+  sync stops failing with `SKILL.md not found`.
+- **An unparseable hook or MCP JSON target is backed up and regenerated.** The
+  exact bytes are copied to `<file>.bak` (or the first free `.bak.N`), sync warns
+  naming the file and the backup, and then rewrites the file, so user content is
+  never lost silently. Bare `NaN`/`Infinity` count as invalid JSON, and a recipe
+  MCP document that contains them is refused with one error line instead of
+  being written.
+- **A real directory at `<agent>/skills` is refused, not deleted.** `sync` and
+  `sync-agent` exit 1 with
+  `    ✗ refuse to overwrite non-symlink: <path> — move or delete it so ai-specs can create the symlink`
+  and leave the directory untouched; the legacy `rm -rf` is gone.
+- **Every write and delete stays inside the project.** A symlinked agent
+  directory is accepted when it resolves inside the project root and refused
+  (rc 1, nothing written) when it resolves outside; a refused write never leaves
+  a half-applied run, and a symlink cannot redirect a project or cache write
+  outside the tree.
+- **Containment also covers the CLI cache entries sync materializes.**
+  A symlinked `<cache>/commands/<id>.md`, a recipe's `<cache>/.recipe/<id>/skills`
+  directory and a `<cache>/backups` entry are refused before the first write
+  (rc 1, `refuse to write`), so a recipe command copy, a bundled skill
+  replacement and a `sync --refresh-gates` snapshot can no longer follow the
+  link and write or delete outside the CLI home.
+- **A disabled worktree-flow never cleans up.** `worktree-cleanup` checks the
+  main checkout's manifest first: recipe disabled or absent exits 0 with
+  `worktree-cleanup: worktree-flow is not enabled in <manifest>; nothing to clean`;
+  a missing or unreadable manifest, or a bare repository, exits 2 and deletes
+  nothing. A hook left behind by a disabled recipe can no longer remove
+  worktrees or branches (JD-A-004).
+- **An upgraded legacy install refreshes its launcher copy.** `bin/ai-specs`
+  trusts `dist/ai-specs` only when its bytes are proven: a stamp binding the
+  version to the binary's SHA-256 (re-hashed when size, mtime, ctime or inode
+  change) or the committed digest in `bin/SHA256SUMS`. Otherwise it fetches the
+  verified asset once; a failed refresh prints exactly one warning and runs the
+  existing binary. `install.sh` writes the stamp, and `ai-specs upgrade` honors
+  `AI_SPECS_RELEASE_BASE` (JD-A-005). Known limit: an in-place same-size
+  rewrite with its mtime restored within the same second is not detected; the
+  stamp is a cache, not a security boundary.
+- **Retired agent links are deleted only when ai-specs created them.** A new
+  `[links]` lock section records each link sync creates; links that already
+  existed, or that predate 0.26, are kept with one notice (JD-B-001).
+- **Pre-0.26 MCP servers are adopted, user servers are never overwritten.** A
+  same-named server whose value is exactly what sync renders is recorded and
+  managed from then on; any other is kept byte-for-byte, and the JSON notice
+  says how to regenerate it (JD-B-002).
+- **A retired agent's leftovers are pruned atomically.** Recorded command copies
+  and links are re-checked before the first delete and again before each unlink;
+  a refused or failed delete exits 1 with the project and lock byte-identical.
+
 ## [0.25.2] — 2026-11-16
 
 ### Fixed

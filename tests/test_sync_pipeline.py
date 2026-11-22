@@ -609,7 +609,8 @@ class SyncPipelineTests(unittest.TestCase):
             self.assertEqual(list(parsed.keys()), ["$schema", "mcp", "theme"])
             self.assertEqual(parsed["theme"], "system")
             self.assertEqual(parsed["mcp"]["demo"]["environment"]["API_KEY"], "{env:DEMO_API_KEY}")
-            self.assertNotIn("old", parsed["mcp"])
+            # S5 merge per server: an unrecorded user server survives.
+            self.assertEqual(parsed["mcp"]["old"], {"type": "local", "command": ["old"]})
         finally:
             shutil.rmtree(workspace.parent)
 
@@ -2973,7 +2974,7 @@ class FanOutDriftTests(unittest.TestCase):
         finally:
             shutil.rmtree(workspace.parent)
 
-    def test_cursor_skills_migrates_real_directory(self):
+    def test_cursor_skills_refuses_real_directory(self):
         workspace = self.make_workspace()
         home = _home_for(workspace)
         try:
@@ -2988,13 +2989,14 @@ class FanOutDriftTests(unittest.TestCase):
             (legacy / "SKILL.md").write_text("# foo\n")
 
             result = invoke(workspace, "sync", cli_home=home)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            # T6 (S1): a real skills directory is refused, never deleted.
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("refuse to overwrite non-symlink:", result.stderr)
+            self.assertIn(".cursor/skills", result.stderr)
 
             skills_link = workspace / ".cursor" / "skills"
-            resolved = (cache_project_dir(workspace, home) / "resolved-skills").resolve()
-            self.assertTrue(skills_link.is_symlink())
-            self.assertEqual(skills_link.resolve(), resolved)
-            self.assertFalse((resolved / "foo").exists())
+            self.assertFalse(skills_link.is_symlink())
+            self.assertEqual((legacy / "SKILL.md").read_text(), "# foo\n")
         finally:
             shutil.rmtree(workspace.parent)
 

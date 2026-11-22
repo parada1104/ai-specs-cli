@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/ai-specs/internal/toml"
 )
 
 // --- frozen oracle ----------------------------------------------------------
@@ -257,6 +259,30 @@ type mcpRefCase struct {
 	// goErrNotContains guards a misattributed message (F3: a read error must
 	// not be reported as "not found").
 	goErrNotContains string
+	// acceptedDivergence is the expected Go stderr for a case the port
+	// deliberately no longer reproduces (rc 1, no stdout, target untouched).
+	// The frozen record still captures Python's behavior.
+	acceptedDivergence *string
+	// s5Keeps lists user-authored fragments the accepted S5 divergence must
+	// leave in the target instead of the frozen record's whole-key
+	// replacement; the fragments are checked instead of target byte equality.
+	s5Keeps []string
+	// s5Target / s5NoTarget pin the target S5 requires when the frozen record
+	// captures Python truncating (or creating) it on a failed render.
+	s5Target   *string
+	s5NoTarget bool
+	// s5Stderr pins the Go stderr of a case whose S5 upgrade notice the frozen
+	// record cannot contain.
+	s5Stderr *string
+	// refusedPrefix pins a case the Codex safety net now refuses (legacy wrote a
+	// document that does not parse): rc 1, empty stdout, no target written, and a
+	// single error line starting with the prefix.
+	refusedPrefix *string
+	// managedBlock marks a Codex case whose target ai-specs now writes inside its
+	// managed marker block instead of rewriting plain tables: rc and stdout are
+	// compared with the frozen record, and the target is checked against the
+	// block contract instead of the frozen bytes.
+	managedBlock bool
 }
 
 const mcpManifestRel = "ai-specs/ai-specs.toml"
@@ -341,10 +367,83 @@ func runMCPGo(t *testing.T, tc mcpRefCase) (string, string, int, *string) {
 	norm := func(s string) string { return strings.ReplaceAll(s, dir, "<TEMP>") }
 	var targetB64 *string
 	if data, err := os.ReadFile(targetPath); err == nil {
+		if tc.name == "json nan infinity literals" && !json.Valid(data) {
+			t.Errorf("regenerated target is not valid JSON: %q", data)
+		}
 		b := base64.StdEncoding.EncodeToString(data)
 		targetB64 = &b
 	}
+	if tc.name == "json nan infinity literals" {
+		if backup, err := os.ReadFile(targetPath + ".bak"); err != nil || string(backup) != *tc.target {
+			t.Errorf("backup = %q (%v), want %q", backup, err, *tc.target)
+		}
+	}
 	return norm(out.String()), norm(errBuf.String()), rc, targetB64
+}
+
+// s5TargetDiffers reports whether the case pins an accepted S5 divergence in the
+// written target instead of Python's frozen bytes.
+func (tc mcpRefCase) s5TargetDiffers() bool {
+	return tc.s5Keeps != nil || tc.s5Target != nil || tc.s5NoTarget
+}
+
+// checkS5Target asserts the accepted S5 outcome: user-authored fragments the
+// whole-key replacement used to destroy are still in the target, or (for a
+// failed render) the target is exactly what it was, never truncated.
+func checkS5Target(tc mcpRefCase, got *string) error {
+	if tc.s5NoTarget {
+		if got != nil {
+			return fmt.Errorf("target must not be written, got %q", *got)
+		}
+		return nil
+	}
+	if tc.s5Target != nil {
+		want := base64.StdEncoding.EncodeToString([]byte(*tc.s5Target))
+		if got == nil || *got != want {
+			return fmt.Errorf("target must stay byte-identical: got %s want %s", derefString(got), want)
+		}
+	}
+	if len(tc.s5Keeps) > 0 {
+		if got == nil {
+			return fmt.Errorf("no target was written")
+		}
+		raw, err := base64.StdEncoding.DecodeString(*got)
+		if err != nil {
+			return err
+		}
+		for _, fragment := range tc.s5Keeps {
+			if !strings.Contains(string(raw), fragment) {
+				return fmt.Errorf("user-authored %q was not preserved:\n%s", fragment, raw)
+			}
+		}
+	}
+	return nil
+}
+
+// checkManagedBlockText asserts the managed-block contract for a Codex target
+// (or its dry-run rendering) whose frozen record froze the legacy plain-table
+// rewrite: both markers appear exactly once, the frozen target bytes survive as
+// an untouched prefix, and the result parses.
+func checkManagedBlockText(t *testing.T, text string, tc mcpRefCase) {
+	t.Helper()
+	if text == "" {
+		t.Errorf("no target was written")
+		return
+	}
+	if strings.Count(text, mcpTOMLBlockBegin) != 1 || strings.Count(text, mcpTOMLBlockEnd) != 1 {
+		t.Errorf("managed block markers missing or duplicated:\n%s", text)
+		return
+	}
+	outside := text[:strings.Index(text, mcpTOMLBlockBegin)]
+	switch {
+	case tc.target != nil && !strings.HasPrefix(outside, *tc.target):
+		t.Errorf("outside bytes not preserved\n--- got ---\n%q\n--- want prefix ---\n%q", outside, *tc.target)
+	case tc.target == nil && outside != "":
+		t.Errorf("a fresh target must hold only the block, got %q", outside)
+	}
+	if _, err := toml.Parse([]byte(text)); err != nil {
+		t.Errorf("written document does not parse: %v\n%s", err, text)
+	}
 }
 
 // TestMCPRenderDifferential requires byte equality of the written file bytes,
@@ -363,6 +462,57 @@ func TestMCPRenderDifferential(t *testing.T) {
 				t.Fatalf("frozen record stderr/dropped mismatch (traceback=%v)", tc.tracebackStderr)
 			}
 			goOut, goErr, goRC, goTarget := runMCPGo(t, tc)
+			if tc.managedBlock {
+				if goRC != ref.RC || (!tc.dryRun && goOut != ref.Stdout) {
+					t.Errorf("managed block case: rc=%d stdout=%q (want rc=%d stdout=%q)",
+						goRC, goOut, ref.RC, ref.Stdout)
+				}
+				if tc.dryRun {
+					// The dry-run banner line precedes the rendered content.
+					_, content, _ := strings.Cut(goOut, "\n")
+					checkManagedBlockText(t, content, tc)
+				} else if goTarget == nil {
+					checkManagedBlockText(t, "", tc)
+				} else if raw, derr := base64.StdEncoding.DecodeString(*goTarget); derr != nil {
+					t.Errorf("decode target: %v", derr)
+				} else {
+					checkManagedBlockText(t, string(raw), tc)
+				}
+				return
+			}
+			if tc.refusedPrefix != nil {
+				if goRC != 1 || goOut != "" || goTarget != nil || !strings.HasPrefix(goErr, *tc.refusedPrefix) {
+					t.Errorf("refused case: rc=%d stdout=%q stderr=%q target=%v", goRC, goOut, goErr, goTarget)
+				}
+				return
+			}
+			// Accepted divergence (S4, Robert 2026-11-18): a recipe MCP input
+			// carrying a bare NaN/Infinity is refused instead of written into the
+			// target, so ai-specs never poisons its own JSON/TOML output.
+			if tc.acceptedDivergence != nil {
+				if goRC != 1 || goOut != "" || goErr != *tc.acceptedDivergence || goTarget != nil {
+					t.Errorf("accepted divergence: rc=%d stdout=%q stderr=%q target=%v",
+						goRC, goOut, goErr, goTarget)
+				}
+				return
+			}
+			// Accepted divergence (Robert, 2026-11-18): infinities are written as
+			// the valid JSON numbers 1e999/-1e999 instead of Python's bare
+			// Infinity, so the next sync does not treat its own output as invalid.
+			if goTarget != nil && tc.name == "existing json numeric extremes round-trip" {
+				raw, _ := base64.StdEncoding.DecodeString(*goTarget)
+				legacy := strings.ReplaceAll(strings.ReplaceAll(string(raw), "-1e999", "-Infinity"), "1e999", "Infinity")
+				b := base64.StdEncoding.EncodeToString([]byte(legacy))
+				goTarget = &b
+			}
+
+			switch tc.name {
+			case "invalid json becomes empty object", "json raw control char rejected", "target invalid utf8 json", "json nan infinity literals":
+				// S4 adds recovery without changing the regenerated bytes.
+				ref = frozenMCPRecord(t, golden, "claude .mcp.json mcpServers")
+				ref.Stderr = mcpStr("warning: invalid JSON in <TEMP>/.mcp.json; backed up to <TEMP>/.mcp.json.bak\n")
+				tc.tracebackStderr = false
+			}
 
 			if goOut != ref.Stdout {
 				t.Errorf("stdout differs\n--- go ---\n%q\n--- frozen ---\n%q", goOut, ref.Stdout)
@@ -370,9 +520,14 @@ func TestMCPRenderDifferential(t *testing.T) {
 			if goRC != ref.RC {
 				t.Errorf("rc: go=%d frozen=%d", goRC, ref.RC)
 			}
-			if !govPtrEqual(goTarget, ref.TargetB64) {
+			if !govPtrEqual(goTarget, ref.TargetB64) && !tc.s5TargetDiffers() {
 				t.Errorf("target bytes differ\n  go:     %s\n  frozen: %s",
 					derefString(goTarget), derefString(ref.TargetB64))
+			}
+			if tc.s5TargetDiffers() {
+				if err := checkS5Target(tc, goTarget); err != nil {
+					t.Errorf("accepted S5 divergence: %v", err)
+				}
 			}
 			if tc.tracebackStderr {
 				// Only the exception-type marker is frozen here; Python's stderr
@@ -389,8 +544,12 @@ func TestMCPRenderDifferential(t *testing.T) {
 				}
 				return
 			}
-			if goErr != *ref.Stderr {
-				t.Errorf("stderr differs\n--- go ---\n%q\n--- frozen ---\n%q", goErr, *ref.Stderr)
+			wantErr := *ref.Stderr
+			if tc.s5Stderr != nil {
+				wantErr = *tc.s5Stderr
+			}
+			if goErr != wantErr {
+				t.Errorf("stderr differs\n--- go ---\n%q\n--- want ---\n%q", goErr, wantErr)
 			}
 		})
 	}
@@ -454,11 +613,8 @@ func mcpRunRender(t *testing.T, dir, agent, target, mcpKey, recipe string) (stri
 	return out.String(), rc, errBuf.String()
 }
 
-// TestMCPRenderJSONDepthLimit pins the decoder's nesting bound. Python's
-// json.loads raises RecursionError at a stack/version-dependent depth (100000
-// accepted on 3.14); unbounded Go recursion dies with a fatal stack overflow
-// (rc 2) instead of the port's rc 1, and a depth overflow must NOT degrade to
-// {} (nor be silently ignored for --recipe-mcp).
+// TestMCPRenderJSONDepthLimit pins recovery for target depth overflow while
+// preserving the refusal for an over-limit --recipe-mcp input.
 func TestMCPRenderJSONDepthLimit(t *testing.T) {
 	dir := t.TempDir()
 	over := mcpDeepJSON(mcpJSONMaxDepth + 1)
@@ -467,7 +623,7 @@ func TestMCPRenderJSONDepthLimit(t *testing.T) {
 	if err := os.WriteFile(atLimit, []byte(mcpDeepJSON(mcpJSONMaxDepth)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, rc, stderr := mcpRunRender(t, dir, "claude", atLimit, "mcpServers", ""); rc != 0 {
+	if _, rc, stderr := mcpRunRender(t, dir, "claude", atLimit, "mcpServers", ""); rc != 0 || stderr != "" {
 		t.Fatalf("at limit: rc=%d want 0 (stderr: %s)", rc, stderr)
 	}
 
@@ -475,11 +631,16 @@ func TestMCPRenderJSONDepthLimit(t *testing.T) {
 	if err := os.WriteFile(target, []byte(over), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if out, rc, stderr := mcpRunRender(t, dir, "claude", target, "mcpServers", ""); rc != 1 || out != "" || !strings.HasPrefix(stderr, "error: ") {
-		t.Fatalf("target over limit: rc=%d stdout=%q stderr=%q", rc, out, stderr)
+	wantOut := fmt.Sprintf("  ✓ claude → %s (3 server(s))\n", target)
+	wantErr := fmt.Sprintf("warning: invalid JSON in %s; backed up to %s.bak\n", target, target)
+	if out, rc, stderr := mcpRunRender(t, dir, "claude", target, "mcpServers", ""); rc != 0 || out != wantOut || stderr != wantErr {
+		t.Errorf("target over limit: rc=%d stdout=%q stderr=%q", rc, out, stderr)
 	}
-	if got, _ := os.ReadFile(target); string(got) != over {
-		t.Errorf("target changed: got %d bytes want %d", len(got), len(over))
+	if got, err := os.ReadFile(target + ".bak"); err != nil || string(got) != over {
+		t.Errorf("backup: got %d bytes (%v), want %d", len(got), err, len(over))
+	}
+	if got, err := os.ReadFile(target); err != nil || !json.Valid(got) || !bytes.Contains(got, []byte(`"mcpServers"`)) {
+		t.Errorf("regenerated target: got %d bytes (%v)", len(got), err)
 	}
 
 	recipe := filepath.Join(dir, "deep-recipe.json")
@@ -495,11 +656,11 @@ func TestMCPRenderJSONDepthLimit(t *testing.T) {
 	}
 }
 
-// TestMCPRenderSurrogateWriteReportsOpenError pins the F5 write path: Python's
-// write_text() opens (and truncates) the target BEFORE encoding, so a failing
-// open is reported first (PermissionError), not the surrogate encode error.
-// Non-root only: mode bits are not enforced for root.
-func TestMCPRenderSurrogateWriteReportsOpenError(t *testing.T) {
+// TestMCPRenderSurrogateFailureLeavesTargetIntact pins the accepted S5
+// divergence from F5: Python's write_text() opens (and truncates) the target
+// before it fails to encode, so a failed render used to destroy the user's
+// file. The port refuses before touching it, so the bytes stay as they were.
+func TestMCPRenderSurrogateFailureLeavesTargetIntact(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("a read-only file is not enforced as root")
 	}
@@ -519,7 +680,9 @@ func TestMCPRenderSurrogateWriteReportsOpenError(t *testing.T) {
 	defer os.Chmod(target, 0o644)
 
 	out, rc, stderr := mcpRunRender(t, dir, "codex", target, "mcp_servers", recipe)
-	if rc != 1 || out != "" || !strings.Contains(stderr, "permission denied") || strings.Contains(stderr, "lone surrogate") {
+	// The name is rendered as a quoted key, and a lone surrogate is not a TOML
+	// scalar, so the render is refused before the target is opened.
+	if rc != 1 || out != "" || !strings.Contains(stderr, "refusing to rewrite Codex MCP config") {
 		t.Fatalf("rc=%d stdout=%q stderr=%q", rc, out, stderr)
 	}
 	if got, _ := os.ReadFile(target); string(got) != original {
@@ -537,7 +700,7 @@ func mcpRenderCases() []mcpRefCase {
 		{name: "opencode opencode.json mcp", manifest: mcpStr(mcpBaseManifest),
 			targetRel: "opencode.json", agent: "opencode", mcpKey: "mcp"},
 		{name: "codex .codex/config.toml mcp_servers", manifest: mcpStr(mcpBaseManifest),
-			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers"},
+			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers", managedBlock: true},
 		{name: "gemini .gemini/settings.json mcpServers", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".gemini/settings.json", agent: "gemini", mcpKey: "mcpServers"},
 		{name: "pi .pi/mcp.json mcpServers", manifest: mcpStr(mcpBaseManifest),
@@ -551,7 +714,9 @@ func mcpRenderCases() []mcpRefCase {
 			name:      "existing json preserves keys order duplicates and unicode",
 			manifest:  mcpStr(mcpBaseManifest),
 			targetRel: ".mcp.json", agent: "claude", mcpKey: "mcpServers",
-			target: mcpStr(`{"emoji": "🚀", "café": "naïve", "dup": 1, "z": 2, "dup": 3, "pi": 3.14, "n": 7, "whole": 2.0, "exp": 1e3, "neg": -0, "mcpServers": {"keep": {"command": "x"}}}`),
+			target:   mcpStr(`{"emoji": "🚀", "café": "naïve", "dup": 1, "z": 2, "dup": 3, "pi": 3.14, "n": 7, "whole": 2.0, "exp": 1e3, "neg": -0, "mcpServers": {"keep": {"command": "x"}}}`),
+			s5Keeps:  []string{`"keep"`},
+			s5Stderr: mcpStr("    ! <TEMP>/.mcp.json: MCP servers not recorded as ai-specs-managed: keep (remove them if ai-specs generated them)\n"),
 		},
 		{
 			name:      "existing json numeric extremes round-trip",
@@ -599,8 +764,9 @@ func mcpRenderCases() []mcpRefCase {
 			name:      "recipe mcp big integer codex toml",
 			manifest:  mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
-			recipeRel: "recipe-mcp.json",
-			recipe:    mcpStr(`{"big": {"command": "d", "timeout": 123456789012345678901234567890}}`),
+			recipeRel:    "recipe-mcp.json",
+			recipe:       mcpStr(`{"big": {"command": "d", "timeout": 123456789012345678901234567890}}`),
+			managedBlock: true,
 		},
 		{
 			name:      "recipe mcp non-object json ignored",
@@ -621,13 +787,16 @@ func mcpRenderCases() []mcpRefCase {
 			name:      "codex strips prior blocks and keeps user tables",
 			manifest:  mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
-			target: mcpStr("# user comment\n\n[user_table]\nx = 1\n\n[mcp_servers.old]\ncommand = \"old\"\n\n[mcp_servers.old.env]\nA = \"1\"\n\n[after]\ny = 2\n\n\n"),
+			target:  mcpStr("# user comment\n\n[user_table]\nx = 1\n\n[mcp_servers.old]\ncommand = \"old\"\n\n[mcp_servers.old.env]\nA = \"1\"\n\n[after]\ny = 2\n\n\n"),
+			s5Keeps: []string{"[mcp_servers.old]", "[mcp_servers.old.env]"}, s5Stderr: mcpStr("    ! <TEMP>/.codex/config.toml: MCP servers not recorded as ai-specs-managed: old (remove them if ai-specs generated them)\n"),
 		},
 		{
 			name:      "codex CRLF lines",
 			manifest:  mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
-			target: mcpStr("[user_table]\r\nx = 1\r\n\r\n[mcp_servers.old]\r\ncommand = \"old\"\r\n"),
+			target:   mcpStr("[user_table]\r\nx = 1\r\n\r\n[mcp_servers.old]\r\ncommand = \"old\"\r\n"),
+			s5Keeps:  []string{"[mcp_servers.old]"},
+			s5Stderr: mcpStr("    ! <TEMP>/.codex/config.toml: MCP servers not recorded as ai-specs-managed: old (remove them if ai-specs generated them)\n"),
 		},
 
 		// --- env-ref regex quirks (Python `$` before trailing newline; optional
@@ -658,7 +827,8 @@ func mcpRenderCases() []mcpRefCase {
 		{name: "dry-run json", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".mcp.json", agent: "claude", mcpKey: "mcpServers", dryRun: true},
 		{name: "dry-run toml", manifest: mcpStr(mcpBaseManifest),
-			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers", dryRun: true},
+			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers", dryRun: true,
+			managedBlock: true},
 
 		// --- F1: existing target cannot be read (Python read_text raises) ---
 		{name: "target unreadable json", manifest: mcpStr(mcpBaseManifest),
@@ -718,15 +888,22 @@ func mcpRenderCases() []mcpRefCase {
 		{name: "recipe json nan json agent", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".mcp.json", agent: "claude", mcpKey: "mcpServers",
 			recipeRel: "recipe-mcp.json",
-			recipe:    mcpStr(`{"delta": {"command": "d", "env": {"K": NaN, "I": Infinity, "J": -Infinity}}}`)},
+			recipe:    mcpStr(`{"delta": {"command": "d", "env": {"K": NaN, "I": Infinity, "J": -Infinity}}}`),
+			// Python writes the bare constants into the target.
+			acceptedDivergence: mcpStr("error: <TEMP>/recipe-mcp.json: invalid JSON: non-finite constant NaN/Infinity\n")},
 		{name: "recipe json nan codex toml", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
 			recipeRel: "recipe-mcp.json",
-			recipe:    mcpStr(`{"delta": {"command": "d", "env": {"K": NaN, "I": Infinity, "J": -Infinity}}}`)},
+			recipe:    mcpStr(`{"delta": {"command": "d", "env": {"K": NaN, "I": Infinity, "J": -Infinity}}}`),
+			// Python writes nan/inf/-inf into the TOML env table.
+			acceptedDivergence: mcpStr("error: <TEMP>/recipe-mcp.json: invalid JSON: non-finite constant NaN/Infinity\n")},
 		{name: "recipe lone surrogate codex toml", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
 			recipeRel: "recipe-mcp.json",
-			recipe:    mcpStr(`{"delta": {"command": "d", "env": {"K": "\ud800"}}}`)},
+			recipe:    mcpStr(`{"delta": {"command": "d", "env": {"K": "\ud800"}}}`),
+			// Legacy wrote `env = { K = "\ud800" }`, which no TOML parser accepts:
+			// the safety net refuses instead of writing an unreadable config.
+			refusedPrefix: mcpStr("error: <TEMP>/.codex/config.toml: refusing to rewrite Codex MCP config: merged document does not parse: toml:")},
 
 		// --- F5: a lone surrogate that reaches the rendered content raw. JSON
 		// and TOML *values* escape it via json.dumps, but a raw TOML table name
@@ -739,18 +916,21 @@ func mcpRenderCases() []mcpRefCase {
 			target:          mcpStr("[user]\nx = 1\n"),
 			recipeRel:       "recipe-mcp.json",
 			recipe:          mcpStr(`{"\ud800": {"command": "d"}}`),
-			tracebackStderr: true, pythonExc: "UnicodeEncodeError"},
+			tracebackStderr: true, pythonExc: "UnicodeEncodeError",
+			s5Target: mcpStr("[user]\nx = 1\n")},
 		{name: "surrogate server name codex toml creates empty target", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
 			recipeRel:       "recipe-mcp.json",
 			recipe:          mcpStr(`{"\ud800": {"command": "d"}}`),
-			tracebackStderr: true, pythonExc: "UnicodeEncodeError"},
+			tracebackStderr: true, pythonExc: "UnicodeEncodeError",
+			s5NoTarget: true},
 		{name: "surrogate env key codex toml truncates existing target", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".codex/config.toml", agent: "codex", mcpKey: "mcp_servers",
 			target:          mcpStr("[user]\nx = 1\n"),
 			recipeRel:       "recipe-mcp.json",
 			recipe:          mcpStr(`{"delta": {"command": "d", "env": {"\ud800": "v"}}}`),
-			tracebackStderr: true, pythonExc: "UnicodeEncodeError"},
+			tracebackStderr: true, pythonExc: "UnicodeEncodeError",
+			s5Target: mcpStr("[user]\nx = 1\n")},
 		{name: "surrogate server name json escaped is unaffected", manifest: mcpStr(mcpBaseManifest),
 			targetRel: ".mcp.json", agent: "claude", mcpKey: "mcpServers",
 			recipeRel: "recipe-mcp.json",

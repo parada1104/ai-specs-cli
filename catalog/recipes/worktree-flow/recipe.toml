@@ -71,7 +71,7 @@ required = false
 type = "string"
 default = "auto"
 enum = ["auto", "go"]
-help_text = "Worktree gate implementation: auto (use the Go binary when the CLI can provide it) or go (explicit Go pin). Both acquire the verified binary and fail open with a doctor ERROR when none resolves. The bash value has been removed."
+help_text = "Worktree gate implementation: auto (default) and go both use the installed CLI's worktree-gate command. If the CLI cannot serve it, the launcher fails open and doctor reports an ERROR. The bash value has been removed."
 
 
 # Legacy compatibility alias only. Topology is owned by the project manifest

@@ -2,17 +2,15 @@
 
 Severity table (design §6.5 / spec "Diagnostics for gate implementation
 health"):
-  OK    Go binary resolved, version matches stamp, selftest passes
-  INFO  gate_impl=bash configured explicitly
-  WARN  gate_impl=auto falling back to Bash / version mismatch
-  ERROR gate_impl=go with no usable binary (failing open)
-  ERROR digest mismatch recorded at last acquisition
+  OK    installed CLI serves worktree-gate and selftest passes
+  INFO  leftover legacy launcher file
+  WARN  materialized launcher still resolves the retired separate binary
+  ERROR retired gate_impl=bash or missing/failing installed CLI (failing open)
 
 Every test drives `bin/ai-specs doctor` and asserts on its rendered output.
 """
 from __future__ import annotations
 
-import platform
 import re
 import sys
 import tempfile
@@ -40,22 +38,11 @@ BUNDLED_COMMANDS = ("rules-audit", "skills-as-rules")
 _LINE_RE = re.compile(r"^\s*(OK|INFO|WARN|ERROR)\s+(?P<name>\S+)\s+(?P<body>.*)$")
 
 
-def _platform() -> tuple[str, str]:
-    """Mirror gate_binary.detect_platform for staging cache paths in tests."""
-    goos = {"Darwin": "darwin", "Linux": "linux"}.get(platform.system(), "")
-    machine = platform.machine()
-    goarch = "arm64" if machine in ("arm64", "aarch64") else (
-        "amd64" if machine in ("x86_64", "amd64") else "")
-    return goos, goarch
-
-
 def _make_home(base: Path) -> Path:
-    """Isolated CLI home with a REAL lib copy and an empty catalog.
+    """Isolated CLI home with a real lib copy and an empty catalog.
 
-    ``lib/`` is not installed: doctor is the native binary, so every cache
-    lookup (binary, verification receipt, digest-mismatch record) stays inside
-    temp; the empty catalog removes the SHA256SUMS trust root so a
-    receipt-backed stub binary is accepted exactly like an acquired one.
+    ``lib/`` is not installed: doctor is the native binary, and the empty
+    catalog keeps unrelated bundled-cache checks from affecting its exit code.
     """
     return isolated_home(base, catalog=False)
 
@@ -72,32 +59,20 @@ def _seed_clean_cache(root: Path, home: Path) -> None:
         path.write_text("# bundled\n", encoding="utf-8")
 
 
-def _gate_cache_dir(home: Path) -> Path:
-    version = (home / "VERSION").read_text(encoding="utf-8").strip()
-    goos, goarch = _platform()
-    return home / "cache" / "bin" / "worktree-gate" / version / f"{goos}-{goarch}"
-
-
-def _stage_gate_stub(home: Path, *, version: str) -> None:
-    """Install a receipt-backed stub binary answering --version.
-
-    doctor runs `--version` and `--selftest` against the resolved binary; the
-    stub reports the given version and passes everything else.
-    """
-    bindir = _gate_cache_dir(home)
-    bindir.mkdir(parents=True, exist_ok=True)
-    stub = bindir / "worktree-gate"
-    stub.write_text(
+def _stage_gate_cli(home: Path, *, working: bool = True) -> None:
+    """Install a CLI fixture whose worktree-gate selftest can pass or fail."""
+    dist = home / "dist"
+    dist.mkdir(parents=True, exist_ok=True)
+    cli = dist / "ai-specs"
+    result = "echo ok\n  exit 0" if working else "echo selftest exploded >&2\n  exit 1"
+    cli.write_text(
         "#!/bin/sh\n"
-        'if [ "$1" = "--version" ]; then\n'
-        f'  printf \'%s\\n\' "{version}"\n'
-        "  exit 0\n"
-        "fi\n"
-        "exit 0\n",
+        'if [ "$1" = "worktree-gate" ] && [ "$2" = "--selftest" ]; then\n'
+        f"  {result}\n"
+        "fi\nexit 1\n",
         encoding="utf-8",
     )
-    stub.chmod(0o755)
-    (bindir / "worktree-gate.verified").write_text("status=verified\n", encoding="utf-8")
+    cli.chmod(0o755)
 
 
 def _named_checks(stdout: str, name: str) -> list[tuple[str, str]]:
@@ -182,8 +157,7 @@ class WorktreeGateDoctorTests(unittest.TestCase):
         )
         leftover.parent.mkdir(parents=True)
         leftover.write_text("inert leftover\n")
-        self._write_launcher(root, 'stamped_gate_version="9.9.9"\n')
-        _stage_gate_stub(self.home, version="9.9.9")
+        _stage_gate_cli(self.home)
         checks, code = self._checks(root)
         infos = [body for sev, body in checks if sev == "INFO"]
         self.assertEqual(len(infos), 1)
@@ -196,13 +170,8 @@ class WorktreeGateDoctorTests(unittest.TestCase):
     def test_go_without_binary_reports_error_failing_open(self):
         root = self._project(gate_impl="go")
         checks, code = self._checks(root)
-        self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0][0], "ERROR")
-        self.assertIn("failing open", checks[0][1])
-        version = (self.home / "VERSION").read_text(encoding="utf-8").strip()
-        goos, goarch = _platform()
-        expected_suffix = f"cache/bin/worktree-gate/{version}/{goos}-{goarch}/worktree-gate"
-        self.assertIn(expected_suffix, checks[0][1])
+        self.assertEqual(checks, [("ERROR", "ai-specs CLI is missing or not executable at <TEMP>/dist/ai-specs; "
+                                            "the gate is failing open  (reinstall ai-specs via install.sh)")])
         self.assertEqual(code, 1)
 
     def test_auto_without_binary_reports_error_failing_open(self):
@@ -215,46 +184,21 @@ class WorktreeGateDoctorTests(unittest.TestCase):
         self.assertNotIn("rollback lever", checks[0][1])
         self.assertEqual(code, 1)
 
-    def test_healthy_binary_reports_ok(self):
+    def test_healthy_cli_reports_ok(self):
         root = self._project()
-        self._write_launcher(root, 'stamped_gate_version="9.9.9"\n')
-        _stage_gate_stub(self.home, version="9.9.9")
+        _stage_gate_cli(self.home)
         checks, code = self._checks(root)
         self.assertEqual(len(checks), 1)
         self.assertEqual(checks[0][0], "OK")
-        self.assertIn("9.9.9", checks[0][1])
+        self.assertIn("serves worktree-gate; selftest passed", checks[0][1])
         self.assertEqual(code, 0)
 
-    def test_version_mismatch_reports_warn(self):
+    def test_cli_selftest_failure_reports_error_failing_open(self):
         root = self._project()
-        self._write_launcher(root, 'stamped_gate_version="8.8.8"\n')
-        _stage_gate_stub(self.home, version="9.9.9")
+        _stage_gate_cli(self.home, working=False)
         checks, code = self._checks(root)
-        self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0][0], "WARN")
-        self.assertIn("8.8.8", checks[0][1])
-        # Frozen exit contract: WARN never affects the exit code.
-        self.assertEqual(code, 0)
-
-    def test_digest_mismatch_record_reports_error(self):
-        root = self._project()
-        version = (self.home / "VERSION").read_text(encoding="utf-8").strip()
-        goos, goarch = _platform()
-        mismatch = (
-            self.home / "cache" / "bin" / "worktree-gate" / version
-            / "last-digest-mismatch.txt"
-        )
-        mismatch.parent.mkdir(parents=True, exist_ok=True)
-        mismatch.write_text(
-            f"worktree-gate: digest mismatch for worktree-gate-{goos}-{goarch}; "
-            "artifact deleted and never executed",
-            encoding="utf-8",
-        )
-        checks, code = self._checks(root)
-        self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0][0], "ERROR")
-        self.assertIn("digest mismatch", checks[0][1])
-        self.assertIn("never executed", checks[0][1])
+        self.assertEqual(checks, [("ERROR", "ai-specs CLI at <TEMP>/dist/ai-specs failed worktree-gate --selftest: "
+                                            "selftest exploded; the gate is failing open  (run ai-specs upgrade)")])
         self.assertEqual(code, 1)
 
 
