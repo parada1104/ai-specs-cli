@@ -7,11 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.26.1] — 2026-11-22
+## [0.26.2] — 2026-11-22
 
-First published release of the 0.26 line. The `v0.26.0` tag exists but was never
-released: its release workflow failed before publishing any asset. Upgrading
-from 0.25.x replays the [0.26.0] upgrade notes below.
+First published release of the 0.26 line. The `v0.26.0` and `v0.26.1` tags exist
+but were never released: their release workflows failed before publishing any
+asset. Upgrading from 0.25.x replays the [0.26.0] upgrade notes below.
+
+### Fixed
+- **Concurrent `sync` runs no longer fail with `refuse to write ... sync.lock`.**
+  The write-containment check reported a cache directory that another run was
+  creating or removing at that moment as an unresolvable link, so the second
+  run exited with `ERROR: cannot acquire sync lock`. Only an existing symlink
+  that cannot resolve is refused now; every other containment refusal is
+  unchanged.
+
+## [0.26.1] — 2026-11-22 (tagged, not released)
 
 ### Fixed
 - **The worktree gate's ledger contract test no longer depends on the host's
