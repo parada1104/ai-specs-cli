@@ -32,7 +32,8 @@ func ledgerGit(t *testing.T, dir string, args ...string) string {
 func ledgerRepo(t *testing.T) (dir, common, branch string) {
 	t.Helper()
 	dir = t.TempDir()
-	ledgerGit(t, dir, "init", "-q")
+	// Pin the branch: CI's git defaults to master, and the contract test expects main.
+	ledgerGit(t, dir, "init", "-q", "-b", "main")
 	ledgerGit(t, dir, "config", "user.email", "t@example.invalid")
 	ledgerGit(t, dir, "config", "user.name", "t")
 	if err := os.WriteFile(filepath.Join(dir, "README"), []byte("x"), 0o600); err != nil {
