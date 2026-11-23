@@ -29,25 +29,41 @@ const worktreeGateLauncherScript = "worktree-gate.sh"
 // declare; `ai-specs tracker-card-gate` serves both of them (T6).
 const trackerCardGateScript = "tracker-card-gate.sh"
 
+// planBuildGateScript is the retired planning gate the plan-build-flow recipe's
+// hook declares; `ai-specs plan-build-gate` serves it (T7).
+const planBuildGateScript = "plan-build-gate.sh"
+
 // worktreeGateHookVerb is the CLI verb the renderers invoke for the gate.
 const worktreeGateHookVerb = "worktree-gate"
 
 // cliServedHookCommand is the shell command that serves this hook, or "" when
 // the hook keeps its materialized script. Every hook is CLI-served once its
-// phase has landed: worktree-flow's worktree-gate (F1) and trello-mcp-workflow's
-// tracker-card-gate (F2).
+// phase has landed: worktree-flow's worktree-gate (F1), trello-mcp-workflow's
+// tracker-card-gate (F2) and plan-build-flow's plan-build-gate (F3).
 func cliServedHookCommand(recipeID string, hook *schema.RuntimeHook) string {
 	verb := ""
-	prefix := `cli="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"; `
+	script := filepath.Base(hook.Script)
 	switch {
-	case recipeID == "worktree-flow" && filepath.Base(hook.Script) == worktreeGateLauncherScript:
+	case recipeID == "worktree-flow" && script == worktreeGateLauncherScript:
 		// The id is shell-quoted: it is recipe data, so an id with spaces or shell
 		// metacharacters must reach the CLI as one argument instead of as source.
 		verb = worktreeGateHookVerb + " --hook " + shellQuote(hook.ID)
-	case recipeID == "trello-mcp-workflow" && filepath.Base(hook.Script) == trackerCardGateScript:
+	case recipeID == "trello-mcp-workflow" && script == trackerCardGateScript:
 		// Both hook matchers (path writes and shell) are one verb: the event on
 		// stdin decides the checkpoint.
 		verb = "tracker-card-gate"
+	case recipeID == "plan-build-flow" && script == planBuildGateScript:
+		// The planning gate hosts the work-start checkpoint and its own artifact
+		// rule; the event on stdin carries everything it needs.
+		verb = "plan-build-gate"
+	default:
+		return ""
+	}
+	// The launcher's resolution order, kept machine-independent: the CLI that
+	// ran sync (AI_SPECS_HOME/dist) first, `ai-specs` on PATH second. A missing
+	// CLI fails open with exit 0, exactly like the launcher did.
+	prefix := `cli="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"; `
+	if recipeID != "worktree-flow" {
 		// R1-tracker-cli-provenance: pin the installation that ran sync. Reading
 		// AI_SPECS_HOME at hook time is not equivalent — the agent may lack it
 		// (silent no-op) or resolve another ai-specs on PATH (wrong grader). The
@@ -56,8 +72,6 @@ func cliServedHookCommand(recipeID string, hook *schema.RuntimeHook) string {
 			root := aihome.ResolveHome(exe, os.Getenv("AI_SPECS_HOME"))
 			prefix = `cli=` + shellQuote(filepath.Join(root, "dist", "ai-specs")) + `; `
 		}
-	default:
-		return ""
 	}
 	return prefix +
 		`[ -x "$cli" ] || cli=ai-specs; ` +
@@ -80,12 +94,14 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
-// recipeServesCLIHook reports whether the recipe declares a CLI-served hook.
-func recipeServesCLIHook(recipeID string, recipe *schema.Recipe) bool {
-	for _, hook := range recipe.RuntimeHooks {
-		if cliServedHookCommand(recipeID, hook) != "" {
-			return true
-		}
+// recipeContributesRuntimeSnapshot reports whether a CLI-served recipe's verbs
+// read the per-project snapshot. plan-build-flow's gate reads none, so a
+// plan-build-only project keeps the "no sync snapshot" policy (S6) instead of
+// publishing an empty one.
+func recipeContributesRuntimeSnapshot(recipeID string) bool {
+	switch recipeID {
+	case "worktree-flow", "trello-mcp-workflow":
+		return true
 	}
 	return false
 }

@@ -365,10 +365,11 @@ func applyRecipeArtifactPrune(root, lockPath string, doomed, stale []string, rec
 
 // retiredGateLaunchers labels the hook scripts the CLI now serves, keyed by
 // their materialized path (cli-served-recipes: F1 worktree-gate, F2
-// tracker-card-gate).
+// tracker-card-gate, F3 plan-build-gate).
 var retiredGateLaunchers = map[string]string{
 	shared.HookScriptRelPath("worktree-flow", worktreeGateLauncherScript):  "worktree-gate launcher",
 	shared.HookScriptRelPath("trello-mcp-workflow", trackerCardGateScript): "tracker-card-gate launcher",
+	shared.HookScriptRelPath("plan-build-flow", planBuildGateScript):       "plan-build-gate launcher",
 }
 
 // retiredGateLauncherModified reports whether rel is one of the retired gate
