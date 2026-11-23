@@ -5,6 +5,7 @@ package cli
 // verb, so these tests pin the shell host's exit codes and message bytes.
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -377,4 +378,192 @@ func TestPlanBuildGatePlanSurvivesGlobMetacharRoot(t *testing.T) {
 	if code, stdout, stderr := runPlanBuildGateCLI(t, bracketed, planBuildGateEvent(bracketed, "Write", "src/x.go")); code != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("plan under a bracketed root = (%d, %q, %q), want silence", code, stdout, stderr)
 	}
+}
+
+// --- ODD mode (plan-build-odd-companion S3/S10) ----------------------------
+
+// planBuildWriteMode writes the manifest declaring one execution mode.
+func planBuildWriteMode(t *testing.T, root, mode string) {
+	t.Helper()
+	dir := filepath.Join(root, "ai-specs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "[recipes.plan-build-flow]\nenabled = true\n\n" +
+		"[recipes.plan-build-flow.config]\nmode = \"" + mode + "\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "ai-specs.toml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// planBuildBranch checks out the change branch the plan pairs with.
+func planBuildBranch(t *testing.T, repo, branch string) {
+	t.Helper()
+	gitTest(t, repo, "checkout", "-b", branch)
+}
+
+// planBuildWriteOddPlan writes the paired ODD plan.
+func planBuildWriteOddPlan(t *testing.T, root, change string) {
+	t.Helper()
+	path := filepath.Join(root, "odd", "tasks", change+".md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// planBuildCommonDir is the repository's git common directory.
+func planBuildCommonDir(t *testing.T, repo string) string {
+	t.Helper()
+	common := gitOutput(t, repo, "rev-parse", "--git-common-dir")
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(repo, common)
+	}
+	return sharedRealPath(common)
+}
+
+// planBuildOddRefusal is the ODD plan refusal, verbatim.
+func planBuildOddRefusal(tool, rel, change, branch string) string {
+	return "plan-build-gate: refusing to " + tool + " '" + rel + "' — ODD mode is active but the ODD plan " +
+		"'odd/tasks/" + change + ".md' is missing or is not a regular file for branch '" + branch + "'. " +
+		"Write the plan first, or declare mode = \"openspec\" in ai-specs/ai-specs.toml to use the " +
+		"OpenSpec flow. Writing planning artifacts under odd/ is never blocked.\n"
+}
+
+// planBuildOddBranchRefusal is the ODD detached-HEAD refusal, verbatim.
+func planBuildOddBranchRefusal(tool, rel string) string {
+	return "plan-build-gate: refusing to " + tool + " '" + rel + "' — ODD mode is active but the current " +
+		"branch cannot be resolved (detached HEAD), so no ODD plan can be paired. Check out the change " +
+		"branch, or declare mode = \"openspec\" in ai-specs/ai-specs.toml to use the OpenSpec flow.\n"
+}
+
+// planBuildAssertAbsent pins that a refused write touched nothing on disk.
+func planBuildAssertAbsent(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("%s: stat err %v, want the refused target to stay absent", path, err)
+	}
+}
+
+// oddRepo is a repository declaring odd mode on a prefixed change branch.
+func oddRepo(t *testing.T) (repo, branch string) {
+	t.Helper()
+	repo = sharedRealPath(newGateFixture(t))
+	planBuildWriteMode(t, repo, "odd")
+	branch = "feat/odd-change"
+	planBuildBranch(t, repo, branch)
+	return repo, branch
+}
+
+// The paired plan allows the production write.
+func TestPlanBuildGateOddModeAllowsWithPlan(t *testing.T) {
+	repo, _ := oddRepo(t)
+	planBuildWriteOddPlan(t, repo, "odd-change")
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("gate = (%d, %q, %q), want silence", code, stdout, stderr)
+	}
+}
+
+// A missing plan refuses and names the path and both escapes.
+func TestPlanBuildGateOddModeRefusesWithoutPlan(t *testing.T) {
+	repo, branch := oddRepo(t)
+	want := planBuildOddRefusal("Write", "src/app.go", "odd-change", branch)
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
+		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+	}
+	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
+}
+
+// A directory named like the plan is not a plan.
+func TestPlanBuildGateOddModePlanMustBeRegularFile(t *testing.T) {
+	repo, branch := oddRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, "odd", "tasks", "odd-change.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := planBuildOddRefusal("Write", "src/app.go", "odd-change", branch)
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
+		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+	}
+	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
+}
+
+// An OpenSpec tasks.md never satisfies the ODD gate.
+func TestPlanBuildGateOddModeIgnoresOpenspecTasks(t *testing.T) {
+	repo, branch := oddRepo(t)
+	planBuildWritePlan(t, repo, "openspec-change")
+	want := planBuildOddRefusal("Write", "src/app.go", "odd-change", branch)
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
+		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+	}
+	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
+}
+
+// Writing the plan that the gate requires is never blocked.
+func TestPlanBuildGateOddModeAllowsPlanWrites(t *testing.T) {
+	repo, _ := oddRepo(t)
+	for _, target := range []string{"odd/tasks/odd-change.md", "odd/changes/odd-change/proposal.md"} {
+		if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", target)); code != 0 || stdout != "" || stderr != "" {
+			t.Fatalf("%s = (%d, %q, %q), want silence", target, code, stdout, stderr)
+		}
+	}
+	planBuildAssertAbsent(t, filepath.Join(repo, "odd", "tasks", "odd-change.md"))
+}
+
+// A detached HEAD refuses instead of pairing an arbitrary plan.
+func TestPlanBuildGateOddModeDetachedHeadBlocks(t *testing.T) {
+	repo, _ := oddRepo(t)
+	planBuildWriteOddPlan(t, repo, "odd-change")
+	gitTest(t, repo, "checkout", "--detach")
+	want := planBuildOddBranchRefusal("Write", "src/app.go")
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
+		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+	}
+	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
+}
+
+// A declared openspec mode is byte-identical to the pre-change gate: the
+// nearest-root refusal without a change folder, silence with one.
+func TestPlanBuildGateDeclaredOpenspecIsUnchanged(t *testing.T) {
+	repo := sharedRealPath(newGateFixture(t))
+	planBuildWriteMode(t, repo, "openspec")
+	want := planBuildNearestRefusal("Write", "src/app.go")
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
+		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+	}
+	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
+	planBuildWritePlan(t, repo, "some-change")
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("gate with a plan = (%d, %q, %q), want silence", code, stdout, stderr)
+	}
+}
+
+// auto follows the Gentle AI state directory: present behaves as odd.
+func TestPlanBuildGateAutoInfersOddFromStateDir(t *testing.T) {
+	repo, branch := oddRepo(t)
+	planBuildWriteMode(t, repo, "auto")
+	if err := os.MkdirAll(filepath.Join(planBuildCommonDir(t, repo), "gentle-ai"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := planBuildOddRefusal("Write", "src/app.go", "odd-change", branch)
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
+		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+	}
+	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
+	planBuildWriteOddPlan(t, repo, "odd-change")
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("gate with a plan = (%d, %q, %q), want silence", code, stdout, stderr)
+	}
+}
+
+// auto without the state directory stays on the OpenSpec flow.
+func TestPlanBuildGateAutoWithoutStateDirStaysOpenspec(t *testing.T) {
+	repo := sharedRealPath(newGateFixture(t))
+	planBuildWriteMode(t, repo, "auto")
+	want := planBuildNearestRefusal("Write", "src/app.go")
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
+		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+	}
+	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
 }
