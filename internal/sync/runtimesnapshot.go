@@ -23,26 +23,48 @@ import (
 // declare. A hook declaring it is served by the CLI, not materialized.
 const worktreeGateLauncherScript = "worktree-gate.sh"
 
+// trackerCardGateScript is the retired Tracker gate the trello recipe's hooks
+// declare; `ai-specs tracker-card-gate` serves both of them (T6).
+const trackerCardGateScript = "tracker-card-gate.sh"
+
 // worktreeGateHookVerb is the CLI verb the renderers invoke for the gate.
 const worktreeGateHookVerb = "worktree-gate"
 
 // cliServedHookCommand is the shell command that serves this hook, or "" when
-// the hook keeps its materialized script. Only worktree-flow's worktree-gate
-// hooks are CLI-served in F1.
+// the hook keeps its materialized script. Every hook is CLI-served once its
+// phase has landed: worktree-flow's worktree-gate (F1) and trello-mcp-workflow's
+// tracker-card-gate (F2).
 func cliServedHookCommand(recipeID string, hook *schema.RuntimeHook) string {
-	if recipeID != "worktree-flow" || filepath.Base(hook.Script) != worktreeGateLauncherScript {
+	verb := ""
+	switch {
+	case recipeID == "worktree-flow" && filepath.Base(hook.Script) == worktreeGateLauncherScript:
+		// The id is shell-quoted: it is recipe data, so an id with spaces or shell
+		// metacharacters must reach the CLI as one argument instead of as source.
+		verb = worktreeGateHookVerb + " --hook " + shellQuote(hook.ID)
+	case recipeID == "trello-mcp-workflow" && filepath.Base(hook.Script) == trackerCardGateScript:
+		// Both hook matchers (path writes and shell) are one verb: the event on
+		// stdin decides the checkpoint.
+		verb = "tracker-card-gate"
+	default:
 		return ""
 	}
 	// The launcher's resolution order, kept machine-independent: the CLI that
 	// ran sync (AI_SPECS_HOME/dist) first, `ai-specs` on PATH second. A missing
 	// CLI fails open with exit 0, exactly like the launcher did.
-	//
-	// The id is shell-quoted: it is recipe data, so an id with spaces or shell
-	// metacharacters must reach the CLI as one argument instead of as source.
 	return `cli="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"; ` +
 		`[ -x "$cli" ] || cli=ai-specs; ` +
 		`command -v "$cli" >/dev/null 2>&1 || exit 0; ` +
-		`exec "$cli" ` + worktreeGateHookVerb + ` --hook ` + shellQuote(hook.ID)
+		`exec "$cli" ` + verb
+}
+
+// trackerRuntimeGateMode mirrors the tracker launcher's stamped hint: a
+// configured gate_mode is used verbatim (Python's
+// str(merged_cfg.get("gate_mode", "warn"))), and warn is the default.
+func trackerRuntimeGateMode(cfg map[string]any) string {
+	if value, ok := cfg["gate_mode"]; ok {
+		return shared.PyConfigString(value)
+	}
+	return "warn"
 }
 
 // shellQuote renders value as one POSIX sh single-quoted word.

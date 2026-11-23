@@ -395,7 +395,7 @@ Hard blockers (do **not** merge):
 The promotion check is tier-scoped: Light changes and changes with no `specs/`
 deltas are never blocked by it.
 
-Tracker item closure (`tracker-card-gate.sh --root <root> --checkpoint
+Tracker item closure (`ai-specs tracker-card-gate --root <root> --checkpoint
 archive-close`) is a separate Tracker-domain checkpoint: it is not this OpenSpec
 archive, it never moves the change folder, and this guardian never grades or
 writes tracker state.

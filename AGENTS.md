@@ -73,7 +73,7 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - On SDD phase transitions, move the card and update its phase label; post a progress comment at milestones.
 - The tracker gate is advisory: a warn/block/ask verdict is a prompt to create/link the card and write the ## Tracker section — never bypass via shell writes, and never claim 'Trello unavailable' when the real gap is a missing link section. A missing card is an availability failure only when the MCP/network is genuinely down.
 - Only omit a card by writing openspec/changes/<slug>/tracker.none with a one-line reason; this is logged and rare.
-- Tracker lifecycle checkpoints are Plan Build-independent: grade them with the tracker gate's direct host mode `ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh --root <root> --checkpoint pre-merge|archive-close [slug]`; no openspec/ tree is required, and `archive-close` is tracker item closure, never an OpenSpec archive.
+- Tracker lifecycle checkpoints are Plan Build-independent: grade them with the tracker gate verb `ai-specs tracker-card-gate --root <root> --checkpoint pre-merge|archive-close [slug]`; no openspec/ tree is required, and `archive-close` is tracker item closure, never an OpenSpec archive.
 - Provider tracker recipes only map native state through `[config.reconcile]`; they never enable, configure, or implement the ledger, and they never grade items.
 - Follow the project's designated workflow for structured changes.
 - Direct `skill-sync` runs are allowed only for metadata validation.

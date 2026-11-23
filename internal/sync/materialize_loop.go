@@ -70,11 +70,15 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 		return nil, err
 	}
 	mergedCfg := materializeProjectOwnedConfig(req.ProjectRoot, req.Recipe.ID, req.Merge.Config)
-	// A CLI-served hook (T2) is served from the snapshot the CLI reads, so sync
-	// records the resolved runtime config it just merged.
+	// A CLI-served hook (T2/T6) is served from the snapshot the CLI reads, so
+	// sync records the resolved runtime config it just merged. Each recipe owns
+	// its own half of one per-project snapshot.
 	if recipeServesCLIHook(req.Recipe.ID, recipe) {
-		snapshot, snapErr := runtimeSnapshotFromConfig(mergedCfg)
-		if snapErr != nil {
+		snapshot := projectcache.RuntimeSnapshot{}
+		if req.SnapshotOut != nil {
+			snapshot = req.SnapshotOut.Snapshot
+		}
+		if snapErr := applyRecipeRuntimeSnapshot(req.Recipe.ID, mergedCfg, &snapshot); snapErr != nil {
 			return nil, snapErr
 		}
 		// Staged, not written: the snapshot may only go live once the whole run
@@ -182,6 +186,25 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 	}
 
 	return resolvedHooks, nil
+}
+
+// applyRecipeRuntimeSnapshot merges one CLI-served recipe's contribution into
+// the pending per-project snapshot: worktree-flow owns the worktree gate policy,
+// trello-mcp-workflow the tracker gate's legacy hint. The merge is additive so a
+// project with only one of the two recipes still gets a complete snapshot.
+func applyRecipeRuntimeSnapshot(recipeID string, mergedCfg map[string]any, snapshot *projectcache.RuntimeSnapshot) error {
+	switch recipeID {
+	case "worktree-flow":
+		resolved, err := runtimeSnapshotFromConfig(mergedCfg)
+		if err != nil {
+			return err
+		}
+		resolved.TrackerGateMode = snapshot.TrackerGateMode
+		*snapshot = resolved
+	case "trello-mcp-workflow":
+		snapshot.TrackerGateMode = trackerRuntimeGateMode(mergedCfg)
+	}
+	return nil
 }
 
 // materializeProjectOwnedConfig adapts the merge decision's ordered object onto

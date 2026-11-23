@@ -95,7 +95,7 @@ requires its complete planning chain.
   blockers.
 - **Tracker `archive-close` is not this archive.** Tracker item closure is a
   separate Tracker-domain checkpoint
-  (`ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh --root <root>
+  (`ai-specs tracker-card-gate --root <root>
   --checkpoint archive-close [slug]`). It
   never moves the change folder, never infers closure from OpenSpec archive
   state, and writes nothing. Plan Build's artifact guardian is tracker-free.

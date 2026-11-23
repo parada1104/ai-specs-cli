@@ -97,9 +97,10 @@ Some hooks also use a sync-stamped constant in the rendered script for values
 that should not be overwritten by env export order. `worktree-flow` uses this
 for `gate_mode`: `ai-specs sync` stamps the resolved mode into
 `worktree-gate.sh`, while `WORKTREE_GATE_MODE` remains a one-shot process
-override at dispatch time. `trello-mcp-workflow` likewise stamps
-`__TRACKER_CARD_GATE_MODE__` (default `warn`) and `__TRACKER_CLI_HOME__`
-into `tracker-card-gate.sh`; `TRACKER_CARD_GATE_MODE` is the one-shot env
+override at dispatch time. `trello-mcp-workflow`'s tracker gate is served by
+the `ai-specs tracker-card-gate` verb (cli-served-recipes F2), so its legacy
+`gate_mode` hint (default `warn`) lives in the per-project sync snapshot
+instead of a stamped script, and `TRACKER_CARD_GATE_MODE` is the one-shot env
 override. The ledger `ledger_mode` is not stamped: the checkpoint hosts read it
 from `ai-specs/ai-specs.toml` at runtime (falling back to `gate_mode`), and
 `TRACKER_LEDGER_MODE` is the one-shot override.
@@ -198,7 +199,7 @@ block are preserved.
 | Recipe | Path hook id | Shell hook id | Shell heuristic |
 |--------|--------------|---------------|-----------------|
 | `worktree-flow` | `worktree-gate` | `worktree-gate-shell` | shell writes into protected main |
-| `trello-mcp-workflow` | `tracker-card-gate` | `tracker-card-gate-shell` | `gh pr create` (archive-close is graded by the shell host's direct mode) |
+| `trello-mcp-workflow` | `tracker-card-gate` | `tracker-card-gate-shell` | `gh pr create` (archive-close is graded by the verb's direct mode) |
 
 Both share one script per recipe with two `[[provides.hooks]]` ids so
 Cursor's file-write skip does not swallow shell coverage. Neither gate
@@ -206,33 +207,34 @@ intercepts MCP tool calls.
 
 ## Ledger checkpoints (tracker lifecycle)
 
-`plan-build-flow` and `trello-mcp-workflow` path/shell hooks, plus
-`tracker-card-gate.sh`'s direct host mode, are **acquisition + JSON bridges** to one
-Go predicate. They invoke `ai-specs worktree-gate --ledger --checkpoint <name>`
+`plan-build-flow` and `trello-mcp-workflow` path/shell hooks, plus the
+`ai-specs tracker-card-gate` verb's direct host mode, are **acquisition +
+JSON bridges** to one Go predicate. They invoke `ai-specs worktree-gate --ledger --checkpoint <name>`
 through the installed `dist/ai-specs`, not through the project-local pin, the
 cache, or `WORKTREE_GATE_BIN`. Plan Build uses `AI_SPECS_HOME` (default
-`$HOME/.ai-specs`); the Tracker host uses the CLI home stamped by sync. Go
-resolves the effective ledger mode. Neither host compiles or downloads a binary.
-Tracker verdicts are advisory and exit `0`; when a checkpoint reaches the
-Tracker grader but the CLI is missing or does not recognize `worktree-gate`,
-the host warns and still exits `0`. Plan Build can exit `2` for a blocking
-verdict or when an old CLI cannot grade the checkpoint.
+`$HOME/.ai-specs`); the Tracker gate runs inside the installed CLI itself, so
+it needs no separate bridge home. Go resolves the effective ledger mode.
+Neither host compiles or downloads a binary. Tracker verdicts are advisory and
+exit `0`: a rendered tracker hook whose CLI is missing exits `0` without
+grading, and the verb itself only exits `2` for a direct-mode usage error. Plan
+Build can exit `2` for a blocking verdict or when an old CLI cannot grade the
+checkpoint.
 
 The domain is Tracker, not a provider. One pure Go grader compares neutral
 expectations against neutral observations; a provider recipe extends that domain
 by declaring a `[config.reconcile]` **adapter** mapping in the project manifest,
 while `ledger_mode` / `gate_mode` stay Tracker-domain policy. The tracker
-lifecycle host is `tracker-card-gate.sh` invoked directly
+lifecycle host is `ai-specs tracker-card-gate` invoked directly
 (`--root <root> --checkpoint pre-merge|archive-close`); `ai-specs gates premerge`
 is Plan Build's artifact-only guardian and never invokes the ledger.
 
 | Checkpoint | Host |
 |---|---|
 | `work-start` | `plan-build-flow` `plan-build-gate.sh` (before the SDD/proposal phase and before the first production write; no change folder required; resolves the witness recipe id through the stamped bridge) |
-| `apply-start` | `trello-mcp-workflow` `tracker-card-gate.sh`, path kind |
-| `pr-review` | `trello-mcp-workflow` `tracker-card-gate.sh`, shell `gh pr create` |
-| `pre-merge` | `tracker-card-gate.sh --root <root> --checkpoint pre-merge` |
-| `archive-close` | `tracker-card-gate.sh --root <root> --checkpoint archive-close` |
+| `apply-start` | `trello-mcp-workflow` `tracker-card-gate` hook, path kind |
+| `pr-review` | `trello-mcp-workflow` `tracker-card-gate` hook, shell `gh pr create` |
+| `pre-merge` | `ai-specs tracker-card-gate --root <root> --checkpoint pre-merge` |
+| `archive-close` | `ai-specs tracker-card-gate --root <root> --checkpoint archive-close` |
 
 The `pre-merge` and `archive-close` lifecycle is Plan Build-independent: the host
 needs **no `openspec/` tree**, and `--stage pre-merge|pre-archive` remains a
@@ -271,8 +273,8 @@ worktree cleanup. Both write only `<git-common-dir>/ai-specs/ledger/state.json`,
 perform no provider MCP/API call and no network I/O, and are never reached from a
 grade path. Opening is therefore **not** agent-only.
 
-**Evidence sides.** `tracker-card-gate.sh` (pre-tool-use hook and direct host
-mode) builds its
+**Evidence sides.** `ai-specs tracker-card-gate` (pre-tool-use hook and direct
+host mode) builds its
 `--evidence` file through the native `ai-specs tracker evidence` verb — acquisition only
 (`## Tracker` / `tracker.none` / local Git facts; no `gh`, no MCP, no network).
 `local` is the ledger's own store snapshot, `code` is the change's `card_id`, `git`
@@ -339,8 +341,8 @@ already-sealed merge outcome (failures go to stderr and it exits `0`), while the
 destructive cleanup fails closed: a close that cannot be persisted preserves the
 candidate. The trigger is workflow-agnostic (no SDD/ODD/OpenSpec and no provider
 call), and the direct tracker host
-(`tracker-card-gate.sh --root <root> --checkpoint archive-close`) remains the
-fallback when the hook is absent. The hook carries the project's configured
+(`ai-specs tracker-card-gate --root <root> --checkpoint archive-close`) remains
+the fallback when the hook is absent. The hook carries the project's configured
 `worktrees_dir`, `integration_branch`, and `repo_topology` stamped at sync, so
 cleanup never silently falls back to `.worktrees`/current HEAD. The stamped
 topology is the CLI-resolved `[project].repo_topology` value (the deprecated

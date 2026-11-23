@@ -333,10 +333,10 @@ func applyRecipeArtifactPrune(root, lockPath string, doomed, stale []string, rec
 		if err := projectWriteGuard(root, path, false); err != nil {
 			return err
 		}
-		if retiredGateLauncherModified(lk.Managed[rel], rel, path) {
+		if label, modified := retiredGateLauncherModified(lk.Managed[rel], rel, path); modified {
 			// A user-edited gate launcher cannot be preserved: the CLI serves the
 			// gate now, so the file would be dead weight. Say so once.
-			fmt.Fprintf(out, "  ✓ removed user-modified worktree-gate launcher %s (ai-specs now serves it from the CLI)\n", rel)
+			fmt.Fprintf(out, "  ✓ removed user-modified %s %s (ai-specs now serves it from the CLI)\n", label, rel)
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
@@ -363,22 +363,32 @@ func applyRecipeArtifactPrune(root, lockPath string, doomed, stale []string, rec
 	return nil
 }
 
-// retiredGateLauncherModified reports whether rel is the retired worktree-gate
-// launcher the CLI now serves, with bytes differing from the recorded baseline:
-// a copy the user edited and that sync is about to remove.
-func retiredGateLauncherModified(record map[string]any, rel, path string) bool {
-	if rel != shared.HookScriptRelPath("worktree-flow", worktreeGateLauncherScript) {
-		return false
+// retiredGateLaunchers labels the hook scripts the CLI now serves, keyed by
+// their materialized path (cli-served-recipes: F1 worktree-gate, F2
+// tracker-card-gate).
+var retiredGateLaunchers = map[string]string{
+	shared.HookScriptRelPath("worktree-flow", worktreeGateLauncherScript):  "worktree-gate launcher",
+	shared.HookScriptRelPath("trello-mcp-workflow", trackerCardGateScript): "tracker-card-gate launcher",
+}
+
+// retiredGateLauncherModified reports whether rel is one of the retired gate
+// launchers the CLI now serves, with bytes differing from the recorded baseline:
+// a copy the user edited and that sync is about to remove. The label names it in
+// the notice.
+func retiredGateLauncherModified(record map[string]any, rel, path string) (string, bool) {
+	label, retired := retiredGateLaunchers[rel]
+	if !retired {
+		return "", false
 	}
 	if kind, _ := record["kind"].(string); kind != "gate" {
-		return false
+		return "", false
 	}
 	recorded, _ := record["sha256"].(string)
 	if recorded == "" {
-		return false
+		return "", false
 	}
 	current, err := lock.Sha256OfFile(path)
-	return err == nil && current != recorded
+	return label, err == nil && current != recorded
 }
 
 // orphanScopePrefix mirrors Python _APPLY_SCOPE_MESSAGE_PREFIX. The in-project
