@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"ai-specs.dev/ai-specs/internal/planbuild"
 )
 
 // resolvePath resolves symlinks in the longest existing prefix of path, like
@@ -44,9 +46,19 @@ func isDir(path string) bool {
 }
 
 func planningRoot(root string) (string, error) {
-	if !isDir(filepath.Join(root, "openspec")) {
+	return planningRootFor(root, planbuild.ModeOpenspec)
+}
+
+// planningRootFor is planningRoot with the mode's own tree: the OpenSpec
+// planning root holds openspec/, the ODD one holds odd/ (S4).
+func planningRootFor(root, mode string) (string, error) {
+	marker := "openspec"
+	if mode == planbuild.ModeOdd {
+		marker = "odd"
+	}
+	if !isDir(filepath.Join(root, marker)) {
 		return "", fmt.Errorf("--root %s is not a planning root: %s is missing; pass the resolved "+
-			"planning root, never the process cwd", root, filepath.Join(root, "openspec"))
+			"planning root, never the process cwd", root, filepath.Join(root, marker))
 	}
 	return root, nil
 }

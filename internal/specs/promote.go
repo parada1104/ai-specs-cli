@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"ai-specs.dev/ai-specs/internal/planbuild"
 )
 
 type domainSource struct {
@@ -58,11 +60,11 @@ func deltaSpecs(folder string) ([]domainSource, []string) {
 // activeDomainCollisions names the other active changes that declare a delta for
 // the same domains. Pure discovery: the caller applies the result before any
 // write, so a collision aborts the whole promotion.
-func activeDomainCollisions(root, slug string, domains map[string]bool) []string {
+func activeDomainCollisions(changesBase, slug string, domains map[string]bool) []string {
 	if len(domains) == 0 {
 		return nil
 	}
-	changes := filepath.Join(root, "openspec", "changes")
+	changes := changesBase
 	entries, err := os.ReadDir(changes)
 	if err != nil {
 		return nil // ReadDir sorts by name, like the Python sorted(iterdir())
@@ -87,13 +89,13 @@ func activeDomainCollisions(root, slug string, domains map[string]bool) []string
 	return blockers
 }
 
-// planDomains composes every delta of one change folder without writing.
-func planDomains(root, folder string, allowRemoved bool) ([]DomainPlan, []string) {
+// planDomains composes every delta of one change folder without writing. The
+// canonical tree is the caller's, so the same composer serves both modes.
+func planDomains(folder, specsBase string, allowRemoved bool) ([]DomainPlan, []string) {
 	deltas, blockers := deltaSpecs(folder)
 	if len(deltas) == 0 {
 		return nil, blockers
 	}
-	specsBase := filepath.Join(root, "openspec", "specs")
 	var plans []DomainPlan
 	for _, pair := range deltas {
 		canonical, err := canonicalTarget(specsBase, pair.domain)
@@ -141,7 +143,14 @@ func planDomains(root, folder string, allowRemoved bool) ([]DomainPlan, []string
 // another active change declares a delta for the same domain, so a blocked
 // promotion leaves the canonical tree byte-identical.
 func PromoteChange(root, slug string, allowRemoved bool) PromotionReport {
-	planning, err := planningRoot(root)
+	return PromoteChangeForMode(root, slug, planbuild.ModeOpenspec, allowRemoved)
+}
+
+// PromoteChangeForMode is PromoteChange with the roots of the resolved execution
+// mode (S7): the composer, its blockers, its collision rule and its idempotence
+// are mode-independent, and only the source and canonical trees move.
+func PromoteChangeForMode(root, slug, mode string, allowRemoved bool) PromotionReport {
+	planning, err := planningRootFor(root, mode)
 	if err != nil {
 		return PromotionReport{Root: root, Slug: slug, Blockers: []string{err.Error()}}
 	}
@@ -149,22 +158,24 @@ func PromoteChange(root, slug string, allowRemoved bool) PromotionReport {
 		return PromotionReport{Root: root, Slug: slug, Blockers: []string{err.Error()}}
 	}
 
-	folder := filepath.Join(planning, "openspec", "changes", slug)
+	changesBase := planbuild.ChangesBase(planning, mode)
+	folder := filepath.Join(changesBase, slug)
 	report := PromotionReport{Root: planning, Slug: slug, Folder: folder}
 	if isSymlink(folder) || !isDir(folder) {
 		report.Blockers = append(report.Blockers,
-			fmt.Sprintf("active change folder missing at openspec/changes/%s/ — the promoter runs "+
-				"before archive-tail while the change folder is still active", slug))
+			fmt.Sprintf("active change folder missing at %s/%s/ — the promoter runs "+
+				"before archive-tail while the change folder is still active",
+				changesLabel(mode), slug))
 		return report
 	}
 
-	plans, blockers := planDomains(planning, folder, allowRemoved)
+	plans, blockers := planDomains(folder, planbuild.SpecsBase(planning, mode), allowRemoved)
 	report.Plans = plans
 	domains := make(map[string]bool, len(plans))
 	for _, plan := range plans {
 		domains[plan.Domain] = true
 	}
-	report.Blockers = append(activeDomainCollisions(planning, slug, domains), blockers...)
+	report.Blockers = append(activeDomainCollisions(changesBase, slug, domains), blockers...)
 	if len(report.Blockers) > 0 {
 		return report
 	}
@@ -180,11 +191,21 @@ func PromoteChange(root, slug string, allowRemoved bool) PromotionReport {
 	return report
 }
 
+// changesLabel is the repository-relative change tree the mode reads, used in
+// messages so a blocker names the tree the reader actually has.
+func changesLabel(mode string) string {
+	if mode == planbuild.ModeOdd {
+		return "odd/changes"
+	}
+	return "openspec/changes"
+}
+
 // CheckFolderParity is the read-only half the Plan Build guardian uses: blockers
 // when a delta is unpromoted or cannot be composed. A change with no specs/
-// deltas is a no-op.
+// deltas is a no-op. It reads the OpenSpec trees; the ODD tail is an open
+// decision (see odd/tasks/plan-build-odd-companion.md, open point B).
 func CheckFolderParity(root, folder string) []string {
-	plans, blockers := planDomains(root, folder, false)
+	plans, blockers := planDomains(folder, filepath.Join(root, "openspec", "specs"), false)
 	for _, plan := range plans {
 		if len(plan.Composition.Pending) == 0 {
 			continue
