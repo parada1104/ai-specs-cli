@@ -86,16 +86,16 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
     def _legacy_hook(self, proj: Path) -> Path:
         return proj / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate-legacy.sh"
 
-    def test_gate_impl_defaults_to_auto_and_stamps(self):
+    def test_gate_impl_defaults_to_auto(self):
+        """gate_impl=auto uses the installed CLI's worktree-gate route: no
+        launcher is materialized and no separate gate binary is acquired."""
         proj = self._project()
         result = self._sync(proj)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        content = self._hook(proj).read_text()
-        self.assertIn('cli_bin="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"', content)
-        self.assertNotIn('stamped_gate_impl="', content)
-        self.assertNotIn('stamped_gate_version="', content)
-        self.assertNotIn("__WORKTREE_GATE_IMPL__", content)
-        self.assertNotIn("__WORKTREE_GATE_VERSION__", content)
+        self.assertFalse(self._hook(proj).exists(),
+                         "the gate launcher is CLI-served, never materialized")
+        self.assertFalse((self.home / "cache" / "bin" / "worktree-gate").exists(),
+                         "no separate gate binary may be acquired")
 
     def test_gate_impl_bash_rejected_at_sync(self):
         """gate_impl=bash is removed; sync must fail closed with auto | go."""
@@ -113,14 +113,16 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
             "rejected bash must not materialize a legacy gate",
         )
 
-    def test_gate_impl_go_stamps(self):
+    def test_gate_impl_go_is_accepted(self):
+        """gate_impl=go is a valid pin; it also routes through the installed
+        CLI, so neither the launcher nor a separate gate binary appears."""
         proj = self._project(
             '[recipes.worktree-flow.config]\ngate_impl = "go"'
         )
         result = self._sync(proj)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        content = self._hook(proj).read_text()
-        self.assertIn('worktree-gate --gate-mode', content)
+        self.assertFalse(self._hook(proj).exists(),
+                         "the gate launcher is CLI-served, never materialized")
         self.assertFalse(
             self._legacy_hook(proj).exists(),
             "ordinary sync must not write LEGACY_HOOK_REL",
@@ -130,12 +132,13 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         proj = self._project()
         result = self._sync(proj)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertTrue(self._hook(proj).is_file())
+        self.assertFalse(self._hook(proj).exists(), "the gate is CLI-served")
         cleanup = (
             proj / "ai-specs" / "recipes" / "worktree-flow"
             / "overrides" / "bin" / "worktree-cleanup.sh"
         )
-        self.assertTrue(cleanup.is_file(), "cleanup override must still materialize")
+        self.assertFalse(cleanup.exists(),
+                         "cleanup is served by `ai-specs worktree-cleanup`")
         self.assertFalse(self._legacy_hook(proj).exists())
 
     def test_leftover_legacy_hook_is_not_rewritten(self):
@@ -162,12 +165,11 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         self.assertIn("auto | go", combined)
         self.assertNotIn(" | bash", combined)
 
-    def test_sentinel_upgrade_replaces_pre_go_gate(self):
-        # A pre-Go materialized gate (the e080483 gate, which already carries
-        # the stamped_gate_scope sentinel) has NO lock baseline under the gate
-        # provenance model: ordinary sync preserves it with a warning (unknown
-        # provenance, no seeding), and an explicit refresh upgrades it to the
-        # launcher after backing up the pre-refresh bytes.
+    def test_pre_go_gate_is_untouched_by_sync_and_refresh(self):
+        # A pre-Go materialized gate is no longer a sync target at all: the
+        # launcher is CLI-served, so the stale file carries no record and no
+        # renderer owns it. Sync (and --refresh-gates) leave those bytes alone;
+        # doctor reports the stale launcher and names the fix (`rm` + sync).
         proj = self._project()
         hook = self._hook(proj)
         hook.parent.mkdir(parents=True, exist_ok=True)
@@ -183,18 +185,12 @@ class WorktreeGatePhase3MaterializeTests(unittest.TestCase):
         result = self._sync(proj)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(hook.read_text(), pre_go,
-                         "unknown provenance must preserve the pre-Go gate")
-        self.assertIn("no recorded provenance", result.stderr)
+                         "an unowned stale launcher must keep its bytes")
 
         result = self._sync(proj, "--refresh-gates")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        content = hook.read_text()
-        self.assertIn('stamped_gate_scope="', content, "launcher must keep the sentinel")
-        self.assertIn("--gate-mode", content, "must be replaced by the launcher")
-        self.assertNotIn("_resolve_gate_mode", content,
-                         "mode resolution is Go-owned; the launcher must not resolve")
-        self.assertNotIn("_resolve_binary", content, "legacy binary resolution must be gone")
-        self.assertIn("/dist/ai-specs", content, "launcher must route through installed CLI")
+        self.assertEqual(hook.read_text(), pre_go,
+                         "the retired launcher is not a refresh target either")
 
     def test_launcher_forwards_the_raw_stamped_mode_to_go(self):
         # The launcher is transport only: env/stamp precedence and fallback are

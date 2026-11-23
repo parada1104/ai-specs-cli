@@ -133,7 +133,8 @@ class _CliFixtureMixin:
     def cache(self) -> Path:
         return cache_project_dir(self.root, self.home)
 
-    def materialized_readme(self) -> Path:
+    def recipe_readme_path(self) -> Path:
+        """The project path sync used to copy the recipe doc to; CLI-served now."""
         return self.root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
 
     def materialized_skill(self) -> Path:
@@ -187,9 +188,9 @@ class PlanBuildFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         self.assertEqual(raw_text.count("[config.artifact_store_default]"), 1)
         self.assertIn('enum = ["openspec", "engram", "both"]', raw_text)
 
-    def test_brief_and_readme_vocabulary_clean(self):
-        """Brief workflow rules and the materialized README carry no forbidden
-        vocabulary (SDD/spec-driven terms)."""
+    def test_brief_and_catalog_readme_vocabulary_clean(self):
+        """Brief workflow rules and the recipe's catalog README carry no
+        forbidden vocabulary (SDD/spec-driven terms)."""
         rules = _recipe_toml()["provides"]["brief"]["workflow_rules"]
         fragments = "\n".join(rules).lower()
         for term in FORBIDDEN_TERMS:
@@ -197,11 +198,15 @@ class PlanBuildFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         for slash in FORBIDDEN_SLASH:
             self.assertNotIn(slash, fragments)
 
-        self.recipe_add(RECIPE_ID)
-        self.sync_ok()
-        readme = self.materialized_readme().read_text()
+        # The README stays in the CLI's catalog, so the checked bytes are the
+        # catalog source, not a project copy.
+        readme = (CATALOG / RECIPE_ID / "README.md").read_text()
         for term in FORBIDDEN_TERMS:
             self.assertNotIn(term, _without_delivery_contracts_section(readme).lower())
+        self.recipe_add(RECIPE_ID)
+        self.sync_ok()
+        self.assertFalse(self.recipe_readme_path().exists(),
+                         "the recipe doc is never materialized into the project")
 
     def test_store_defaults_override_and_enum_rejection(self):
         """The store config resolves into the rendered brief: the manifest
@@ -271,11 +276,11 @@ class PlanBuildFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
                 )
 
     def test_materialization_preserves_cross_repo_guidance(self):
-        """Sync materializes the topology guidance into both the recipe README
-        and the bundled skill."""
+        """The topology guidance lives in the catalog README (CLI-served) and
+        in the bundled skill sync materializes."""
         self.recipe_add(RECIPE_ID)
         self.sync_ok()
-        generated_readme = self.materialized_readme().read_text().lower()
+        generated_readme = (CATALOG / RECIPE_ID / "README.md").read_text().lower()
         generated_skill = self.materialized_skill().read_text().lower()
         for text in (generated_readme, generated_skill):
             self.assertIn("topology", text)

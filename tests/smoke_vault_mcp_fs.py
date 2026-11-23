@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke: vault-fs-mcp.sh launches real filesystem MCP with the right root.
+"""Smoke: `ai-specs mcp vault-fs` launches real filesystem MCP with the right root.
 
 No sync, no release, no LLM. Proves standalone CANONICAL_VAULT_PATH (OBSIDIAN
 unset) is what the server scopes to.
@@ -21,14 +21,8 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-WRAPPER = (
-    ROOT
-    / "catalog"
-    / "recipes"
-    / "vault-canonical-store"
-    / "templates"
-    / "vault-fs-mcp.sh"
-)
+sys.path.insert(0, str(ROOT / "tests"))
+import _go_cli  # noqa: E402
 
 ALLOWED_RE = re.compile(r"Allowed directories:\s*\[\s*'([^']+)'\s*\]", re.DOTALL)
 
@@ -38,10 +32,6 @@ def main() -> int:
     parser.add_argument("--path", help="Absolute vault scope (default: temp dir)")
     parser.add_argument("--timeout", type=float, default=60.0)
     args = parser.parse_args()
-
-    if not WRAPPER.is_file():
-        print(f"FAIL: missing wrapper {WRAPPER}", file=sys.stderr)
-        return 2
 
     cleanup: Path | None = None
     if args.path:
@@ -59,12 +49,13 @@ def main() -> int:
     env = {k: v for k, v in os.environ.items() if k != "OBSIDIAN_VAULT_PATH"}
     env["CANONICAL_VAULT_PATH"] = str(vault)
 
-    print(f"wrapper: {WRAPPER}")
+    cli = _go_cli.cli()
+    print(f"cli: {cli}")
     print(f"CANONICAL_VAULT_PATH={vault}")
     print("OBSIDIAN_VAULT_PATH unset")
 
     proc = subprocess.Popen(
-        ["bash", str(WRAPPER)],
+        [str(cli), "mcp", "vault-fs"],
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,

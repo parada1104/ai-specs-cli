@@ -539,7 +539,7 @@
    "runtime_hooks": [
     {
      "blocking": true,
-     "description": "Block production edits until an active change folder with a tasks.md plan exists",
+     "description": "Block production edits until an active change folder with a tasks.md plan exists. Served by `ai-specs plan-build-gate` (no materialized script)",
      "event": "pre-tool-use",
      "id": "plan-build-gate",
      "matcher": "Edit|Write|MultiEdit|NotebookEdit",
@@ -946,7 +946,7 @@
      },
      {
       "key": null,
-      "text": "Tracker lifecycle checkpoints are Plan Build-independent: grade them with the tracker gate's direct host mode `ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh --root <root> --checkpoint pre-merge|archive-close [slug]`; no openspec/ tree is required, and `archive-close` is tracker item closure, never an OpenSpec archive."
+      "text": "Tracker lifecycle checkpoints are Plan Build-independent: grade them with the tracker gate verb `ai-specs tracker-card-gate --root <root> --checkpoint pre-merge|archive-close [slug]`; no openspec/ tree is required, and `archive-close` is tracker item closure, never an OpenSpec archive."
      },
      {
       "key": null,
@@ -1161,7 +1161,7 @@
    "runtime_hooks": [
     {
      "blocking": false,
-     "description": "Advisory: report a production edit's apply-start ledger verdict through the verified Go predicate; a block/ask/needs-item is reported and never blocks source work; fail open",
+     "description": "Advisory: report a production edit's apply-start ledger verdict through the verified Go predicate; a block/ask/needs-item is reported and never blocks source work; fail open. Served by `ai-specs tracker-card-gate` (no materialized script)",
      "event": "pre-tool-use",
      "id": "tracker-card-gate",
      "matcher": "Edit|Write|MultiEdit|NotebookEdit",
@@ -1169,7 +1169,7 @@
     },
     {
      "blocking": false,
-     "description": "Advisory: report a `gh pr create` pr-review ledger verdict through the verified Go predicate; never blocks; does not gate shell writes",
+     "description": "Advisory: report a `gh pr create` pr-review ledger verdict through the verified Go predicate; never blocks; does not gate shell writes. Served by `ai-specs tracker-card-gate` (no materialized script)",
      "event": "pre-tool-use",
      "id": "tracker-card-gate-shell",
      "matcher": "Bash|Shell|Execute|Terminal",
@@ -1309,9 +1309,10 @@
     {
      "config": {
       "args": [
-       "ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh"
+       "mcp",
+       "vault-fs"
       ],
-      "command": "bash",
+      "command": "ai-specs",
       "env": {
        "CANONICAL_VAULT_PATH": "$CANONICAL_VAULT_PATH"
       },

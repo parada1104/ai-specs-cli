@@ -414,7 +414,7 @@ class VaultMcpLiveHelperTests(unittest.TestCase):
         self.assertEqual(cfg, root / ".mcp.json")
         text = cfg.read_text()
         self.assertIn("vault-canonical", text)
-        self.assertIn("vault-fs-mcp.sh", text)
+        self.assertIn("vault-fs", text)
         self.assertIn("CANONICAL_VAULT_PATH", text)
 
 

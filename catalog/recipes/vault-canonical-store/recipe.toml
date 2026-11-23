@@ -63,18 +63,21 @@ text = "Canonical project notes in the vault (scoped to the project path)."
 # Path resolution: keep the vault root out of MCP args. OpenCode only expands
 # {env:VAR} at config-load (shell $VAR/${VAR} stay literal); other hosts expand
 # ${VAR} from process env at parse time and a sole-arg "${VAR}" can still fail
-# when the var is missing then. The wrapper reads CANONICAL_VAULT_PATH from the
-# child env at exec time (validates absolute path, allows spaces, expands ~/).
+# when the var is missing then. `ai-specs mcp vault-fs` reads
+# CANONICAL_VAULT_PATH from the child env at exec time (validates absolute path,
+# allows spaces, expands ~/), so no script is materialized into the project.
 #
 # Filesystem package pinned: 2025.7.29+ replaces argv dirs with MCP client
 # roots when the client advertises roots (omp/pi), silently re-scoping to cwd.
 [[provides.mcp]]
 id = "vault-canonical"
-command = "bash"
-args = ["ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh"]
+command = "ai-specs"
+args = ["mcp", "vault-fs"]
 env = { CANONICAL_VAULT_PATH = "$CANONICAL_VAULT_PATH" }
 timeout = 30000
 
+# Retired target, kept as the migration marker: sync refuses to materialize it
+# and retires a lock-recorded copy (`ai-specs mcp vault-fs` serves the server).
 [[provides.templates]]
 source = "templates/vault-fs-mcp.sh"
 target = "ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh"

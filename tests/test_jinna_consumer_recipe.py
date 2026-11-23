@@ -119,8 +119,7 @@ class JinnaConsumerRecipeFlowTests(unittest.TestCase):
             )
 
             readme = consumer / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
-            self.assertTrue(readme.is_file(), "the recipe README was not materialized")
-            self.assertTrue(readme.read_text(encoding="utf-8").strip())
+            self.assertFalse(readme.exists(), "the recipe README is CLI-served, not materialized")
 
             skill = (
                 cache_project_dir(consumer, cli_home)

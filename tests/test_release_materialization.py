@@ -193,7 +193,11 @@ class ReleaseMaterializationTests(unittest.TestCase):
             )
 
         gate = self.workspace / "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh"
-        self.assertTrue(gate.exists(), "worktree-flow launcher missing after sync")
+        self.assertFalse(gate.exists(), "the worktree gate is CLI-served, not materialized")
+        self.assertTrue(
+            (self.workspace / ".claude/settings.json").exists(),
+            "the CLI-served hook must still be wired into the harness",
+        )
 
         self.assertEqual(
             snapshot_dogfood_lock(),

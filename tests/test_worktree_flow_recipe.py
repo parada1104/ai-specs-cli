@@ -9,13 +9,14 @@ policies, and golden skill/command content) through the CLI process boundary:
   ``recipe add`` (validation + exact id + materialization plan) and via
   ``tomllib`` reads of the catalog recipe.toml.
 - Config defaults, overrides, and enum rejection are observable via ``sync``:
-  the stamped ``worktree-gate.sh`` hook carries the resolved gate_mode /
-  gate_scope / repo_topology, values outside a declared enum fail sync naming
-  the value, and the rendered AGENTS.md brief states the configured policy.
+  the per-project runtime snapshot (``cache/projects/<key>/runtime.toml``)
+  carries the resolved gate_mode / gate_scope / repo_topology, values outside a
+  declared enum fail sync naming the value, and the rendered AGENTS.md brief
+  states the configured policy.
 - Materialization is observable via ``sync``: bundled skill + commands under
-  the per-project CLI cache, the cleanup launcher under
-  ``ai-specs/recipes/worktree-flow/overrides/bin/``, and the managed
-  post-merge hook under ``.git/hooks/post-merge``.
+  the per-project CLI cache and the managed one-line post-merge hook under
+  ``.git/hooks/post-merge``. The gate launcher and the cleanup override are
+  CLI-served now, so their absence is the contract.
 - Golden content checks read the recipe surfaces directly (read-only).
 """
 from __future__ import annotations
@@ -109,7 +110,12 @@ class _CliFixtureMixin:
     def cache(self) -> Path:
         return cache_project_dir(self.root, self.home)
 
-    def stamped_gate_hook(self) -> Path:
+    def runtime_snapshot(self) -> dict:
+        """The per-project runtime config of the last sync (S2: never the toml)."""
+        path = self.cache() / "runtime.toml"
+        return tomllib.loads(path.read_text())["worktree_gate"]
+
+    def gate_launcher(self) -> Path:
         return (
             self.root / "ai-specs" / "recipes" / RECIPE_ID
             / "hooks" / "worktree-gate.sh"
@@ -137,19 +143,15 @@ class WorktreeFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         self.recipe_add(RECIPE_ID)
         result = self.sync()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        hook = self.stamped_gate_hook()
-        self.assertTrue(hook.is_file())
-        content = hook.read_text()
-        self.assertIn('stamped_gate_mode="always"', content)
+        self.assertFalse(self.gate_launcher().exists(), "no gate launcher is materialized")
+        self.assertEqual(self.runtime_snapshot()["gate_mode"], "always")
 
-    def test_sync_materializes_gate_mode_into_hook(self):
+    def test_sync_records_gate_mode_in_the_snapshot(self):
         self.recipe_add(RECIPE_ID)
         self.set_config('gate_mode = "always"', 'gate_mode = "ask"')
         result = self.sync()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        content = self.stamped_gate_hook().read_text()
-        self.assertIn('stamped_gate_mode="ask"', content)
-        self.assertNotIn("__WORKTREE_GATE_MODE__", content)
+        self.assertEqual(self.runtime_snapshot()["gate_mode"], "ask")
 
     def test_sync_rejects_invalid_gate_mode(self):
         self.recipe_add(RECIPE_ID)
@@ -160,7 +162,7 @@ class WorktreeFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         self.assertIn("bogus", combined)
         self.assertRegex(combined, r"always.*ask.*off|always \| ask \| off")
 
-    def test_materializes_skill_commands_and_script(self):
+    def test_materializes_skill_and_commands_but_no_scripts(self):
         self.recipe_add(RECIPE_ID)
         result = self.sync()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -173,7 +175,8 @@ class WorktreeFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
             self.root / "ai-specs" / "recipes" / RECIPE_ID / "overrides" / "bin"
             / "worktree-cleanup.sh"
         )
-        self.assertTrue(script.is_file(), "cleanup script should materialize")
+        self.assertFalse(script.exists(), "cleanup is served by the CLI verb, not a script")
+        self.assertFalse(self.gate_launcher().exists(), "the gate launcher is not materialized")
 
     def test_sync_defaults_repo_topology_to_auto(self):
         """With no project override, sync resolves repo_topology to the
@@ -181,8 +184,7 @@ class WorktreeFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         self.recipe_add(RECIPE_ID)
         result = self.sync()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        content = self.stamped_gate_hook().read_text()
-        self.assertIn('stamped_repo_topology="auto"', content)
+        self.assertEqual(self.runtime_snapshot()["repo_topology"], "auto")
 
     def test_sync_rejects_invalid_repo_topology(self):
         self.recipe_add(RECIPE_ID)
@@ -197,7 +199,7 @@ class WorktreeFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
             r"|auto \| standalone \| monorepo-apps \| monorepo-submodules",
         )
 
-    def test_sync_materializes_with_repo_topology_default(self):
+    def test_sync_materializes_with_default_topology(self):
         self.recipe_add(RECIPE_ID)
         result = self.sync()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -210,7 +212,7 @@ class WorktreeFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
             self.root / "ai-specs" / "recipes" / RECIPE_ID / "overrides" / "bin"
             / "worktree-cleanup.sh"
         )
-        self.assertTrue(script.is_file(), "cleanup script should materialize")
+        self.assertFalse(script.exists(), "cleanup is served by the CLI verb, not a script")
 
     def test_gate_scope_defaults_to_auto_and_is_independent(self):
         """gate_scope stays `auto` (its own default) even when gate_mode and
@@ -219,21 +221,19 @@ class WorktreeFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         self.set_config('repo_topology = "auto"', 'repo_topology = "monorepo-submodules"')
         result = self.sync()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        content = self.stamped_gate_hook().read_text()
-        self.assertIn('stamped_gate_scope="auto"', content)
-        self.assertIn('stamped_gate_mode="always"', content)
-        self.assertIn('stamped_repo_topology="monorepo-submodules"', content)
+        snap = self.runtime_snapshot()
+        self.assertEqual(snap["gate_scope"], "auto")
+        self.assertEqual(snap["gate_mode"], "always")
+        self.assertEqual(snap["repo_topology"], "monorepo-submodules")
 
-    def test_gate_scope_materializes_stamp(self):
+    def test_gate_scope_reaches_the_snapshot(self):
         self.recipe_add(RECIPE_ID)
         self.set_config('gate_scope = "auto"', 'gate_scope = "superrepo"')
         result = self.sync()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        content = self.stamped_gate_hook().read_text()
-        self.assertIn('stamped_gate_scope="superrepo"', content)
-        self.assertIn('stamped_repo_topology="auto"', content)
-        self.assertNotIn("__WORKTREE_REPO_TOPOLOGY__", content)
-        self.assertNotIn("__WORKTREE_GATE_SCOPE__", content)
+        snap = self.runtime_snapshot()
+        self.assertEqual(snap["gate_scope"], "superrepo")
+        self.assertEqual(snap["repo_topology"], "auto")
 
     def test_gate_scope_rejects_invalid_value(self):
         self.recipe_add(RECIPE_ID)
@@ -244,11 +244,15 @@ class WorktreeFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         self.assertIn("super-repo", combined)
         self.assertIn("auto | superrepo | subrepo", combined)
 
-    def test_stale_gate_hook_is_preserved_with_refresh_guidance(self):
+    def test_unrecorded_gate_launcher_is_left_alone(self):
+        """Sync never claims a gate launcher it did not write: a copy that
+        appears after a sync is untracked, so the next sync leaves it intact
+        and doctor reports it instead of silently deleting user bytes."""
         self.recipe_add(RECIPE_ID)
         result = self.sync()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        hook = self.stamped_gate_hook()
+        hook = self.gate_launcher()
+        hook.parent.mkdir(parents=True, exist_ok=True)
         hook.write_text("custom legacy hook\n")
         result = self.sync()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -300,31 +304,46 @@ class WorktreeFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
             os.access(hook, os.X_OK), "post-merge hook must be executable for Git"
         )
         content = hook.read_text()
-        self.assertIn("worktree-cleanup.sh", content)
-        self.assertIn("exit 0", content)
+        # S4: one CLI line, always regenerated, holds no policy of its own.
+        self.assertIn('exec "$cli" worktree-cleanup', content)
+        self.assertIn("|| exit 0", content)
         self.assertNotIn("__WORKTREE_", content)
 
-    def test_post_merge_hook_fails_open_without_launcher(self):
+    def test_post_merge_hook_fails_open_without_a_cli(self):
+        """A missing CLI never breaks an already-merged merge: the hook exits
+        0 instead of failing the git hook. (A present CLI without a sync
+        snapshot exits 2 by design — worktree-cleanup is fail-closed.)"""
         self.recipe_add(RECIPE_ID)
         result = self.sync()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        proc = _run_quiet(["bash", str(self.post_merge_hook())], cwd=self.root)
+        empty_home = self.base / "no-cli-home"
+        empty_home.mkdir()
+        proc = _run_quiet(
+            ["sh", str(self.post_merge_hook())], cwd=self.root,
+            env={
+                "PATH": "/usr/bin:/bin",
+                "HOME": str(empty_home),
+                "AI_SPECS_HOME": str(empty_home),
+            },
+        )
         self.assertEqual(
             proc.returncode, 0, "hook must fail open and never break the merge"
         )
 
-    def test_sync_preserves_existing_post_merge_hook(self):
+    def test_sync_regenerates_an_existing_post_merge_hook(self):
+        """S4: the hook is not an override, so sync ALWAYS regenerates it. A
+        pre-existing hand-written hook is replaced by the CLI line."""
         hook = self.post_merge_hook()
         hook.parent.mkdir(parents=True)
         hook.write_text("#!/bin/sh\necho user hook\n")
         self.recipe_add(RECIPE_ID)
         result = self.sync()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(hook.read_text(), "#!/bin/sh\necho user hook\n")
+        self.assertIn('exec "$cli" worktree-cleanup', hook.read_text())
 
     # --- Post-merge hook stamps configured cleanup config (T4) ---------------
 
-    def test_post_merge_hook_stamps_configured_cleanup_config(self):
+    def test_post_merge_hook_carries_no_config_and_the_snapshot_does(self):
         self.recipe_add(RECIPE_ID)
         self.set_config('worktrees_dir = ".worktrees"', 'worktrees_dir = "custom-wt"')
         self.set_config('integration_branch = "main"', 'integration_branch = "trunk"')
@@ -333,19 +352,22 @@ class WorktreeFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         content = self.post_merge_hook().read_text()
         self.assertNotIn("__WORKTREE_", content)
-        self.assertIn('worktrees_dir="custom-wt"', content)
-        self.assertIn('integration_branch="trunk"', content)
-        self.assertIn('topology="monorepo-submodules"', content)
+        self.assertNotIn("custom-wt", content, "the hook stamps nothing; the verb reads the snapshot")
+        snap = self.runtime_snapshot()
+        self.assertEqual(snap["worktrees_dir"], "custom-wt")
+        self.assertEqual(snap["integration_branch"], "trunk")
+        self.assertEqual(snap["repo_topology"], "monorepo-submodules")
 
-    def test_post_merge_hook_stamps_catalog_defaults(self):
+    def test_post_merge_hook_and_snapshot_carry_catalog_defaults(self):
         self.recipe_add(RECIPE_ID)
         result = self.sync()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         content = self.post_merge_hook().read_text()
         self.assertNotIn("__WORKTREE_", content)
-        self.assertIn('worktrees_dir=".worktrees"', content)
-        self.assertIn('integration_branch="main"', content)
-        self.assertIn('topology="auto"', content)
+        snap = self.runtime_snapshot()
+        self.assertEqual(snap["worktrees_dir"], ".worktrees")
+        self.assertEqual(snap["integration_branch"], "main")
+        self.assertEqual(snap["repo_topology"], "auto")
 
     def test_post_merge_hook_materializes_in_linked_worktree(self):
         """A linked worktree's `.git` is a gitfile, not a directory: the managed
@@ -385,7 +407,10 @@ class WorktreeFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         self.assertTrue(os.access(hook, os.X_OK))
 
 
-    def test_post_merge_hook_passes_stamped_config_to_launcher(self):
+    def test_post_merge_hook_execs_the_cleanup_verb(self):
+        """The wrapper used to stamp --dir/--base into the launcher call. The
+        verb reads the same values from the snapshot, so the hook stays one
+        line and the launcher is gone."""
         subprocess.run(["git", "init", "-q", str(self.root)], check=True,
                        capture_output=True, stdin=subprocess.DEVNULL)
         self.recipe_add(RECIPE_ID)
@@ -398,19 +423,8 @@ class WorktreeFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
             self.root / "ai-specs" / "recipes" / RECIPE_ID / "overrides"
             / "bin" / "worktree-cleanup.sh"
         )
-        captured = self.root / "captured-args.txt"
-        launcher.write_text(
-            "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > " + str(captured) + "\n"
-        )
-        launcher.chmod(0o755)
-
-        proc = _run_quiet(["bash", str(self.post_merge_hook())], cwd=self.root)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        args = captured.read_text().splitlines()
-        self.assertIn("--dir", args)
-        self.assertEqual(args[args.index("--dir") + 1], "custom-wt")
-        self.assertIn("--base", args)
-        self.assertEqual(args[args.index("--base") + 1], "trunk")
+        self.assertFalse(launcher.exists(), "the cleanup override is retired")
+        self.assertIn('exec "$cli" worktree-cleanup', self.post_merge_hook().read_text())
 
 
 class WorktreeFlowGoldenContentTests(unittest.TestCase):

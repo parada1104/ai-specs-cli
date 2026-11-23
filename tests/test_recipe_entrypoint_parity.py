@@ -187,9 +187,10 @@ class RecipeEntrypointLifecycleParityTests(unittest.TestCase):
         self.assertIn("doc: README.md", add_out)
         self.assertIn(f"ai-specs/recipes/{RECIPE_ID}/README.md", add_out)
 
-        # sync materialized the primitives ``recipe add`` announced.
+        # sync materialized the primitives ``recipe add`` announced. The doc is
+        # CLI-served now, so the announced target stays absent by design.
         readme = self.consumer / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
-        self.assertTrue(readme.is_file() and readme.read_text(encoding="utf-8").strip())
+        self.assertFalse(readme.exists(), "the recipe doc is CLI-served, not materialized")
         skill = (
             cache_project_dir(self.consumer, self.cli_home)
             / "resolved-skills"
