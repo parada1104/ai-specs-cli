@@ -90,16 +90,7 @@ func runWorktreeGateHook(home string, stdin io.Reader, stdout, stderr io.Writer,
 		return 0
 	}
 	roots := worktreeGateRoots()
-	var snapshot projectcache.RuntimeSnapshot
-	found := false
-	for _, root := range roots {
-		candidate, present, err := projectcache.ReadRuntimeSnapshot(root, home)
-		if err != nil || !present {
-			continue
-		}
-		snapshot, found = candidate, true
-		break
-	}
+	snapshot, found := worktreeGateSnapshot(home, roots)
 	if !found {
 		message := fmt.Sprintf(worktreeGateNoSnapshotMessage, roots[0])
 		fmt.Fprintf(stderr, "%s\n", message)
@@ -117,6 +108,20 @@ func runWorktreeGateHook(home string, stdin io.Reader, stdout, stderr io.Writer,
 		"--repo-topology", snapshot.RepoTopology,
 		"--protected", snapshot.Protected,
 	}, bytes.NewReader(input), stdout, stderr, version)
+}
+
+// worktreeGateSnapshot reads the first snapshot present in the given roots: the
+// project its runtime exported, then the main worktree. found is false when the
+// project has never been synced.
+func worktreeGateSnapshot(home string, roots []string) (projectcache.RuntimeSnapshot, bool) {
+	for _, root := range roots {
+		candidate, present, err := projectcache.ReadRuntimeSnapshot(root, home)
+		if err != nil || !present {
+			continue
+		}
+		return candidate, true
+	}
+	return projectcache.RuntimeSnapshot{}, false
 }
 
 // worktreeGateRoots lists the snapshot locations of the project that installed
