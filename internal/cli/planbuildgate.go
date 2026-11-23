@@ -100,8 +100,9 @@ const planBuildGateOddPlanRefusal = "%s: refusing to %s '%s' — ODD mode is act
 
 // planBuildGateOddBranchRefusal is the odd-mode refusal for an unresolvable branch.
 const planBuildGateOddBranchRefusal = "%s: refusing to %s '%s' — ODD mode is active but the current " +
-	"branch cannot be resolved (detached HEAD), so no ODD plan can be paired. Check out the change " +
-	"branch, or declare mode = \"openspec\" in ai-specs/ai-specs.toml to use the OpenSpec flow.\n"
+	"branch cannot be resolved (detached HEAD), so no ODD plan can be paired. Write the plan at " +
+	"'odd/tasks/<change>.md' on the change branch, or declare mode = \"openspec\" in " +
+	"ai-specs/ai-specs.toml to use the OpenSpec flow.\n"
 
 // planBuildGateCentralRefusal is the shell host's central-root refusal.
 const planBuildGateCentralRefusal = "%s: refusing to %s '%s' — no active change folder " +
@@ -194,13 +195,9 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 }
 
 // planBuildGateCommonDir resolves git's common directory against the probe
-// directory, because git usually answers with a relative ".git".
+// directory, through the one helper the promoter shares.
 func planBuildGateCommonDir(probeDir string) string {
-	commonDir := worktreeGateGit(probeDir, "rev-parse", "--git-common-dir")
-	if commonDir == "" || filepath.IsAbs(commonDir) {
-		return commonDir
-	}
-	return filepath.Join(probeDir, commonDir)
+	return planbuild.CommonDir(probeDir)
 }
 
 // planBuildGateOddPlan grades the odd-mode plan: the paired plan of the current
@@ -212,7 +209,7 @@ func planBuildGateOddPlan(repoRoot, probeDir, tool, rel string, stderr io.Writer
 		fmt.Fprintf(stderr, planBuildGateOddBranchRefusal, planBuildGateName, tool, rel)
 		return 2
 	}
-	if info, err := os.Stat(planbuild.PlanPath(repoRoot, change)); err == nil && info.Mode().IsRegular() {
+	if info, err := os.Lstat(planbuild.PlanPath(repoRoot, change)); err == nil && info.Mode().IsRegular() {
 		return 0
 	}
 	fmt.Fprintf(stderr, planBuildGateOddPlanRefusal, planBuildGateName, tool, rel, change, branch)

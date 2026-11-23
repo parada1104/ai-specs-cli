@@ -189,25 +189,18 @@ class PlanBuildFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
 
     def test_recipe_declares_exact_store_schema_and_hook_pair(self):
         """`recipe add` validates the schema; the declared config schema is
-        exactly the artifact_store_default field plus the repository-wide mode
-        field, and the only hook is the on-sync validate-config pair (read from
-        the catalog declaration)."""
+        exactly the artifact_store_default field and the only hook is the
+        on-sync validate-config pair (read from the catalog declaration)."""
         self.recipe_add(RECIPE_ID)
         raw = _recipe_toml()
         fields = raw["config"]
-        self.assertEqual(list(fields), ["artifact_store_default", "mode"])
+        self.assertEqual(list(fields), ["artifact_store_default"])
         field = fields["artifact_store_default"]
         self.assertFalse(field["required"])
         self.assertEqual(field["type"], "string")
         self.assertEqual(field["default"], "openspec")
         self.assertEqual(field["enum"], STORE_ENUM)
         self.assertTrue(field["help_text"].strip())
-        mode = fields["mode"]
-        self.assertFalse(mode["required"])
-        self.assertEqual(mode["type"], "string")
-        self.assertEqual(mode["default"], "auto")
-        self.assertEqual(mode["enum"], ["auto", "odd", "openspec"])
-        self.assertTrue(mode["help_text"].strip())
         hook_pairs = [(h["event"], h["action"]) for h in raw["hooks"]]
         self.assertEqual(hook_pairs, [("on-sync", "validate-config")])
 
@@ -455,11 +448,7 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         raw = _recipe_toml()
         schema_keys = set(raw["config"])
         self.assertNotIn("chained_" + "pr_default", schema_keys)
-        # `mode` is the repository-wide Plan Build execution mode (S1 of
-        # plan-build-odd-companion). It is the ONLY mode-named key allowed: every
-        # other session control (execution mode per session, review budget,
-        # delivery strategy, chain strategy) stays out of the recipe schema.
-        self.assertEqual({key for key in schema_keys if "mode" in key.lower()}, {"mode"})
+        self.assertFalse(any("mode" in key.lower() for key in schema_keys))
 
         surface = _recipe_surface_text(CATALOG / RECIPE_ID)
         removed_root = "bud" + "get"
@@ -705,7 +694,7 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
 
     def test_phase_contract_stays_out_of_recipe_config_and_named_vocabulary(self):
         raw = _recipe_toml()
-        self.assertEqual(list(raw["config"]), ["artifact_store_default", "mode"])
+        self.assertEqual(list(raw["config"]), ["artifact_store_default"])
         rules = "\n".join(raw["provides"]["brief"]["workflow_rules"])
         surface = _recipe_surface_text(CATALOG / RECIPE_ID)
         for term in ("gentle-ai", "gentle ai"):

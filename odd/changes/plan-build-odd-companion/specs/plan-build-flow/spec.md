@@ -39,13 +39,12 @@ requiring the OpenSpec change folder, and `odd` mode requires the paired ODD pla
 - WHEN Plan Build resolves the mode
 - THEN the resolved mode is `openspec`
 
-#### Scenario: An unusable manifest or Git context stays OpenSpec
+#### Scenario: An unusable value still follows the inference
 
-- GIVEN the manifest is missing, unreadable, or carries an unknown `mode` value,
-  or the Git common directory cannot be resolved
+- GIVEN the manifest is missing, unreadable, or carries an unknown `mode` value
 - WHEN Plan Build resolves the mode
-- THEN the resolved mode is `openspec`
-- AND production writes still require `openspec/changes/<slug>/tasks.md`
+- THEN the declared value is treated as `auto` and the state-directory inference decides
+- AND an unresolvable Git common directory resolves to `openspec`, keeping production writes on `openspec/changes/<slug>/tasks.md`
 
 ### Requirement: ODD change workspace
 
@@ -75,6 +74,14 @@ byte-identical.
 - GIVEN `odd` mode is active and the change preserves observable behavior
 - WHEN it reaches delivery
 - THEN it carries no delta, no change folder, and no promotion step
+
+#### Scenario: A task-only ODD change reports nothing to promote
+
+- GIVEN `odd` mode is active, the change carries no delta, and
+  `odd/tasks/<change>.md` exists
+- WHEN promotion runs for that change
+- THEN it reports nothing to promote and raises no blocker
+- AND it creates neither a change folder nor a canonical spec
 
 #### Scenario: No ODD configuration file is invented
 

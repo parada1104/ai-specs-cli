@@ -127,6 +127,50 @@ func TestPromoteOddModeIsIdempotent(t *testing.T) {
 	}
 }
 
+// The promoter and the guardian share one mode decision: in odd mode the parity
+// check reads odd/specs, so an odd delta matches its own canonical tree and an
+// OpenSpec canonical file can never satisfy it.
+func TestCheckFolderParityFollowsTheMode(t *testing.T) {
+	root := newOddRepo(t)
+	folder := writeOddDelta(t, root, "parity", "capability", deltaDoc(addedSection(addedBlock)))
+	if err := os.MkdirAll(filepath.Join(root, "ai-specs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ai-specs", "ai-specs.toml"),
+		[]byte("[recipes.plan-build-flow]\nenabled = true\n\n[recipes.plan-build-flow.config]\nmode = \"odd\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := CheckFolderParity(root, folder); len(got) != 1 ||
+		!strings.Contains(got[0], "is not promoted into odd/specs/capability/spec.md") {
+		t.Fatalf("CheckFolderParity before promotion = %q, want the odd-tree blocker", got)
+	}
+	if report := PromoteChangeForMode(root, "parity", planbuild.ModeOdd, false); len(report.Blockers) != 0 {
+		t.Fatalf("promote Blockers = %q", report.Blockers)
+	}
+	if got := CheckFolderParity(root, folder); len(got) != 0 {
+		t.Fatalf("CheckFolderParity after promotion = %q, want none", got)
+	}
+}
+
+// A task-only ODD change keeps no change folder: promotion is a no-op and never
+// a blocker, and it writes neither a change folder nor a canonical tree.
+func TestPromoteOddTaskOnlyWithoutChangeFolder(t *testing.T) {
+	root := newOddRepo(t)
+	plan := []byte("# Task-only work\n")
+	path := filepath.Join(root, "odd", "tasks", "task-only.md")
+	if err := os.WriteFile(path, plan, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report := PromoteChangeForMode(root, "task-only", planbuild.ModeOdd, false)
+	if len(report.Blockers) != 0 || len(report.Plans) != 0 {
+		t.Fatalf("task-only promotion: Blockers = %q, Plans = %d, want none and 0",
+			report.Blockers, len(report.Plans))
+	}
+	if _, err := os.Stat(filepath.Join(root, "odd", "changes", "task-only")); !os.IsNotExist(err) {
+		t.Fatalf("odd/changes/task-only was created (err = %v)", err)
+	}
+}
+
 // The OpenSpec entry point keeps the OpenSpec roots: the odd delta is invisible
 // to it, which is the S9 isolation the mode switch promises.
 func TestPromoteOpenSpecModeIgnoresOddDelta(t *testing.T) {

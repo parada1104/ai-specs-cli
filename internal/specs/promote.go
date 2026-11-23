@@ -161,6 +161,11 @@ func PromoteChangeForMode(root, slug, mode string, allowRemoved bool) PromotionR
 	changesBase := planbuild.ChangesBase(planning, mode)
 	folder := filepath.Join(changesBase, slug)
 	report := PromotionReport{Root: planning, Slug: slug, Folder: folder}
+	if mode == planbuild.ModeOdd && !isDir(folder) && oddTaskOnly(planning, slug) {
+		// A task-only ODD change carries no delta and no change folder, so
+		// promotion has nothing to do and raises nothing.
+		return report
+	}
 	if isSymlink(folder) || !isDir(folder) {
 		report.Blockers = append(report.Blockers,
 			fmt.Sprintf("active change folder missing at %s/%s/ — the promoter runs "+
@@ -191,6 +196,14 @@ func PromoteChangeForMode(root, slug, mode string, allowRemoved bool) PromotionR
 	return report
 }
 
+// canonicalLabel is the repository-relative canonical tree the mode writes.
+func canonicalLabel(mode string) string {
+	if mode == planbuild.ModeOdd {
+		return "odd/specs"
+	}
+	return "openspec/specs"
+}
+
 // changesLabel is the repository-relative change tree the mode reads, used in
 // messages so a blocker names the tree the reader actually has.
 func changesLabel(mode string) string {
@@ -200,20 +213,27 @@ func changesLabel(mode string) string {
 	return "openspec/changes"
 }
 
+// oddTaskOnly reports the paired ODD plan of a change that kept no change folder.
+func oddTaskOnly(root, change string) bool {
+	info, err := os.Lstat(planbuild.PlanPath(root, change))
+	return err == nil && info.Mode().IsRegular()
+}
+
 // CheckFolderParity is the read-only half the Plan Build guardian uses: blockers
 // when a delta is unpromoted or cannot be composed. A change with no specs/
-// deltas is a no-op. It reads the OpenSpec trees; the ODD tail is an open
-// decision (see odd/tasks/plan-build-odd-companion.md, open point B).
+// deltas is a no-op. The canonical root follows the resolved mode, so odd deltas
+// are compared against odd/specs and never against the OpenSpec tree.
 func CheckFolderParity(root, folder string) []string {
-	plans, blockers := planDomains(folder, filepath.Join(root, "openspec", "specs"), false)
+	mode := planbuild.ResolveRepo(root)
+	plans, blockers := planDomains(folder, planbuild.SpecsBase(root, mode), false)
 	for _, plan := range plans {
 		if len(plan.Composition.Pending) == 0 {
 			continue
 		}
 		blockers = append(blockers, fmt.Sprintf(
-			"specs/%s/spec.md is not promoted into openspec/specs/%s/spec.md (%s); run "+
+			"specs/%s/spec.md is not promoted into %s/%s/spec.md (%s); run "+
 				"`ai-specs specs promote <slug> --root <root>` before archive",
-			plan.Domain, plan.Domain, strings.Join(plan.Composition.Pending, ", ")))
+			plan.Domain, canonicalLabel(mode), plan.Domain, strings.Join(plan.Composition.Pending, ", ")))
 	}
 	return blockers
 }

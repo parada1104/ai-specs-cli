@@ -435,8 +435,9 @@ func planBuildOddRefusal(tool, rel, change, branch string) string {
 // planBuildOddBranchRefusal is the ODD detached-HEAD refusal, verbatim.
 func planBuildOddBranchRefusal(tool, rel string) string {
 	return "plan-build-gate: refusing to " + tool + " '" + rel + "' — ODD mode is active but the current " +
-		"branch cannot be resolved (detached HEAD), so no ODD plan can be paired. Check out the change " +
-		"branch, or declare mode = \"openspec\" in ai-specs/ai-specs.toml to use the OpenSpec flow.\n"
+		"branch cannot be resolved (detached HEAD), so no ODD plan can be paired. Write the plan at " +
+		"'odd/tasks/<change>.md' on the change branch, or declare mode = \"openspec\" in " +
+		"ai-specs/ai-specs.toml to use the OpenSpec flow.\n"
 }
 
 // planBuildAssertAbsent pins that a refused write touched nothing on disk.
@@ -509,6 +510,27 @@ func TestPlanBuildGateOddModeAllowsPlanWrites(t *testing.T) {
 		}
 	}
 	planBuildAssertAbsent(t, filepath.Join(repo, "odd", "tasks", "odd-change.md"))
+}
+
+// A symlink at the plan path is not a regular file of the repository: the gate
+// refuses instead of following the link to a file elsewhere.
+func TestPlanBuildGateOddModePlanMustNotBeASymlink(t *testing.T) {
+	repo, branch := oddRepo(t)
+	outside := filepath.Join(t.TempDir(), "elsewhere.md")
+	if err := os.WriteFile(outside, []byte("# plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "odd", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repo, "odd", "tasks", "odd-change.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	want := planBuildOddRefusal("Write", "src/app.go", "odd-change", branch)
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
+		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+	}
+	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
 }
 
 // A detached HEAD refuses instead of pairing an arbitrary plan.

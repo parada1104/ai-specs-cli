@@ -13,7 +13,6 @@ package cli
 import (
 	"fmt"
 	"io"
-	"path/filepath"
 	"strings"
 
 	"ai-specs.dev/ai-specs/internal/planbuild"
@@ -75,16 +74,8 @@ func runSpecsDispatch(args []string, stdout, stderr io.Writer) int {
 
 // runSpecsPromote is the verb's own argument contract (slug, --root,
 // --allow-removed) and the Python main()'s reporting.
-// planBuildMode resolves the repository's Plan Build execution mode for the
-// promoter: same manifest key and same inference as the pre-tool-use gate.
-func planBuildMode(root string) string {
-	common := worktreeGateGit(root, "rev-parse", "--git-common-dir")
-	if common != "" && !filepath.IsAbs(common) {
-		common = filepath.Join(root, common)
-	}
-	return planbuild.Resolve(root, common)
-}
-
+// runSpecsPromote is the verb's own argument contract (slug, --root,
+// --allow-removed) and the Python main()'s reporting.
 func runSpecsPromote(args []string, stdout, stderr io.Writer) int {
 	slug := ""
 	root := ""
@@ -127,7 +118,7 @@ func runSpecsPromote(args []string, stdout, stderr io.Writer) int {
 		return usageError("ERROR: missing required option: --root")
 	}
 
-	report := specs.PromoteChangeForMode(root, slug, planBuildMode(root), allowRemoved)
+	report := specs.PromoteChangeForMode(root, slug, planbuild.ResolveRepo(root), allowRemoved)
 	if len(report.Blockers) > 0 {
 		fmt.Fprintln(stderr, "spec-promotion: BLOCKED")
 		for _, blocker := range report.Blockers {

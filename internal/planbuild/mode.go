@@ -6,7 +6,9 @@ package planbuild
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"ai-specs.dev/ai-specs/internal/config"
 )
@@ -58,6 +60,26 @@ func Resolve(root, gitCommonDir string) string {
 		}
 	}
 	return Decide(declared, gentleAIState(gitCommonDir))
+}
+
+// CommonDir resolves the repository's Git common directory. git reports it
+// relative to the repository (`.git` for a main checkout), so a relative answer
+// is joined onto root.
+func CommonDir(root string) string {
+	out, err := exec.Command("git", "-C", root, "rev-parse", "--git-common-dir").Output()
+	if err != nil {
+		return ""
+	}
+	common := strings.TrimSpace(string(out))
+	if common == "" || filepath.IsAbs(common) {
+		return common
+	}
+	return filepath.Join(root, common)
+}
+
+// ResolveRepo is Resolve with the repository's own common directory.
+func ResolveRepo(root string) string {
+	return Resolve(root, CommonDir(root))
 }
 
 // gentleAIState reports whether the Gentle AI state directory exists: the
