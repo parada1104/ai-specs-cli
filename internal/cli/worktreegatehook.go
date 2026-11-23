@@ -15,10 +15,13 @@ package cli
 // question tool — whether to run `ai-specs sync` (S6).
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"ai-specs.dev/ai-specs/internal/projectcache"
@@ -48,7 +51,14 @@ func worktreeGateHookRequest(args []string) (string, bool) {
 
 // runWorktreeGateHook answers one agent hook invocation from the snapshot.
 func runWorktreeGateHook(home string, stdin io.Reader, stdout, stderr io.Writer, version string) int {
-	roots := worktreeGateRoots()
+	// The payload is read once: the event's cwd selects the project (the hook
+	// may be launched from anywhere) and the runner gets the same bytes.
+	input, err := io.ReadAll(stdin)
+	if err != nil {
+		fmt.Fprintf(stderr, "worktree-gate: cannot read the hook payload: %v\n", err)
+		return 0
+	}
+	roots := worktreeGateRoots(worktreeGateEventCwd(input))
 	var snapshot projectcache.RuntimeSnapshot
 	found := false
 	for _, root := range roots {
@@ -73,22 +83,48 @@ func runWorktreeGateHook(home string, stdin io.Reader, stdout, stderr io.Writer,
 		"--gate-scope", snapshot.GateScope,
 		"--repo-topology", snapshot.RepoTopology,
 		"--protected", snapshot.Protected,
-	}, stdin, stdout, stderr, version)
+	}, bytes.NewReader(input), stdout, stderr, version)
+}
+
+// worktreeGateEventCwd is the cwd the hook payload names — the directory the
+// gate runner judges — or the process cwd when the payload carries none.
+func worktreeGateEventCwd(input []byte) string {
+	var event struct {
+		Cwd string `json:"cwd"`
+	}
+	if json.Unmarshal(input, &event) == nil && event.Cwd != "" {
+		return event.Cwd
+	}
+	if cwd, cwdErr := os.Getwd(); cwdErr == nil {
+		return cwd
+	}
+	return "."
 }
 
 // worktreeGateRoots lists the candidate project roots for the snapshot lookup,
-// most specific first: the git toplevel of the process cwd (a linked worktree
-// included) and then the repository's main worktree, where sync usually ran.
-// The first root carrying a snapshot wins, so working inside a worktree never
+// most specific first: the event cwd and every one of its ancestors up to the
+// filesystem root (ai-specs.toml may sit below the git toplevel, and a submodule
+// resolves to the superproject), then the git toplevel (a linked worktree
+// included) and the repository's main worktree, where sync usually ran. The
+// first root carrying a snapshot wins, so working inside a worktree never
 // reports a missing snapshot.
-func worktreeGateRoots() []string {
-	cwd, err := os.Getwd()
-	if err != nil || cwd == "" {
-		return []string{"."}
+func worktreeGateRoots(cwd string) []string {
+	// The cache key resolves the project root, and the S6 message names it, so
+	// start from the real path.
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolved
 	}
-	roots := []string{cwd}
+	var roots []string
+	for dir := cwd; ; {
+		roots = append(roots, dir)
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
 	if top := worktreeGateGit(cwd, "rev-parse", "--show-toplevel"); top != "" {
-		roots = []string{top}
+		roots = append(roots, top)
 	}
 	if main := worktreeGateGit(cwd, "worktree", "list", "--porcelain"); main != "" {
 		for _, line := range strings.Split(main, "\n") {

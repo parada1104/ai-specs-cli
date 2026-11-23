@@ -53,6 +53,9 @@ type materializeArtifactRequest struct {
 	RefreshGates bool
 	Stdout       io.Writer
 	Stderr       io.Writer
+	// SnapshotOut receives the resolved snapshot. The spine publishes it
+	// only on its successful return, so a failed run leaves the old one live.
+	SnapshotOut *pendingRuntimeSnapshot
 }
 
 // materializeRecipeArtifacts runs the Python loop body for one enabled recipe
@@ -74,8 +77,10 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 		if snapErr != nil {
 			return nil, snapErr
 		}
-		if _, snapErr := projectcache.WriteRuntimeSnapshot(req.ProjectRoot, req.AISpecsHome, snapshot); snapErr != nil {
-			return nil, snapErr
+		// Staged, not written: the snapshot may only go live once the whole run
+		// succeeded, so the spine publishes it (R1-002/R3-001).
+		if req.SnapshotOut != nil {
+			*req.SnapshotOut = pendingRuntimeSnapshot{Snapshot: snapshot, Found: true}
 		}
 	}
 	lockPath := filepath.Join(req.ProjectRoot, "ai-specs", ".ai-specs.lock")

@@ -51,6 +51,15 @@ func recipeServesCLIHook(recipeID string, recipe *schema.Recipe) bool {
 	return false
 }
 
+// pendingRuntimeSnapshot is the snapshot a run resolved while materializing but
+// must not publish yet: it becomes live only when the whole run succeeds, so a
+// later failure leaves the previous policy in place (R1-002/R3-001). The spine
+// owns the value, the materializer fills it, `(*runner).run` writes it once.
+type pendingRuntimeSnapshot struct {
+	Snapshot projectcache.RuntimeSnapshot
+	Found    bool
+}
+
 // runtimeSnapshotFromConfig resolves the snapshot fields exactly as the retired
 // launcher's stamps were resolved: the same merged-config keys, the same
 // defaults and the same enum refusals (verbatim messages).

@@ -222,3 +222,32 @@ func TestRenderHooksWiresCLICommandPerAgent(t *testing.T) {
 		})
 	}
 }
+
+// R1-002/R3-001: the snapshot is the config sync actually applied, so a run
+// that fails after materialization must leave the previous one in place — a
+// failed `off` sync cannot quietly disarm the gate.
+func TestSyncFailedRunKeepsPreviousSnapshot(t *testing.T) {
+	home, _ := spineEnv(t)
+	project := spineProject(t, strings.Replace(cliServedManifest, "gate_mode = 'ask'", "gate_mode = 'off'", 1))
+	previous := projectcache.RuntimeSnapshot{
+		GateMode: "always", GateScope: "auto", RepoTopology: "auto",
+		Protected: "main development", WorktreesDir: ".wt", IntegrationBranch: "development",
+	}
+	if _, err := projectcache.WriteRuntimeSnapshot(project, home, previous); err != nil {
+		t.Fatal(err)
+	}
+	// A later step fails after the recipe materialization: `.git` is not a
+	// directory, so the post-merge template cannot be written.
+	spineWrite(t, filepath.Join(project, ".git"), "not a directory\n", 0o644)
+	rc, stdout, stderr := runCLIServedSync(t, home, project)
+	if rc == 0 {
+		t.Fatalf("sync with an unwritable template target must fail\n%s\n%s", stdout, stderr)
+	}
+	snapshot, found, err := projectcache.ReadRuntimeSnapshot(project, home)
+	if err != nil || !found {
+		t.Fatalf("snapshot: found=%v err=%v", found, err)
+	}
+	if snapshot != previous {
+		t.Fatalf("snapshot = %+v, want the previous %+v", snapshot, previous)
+	}
+}

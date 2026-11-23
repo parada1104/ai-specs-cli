@@ -131,3 +131,43 @@ func TestWorktreeGateHookFindsMainWorktreeSnapshot(t *testing.T) {
 		t.Fatalf("worktree hook = (%d, %q, %q), want allowed (no missing-snapshot nag)", code, stdout, stderr)
 	}
 }
+
+// R1-001/R4-snapshot-root-lookup: the gate judges the EVENT's cwd, so the
+// snapshot lookup must use it too. A hook launched from an unrelated directory
+// still has to find the snapshot of the project the event targets.
+func TestWorktreeGateHookUsesEventProject(t *testing.T) {
+	repo, home, launchDir := newGateFixture(t), t.TempDir(), t.TempDir()
+	if _, err := projectcache.WriteRuntimeSnapshot(repo, home, projectcache.RuntimeSnapshot{
+		GateMode: "always", GateScope: "auto", RepoTopology: "auto",
+		Protected: "main", WorktreesDir: ".worktrees", IntegrationBranch: "main",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	input := fmt.Sprintf(`{"tool_name":"Write","cwd":%q,"tool_input":{"file_path":"README.md"}}`, repo)
+	code, stdout, stderr := runHookCLI(t, launchDir, home, input)
+	if code != 2 || stdout != "" || !strings.Contains(stderr, "refusing to Write") {
+		t.Fatalf("hook = (%d, %q, %q), want blocked (2, blocked message)", code, stdout, stderr)
+	}
+}
+
+// The same lookup walks UP from the event cwd: a write inside a subdirectory of
+// the synced project (an ai-specs.toml below the git toplevel, or a submodule)
+// is judged by that project's snapshot.
+func TestWorktreeGateHookUsesNestedEventProject(t *testing.T) {
+	repo, home, launchDir := newGateFixture(t), t.TempDir(), t.TempDir()
+	if _, err := projectcache.WriteRuntimeSnapshot(repo, home, projectcache.RuntimeSnapshot{
+		GateMode: "always", GateScope: "auto", RepoTopology: "auto",
+		Protected: "main", WorktreesDir: ".worktrees", IntegrationBranch: "main",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(repo, "modules", "app")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	input := fmt.Sprintf(`{"tool_name":"Write","cwd":%q,"tool_input":{"file_path":"README.md"}}`, nested)
+	code, stdout, stderr := runHookCLI(t, launchDir, home, input)
+	if code != 2 || stdout != "" || !strings.Contains(stderr, "refusing to Write") {
+		t.Fatalf("hook = (%d, %q, %q), want blocked (2, blocked message)", code, stdout, stderr)
+	}
+}
