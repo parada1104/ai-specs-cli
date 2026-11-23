@@ -301,8 +301,12 @@ func managedTargetAbsent(root, rel string) bool {
 
 func applyRecipeArtifactPrune(root, lockPath string, doomed, stale []string, recipeDir func(string, map[string]any) string, enabled map[string]bool, out io.Writer) error {
 	// Retirement is unconditional and runs before the early return: the cleanup
-	// override is not a managed template, so no plan ever lists it (T3/S1).
+	// override is not a managed template and a recipe README is no longer a
+	// project artifact, so no plan ever lists either (T3/T5, S1).
 	if err := retireWorktreeCleanupOverride(root, lockPath, out); err != nil {
+		return err
+	}
+	if err := retireRecipeREADMEDocs(root, lockPath, out); err != nil {
 		return err
 	}
 	if len(doomed) == 0 && len(stale) == 0 {
@@ -335,14 +339,8 @@ func applyRecipeArtifactPrune(root, lockPath string, doomed, stale []string, rec
 		}
 		// Sweep only emptied parents. Overrides and other untracked contents
 		// keep their directories, even when the recipe has been disabled.
-		for parent, base := filepath.Dir(path), filepath.Join(root, dir); shared.TemplatePathContained(base, parent); parent = filepath.Dir(parent) {
-			err := os.Remove(parent)
-			if errors.Is(err, syscall.ENOTEMPTY) || errors.Is(err, syscall.EEXIST) {
-				break
-			}
-			if err != nil && !os.IsNotExist(err) {
-				return err
-			}
+		if err := removeEmptiedParents(filepath.Join(root, dir), path); err != nil {
+			return err
 		}
 		delete(lk.Managed, rel)
 		changed = true
@@ -407,6 +405,22 @@ func applyRecipeSkillOrphans(in OrphanCleanupInput, remove func(path string) err
 				return err
 			}
 			fmt.Fprintf(out, "  ✓ removed orphaned %s%s/skills/%s\n", orphanScopePrefix("recipe_skills"), recipe, skill)
+		}
+	}
+	return nil
+}
+
+// removeEmptiedParents removes the parents of path that became empty, never
+// climbing above base, so a directory still holding untracked contents (an
+// overrides tree) survives. An absent parent is fine.
+func removeEmptiedParents(base, path string) error {
+	for parent := filepath.Dir(path); shared.TemplatePathContained(base, parent); parent = filepath.Dir(parent) {
+		err := os.Remove(parent)
+		if errors.Is(err, syscall.ENOTEMPTY) || errors.Is(err, syscall.EEXIST) {
+			return nil
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return err
 		}
 	}
 	return nil

@@ -17,13 +17,11 @@ package sync
 // directory of the main repository.
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"ai-specs.dev/ai-specs/internal/lock"
 	shared "ai-specs.dev/worktree-gate/shared"
@@ -102,14 +100,8 @@ func retireWorktreeCleanupOverride(root, lockPath string, out io.Writer) error {
 	// Sweep only emptied parents, so a user override elsewhere in the recipe
 	// (the trello card templates) keeps its directories.
 	base := filepath.Join(root, "ai-specs", "recipes", worktreeFlowRecipeID, "overrides")
-	for parent := filepath.Dir(path); shared.TemplatePathContained(base, parent); parent = filepath.Dir(parent) {
-		err := os.Remove(parent)
-		if errors.Is(err, syscall.ENOTEMPTY) || errors.Is(err, syscall.EEXIST) {
-			break
-		}
-		if err != nil && !os.IsNotExist(err) {
-			return err
-		}
+	if err := removeEmptiedParents(base, path); err != nil {
+		return err
 	}
 	if _, recorded := lk.Managed[retiredWorktreeCleanupOverride]; !recorded {
 		return nil

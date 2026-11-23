@@ -142,6 +142,11 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 	}
 
 	for _, doc := range recipe.Docs {
+		if recipeREADMEServesCLI(req.Recipe.ID, doc.Target) {
+			// The README stays catalog documentation (T5/S1): the project keeps
+			// no copy, and the prune retires an older sync's one.
+			continue
+		}
 		if err := materializeDocArtifact(req, recipeDir, lockPath, doc); err != nil {
 			return nil, err
 		}

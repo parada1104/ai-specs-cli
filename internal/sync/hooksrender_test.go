@@ -229,7 +229,10 @@ func TestSyncPruneRefusalKeepsWiringAndLock(t *testing.T) {
 				t.Fatalf("refusal rc=%d, stderr=%q, stdout=%q; want rc=1 and %q", rc, stderr, out, wantError)
 			}
 			after, afterModes := hooksSnapshot(t, project)
-			for _, rel := range []string{recipe + "README.md", ".claude/settings.json", lockRel} {
+			// The recipe README is no longer materialized (T5/S1), so the managed
+			// artifacts this snapshot must still see live outside the recipe tree
+			// (the blocked-leaf variant replaces the gate launcher with a directory).
+			for _, rel := range []string{".claude/settings.json", lockRel} {
 				if before[rel] == "" {
 					t.Errorf("%s missing from fixture", rel)
 				}
