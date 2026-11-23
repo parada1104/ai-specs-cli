@@ -11,9 +11,11 @@ package sync
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
+	aihome "ai-specs.dev/ai-specs/internal/home"
 	"ai-specs.dev/ai-specs/internal/projectcache"
 	"ai-specs.dev/ai-specs/internal/schema"
 	shared "ai-specs.dev/worktree-gate/shared"
@@ -36,6 +38,7 @@ const worktreeGateHookVerb = "worktree-gate"
 // tracker-card-gate (F2).
 func cliServedHookCommand(recipeID string, hook *schema.RuntimeHook) string {
 	verb := ""
+	prefix := `cli="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"; `
 	switch {
 	case recipeID == "worktree-flow" && filepath.Base(hook.Script) == worktreeGateLauncherScript:
 		// The id is shell-quoted: it is recipe data, so an id with spaces or shell
@@ -45,13 +48,18 @@ func cliServedHookCommand(recipeID string, hook *schema.RuntimeHook) string {
 		// Both hook matchers (path writes and shell) are one verb: the event on
 		// stdin decides the checkpoint.
 		verb = "tracker-card-gate"
+		// R1-tracker-cli-provenance: pin the installation that ran sync. Reading
+		// AI_SPECS_HOME at hook time is not equivalent — the agent may lack it
+		// (silent no-op) or resolve another ai-specs on PATH (wrong grader). The
+		// PATH fallback below still covers an install whose binary is gone.
+		if exe, err := os.Executable(); err == nil {
+			root := aihome.ResolveHome(exe, os.Getenv("AI_SPECS_HOME"))
+			prefix = `cli=` + shellQuote(filepath.Join(root, "dist", "ai-specs")) + `; `
+		}
 	default:
 		return ""
 	}
-	// The launcher's resolution order, kept machine-independent: the CLI that
-	// ran sync (AI_SPECS_HOME/dist) first, `ai-specs` on PATH second. A missing
-	// CLI fails open with exit 0, exactly like the launcher did.
-	return `cli="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"; ` +
+	return prefix +
 		`[ -x "$cli" ] || cli=ai-specs; ` +
 		`command -v "$cli" >/dev/null 2>&1 || exit 0; ` +
 		`exec "$cli" ` + verb

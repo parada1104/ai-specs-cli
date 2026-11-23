@@ -6,6 +6,7 @@ package sync
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -124,5 +125,34 @@ func TestSyncRetiresTrackerCardGateScript(t *testing.T) {
 				t.Fatalf("notice = %v, want %v; stderr=%q", noticed, tc.wantNotice, stderr)
 			}
 		})
+	}
+}
+
+// R1-tracker-cli-provenance: the rendered tracker hook pins the installation
+// that ran sync, so an agent started without AI_SPECS_HOME — or with a
+// different ai-specs on PATH — still grades through it.
+func TestTrackerCardGateHookBindsSyncTimeCLIHome(t *testing.T) {
+	home, _ := spineEnv(t)
+	project := spineProject(t, trackerGateManifest)
+	t.Setenv("AI_SPECS_HOME", home)
+	scratch := t.TempDir()
+	marker := filepath.Join(scratch, "marker")
+	spineWrite(t, filepath.Join(home, "dist", "ai-specs"), "#!/bin/sh\nprintf 'sync-time' > "+marker+"\n", 0o755)
+	if rc, _, stderr := runCLIServedSync(t, home, project); rc != 0 {
+		t.Fatalf("sync rc=%d %s", rc, stderr)
+	}
+	decoyDir := filepath.Join(scratch, "decoy")
+	spineWrite(t, filepath.Join(decoyDir, "ai-specs"), "#!/bin/sh\nprintf 'decoy' > "+marker+"\n", 0o755)
+	// The agent's environment carries no AI_SPECS_HOME and PATH resolves a
+	// different ai-specs first: neither may decide which CLI grades the event.
+	cmd := exec.Command("bash", filepath.Join(project, ".cursor", "hooks",
+		"trello-mcp-workflow-tracker-card-gate-shell.sh"))
+	cmd.Env = []string{"PATH=" + decoyDir + ":" + os.Getenv("PATH"), "CURSOR_PROJECT_DIR=" + project}
+	cmd.Stdin = strings.NewReader(`{"tool_name":"Shell","tool_input":{"command":"git status"}}`)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("hook failed: %v\n%s", err, out)
+	}
+	if got := readFileString(t, marker); got != "sync-time" {
+		t.Fatalf("marker = %q, want the sync-time installation to receive the event", got)
 	}
 }

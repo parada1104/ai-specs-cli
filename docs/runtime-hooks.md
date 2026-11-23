@@ -213,7 +213,9 @@ JSON bridges** to one Go predicate. They invoke `ai-specs worktree-gate --ledger
 through the installed `dist/ai-specs`, not through the project-local pin, the
 cache, or `WORKTREE_GATE_BIN`. Plan Build uses `AI_SPECS_HOME` (default
 `$HOME/.ai-specs`); the Tracker gate runs inside the installed CLI itself, so
-it needs no separate bridge home. Go resolves the effective ledger mode.
+it needs no separate bridge home; its rendered command pins the sync-time
+install (`<sync-home>/dist/ai-specs tracker-card-gate`) instead of re-reading
+the agent's environment. Go resolves the effective ledger mode.
 Neither host compiles or downloads a binary. Tracker verdicts are advisory and
 exit `0`: a rendered tracker hook whose CLI is missing exits `0` without
 grading, and the verb itself only exits `2` for a direct-mode usage error. Plan
@@ -295,15 +297,14 @@ host. Recording the exemption is the explicit human/agent
 honored at every checkpoint as allow/exempt and is not a conflict; removing the file
 does not revoke it (a human adjudicates with `--decide`).
 
-The CLI home is stamped at sync (`__TRACKER_CLI_HOME__`); the tracker gate runs
-`<home>/dist/ai-specs tracker slug|evidence` for evidence acquisition and
-`<home>/dist/ai-specs tracker classify` for the stdin command classifier (the hook
-carries no python3). The legacy
-`__TRACKER_LIB_INTERNAL__` stamp remains a materializer placeholder the tracker
-gate no longer reads (the plan-build gate still uses that seam to resolve the
-witness-bound recipe id). An empty or absent CLI-home stamp, or a missing
-non-executable binary, skips the evidence file (fail open), exactly like a missing
-binary; the plan-build gate leaves the recipe id unresolved.
+Sync stamps the CLI home that served it into the rendered hook command, which
+execs `<sync-home>/dist/ai-specs tracker-card-gate`; the verb does its evidence
+acquisition (`tracker slug|evidence`) and stdin classification in process, so
+the hook carries no python3. `ai-specs` on PATH is the fallback only when that
+install's binary is gone, and a missing binary skips the evidence file and
+exits `0`. The legacy `__TRACKER_LIB_INTERNAL__` stamp remains a materializer
+placeholder the tracker gate no longer reads (the plan-build gate still uses it
+to resolve the witness-bound recipe id).
 
 Without the CLI the tracker gate also cannot classify the hook event, so it exits 0
 without grading `apply-start` or `pr-review`. This is the accepted U-F2b behavior
