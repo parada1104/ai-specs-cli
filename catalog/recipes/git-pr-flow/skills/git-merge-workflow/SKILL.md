@@ -187,8 +187,7 @@ gh pr merge --squash
 
 ```bash
 cd <main-repo-root>
-bash ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh \
-  --dir .worktrees --base <integration-branch>
+ai-specs worktree-cleanup
 ```
 
 The cleanup command owns, in this order, merged-worktree removal, remote branch

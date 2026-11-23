@@ -53,6 +53,9 @@ type materializeArtifactRequest struct {
 	RefreshGates bool
 	Stdout       io.Writer
 	Stderr       io.Writer
+	// SnapshotOut receives the resolved snapshot. The spine publishes it
+	// only on its successful return, so a failed run leaves the old one live.
+	SnapshotOut *pendingRuntimeSnapshot
 }
 
 // materializeRecipeArtifacts runs the Python loop body for one enabled recipe
@@ -67,6 +70,19 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 		return nil, err
 	}
 	mergedCfg := materializeProjectOwnedConfig(req.ProjectRoot, req.Recipe.ID, req.Merge.Config)
+	// A CLI-served hook (T2) is served from the snapshot the CLI reads, so sync
+	// records the resolved runtime config it just merged.
+	if recipeServesCLIHook(req.Recipe.ID, recipe) {
+		snapshot, snapErr := runtimeSnapshotFromConfig(mergedCfg)
+		if snapErr != nil {
+			return nil, snapErr
+		}
+		// Staged, not written: the snapshot may only go live once the whole run
+		// succeeded, so the spine publishes it (R1-002/R3-001).
+		if req.SnapshotOut != nil {
+			*req.SnapshotOut = pendingRuntimeSnapshot{Snapshot: snapshot, Found: true}
+		}
+	}
 	lockPath := filepath.Join(req.ProjectRoot, "ai-specs", ".ai-specs.lock")
 	roots := CopyRoots{
 		RecipeSkillsRoot: projectcache.RecipeSkillsRoot(req.ProjectRoot, req.AISpecsHome),
@@ -104,13 +120,38 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 		}
 	}
 
+	postMerge := false
 	for _, tpl := range recipe.Templates {
+		if worktreeTemplateServesCLI(req.Recipe.ID, tpl.Target) {
+			// The CLI serves this target itself (T3/S4): the cleanup launcher is
+			// retired and the post-merge hook is generated after this loop.
+			if posixAsPosix(tpl.Target) == worktreePostMergeTarget {
+				postMerge = true
+			}
+			continue
+		}
+		if vaultMCPTemplateServesCLI(req.Recipe.ID, tpl.Target) {
+			// `ai-specs mcp vault-fs` serves the vault MCP server (T4/S5); the
+			// wrapper script is retired by the prune, never materialized.
+			continue
+		}
 		if err := materializeTemplateArtifact(req, recipeDir, lockPath, tpl, mergedCfg); err != nil {
+			return nil, err
+		}
+	}
+	// Always regenerated when declared: the hook holds no policy, only the verb.
+	if postMerge {
+		if err := materializeWorktreePostMergeHook(req.ProjectRoot); err != nil {
 			return nil, err
 		}
 	}
 
 	for _, doc := range recipe.Docs {
+		if recipeREADMEServesCLI(req.Recipe.ID, doc.Target) {
+			// The README stays catalog documentation (T5/S1): the project keeps
+			// no copy, and the prune retires an older sync's one.
+			continue
+		}
 		if err := materializeDocArtifact(req, recipeDir, lockPath, doc); err != nil {
 			return nil, err
 		}
@@ -127,6 +168,12 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 
 	resolvedHooks := []any{}
 	for _, rhook := range recipe.RuntimeHooks {
+		if cliServedHookCommand(req.Recipe.ID, rhook) != "" {
+			// CLI-served: no launcher bytes to materialize; the resolved entry
+			// carries the CLI command every renderer wires.
+			resolvedHooks = append(resolvedHooks, materializeResolvedHookEntry(req.Recipe.ID, rhook, "", mergedCfg))
+			continue
+		}
 		entry, err := materializeRuntimeHook(req, recipeDir, lockPath, rhook, mergedCfg)
 		if err != nil {
 			return nil, err
@@ -474,7 +521,11 @@ func materializeResolvedHookEntry(recipeID string, rhook *schema.RuntimeHook, sc
 	entry.set("event", rhook.Event)
 	entry.set("matcher", rhook.Matcher)
 	entry.set("blocking", rhook.Blocking)
-	entry.set("script_path", scriptPath)
+	if command := cliServedHookCommand(recipeID, rhook); command != "" {
+		entry.set("command", command)
+	} else {
+		entry.set("script_path", scriptPath)
+	}
 	env := newMCPObj()
 	for _, key := range sortedStrings(materializeEnvKeys(mergedCfg)) {
 		env.set(key, materializePyStr(mergedCfg[key]))

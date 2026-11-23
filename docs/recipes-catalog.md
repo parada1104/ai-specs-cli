@@ -322,8 +322,8 @@ proven reachable from a resolved base candidate), preserves dirty and unmerged
 ones, and never touches the main worktree.
 
 - **Provides:** skill `worktree-flow`, commands `/worktree-new`,
-  `/worktree-clean`, script `bin/worktree-cleanup.sh`, and a `worktree-gate`
-  runtime hook (`[[provides.hooks]]`) that blocks writes to the main worktree on
+  `/worktree-clean`, the CLI verb `ai-specs worktree-cleanup`, and a
+  `worktree-gate` runtime hook (`[[provides.hooks]]`) that blocks writes to the main worktree on
   protected branches, supports `gate_mode` dispatch (`always` / `ask` / `off`),
   and applies the proven-topology `gate_scope` policy — see
   [`docs/runtime-hooks.md`](runtime-hooks.md); capabilities
@@ -567,9 +567,11 @@ and handoffs in a configured vault MCP (e.g. Obsidian over a filesystem MCP
 server). Defines when to read/write canonical context, plus decision- and
 handoff-note shapes. The rule: Vault holds the deliberate, human-auditable
 record; operational memory holds searchable continuity. Ships an MCP preset for
-`@modelcontextprotocol/server-filesystem` (pinned `2025.7.1`) via
-`vault-fs-mcp.sh`, which reads absolute `CANONICAL_VAULT_PATH` from the
-environment at exec time (not a bare `${VAR}` MCP arg). Also vendors the
+`@modelcontextprotocol/server-filesystem` (pinned `2025.7.1`) served by
+`ai-specs mcp vault-fs`, which reads absolute `CANONICAL_VAULT_PATH` from the
+environment at run time (not a bare `${VAR}` MCP arg). The generated entry is
+`command: ai-specs` with `args: [mcp, vault-fs]`, so no script is materialized
+into the project. Also vendors the
 kepano Obsidian skills (`obsidian-markdown`, `obsidian-bases`, `json-canvas`,
 `obsidian-cli`, `defuddle`) for LLM wiki / second-brain note formats. Set the
 path in `.envrc` (shell expansion); quote when the Obsidian path contains

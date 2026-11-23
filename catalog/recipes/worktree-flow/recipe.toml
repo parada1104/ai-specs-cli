@@ -116,16 +116,17 @@ script = "hooks/worktree-gate.sh"
 matcher = "Bash|Shell|Execute|Terminal"
 blocking = true
 description = "Best-effort block shell commands that write into the main worktree on a protected branch (bash-bypass coverage)"
+# Both targets below are CLI-SERVED since cli-served-recipes T3/S1/S4: sync
+# neither materializes the retired launcher nor stamps a post-merge wrapper.
+# The entry declares the asset and its git-resolved path; sync removes the old
+# user-editable launcher and always regenerates `.git/hooks/post-merge` as a
+# one-line `exec ai-specs worktree-cleanup` hook. The sources are kept as the
+# historical reference until T8 collapses them with the goldens.
 [[provides.templates]]
 source = "templates/worktree-cleanup.sh"
 target = "ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh"
 condition = "not_exists"
 
-# Managed VCS post-merge close trigger. Sync stamps the project's configured
-# worktrees_dir, integration_branch, and repo_topology into the wrapper, which
-# passes them to the materialized cleanup launcher; cleanup closes the matching
-# ledger item at archive-close before it removes a merged worktree or local
-# branch. The not_exists condition preserves any existing user hook at this path.
 [[provides.templates]]
 source = "templates/post-merge.sh"
 target = ".git/hooks/post-merge"

@@ -21,6 +21,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"ai-specs.dev/ai-specs/internal/projectcache"
 	"ai-specs.dev/ai-specs/internal/target"
 	"ai-specs.dev/ai-specs/internal/toml"
 )
@@ -302,7 +303,7 @@ func (r *runner) run(opts options) int {
 	}
 	// Plan all prunes before project writes, including bundled refresh of the lock.
 	enabled, hooks, commands, inputErr := loadPruneInputs(root, r.home)
-	var applyRecipePrune func() error
+	var applyRecipePrune func(io.Writer) error
 	var applyCommandPrune func(io.Writer) (map[string]bool, error)
 	var applyAgentPrune func(io.Writer, io.Writer) error
 	retired := map[string]bool{}
@@ -412,6 +413,9 @@ func (r *runner) run(opts options) int {
 
 	recipeRC := 0
 	var materialized MaterializeResult
+	// The snapshot the recipe materialization resolves stays staged: it may only
+	// go live once the whole run succeeded (R1-002/R3-001).
+	var pendingSnapshot pendingRuntimeSnapshot
 	if outF, err := os.Create(recipeOutFile); err != nil {
 		recipeRC = 1
 	} else if errF, err := os.Create(recipeErrFile); err != nil {
@@ -433,6 +437,7 @@ func (r *runner) run(opts options) int {
 			RefreshGates:      opts.refreshGates,
 			Stdout:            outF,
 			Stderr:            errF,
+			SnapshotOut:       &pendingSnapshot,
 		})
 		if materializeErr != nil {
 			recipeRC = 1
@@ -465,7 +470,19 @@ func (r *runner) run(opts options) int {
 		fmt.Fprintf(r.stderr, "ERROR: cannot plan prune: %v\n", inputErr)
 		return 1
 	}
-	if err := applyRecipePrune(); err != nil {
+	// Upgrade gap (R1-upgrade-enforcement-gap): with no previous snapshot to
+	// preserve, publish the staged one BEFORE the launcher is pruned.
+	publishedSnapshot := false
+	if pendingSnapshot.Found {
+		if _, found, _ := projectcache.ReadRuntimeSnapshot(root, r.home); !found {
+			if _, err := projectcache.WriteRuntimeSnapshot(root, r.home, pendingSnapshot.Snapshot); err != nil {
+				fmt.Fprintf(r.stderr, "ERROR: cannot write the runtime snapshot: %v\n", err)
+				return 1
+			}
+			publishedSnapshot = true
+		}
+	}
+	if err := applyRecipePrune(r.stderr); err != nil {
 		fmt.Fprintf(r.stderr, "ERROR: cannot prune recipe artifacts: %v\n", err)
 		return 1
 	}
@@ -526,6 +543,13 @@ func (r *runner) run(opts options) int {
 	if err := cliversion.StampLockMetaNow(root, r.home); err != nil {
 		fmt.Fprintf(r.stderr, "ERROR: cannot stamp %s: %v\n", cliversion.LockMetaPath(root), err)
 		return 1
+	}
+
+	if pendingSnapshot.Found && !publishedSnapshot {
+		if _, err := projectcache.WriteRuntimeSnapshot(root, r.home, pendingSnapshot.Snapshot); err != nil {
+			fmt.Fprintf(r.stderr, "ERROR: cannot write the runtime snapshot: %v\n", err)
+			return 1
+		}
 	}
 
 	fmt.Fprintln(r.stdout, "")

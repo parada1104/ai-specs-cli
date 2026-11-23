@@ -227,8 +227,7 @@ cleanup script:
 
 ```bash
 cd <main-repo-root>
-bash ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh \
-  --dir .worktrees --base <base_branch>
+ai-specs worktree-cleanup
 ```
 
 Manual fallback only if the script is unavailable. After a successful merge,

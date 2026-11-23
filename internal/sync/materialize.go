@@ -53,6 +53,9 @@ type MaterializeRequest struct {
 	RefreshGates      bool
 	Stdout            io.Writer
 	Stderr            io.Writer
+	// SnapshotOut receives the snapshot the recipes resolve; the caller
+	// publishes it once the whole run succeeds (R1-002/R3-001).
+	SnapshotOut *pendingRuntimeSnapshot
 }
 
 // MaterializeResult carries the paths, documents and names the caller needs. A
@@ -300,6 +303,7 @@ func MaterializeRecipes(req MaterializeRequest) (MaterializeResult, error) {
 			RefreshGates: req.RefreshGates,
 			Stdout:       stdout,
 			Stderr:       stderr,
+			SnapshotOut:  req.SnapshotOut,
 		})
 		if err != nil {
 			return result, materializeFatal(stderr, err.Error())

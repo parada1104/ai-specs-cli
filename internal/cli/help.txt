@@ -22,6 +22,8 @@ Commands:
   specs promote <slug> --root <planning-root>  Compose change delta specs into canonical specs
   gates premerge <slug> --root <planning-root>  Check the pre-merge archive/artifact gates
   worktree-gate [gate args...]  Run the worktree gate (arguments passed through unchanged)
+  worktree-cleanup [--dry-run]  Remove merged worktrees and branches (policy from the last sync)
+  mcp vault-fs  Serve the vault filesystem MCP server (used by .mcp.json; reads CANONICAL_VAULT_PATH)
   tracker slug|evidence <root>  Print the active change slug or ledger evidence JSON
   hook field|normalize-path  Read hook JSON fields and the canonical hook target
   version Print CLI version
