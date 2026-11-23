@@ -61,12 +61,13 @@ const (
 	routeTrackerField                       // native: `tracker field`, JSON value reader for the hook helpers (GO-20 U2e U-F)
 	routeTrackerClassify                    // native: `tracker classify`, the hook event classifier (GO-20 U2e U-F2b)
 	routeHook                               // native: the `hook` family remainder — usage/help/unknown (GO-20 U2e U-F2a)
-	routeHookField                          // native: `hook field`, JSON value reader for plan-build-gate.sh (GO-20 U2e U-F2a)
+	routeHookField                          // native: `hook field`, JSON value reader for the gate hosts (GO-20 U2e U-F2a)
 	routeHookNormalizePath                  // native: `hook normalize-path`, canonical hook target (GO-20 U2e U-F2a)
 	routeWorktreeGate                       // direct passthrough to the importable worktree-gate runner
 	routeWorktreeCleanup                    // native: `worktree-cleanup`, the CLI-served post-merge cleanup (T3)
 	routeMCPVaultFS                         // native: `mcp vault-fs`, the CLI-served vault filesystem MCP server (T4)
 	routeTrackerCardGate                    // native: `tracker-card-gate`, the CLI-served Tracker card gate (T6)
+	routePlanBuildGate                      // native: `plan-build-gate`, the CLI-served planning gate (T7)
 	routeUnknown                            // unknown command: usage error, exit 2
 )
 
@@ -116,6 +117,7 @@ var native = map[string]route{
 	"--help":            {kind: routeHelp},
 	"worktree-gate":     {kind: routeWorktreeGate},
 	"tracker-card-gate": {kind: routeTrackerCardGate},
+	"plan-build-gate":   {kind: routePlanBuildGate},
 	"worktree-cleanup":  {kind: routeWorktreeCleanup},
 }
 
@@ -264,6 +266,10 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		// Hook mode takes no arguments; the direct host mode takes its own
 		// (--root/--checkpoint/--stage) and is selected from the same verb.
 		return runTrackerCardGate(home, args[1:], stdin, stdout, stderr)
+	case routePlanBuildGate:
+		// Pre-tool-use hook only: one event on stdin, no arguments, like the
+		// script it replaces.
+		return runPlanBuildGate(args[1:], stdin, stdout, stderr)
 	case routeMCPVaultFS:
 		// args[0]=mcp, args[1]=vault-fs: the verb parses no arguments, like the
 		// script it replaces.

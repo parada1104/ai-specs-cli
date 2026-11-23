@@ -45,7 +45,7 @@ event = "pre-tool-use"
 script = "hooks/plan-build-gate.sh"
 matcher = "Edit|Write|MultiEdit|NotebookEdit"
 blocking = true
-description = "Block production edits until an active change folder with a tasks.md plan exists"
+description = "Block production edits until an active change folder with a tasks.md plan exists. Served by `ai-specs plan-build-gate` (no materialized script)"
 
 [[provides.docs]]
 source = "README.md"

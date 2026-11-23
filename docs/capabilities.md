@@ -245,10 +245,10 @@ ever guessing a provider.
   section from a hardcoded recipe id. Reading the witness is acquisition, not
   grading.
 - **`work-start` host.** `work-start` is hosted by `plan-build-flow`'s
-  `plan-build-gate.sh`, which resolves the bound recipe id through its stamped
-  `__TRACKER_LIB_INTERNAL__` seam, so `recipes.<witness recipe id>.config`
-  drives its effective mode. A tracker-bound project without `plan-build-flow`
-  enabled has an unhosted `work-start`; `doctor` reports it as an INFO line
+  `ai-specs plan-build-gate` hook, which resolves the witness-bound recipe id in
+  process, so `recipes.<witness recipe id>.config` drives its effective mode. A
+  tracker-bound project without `plan-build-flow` enabled has an unhosted
+  `work-start`; `doctor` reports it as an INFO line
   (`work-start is unhosted`) while the other four checkpoints keep grading.
 
 This is the project-level Python→Go strangler policy applied at the seam it

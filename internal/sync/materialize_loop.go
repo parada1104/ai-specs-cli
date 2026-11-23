@@ -73,7 +73,7 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 	// A CLI-served hook (T2/T6) is served from the snapshot the CLI reads, so
 	// sync records the resolved runtime config it just merged. Each recipe owns
 	// its own half of one per-project snapshot.
-	if recipeServesCLIHook(req.Recipe.ID, recipe) {
+	if recipeContributesRuntimeSnapshot(req.Recipe.ID) {
 		snapshot := projectcache.RuntimeSnapshot{}
 		if req.SnapshotOut != nil {
 			snapshot = req.SnapshotOut.Snapshot

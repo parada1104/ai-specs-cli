@@ -26,6 +26,7 @@ Commands:
   mcp vault-fs  Serve the vault filesystem MCP server (used by .mcp.json; reads CANONICAL_VAULT_PATH)
   tracker-card-gate [--root <root> [--checkpoint pre-merge|archive-close]]
                Grade a Tracker ledger checkpoint; also the pre-tool-use hook
+  plan-build-gate  Refuse production writes until a change folder has a plan (pre-tool-use hook)
   tracker slug|evidence <root>  Print the active change slug or ledger evidence JSON
   hook field|normalize-path  Read hook JSON fields and the canonical hook target
   version Print CLI version

@@ -1,5 +1,5 @@
 // Package hook holds the native event helpers of the gate hooks (GO-20 U2e,
-// U-F2a). NormalizeEvent is the port of plan-build-gate.sh's embedded python
+// U-F2a). NormalizeEvent is the port of the retired plan-build-gate.sh's embedded python
 // normalization: it resolves the hook's target path the way os.path.realpath
 // does (non-strict, symlink-aware), so the boundary decision is made on the
 // canonical path.

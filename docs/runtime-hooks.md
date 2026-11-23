@@ -207,20 +207,17 @@ intercepts MCP tool calls.
 
 ## Ledger checkpoints (tracker lifecycle)
 
-`plan-build-flow` and `trello-mcp-workflow` path/shell hooks, plus the
-`ai-specs tracker-card-gate` verb's direct host mode, are **acquisition +
-JSON bridges** to one Go predicate. They invoke `ai-specs worktree-gate --ledger --checkpoint <name>`
-through the installed `dist/ai-specs`, not through the project-local pin, the
-cache, or `WORKTREE_GATE_BIN`. Plan Build uses `AI_SPECS_HOME` (default
-`$HOME/.ai-specs`); the Tracker gate runs inside the installed CLI itself, so
-it needs no separate bridge home; its rendered command pins the sync-time
-install (`<sync-home>/dist/ai-specs tracker-card-gate`) instead of re-reading
-the agent's environment. Go resolves the effective ledger mode.
-Neither host compiles or downloads a binary. Tracker verdicts are advisory and
-exit `0`: a rendered tracker hook whose CLI is missing exits `0` without
-grading, and the verb itself only exits `2` for a direct-mode usage error. Plan
-Build can exit `2` for a blocking verdict or when an old CLI cannot grade the
-checkpoint.
+The `ai-specs plan-build-gate` and `ai-specs tracker-card-gate` verbs, plus the
+Tracker gate's direct host mode, are the hosts of one Go predicate: each calls
+`worktree-gate --ledger --checkpoint <name>` in process inside the installed
+CLI, not through the project-local pin, the cache, or `WORKTREE_GATE_BIN`. Both
+rendered hook commands pin the sync-time install
+(`<sync-home>/dist/ai-specs <verb>`) instead of re-reading the agent's
+environment, and Go resolves the effective ledger mode. Neither host compiles or
+downloads a binary. Tracker verdicts are advisory and exit `0`: a rendered
+tracker hook whose CLI is missing exits `0` without grading, and the verb itself
+only exits `2` for a direct-mode usage error. Plan Build blocks: it exits `2` for
+a work-start block verdict and for its own missing-plan refusal.
 
 The domain is Tracker, not a provider. One pure Go grader compares neutral
 expectations against neutral observations; a provider recipe extends that domain
@@ -232,7 +229,7 @@ is Plan Build's artifact-only guardian and never invokes the ledger.
 
 | Checkpoint | Host |
 |---|---|
-| `work-start` | `plan-build-flow` `plan-build-gate.sh` (before the SDD/proposal phase and before the first production write; no change folder required; resolves the witness recipe id through the stamped bridge) |
+| `work-start` | `plan-build-flow` `ai-specs plan-build-gate` hook, path kind (before the SDD/proposal phase and before the first production write; no change folder required; resolves the witness-bound recipe id in process) |
 | `apply-start` | `trello-mcp-workflow` `tracker-card-gate` hook, path kind |
 | `pr-review` | `trello-mcp-workflow` `tracker-card-gate` hook, shell `gh pr create` |
 | `pre-merge` | `ai-specs tracker-card-gate --root <root> --checkpoint pre-merge` |
@@ -303,8 +300,8 @@ acquisition (`tracker slug|evidence`) and stdin classification in process, so
 the hook carries no python3. `ai-specs` on PATH is the fallback only when that
 install's binary is gone, and a missing binary skips the evidence file and
 exits `0`. The legacy `__TRACKER_LIB_INTERNAL__` stamp remains a materializer
-placeholder the tracker gate no longer reads (the plan-build gate still uses it
-to resolve the witness-bound recipe id).
+placeholder that no gate reads any more: both verbs resolve the witness-bound
+recipe id in process.
 
 Without the CLI the tracker gate also cannot classify the hook event, so it exits 0
 without grading `apply-start` or `pr-review`. This is the accepted U-F2b behavior

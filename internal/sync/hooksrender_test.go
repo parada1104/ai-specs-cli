@@ -169,6 +169,19 @@ func TestSyncPruneRefusalKeepsWiringAndLock(t *testing.T) {
 			const launcher = recipe + "hooks/plan-build-gate.sh"
 			const lockRel = "ai-specs/.ai-specs.lock"
 			lockPath := filepath.Join(project, lockRel)
+			// T7 retired the plan-build launcher, so sync no longer writes it: seed
+			// the copy an older sync materialized and the record that owns it.
+			launcherBody := "#!/bin/sh\nexit 0\n"
+			spineWrite(t, filepath.Join(project, launcher), launcherBody, 0o755)
+			seed, err := lock.LoadLock(lockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lock.SetGateBaseline(seed, launcher, lock.Sha256Bytes([]byte(launcherBody)),
+				strPtr("plan-build-flow"), strPtr("hooks/plan-build-gate.sh"))
+			if err := lock.WriteLock(lockPath, seed); err != nil {
+				t.Fatal(err)
+			}
 			lockBytes, err := os.ReadFile(lockPath)
 			if err != nil {
 				t.Fatal(err)
