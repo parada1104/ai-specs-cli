@@ -173,7 +173,7 @@ func PromoteChangeForMode(root, slug, mode string, allowRemoved bool) PromotionR
 				changesLabel(mode), slug))
 		return report
 	}
-	if mode == planbuild.ModeOdd && !sourceContained(folder, changesBase) {
+	if mode == planbuild.ModeOdd && !SourceContained(folder, changesBase) {
 		// A symlinked odd/changes would feed the composer from the other tree.
 		report.Blockers = append(report.Blockers, fmt.Sprintf(
 			"refusing to read change folder %s: it resolves outside %s", folder, changesBase))
@@ -219,10 +219,18 @@ func changesLabel(mode string) string {
 	return "openspec/changes"
 }
 
-// sourceContained reports whether the change folder is reached through real
-// directories: a symlinked odd/ or odd/changes/ would feed the composer from the
-// other planning tree.
-func sourceContained(folder, changesBase string) bool {
+// modeStep is the tail of a parity blocker: odd has no archive step.
+func modeStep(mode string) string {
+	if mode == planbuild.ModeOdd {
+		return "merge"
+	}
+	return "archive"
+}
+
+// SourceContained reports whether the change folder is reached through real
+// directories: a symlinked odd/ or odd/changes/ would feed the gate or the
+// composer from the other planning tree.
+func SourceContained(folder, changesBase string) bool {
 	for _, path := range []string{filepath.Dir(changesBase), changesBase, folder} {
 		if isSymlink(path) {
 			return false
@@ -233,16 +241,18 @@ func sourceContained(folder, changesBase string) bool {
 
 // oddTaskOnly reports the paired ODD plan of a change that kept no change folder.
 func oddTaskOnly(root, change string) bool {
-	info, err := os.Lstat(planbuild.PlanPath(root, change))
-	return err == nil && info.Mode().IsRegular()
+	return planbuild.PlanIsValid(root, change)
 }
 
 // CheckFolderParity is the read-only half the Plan Build guardian uses: blockers
 // when a delta is unpromoted or cannot be composed. A change with no specs/
 // deltas is a no-op. The canonical root follows the resolved mode, so odd deltas
 // are compared against odd/specs and never against the OpenSpec tree.
+// CheckFolderParity is the OpenSpec guardian's entry point: it always compares
+// against openspec/specs, so an explicit pre-archive keeps its own tree even in
+// an odd-mode repository.
 func CheckFolderParity(root, folder string) []string {
-	return CheckFolderParityForMode(root, folder, planbuild.ResolveRepo(root))
+	return CheckFolderParityForMode(root, folder, planbuild.ModeOpenspec)
 }
 
 // CheckFolderParityForMode is the parity check against a mode the caller already
@@ -256,8 +266,9 @@ func CheckFolderParityForMode(root, folder, mode string) []string {
 		}
 		blockers = append(blockers, fmt.Sprintf(
 			"specs/%s/spec.md is not promoted into %s/%s/spec.md (%s); run "+
-				"`ai-specs specs promote <slug> --root <root>` before archive",
-			plan.Domain, canonicalLabel(mode), plan.Domain, strings.Join(plan.Composition.Pending, ", ")))
+				"`ai-specs specs promote <slug> --root <root>` before %s",
+			plan.Domain, canonicalLabel(mode), plan.Domain,
+			strings.Join(plan.Composition.Pending, ", "), modeStep(mode)))
 	}
 	return blockers
 }

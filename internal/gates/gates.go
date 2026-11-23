@@ -171,12 +171,20 @@ func CheckPremergeOdd(repoRoot, change string) Result {
 	}
 	plan := planbuild.PlanPath(repoRoot, change)
 	var blockers []string
-	if info, err := os.Lstat(plan); err != nil || !info.Mode().IsRegular() {
+	if !planbuild.PlanIsValid(repoRoot, change) {
 		blockers = append(blockers, fmt.Sprintf(
-			"ODD plan 'odd/tasks/%s.md' is missing or is not a regular file for the current branch", change))
+			"ODD plan 'odd/tasks/%s.md' is missing, is not a regular file, or resolves outside the "+
+				"repository for the current branch", change))
 	}
-	folder := filepath.Join(planbuild.ChangesBase(repoRoot, planbuild.ModeOdd), change)
-	blockers = append(blockers, specs.CheckFolderParityForMode(repoRoot, folder, planbuild.ModeOdd)...)
+	changesBase := planbuild.ChangesBase(repoRoot, planbuild.ModeOdd)
+	folder := filepath.Join(changesBase, change)
+	if specs.SourceContained(folder, changesBase) {
+		blockers = append(blockers, specs.CheckFolderParityForMode(repoRoot, folder, planbuild.ModeOdd)...)
+	} else {
+		blockers = append(blockers, fmt.Sprintf(
+			"refusing to read the change folder %s: it is reached through a symlinked odd change tree, "+
+				"so the OpenSpec tree would become the parity source", folder))
+	}
 	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: TierOdd, ArchivePath: plan}
 }
 

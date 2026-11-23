@@ -117,3 +117,40 @@ func TestCheckPremergeOddPassesAPromotedDelta(t *testing.T) {
 		t.Fatalf("ArchivePath = %q, Tier = %q, want the plan and %q", got.ArchivePath, got.Tier, TierOdd)
 	}
 }
+
+// A symlinked tasks directory does not satisfy the paired-plan rule: the plan
+// must be a regular file of the repository, as the production gate requires.
+func TestCheckPremergeOddRefusesASymlinkedTasksDir(t *testing.T) {
+	root := oddRepo(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "thing.md"), []byte("# plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "odd", "tasks")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "odd", "tasks")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	wantBlocked(t, CheckPremergeOdd(root, "thing"), "resolves outside the repository")
+}
+
+// A symlinked odd/changes cannot become the parity source: the OpenSpec tree
+// must never be read as odd input.
+func TestCheckPremergeOddRefusesASymlinkedChangeTree(t *testing.T) {
+	root := oddRepo(t)
+	dir := filepath.Join(root, "openspec", "changes", "thing", "specs", "capability")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "spec.md"), []byte(oddDelta), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "odd", "changes")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "openspec", "changes"), filepath.Join(root, "odd", "changes")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	wantBlocked(t, CheckPremergeOdd(root, "thing"), "symlinked odd change tree")
+}

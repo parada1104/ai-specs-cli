@@ -140,15 +140,23 @@ func TestCheckFolderParityFollowsTheMode(t *testing.T) {
 		[]byte("[recipes.plan-build-flow]\nenabled = true\n\n[recipes.plan-build-flow.config]\nmode = \"odd\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if got := CheckFolderParityForMode(root, folder, planbuild.ModeOdd); len(got) != 1 ||
+		!strings.Contains(got[0], "is not promoted into odd/specs/capability/spec.md (ADDED Added requirement); "+
+			"run `ai-specs specs promote <slug> --root <root>` before merge") {
+		t.Fatalf("odd parity before promotion = %q, want the odd-tree blocker ending in merge", got)
+	}
+	// The OpenSpec entry point keeps its own tree even in an odd repository, so
+	// an explicit pre-archive is unaffected by the mode.
 	if got := CheckFolderParity(root, folder); len(got) != 1 ||
-		!strings.Contains(got[0], "is not promoted into odd/specs/capability/spec.md") {
-		t.Fatalf("CheckFolderParity before promotion = %q, want the odd-tree blocker", got)
+		!strings.Contains(got[0], "openspec/specs/capability/spec.md") ||
+		!strings.Contains(got[0], "before archive") {
+		t.Fatalf("CheckFolderParity = %q, want the OpenSpec blocker ending in archive", got)
 	}
 	if report := PromoteChangeForMode(root, "parity", planbuild.ModeOdd, false); len(report.Blockers) != 0 {
 		t.Fatalf("promote Blockers = %q", report.Blockers)
 	}
-	if got := CheckFolderParity(root, folder); len(got) != 0 {
-		t.Fatalf("CheckFolderParity after promotion = %q, want none", got)
+	if got := CheckFolderParityForMode(root, folder, planbuild.ModeOdd); len(got) != 0 {
+		t.Fatalf("odd parity after promotion = %q, want none", got)
 	}
 }
 

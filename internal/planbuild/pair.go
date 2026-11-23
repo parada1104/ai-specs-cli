@@ -5,6 +5,7 @@ package planbuild
 // current branch name.
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -56,4 +57,24 @@ func SpecsBase(root, mode string) string {
 		return filepath.Join(root, "odd", "specs")
 	}
 	return filepath.Join(root, "openspec", "specs")
+}
+
+// PlanIsValid is the single paired-plan predicate every gate uses: the plan is a
+// regular file and its real path stays inside the repository, so a symlinked
+// odd/tasks cannot point the rule at a file elsewhere.
+func PlanIsValid(repoRoot, change string) bool {
+	plan := PlanPath(repoRoot, change)
+	info, err := os.Lstat(plan)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	real, err := filepath.EvalSymlinks(plan)
+	if err != nil {
+		return false
+	}
+	root, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		root = repoRoot
+	}
+	return real == root || strings.HasPrefix(real, root+string(filepath.Separator))
 }

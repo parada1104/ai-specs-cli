@@ -204,17 +204,13 @@ func planBuildGateCommonDir(probeDir string) string {
 // planBuildGateOddPlan grades the odd-mode plan: the paired plan of the current
 // branch, a regular file at odd/tasks/<change>.md.
 func planBuildGateOddPlan(repoRoot, probeDir, tool, rel string, stderr io.Writer) int {
-	branch := worktreeGateGit(probeDir, "symbolic-ref", "--short", "-q", "HEAD")
+	branch := planbuild.Branch(probeDir)
 	change, ok := planbuild.ChangeFromBranch(branch)
 	if !ok {
 		fmt.Fprintf(stderr, planBuildGateOddBranchRefusal, planBuildGateName, tool, rel)
 		return 2
 	}
-	plan := planbuild.PlanPath(repoRoot, change)
-	// Lstat rejects a symlink at the file itself; the containment check rejects a
-	// symlinked parent (odd/tasks -> elsewhere) that would otherwise satisfy it.
-	if info, err := os.Lstat(plan); err == nil && info.Mode().IsRegular() &&
-		planBuildGateUnder(repoRoot, shared.RealPath(plan)) {
+	if planbuild.PlanIsValid(repoRoot, change) {
 		return 0
 	}
 	fmt.Fprintf(stderr, planBuildGateOddPlanRefusal, planBuildGateName, tool, rel, change, branch)
