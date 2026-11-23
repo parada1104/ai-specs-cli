@@ -64,6 +64,7 @@ const (
 	routeHookField                          // native: `hook field`, JSON value reader for plan-build-gate.sh (GO-20 U2e U-F2a)
 	routeHookNormalizePath                  // native: `hook normalize-path`, canonical hook target (GO-20 U2e U-F2a)
 	routeWorktreeGate                       // direct passthrough to the importable worktree-gate runner
+	routeWorktreeCleanup                    // native: `worktree-cleanup`, the CLI-served post-merge cleanup (T3)
 	routeUnknown                            // unknown command: usage error, exit 2
 )
 
@@ -104,14 +105,15 @@ var native = map[string]route{
 	"hub":                 {kind: routeHub},
 	// init is native for the classic path and delegates the wizard to the shim
 	// itself (odd/tasks/go-20-u4-init.md S6).
-	"init":          {kind: routeInit},
-	"version":       {kind: routeVersion},
-	"-v":            {kind: routeVersion},
-	"--version":     {kind: routeVersion},
-	"help":          {kind: routeHelp},
-	"-h":            {kind: routeHelp},
-	"--help":        {kind: routeHelp},
-	"worktree-gate": {kind: routeWorktreeGate},
+	"init":             {kind: routeInit},
+	"version":          {kind: routeVersion},
+	"-v":               {kind: routeVersion},
+	"--version":        {kind: routeVersion},
+	"help":             {kind: routeHelp},
+	"-h":               {kind: routeHelp},
+	"--help":           {kind: routeHelp},
+	"worktree-gate":    {kind: routeWorktreeGate},
+	"worktree-cleanup": {kind: routeWorktreeCleanup},
 }
 
 // Route resolves the dispatcher decision for args. Bare invocation (no args)
@@ -244,6 +246,8 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 			return runWorktreeGateHook(home, stdin, stdout, stderr, version)
 		}
 		return runner.Run(args[1:], stdin, stdout, stderr, version)
+	case routeWorktreeCleanup:
+		return runWorktreeCleanup(home, args[1:], stdout, stderr)
 	case routeVersion:
 		if len(args) > 1 {
 			fmt.Fprintf(stderr, "ERROR: unexpected positional argument: %s\n", args[1])

@@ -863,10 +863,36 @@ func cleanupRecipeGate(superRoot string, errOut io.Writer) (int, bool) {
 	return 0, true
 }
 
-func runCleanup(superRoot string, cfg cleanupConfig, out, errOut io.Writer) int {
-	if superRoot != "" {
-		superRoot = RealPath(superRoot)
+// CleanupPolicy is the cleanup config the CLI's `worktree-cleanup` verb reads
+// from the per-project sync snapshot (S2). The destructive pass takes every
+// value from here, never from a flag or from ai-specs.toml.
+type CleanupPolicy struct {
+	WorktreesDir      string
+	IntegrationBranch string
+	Topology          string
+	Protected         string
+}
+
+// RunCleanupFromPolicy runs the cleanup pass for a project that has a sync
+// snapshot. It is the same decision path as --cleanup, minus the manifest read:
+// a project with a snapshot already authorized cleanup at sync time.
+func RunCleanupFromPolicy(superRoot string, policy CleanupPolicy, dryRun bool, scopes []string, out, errOut io.Writer) int {
+	cfg := newCleanupConfig(superRoot, policy.WorktreesDir, policy.IntegrationBranch, policy.IntegrationBranch, policy.Topology, dryRun, scopes)
+	for _, name := range strings.Fields(policy.Protected) {
+		cfg.protected[name] = struct{}{}
 	}
+	return runCleanupPasses(superRoot, cfg, out, errOut)
+}
+
+func resolveCleanupRoot(superRoot string) string {
+	if superRoot == "" {
+		return ""
+	}
+	return RealPath(superRoot)
+}
+
+func runCleanup(superRoot string, cfg cleanupConfig, out, errOut io.Writer) int {
+	superRoot = resolveCleanupRoot(superRoot)
 	if superRoot == "" {
 		fmt.Fprintln(errOut, "worktree-cleanup: repository root could not be resolved; no destructive action taken")
 		return 2
@@ -876,6 +902,15 @@ func runCleanup(superRoot string, cfg cleanupConfig, out, errOut io.Writer) int 
 	// subject to the primary-worktree requirement below.
 	if code, ok := cleanupRecipeGate(superRoot, errOut); !ok {
 		return code
+	}
+	return runCleanupPasses(superRoot, cfg, out, errOut)
+}
+
+func runCleanupPasses(superRoot string, cfg cleanupConfig, out, errOut io.Writer) int {
+	superRoot = resolveCleanupRoot(superRoot)
+	if superRoot == "" {
+		fmt.Fprintln(errOut, "worktree-cleanup: repository root could not be resolved; no destructive action taken")
+		return 2
 	}
 	if err := requirePrimaryCleanupCheckout(superRoot); err != nil {
 		fmt.Fprintln(errOut, err)
