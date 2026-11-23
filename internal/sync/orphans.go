@@ -232,7 +232,7 @@ func planRecipeSkillOrphans(recipeRoot, catalogDir string, enabled []materialize
 }
 
 // planRecipeArtifactPrune uses managed ownership, not the skill-hash recipes table.
-func planRecipeArtifactPrune(root string, enabledIDs []string, hooks []any) (func() error, error) {
+func planRecipeArtifactPrune(root string, enabledIDs []string, hooks []any) (func(io.Writer) error, error) {
 	lockPath := filepath.Join(root, "ai-specs", ".ai-specs.lock")
 	lk, err := lock.LoadLock(lockPath)
 	if err != nil {
@@ -277,7 +277,9 @@ func planRecipeArtifactPrune(root string, enabledIDs []string, hooks []any) (fun
 			stale = append(stale, rel)
 		}
 	}
-	return func() error { return applyRecipeArtifactPrune(root, lockPath, doomed, stale, recipeDir, enabled) }, nil
+	return func(out io.Writer) error {
+		return applyRecipeArtifactPrune(root, lockPath, doomed, stale, recipeDir, enabled, out)
+	}, nil
 }
 
 // recipeRetired reports whether the record names a recipe the manifest no
@@ -297,7 +299,7 @@ func managedTargetAbsent(root, rel string) bool {
 	return os.IsNotExist(err)
 }
 
-func applyRecipeArtifactPrune(root, lockPath string, doomed, stale []string, recipeDir func(string, map[string]any) string, enabled map[string]bool) error {
+func applyRecipeArtifactPrune(root, lockPath string, doomed, stale []string, recipeDir func(string, map[string]any) string, enabled map[string]bool, out io.Writer) error {
 	if len(doomed) == 0 && len(stale) == 0 {
 		return nil
 	}
@@ -317,6 +319,11 @@ func applyRecipeArtifactPrune(root, lockPath string, doomed, stale []string, rec
 		// symlinked ancestor below ai-specs/ must not redirect the removal.
 		if err := projectWriteGuard(root, path, false); err != nil {
 			return err
+		}
+		if retiredGateLauncherModified(lk.Managed[rel], rel, path) {
+			// A user-edited gate launcher cannot be preserved: the CLI serves the
+			// gate now, so the file would be dead weight. Say so once.
+			fmt.Fprintf(out, "  ✓ removed user-modified worktree-gate launcher %s (ai-specs now serves it from the CLI)\n", rel)
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
@@ -347,6 +354,24 @@ func applyRecipeArtifactPrune(root, lockPath string, doomed, stale []string, rec
 		return lock.WriteLock(lockPath, lk)
 	}
 	return nil
+}
+
+// retiredGateLauncherModified reports whether rel is the retired worktree-gate
+// launcher the CLI now serves, with bytes differing from the recorded baseline:
+// a copy the user edited and that sync is about to remove.
+func retiredGateLauncherModified(record map[string]any, rel, path string) bool {
+	if rel != shared.HookScriptRelPath("worktree-flow", worktreeGateLauncherScript) {
+		return false
+	}
+	if kind, _ := record["kind"].(string); kind != "gate" {
+		return false
+	}
+	recorded, _ := record["sha256"].(string)
+	if recorded == "" {
+		return false
+	}
+	current, err := lock.Sha256OfFile(path)
+	return err == nil && current != recorded
 }
 
 // orphanScopePrefix mirrors Python _APPLY_SCOPE_MESSAGE_PREFIX. The in-project

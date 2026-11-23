@@ -548,6 +548,28 @@ func hooksEnvLines(env *mcpObj, indent string) string {
 	return sb.String()
 }
 
+// hooksSpawnDecl emits the generated module's spawn target declaration: the
+// module-derived script path for a script hook, or the CLI command a
+// CLI-served hook runs through `sh -c`.
+func hooksSpawnDecl(command, scriptPath string, cliServed bool) string {
+	if cliServed {
+		return "// CLI-served hook: the installed ai-specs CLI decides (a missing CLI\n" +
+			"// fails open); no script is materialized into the project.\n" +
+			"const COMMAND = " + hooksJSONDumpsCompact(command) + ";\n"
+	}
+	return "// The materialized launcher resolves beside this generated module at\n" +
+		"// runtime, so relocating the plugin keeps working from any process cwd.\n" +
+		hooksModuleScriptDecl(scriptPath)
+}
+
+// hooksSpawnTarget is spawnSync's leading arguments for the hook's target.
+func hooksSpawnTarget(cliServed bool) string {
+	if cliServed {
+		return `"sh", ["-c", COMMAND], `
+	}
+	return "SCRIPT, "
+}
+
 // hooksModuleScriptDecl mirrors _module_script_decl.
 func hooksModuleScriptDecl(scriptPath string) string {
 	return "const SCRIPT = fileURLToPath(new URL(\"../../" + scriptPath + "\", import.meta.url));\n"
@@ -560,6 +582,14 @@ func hooksMatcherLiteral(h *mcpObj) string {
 		v = ""
 	}
 	return hooksJSONDumpsCompact(v)
+}
+
+// hooksHookCommand returns the CLI command a resolved hook is served by. A
+// CLI-served hook (cli-served-recipes T2) carries `command` instead of
+// `script_path`; every renderer wires that command and never a script path.
+func hooksHookCommand(h *mcpObj) (string, bool) {
+	command, ok := hooksGet(h, "command").(string)
+	return command, ok && command != ""
 }
 
 // hooksLoadJSONFile mirrors _load_json_file for the read-only resolved hooks input:
@@ -709,13 +739,17 @@ func hooksRenderClaude(h *mcpObj, nativeEvent, projectRoot, guardRoot string, st
 	if mcpJSONTruthy(hooksGet(h, "matcher")) {
 		entry.set("matcher", hooksGet(h, "matcher"))
 	}
-	scriptPath, err := hooksRequireStr(h, "script_path")
-	if err != nil {
-		return err
+	command, cliServed := hooksHookCommand(h)
+	if !cliServed {
+		scriptPath, err := hooksRequireStr(h, "script_path")
+		if err != nil {
+			return err
+		}
+		command = "$CLAUDE_PROJECT_DIR/" + scriptPath
 	}
 	commandHook := newMCPObj()
 	commandHook.set("type", "command")
-	commandHook.set("command", "$CLAUDE_PROJECT_DIR/"+scriptPath)
+	commandHook.set("command", command)
 	env, needsEnv, err := hooksEnvDict(h)
 	if err != nil {
 		return err
@@ -773,11 +807,15 @@ func hooksRenderCursor(h *mcpObj, nativeEvent, projectRoot, guardRoot string, st
 	if err != nil {
 		return "", err
 	}
-	scriptPath, err := hooksRequireStr(h, "script_path")
-	if err != nil {
-		return "", err
+	command, cliServed := hooksHookCommand(h)
+	script := ""
+	if !cliServed {
+		scriptPath, err := hooksRequireStr(h, "script_path")
+		if err != nil {
+			return "", err
+		}
+		script = "$CURSOR_PROJECT_DIR/" + scriptPath
 	}
-	script := "$CURSOR_PROJECT_DIR/" + scriptPath
 	envPrefix, err := hooksEnvAssignments(hooksGet(h, "env"))
 	if err != nil {
 		return "", err
@@ -786,13 +824,23 @@ func hooksRenderCursor(h *mcpObj, nativeEvent, projectRoot, guardRoot string, st
 	var b strings.Builder
 	b.WriteString(hooksCursorHeader)
 	b.WriteString("# maps exit 2 \u2192 Cursor deny (decision channel is stdout JSON, snake_case).\n")
-	b.WriteString("script=\"" + script + "\"\n")
+	if cliServed {
+		b.WriteString("# CLI-served hook: the installed ai-specs CLI decides; a missing CLI fails open.\n")
+		b.WriteString("run_hook() {\n  " + command + "\n}\n")
+	} else {
+		b.WriteString("script=\"" + script + "\"\n")
+	}
 	b.WriteString("input=\"$(cat)\"\n")
 	b.WriteString("out=\"$(printf %s \"$input\" | ")
 	if envPrefix != "" {
 		b.WriteString(envPrefix + " ")
 	}
-	b.WriteString("\"$script\")\"; code=$?\n")
+	if cliServed {
+		b.WriteString("run_hook")
+	} else {
+		b.WriteString("\"$script\"")
+	}
+	b.WriteString(")\"; code=$?\n")
 	b.WriteString("if [ \"$code\" = 2 ]; then\n")
 	// Deny message -> JSON scalar with POSIX awk under LC_ALL=C: matches
 	// json.dumps for ASCII (0x01-0x1f as \u00XX, DEL raw) but emits non-ASCII
@@ -851,9 +899,13 @@ func hooksRenderOpencode(h *mcpObj, nativeEvent, projectRoot, guardRoot string) 
 	if err != nil {
 		return "", err
 	}
-	scriptPath, err := hooksRequirePyStr(h, "script_path")
-	if err != nil {
-		return "", err
+	command, cliServed := hooksHookCommand(h)
+	scriptPath := ""
+	if !cliServed {
+		scriptPath, err = hooksRequirePyStr(h, "script_path")
+		if err != nil {
+			return "", err
+		}
 	}
 
 	var b strings.Builder
@@ -862,12 +914,12 @@ func hooksRenderOpencode(h *mcpObj, nativeEvent, projectRoot, guardRoot string) 
 	b.WriteString("// on stdin; exit 2 -> throw (block). NOTE: tool.execute.before does NOT\n")
 	b.WriteString("// fire for subagent (#5894) or MCP (#2319) tool calls.\n")
 	b.WriteString("import { spawnSync } from \"node:child_process\";\n")
-	b.WriteString("import { fileURLToPath } from \"node:url\";\n")
+	if !cliServed {
+		b.WriteString("import { fileURLToPath } from \"node:url\";\n")
+	}
 	b.WriteString("import { isAbsolute } from \"node:path\";\n")
 	b.WriteString("import { statSync } from \"node:fs\";\n\n")
-	b.WriteString("// The materialized launcher resolves beside this generated module at\n")
-	b.WriteString("// runtime, so relocating the plugin keeps working from any process cwd.\n")
-	b.WriteString(hooksModuleScriptDecl(scriptPath))
+	b.WriteString(hooksSpawnDecl(command, scriptPath, cliServed))
 	b.WriteString("const MATCHER = " + hooksMatcherLiteral(h) + ";\n")
 	b.WriteString("const ENV = {\n")
 	b.WriteString(envLines)
@@ -906,7 +958,7 @@ func hooksRenderOpencode(h *mcpObj, nativeEvent, projectRoot, guardRoot string) 
 	b.WriteString("      };\n")
 	b.WriteString("      let res;\n")
 	b.WriteString("      try {\n")
-	b.WriteString("        res = spawnSync(SCRIPT, {\n")
+	b.WriteString("        res = spawnSync(" + hooksSpawnTarget(cliServed) + "{\n")
 	b.WriteString("          input: JSON.stringify(event),\n")
 	b.WriteString("          env: { ...process.env, ...ENV },\n")
 	b.WriteString("          cwd,\n")
@@ -956,20 +1008,29 @@ func hooksRenderPiExt(h *mcpObj, dir, extImport, adapter, nativeEvent, guardRoot
 	if err != nil {
 		return "", err
 	}
-	scriptPath, err := hooksRequirePyStr(h, "script_path")
-	if err != nil {
-		return "", err
+	command, cliServed := hooksHookCommand(h)
+	scriptPath := ""
+	if !cliServed {
+		scriptPath, err = hooksRequirePyStr(h, "script_path")
+		if err != nil {
+			return "", err
+		}
 	}
 
 	var b strings.Builder
 	b.WriteString(hooksTSHeader + recipe + ":" + id + " (event " + event + ").\n")
 	b.WriteString("import type { ExtensionAPI } from \"" + extImport + "\";\n")
 	b.WriteString("import { spawnSync } from \"node:child_process\";\n")
-	b.WriteString("import { fileURLToPath } from \"node:url\";\n\n")
-	b.WriteString("// The materialized launcher resolves beside this generated module at\n")
-	b.WriteString("// runtime; the " + adapter + " event context stays process cwd (no workspace root\n")
-	b.WriteString("// is claimed by this adapter).\n")
-	b.WriteString(hooksModuleScriptDecl(scriptPath))
+	if cliServed {
+		b.WriteString("\n")
+		b.WriteString(hooksSpawnDecl(command, scriptPath, cliServed))
+	} else {
+		b.WriteString("import { fileURLToPath } from \"node:url\";\n\n")
+		b.WriteString("// The materialized launcher resolves beside this generated module at\n")
+		b.WriteString("// runtime; the " + adapter + " event context stays process cwd (no workspace root\n")
+		b.WriteString("// is claimed by this adapter).\n")
+		b.WriteString(hooksModuleScriptDecl(scriptPath))
+	}
 	b.WriteString("const MATCHER = " + hooksMatcherLiteral(h) + ";\n")
 	b.WriteString("const ENV: Record<string, string> = {\n")
 	b.WriteString(envLines)
@@ -995,7 +1056,7 @@ func hooksRenderPiExt(h *mcpObj, dir, extImport, adapter, nativeEvent, guardRoot
 	b.WriteString("      tool_input: { ...rawInput, file_path: rawInput.file_path ?? rawInput.path ?? rawInput.notebook_path },\n")
 	b.WriteString("      cwd: process.cwd(),\n")
 	b.WriteString("    };\n")
-	b.WriteString("    const res = spawnSync(SCRIPT, {\n")
+	b.WriteString("    const res = spawnSync(" + hooksSpawnTarget(cliServed) + "{\n")
 	b.WriteString("      input: JSON.stringify(event),\n")
 	b.WriteString("      env: { ...process.env, ...ENV },\n")
 	b.WriteString("      encoding: \"utf8\",\n")

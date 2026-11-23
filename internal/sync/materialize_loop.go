@@ -67,6 +67,17 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 		return nil, err
 	}
 	mergedCfg := materializeProjectOwnedConfig(req.ProjectRoot, req.Recipe.ID, req.Merge.Config)
+	// A CLI-served hook (T2) is served from the snapshot the CLI reads, so sync
+	// records the resolved runtime config it just merged.
+	if recipeServesCLIHook(req.Recipe.ID, recipe) {
+		snapshot, snapErr := runtimeSnapshotFromConfig(mergedCfg)
+		if snapErr != nil {
+			return nil, snapErr
+		}
+		if _, snapErr := projectcache.WriteRuntimeSnapshot(req.ProjectRoot, req.AISpecsHome, snapshot); snapErr != nil {
+			return nil, snapErr
+		}
+	}
 	lockPath := filepath.Join(req.ProjectRoot, "ai-specs", ".ai-specs.lock")
 	roots := CopyRoots{
 		RecipeSkillsRoot: projectcache.RecipeSkillsRoot(req.ProjectRoot, req.AISpecsHome),
@@ -127,6 +138,12 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 
 	resolvedHooks := []any{}
 	for _, rhook := range recipe.RuntimeHooks {
+		if cliServedHookCommand(req.Recipe.ID, rhook) != "" {
+			// CLI-served: no launcher bytes to materialize; the resolved entry
+			// carries the CLI command every renderer wires.
+			resolvedHooks = append(resolvedHooks, materializeResolvedHookEntry(req.Recipe.ID, rhook, "", mergedCfg))
+			continue
+		}
 		entry, err := materializeRuntimeHook(req, recipeDir, lockPath, rhook, mergedCfg)
 		if err != nil {
 			return nil, err
@@ -474,7 +491,11 @@ func materializeResolvedHookEntry(recipeID string, rhook *schema.RuntimeHook, sc
 	entry.set("event", rhook.Event)
 	entry.set("matcher", rhook.Matcher)
 	entry.set("blocking", rhook.Blocking)
-	entry.set("script_path", scriptPath)
+	if command := cliServedHookCommand(recipeID, rhook); command != "" {
+		entry.set("command", command)
+	} else {
+		entry.set("script_path", scriptPath)
+	}
 	env := newMCPObj()
 	for _, key := range sortedStrings(materializeEnvKeys(mergedCfg)) {
 		env.set(key, materializePyStr(mergedCfg[key]))

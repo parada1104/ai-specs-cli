@@ -240,6 +240,9 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		if data, err := os.ReadFile(filepath.Join(home, "VERSION")); err == nil {
 			version = strings.TrimRight(string(data), "\r\n")
 		}
+		if _, hookMode := worktreeGateHookRequest(args[1:]); hookMode {
+			return runWorktreeGateHook(home, stdin, stdout, stderr, version)
+		}
 		return runner.Run(args[1:], stdin, stdout, stderr, version)
 	case routeVersion:
 		if len(args) > 1 {

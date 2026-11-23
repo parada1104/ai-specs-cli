@@ -302,7 +302,7 @@ func (r *runner) run(opts options) int {
 	}
 	// Plan all prunes before project writes, including bundled refresh of the lock.
 	enabled, hooks, commands, inputErr := loadPruneInputs(root, r.home)
-	var applyRecipePrune func() error
+	var applyRecipePrune func(io.Writer) error
 	var applyCommandPrune func(io.Writer) (map[string]bool, error)
 	var applyAgentPrune func(io.Writer, io.Writer) error
 	retired := map[string]bool{}
@@ -465,7 +465,7 @@ func (r *runner) run(opts options) int {
 		fmt.Fprintf(r.stderr, "ERROR: cannot plan prune: %v\n", inputErr)
 		return 1
 	}
-	if err := applyRecipePrune(); err != nil {
+	if err := applyRecipePrune(r.stderr); err != nil {
 		fmt.Fprintf(r.stderr, "ERROR: cannot prune recipe artifacts: %v\n", err)
 		return 1
 	}
