@@ -269,7 +269,7 @@ dated-plus-undated candidates.
 
 This OpenSpec archive is Plan Build's change-folder boundary and is separate from
 a tracker recipe's `archive-close` checkpoint: `archive-close` is tracker item
-closure through the tracker gate's direct host mode (`tracker-card-gate.sh --root
+closure through the tracker gate verb (`ai-specs tracker-card-gate --root
 <root> --checkpoint archive-close`), never moving the change folder, never
 inferring closure from archive state, and writing nothing. The pre-merge
 artifact guardian is tracker-free.
@@ -528,7 +528,7 @@ requires a `## Tracker` link section before production/PR-archive work.
 
 - **Provides:** skill `trello-mcp-workflow`, command `/trello-workflow`, 6 card
   templates, an MCP preset, dual runtime hooks (`tracker-card-gate` +
-  `tracker-card-gate-shell`); capability `tracker` (+ `trello-session-bootstrap`,
+  `tracker-card-gate-shell`, both served by `ai-specs tracker-card-gate`); capability `tracker` (+ `trello-session-bootstrap`,
   `trello-card-linking`, `trello-state-sync`, `trello-progress-comment`).
 - **Config:**
 

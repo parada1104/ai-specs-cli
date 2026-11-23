@@ -142,15 +142,15 @@ on it.
 ### Tracker lifecycle host (`pre-merge`, `archive-close`)
 
 The `pre-merge` and `archive-close` checkpoints are Plan Build-independent: the
-shell host grades them with **no `openspec/` tree**. The host is also advisory —
+`ai-specs tracker-card-gate` verb grades them with **no `openspec/` tree**. It is
+also advisory —
 it reports every verdict and exits `0`, so a lifecycle check never blocks merge
 or close. Run its direct host mode at the lifecycle boundary — it is the generic
 command a future Jira/Linear recipe reuses unchanged:
 
 ```bash
-GATE=ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh
-bash "$GATE" --root "$PWD" --checkpoint pre-merge <slug>
-bash "$GATE" --root "$PWD" --checkpoint archive-close <slug>
+ai-specs tracker-card-gate --root "$PWD" --checkpoint pre-merge <slug>
+ai-specs tracker-card-gate --root "$PWD" --checkpoint archive-close <slug>
 ```
 
 `--root` is required (the resolved project root, never the process cwd) and the
@@ -239,7 +239,7 @@ JSON. Grade paths keep failing open.
 
 ### Evidence sides
 
-`tracker-card-gate.sh` (pre-tool-use hook and direct host mode) passes a
+`ai-specs tracker-card-gate` (pre-tool-use hook and direct host mode) passes a
 bridge-built `--evidence`
 file (`ai-specs tracker evidence`, acquisition only): `local` is the ledger's
 own store snapshot, `code` is the change's `## Tracker` `card_id`, and `git` is that
@@ -276,9 +276,11 @@ performs **no** Trello MCP/API create, update, move, comment, or label call —
 vocabulary (board, lists, labels, card type) stays in `[config.*]` and out of the
 ledger core item fields and the `## Tracker` contract.
 
-Dual hooks share one script: `tracker-card-gate` (Edit/Write/…) and
-`tracker-card-gate-shell` (Bash/Shell/…). Both are declared `blocking = false`:
-their metadata is advisory, matching the host's advisory verdicts.
+Dual hooks share one CLI verb: `tracker-card-gate` (Edit/Write/…) and
+`tracker-card-gate-shell` (Bash/Shell/…) both exec `ai-specs tracker-card-gate`,
+and the event on stdin decides the checkpoint. Both are declared
+`blocking = false`: their metadata is advisory, matching the verb's advisory
+verdicts. No `.sh` launcher is materialized into `ai-specs/recipes/`.
 
 ## Residual platform gaps
 

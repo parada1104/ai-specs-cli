@@ -220,9 +220,8 @@ host mode — this is the generic lifecycle command, and a future Jira/Linear
 recipe reuses it unchanged:
 
 ```bash
-GATE=ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh
-bash "$GATE" --root "$PWD" --checkpoint pre-merge <slug>
-bash "$GATE" --root "$PWD" --checkpoint archive-close <slug>
+ai-specs tracker-card-gate --root "$PWD" --checkpoint pre-merge <slug>
+ai-specs tracker-card-gate --root "$PWD" --checkpoint archive-close <slug>
 ```
 
 `--root` is required and is the resolved project root, never the process cwd. The
@@ -233,10 +232,10 @@ compatibility alias for `--checkpoint pre-merge|archive-close`.
 **`archive-close` is tracker item closure, not an OpenSpec archive.** It asks the
 one Go predicate whether the bound tracker item can be closed. It never moves
 `openspec/changes/<slug>/`, never reads an OpenSpec archive to infer or select
-closure, and never writes. The host is acquisition only: it resolves the mode,
+closure, and never writes. The verb is acquisition only: it resolves the mode from the last sync snapshot,
 builds local evidence through `ai-specs tracker evidence`, calls
-`worktree-gate --ledger --checkpoint <name>`, and reports the verdict. The host
-is advisory: `block` / `ask` / `needs-item` are reported on stderr and it exits
+`worktree-gate --ledger --checkpoint <name>`, and reports the verdict. It is
+advisory: `block` / `ask` / `needs-item` are reported on stderr and it exits
 `0`, so a Tracker checkpoint never blocks a merge, a close, or source work. No
 provider write, no network, no second grader.
 

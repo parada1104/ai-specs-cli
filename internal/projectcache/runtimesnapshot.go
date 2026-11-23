@@ -22,11 +22,16 @@ import (
 // RuntimeSnapshotFile is the snapshot's leaf name inside the project cache.
 const RuntimeSnapshotFile = "runtime.toml"
 
-// runtimeSnapshotTable is the snapshot's single table name.
-const runtimeSnapshotTable = "worktree_gate"
+// runtimeSnapshotTable is the worktree-flow table; runtimeSnapshotTrackerTable
+// carries the tracker ledger's legacy gate_mode hint (T6).
+const (
+	runtimeSnapshotTable        = "worktree_gate"
+	runtimeSnapshotTrackerTable = "tracker_gate"
+)
 
-// RuntimeSnapshot is the resolved worktree-flow runtime config of the last
-// sync. Every field is the exact value the retired launcher was stamped with.
+// RuntimeSnapshot is the resolved recipe runtime config of the last sync. Every
+// worktree-flow field is the exact value the retired launcher was stamped with;
+// TrackerGateMode is the hint tracker-card-gate.sh was stamped with.
 type RuntimeSnapshot struct {
 	GateMode          string
 	GateScope         string
@@ -34,6 +39,7 @@ type RuntimeSnapshot struct {
 	Protected         string
 	WorktreesDir      string
 	IntegrationBranch string
+	TrackerGateMode   string
 }
 
 // RuntimeSnapshotPath is the snapshot location for a project. It does not
@@ -98,6 +104,12 @@ func renderRuntimeSnapshot(snap RuntimeSnapshot) string {
 		}
 		sb.WriteString(field.key + " = " + quoted + "\n")
 	}
+	sb.WriteString("\n[" + runtimeSnapshotTrackerTable + "]\n")
+	quoted, err := toml.TOMLValue(snap.TrackerGateMode)
+	if err != nil {
+		quoted = `""`
+	}
+	sb.WriteString("gate_mode = " + quoted + "\n")
 	return sb.String()
 }
 
@@ -143,6 +155,15 @@ func ReadRuntimeSnapshot(projectRoot, cliHome string) (RuntimeSnapshot, bool, er
 			return RuntimeSnapshot{}, false, nil
 		}
 		*field.dest = text
+	}
+	// The tracker table is optional: a snapshot written before T6 has no hint,
+	// and the ledger then resolves from env and the manifest as it always did.
+	if trackerVal, ok := root.Get(runtimeSnapshotTrackerTable); ok {
+		if trackerTable, ok := trackerVal.(*toml.Table); ok {
+			if text, isString := trackerTable.Get("gate_mode"); isString {
+				snap.TrackerGateMode, _ = text.(string)
+			}
+		}
 	}
 	return snap, true, nil
 }

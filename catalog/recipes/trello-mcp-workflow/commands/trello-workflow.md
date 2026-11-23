@@ -59,12 +59,11 @@ At a delivery, review, or merge lifecycle transition the agent/provider adapter 
 
 ## Tracker lifecycle checkpoints
 
-The tracker ledger lifecycle is Plan Build-independent and needs no `openspec/` tree. Grade it directly with the tracker gate's shell host:
+The tracker ledger lifecycle is Plan Build-independent and needs no `openspec/` tree. Grade it directly with the tracker gate verb:
 
 ```bash
-GATE=ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh
-bash "$GATE" --root "$PWD" --checkpoint pre-merge <slug>
-bash "$GATE" --root "$PWD" --checkpoint archive-close <slug>
+ai-specs tracker-card-gate --root "$PWD" --checkpoint pre-merge <slug>
+ai-specs tracker-card-gate --root "$PWD" --checkpoint archive-close <slug>
 ```
 
 `--root` is required; the slug is optional. `--stage pre-merge|pre-archive` stays as a compatibility alias for `--checkpoint pre-merge|archive-close`. **`archive-close` is tracker item closure, not an OpenSpec archive** — it never infers a close from archive state. A provider recipe only maps native state through `[config.reconcile]`; it does not enable, configure, or implement the ledger.
