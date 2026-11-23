@@ -121,3 +121,31 @@ func TestCheckGateProvenanceMissingTrackedScript(t *testing.T) {
 	d.checkGateProvenance()
 	assertChecks(t, d, []Check{})
 }
+
+// TestCheckGateProvenanceSkipsCLIServedScripts pins the single-owner rule: a
+// stale launcher left at a CLI-served hook path is reported by
+// checkWorktreeGate, never as a provenance question.
+func TestCheckGateProvenanceSkipsCLIServedScripts(t *testing.T) {
+	for _, script := range []string{"worktree-gate.sh", "tracker-card-gate.sh", "plan-build-gate.sh"} {
+		t.Run(script, func(t *testing.T) {
+			root := t.TempDir()
+			home := t.TempDir()
+			body := "[recipe]\n" +
+				"id = \"myrecipe\"\n" +
+				"name = \"My Recipe\"\n" +
+				"description = \"desc\"\n" +
+				"version = \"1.0.0\"\n\n" +
+				"[[provides.hooks]]\n" +
+				"id = \"my-hook\"\n" +
+				"event = \"pre-tool-use\"\n" +
+				"script = \"hooks/" + script + "\"\n"
+			writeFile(t, filepath.Join(home, "catalog", "recipes", "myrecipe", "recipe.toml"), body)
+			writeFile(t, filepath.Join(root, "ai-specs", "recipes", "myrecipe", "hooks", script), "#!/bin/sh\nexit 0\n")
+			writeManifest(t, root, overrideManifest("myrecipe", ""))
+
+			d := New(root, home)
+			d.checkGateProvenance()
+			assertChecks(t, d, []Check{})
+		})
+	}
+}
