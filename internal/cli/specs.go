@@ -74,8 +74,6 @@ func runSpecsDispatch(args []string, stdout, stderr io.Writer) int {
 
 // runSpecsPromote is the verb's own argument contract (slug, --root,
 // --allow-removed) and the Python main()'s reporting.
-// runSpecsPromote is the verb's own argument contract (slug, --root,
-// --allow-removed) and the Python main()'s reporting.
 func runSpecsPromote(args []string, stdout, stderr io.Writer) int {
 	slug := ""
 	root := ""

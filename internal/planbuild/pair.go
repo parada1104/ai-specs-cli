@@ -5,9 +5,20 @@ package planbuild
 // current branch name.
 
 import (
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+// Branch is the current branch name, born or unborn; "" when HEAD is detached.
+// symbolic-ref answers an unborn branch, where rev-parse --abbrev-ref fails.
+func Branch(root string) string {
+	out, err := exec.Command("git", "-C", root, "symbolic-ref", "--short", "-q", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
 
 // ChangeFromBranch returns the change name: the last path segment of the branch
 // with every prefix stripped, so feat/x, fix/x and user/feat/x all give x. A

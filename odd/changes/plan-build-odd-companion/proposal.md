@@ -67,7 +67,7 @@ The explicit `mode = "odd"` is the answer, and it wins.
 - No Light/Standard/Full simplification.
 - No tracker ledger policy change (see the open points in the task file).
 - No migration of the 55 existing canonical domains from `openspec/specs/`.
-- No Go changes in this preparation session.
+- No Go changes in the *preparation* session (superseded: the implementation followed, four commits).
 
 ## Consequences and risks
 

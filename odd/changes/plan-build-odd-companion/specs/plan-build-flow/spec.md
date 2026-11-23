@@ -270,6 +270,10 @@ and writes `openspec/specs/<domain>/spec.md`. In `odd` mode it reads
 `odd/changes/<slug>/specs/<domain>/spec.md` and writes
 `odd/specs/<domain>/spec.md`, and it SHALL NOT read or write `openspec/specs/`.
 
+In `odd` mode the pre-merge guardian SHALL discover the change from the branch pairing
+and validate only the paired plan and the promotion parity of its deltas; the archive
+step and the tier artifact minima belong to `openspec` mode.
+
 The artifact guardian validates **promotion parity** — every archived
 Standard/Full delta requirement is present in its canonical spec and no
 destructive or unresolved delta remains. Promotion parity is a read-only check:
@@ -312,3 +316,12 @@ canonical spec nor a promotion blocker is invented for them.
 - WHEN `ai-specs specs promote <slug> --root <root>` runs
 - THEN the requirement is composed into `odd/specs/<domain>/spec.md`
 - AND `openspec/specs/<domain>/spec.md` is byte-identical afterward
+
+#### Scenario: ODD pre-merge validates the paired plan and delta parity
+
+- GIVEN the resolved mode is `odd` and the branch pairs with `odd/tasks/<change>.md`
+- WHEN the pre-merge guardian runs
+- THEN it blocks when that plan is missing or is not a regular file of the repository
+- AND it blocks when a delta under `odd/changes/<change>/specs/` is not promoted into `odd/specs/`
+- AND it requires neither an archive nor a tier artifact minimum
+- AND a change with no delta passes with its plan alone

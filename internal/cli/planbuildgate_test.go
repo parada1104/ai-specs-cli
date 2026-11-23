@@ -427,9 +427,10 @@ func planBuildCommonDir(t *testing.T, repo string) string {
 // planBuildOddRefusal is the ODD plan refusal, verbatim.
 func planBuildOddRefusal(tool, rel, change, branch string) string {
 	return "plan-build-gate: refusing to " + tool + " '" + rel + "' — ODD mode is active but the ODD plan " +
-		"'odd/tasks/" + change + ".md' is missing or is not a regular file for branch '" + branch + "'. " +
-		"Write the plan first, or declare mode = \"openspec\" in ai-specs/ai-specs.toml to use the " +
-		"OpenSpec flow. Writing planning artifacts under odd/ is never blocked.\n"
+		"'odd/tasks/" + change + ".md' is missing, is not a regular file, or resolves outside the " +
+		"repository for branch '" + branch + "'. Write the plan first, or declare mode = \"openspec\" " +
+		"in ai-specs/ai-specs.toml to use the OpenSpec flow. Writing planning artifacts under odd/ " +
+		"is never blocked.\n"
 }
 
 // planBuildOddBranchRefusal is the ODD detached-HEAD refusal, verbatim.
@@ -542,6 +543,26 @@ func TestPlanBuildGateOddModeAllowsOnAnUnbornBranch(t *testing.T) {
 	planBuildWriteOddPlan(t, repo, "odd-change")
 	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("gate on an unborn branch = (%d, %q, %q), want silence", code, stdout, stderr)
+	}
+}
+
+// A symlink in a parent component is not containment: odd/tasks pointing outside
+// the repository does not satisfy the paired-plan rule.
+func TestPlanBuildGateOddModeRefusesASymlinkedTasksDir(t *testing.T) {
+	repo, branch := oddRepo(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "odd-change.md"), []byte("# plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(repo, "odd", "tasks")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repo, "odd", "tasks")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	want := planBuildOddRefusal("Write", "src/app.go", "odd-change", branch)
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
+		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
 	}
 }
 

@@ -94,9 +94,10 @@ const planBuildGateNearestRefusal = "%s: refusing to %s '%s' — no active chang
 // planBuildGateOddPlanRefusal is the odd-mode refusal for a missing or
 // non-regular paired plan.
 const planBuildGateOddPlanRefusal = "%s: refusing to %s '%s' — ODD mode is active but the ODD plan " +
-	"'odd/tasks/%s.md' is missing or is not a regular file for branch '%s'. Write the plan first, " +
-	"or declare mode = \"openspec\" in ai-specs/ai-specs.toml to use the OpenSpec flow. Writing " +
-	"planning artifacts under odd/ is never blocked.\n"
+	"'odd/tasks/%s.md' is missing, is not a regular file, or resolves outside the repository " +
+	"for branch '%s'. Write the plan first, or declare mode = \"openspec\" in " +
+	"ai-specs/ai-specs.toml to use the OpenSpec flow. Writing planning artifacts under odd/ is " +
+	"never blocked.\n"
 
 // planBuildGateOddBranchRefusal is the odd-mode refusal for an unresolvable branch.
 const planBuildGateOddBranchRefusal = "%s: refusing to %s '%s' — ODD mode is active but the current " +
@@ -209,7 +210,11 @@ func planBuildGateOddPlan(repoRoot, probeDir, tool, rel string, stderr io.Writer
 		fmt.Fprintf(stderr, planBuildGateOddBranchRefusal, planBuildGateName, tool, rel)
 		return 2
 	}
-	if info, err := os.Lstat(planbuild.PlanPath(repoRoot, change)); err == nil && info.Mode().IsRegular() {
+	plan := planbuild.PlanPath(repoRoot, change)
+	// Lstat rejects a symlink at the file itself; the containment check rejects a
+	// symlinked parent (odd/tasks -> elsewhere) that would otherwise satisfy it.
+	if info, err := os.Lstat(plan); err == nil && info.Mode().IsRegular() &&
+		planBuildGateUnder(repoRoot, shared.RealPath(plan)) {
 		return 0
 	}
 	fmt.Fprintf(stderr, planBuildGateOddPlanRefusal, planBuildGateName, tool, rel, change, branch)

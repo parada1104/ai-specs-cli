@@ -30,6 +30,8 @@ Card: `6b0458aac00e111e539bf60b` — [fFNNuMFY](https://trello.com/c/fFNNuMFY)
 | T7 | S9 | Aislamiento de `openspec` mode: `./tests/run.sh` y el resto de la suite Go sin cambios de expectativas. Cualquier diff en el flujo `openspec` es regresión, no ajuste. | inline | pendiente |
 | T8 | — | Cierre: `./tests/validate.sh`, `docs/go-migration-parity-contract.md` con las superficies nuevas, y decisión sobre los puntos abiertos de abajo. | inline | pendiente |
 
+**Estado**: T1–T6 y T8 implementados en `2598c1f`, `59dca51`, `76daeec`, `de76962` y `83b7a1c`; T7 verificado con la suite y con la paridad comparada contra el baseline de `development`. El smoke del binario en un repo temporal cubre gate, promoción y premerge en ambos modos.
+
 ## Puntos abiertos
 
 ### A. `work-start` del ledger en modo `odd`
@@ -42,7 +44,7 @@ Propuesta: **no cambiar la política**. El tracker sigue siendo una obligación 
 
 Evidencia: `internal/gates/gates.go:115-137` exige carpeta activa en `openspec/changes/<slug>/` y luego su archivado; `internal/gates/archive.go:21` busca `openspec/changes/archive/<slug>/`. El modo `odd` no tiene ciclo de vida de OpenSpec, así que ambos chequeos se quedan sin objeto.
 
-Propuesta: en `odd`, `premerge` valida (a) que exista el plan `odd/tasks/<change>.md`, (b) que cada delta de `odd/changes/<slug>/specs/*/spec.md` esté promovido en `odd/specs/` (paridad leída en el root `odd`), y (c) que no se exija carpeta activa ni archivado. Es decisión humana: si se acepta, es una tarea propia dentro de este change; si no, `premerge` queda sin definir en `odd` y hay que decirlo en la doc en vez de dejar que bloquee por una carpeta que ya no existe.
+**Resuelto por Robert** (L7): el CLI resuelve el modo con el mismo resolvedor que el gate (`planbuild.ResolveRepo`), descubre el change por el emparejamiento de rama (`planbuild.Branch` + `ChangeFromBranch`) y valida la paridad `odd/changes/<change>/specs/` → `odd/specs/`; no exige archivado de OpenSpec y un change sin delta pasa con su plan. Implementado en `gates.CheckPremergeOdd` + `specs.CheckFolderParityForMode`.
 
 ### C. Dos árboles canónicos
 
@@ -78,3 +80,5 @@ Propuesta: el change debe exigir que `odd/specs/` y `odd/changes/` estén versio
 - **L4** — Robert decidió el diseño completo (S1–S9) y pidió señal de detección robusta y verificable para "Gentle Shell presente", descartando las frágiles.
 - **L5** — Robert, verbatim: *"No commitees, no hagas push y no toques todavía el código Go."*
 - **L6** — Señal elegida: `<git-common-dir>/gentle-ai/`. Descartadas por frágiles: `.pi/.claude/.cursor/.omp/.opencode` (los crea `ai-specs sync` para cualquier target), `AGENTS.md`, registros de hook en `ai-specs/.ai-specs.lock`, `$HOME/.gentle-shell` (máquina, no proyecto), variables `PI_*` (no verificables desde un CLI suelto) y la mera presencia de `odd/tasks/*.md` (154 ficheros versionados: satisfaría el gate para siempre).
+- **L7** — Robert decidió, verbatim: *«claramente el gate debe permitir ambos modos; por eso decidimos dejar todo eso del lado del CLI, porque el CLI puede dar una configuración más determinista del modo y del estado»*. Confirma que el repo quede en `odd` por `auto` al mergear, y pide el premerge ODD en este PR y en la misma corrección que los hallazgos R1-001 y R1-002.
+- **L8** — Decisiones técnicas de "entrega en odd" (mías, según el criterio de L7): (a) el veredicto es plan emparejado + paridad de deltas; ni archivado, ni mínimos de tier, ni `verify-report.md`, porque en ODD la verificación es de ODD; (b) `--stage pre-archive` sigue siendo solo de `openspec`; (c) `<slug>` se acepta y se ignora en `odd`, porque el change viene de la rama; (d) una rama sin commits empareja igual (`symbolic-ref`), y HEAD detached bloquea; (e) el plan y la carpeta del change deben estar contenidos en el repo, así un symlink en un componente padre no los resuelve a otra parte; (f) `openspec` no cambia: el empaquetado de symlinks y el guardián son los mismos.

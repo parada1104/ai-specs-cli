@@ -173,6 +173,12 @@ func PromoteChangeForMode(root, slug, mode string, allowRemoved bool) PromotionR
 				changesLabel(mode), slug))
 		return report
 	}
+	if mode == planbuild.ModeOdd && !sourceContained(folder, changesBase) {
+		// A symlinked odd/changes would feed the composer from the other tree.
+		report.Blockers = append(report.Blockers, fmt.Sprintf(
+			"refusing to read change folder %s: it resolves outside %s", folder, changesBase))
+		return report
+	}
 
 	plans, blockers := planDomains(folder, planbuild.SpecsBase(planning, mode), allowRemoved)
 	report.Plans = plans
@@ -213,6 +219,18 @@ func changesLabel(mode string) string {
 	return "openspec/changes"
 }
 
+// sourceContained reports whether the change folder is reached through real
+// directories: a symlinked odd/ or odd/changes/ would feed the composer from the
+// other planning tree.
+func sourceContained(folder, changesBase string) bool {
+	for _, path := range []string{filepath.Dir(changesBase), changesBase, folder} {
+		if isSymlink(path) {
+			return false
+		}
+	}
+	return true
+}
+
 // oddTaskOnly reports the paired ODD plan of a change that kept no change folder.
 func oddTaskOnly(root, change string) bool {
 	info, err := os.Lstat(planbuild.PlanPath(root, change))
@@ -224,7 +242,13 @@ func oddTaskOnly(root, change string) bool {
 // deltas is a no-op. The canonical root follows the resolved mode, so odd deltas
 // are compared against odd/specs and never against the OpenSpec tree.
 func CheckFolderParity(root, folder string) []string {
-	mode := planbuild.ResolveRepo(root)
+	return CheckFolderParityForMode(root, folder, planbuild.ResolveRepo(root))
+}
+
+// CheckFolderParityForMode is the parity check against a mode the caller already
+// resolved, so a caller that knows the mode (the pre-merge gate) reads one tree
+// instead of resolving again.
+func CheckFolderParityForMode(root, folder, mode string) []string {
 	plans, blockers := planDomains(folder, planbuild.SpecsBase(root, mode), false)
 	for _, plan := range plans {
 		if len(plan.Composition.Pending) == 0 {

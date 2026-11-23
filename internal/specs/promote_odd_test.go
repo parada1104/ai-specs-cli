@@ -171,6 +171,32 @@ func TestPromoteOddTaskOnlyWithoutChangeFolder(t *testing.T) {
 	}
 }
 
+// A symlinked odd/changes must not feed the composer from the OpenSpec tree.
+func TestPromoteOddModeRefusesASymlinkedChangeTree(t *testing.T) {
+	root := newOddRepo(t)
+	writeDelta(t, root, "leak", "capability", deltaDoc(addedSection(addedBlock)))
+	if err := os.MkdirAll(filepath.Join(root, "openspec", "changes", "leak", "specs", "capability"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "openspec", "changes", "leak", "specs", "capability", "spec.md"),
+		[]byte(deltaDoc(addedSection(addedBlock))), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "odd", "changes")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "openspec", "changes"), filepath.Join(root, "odd", "changes")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	report := PromoteChangeForMode(root, "leak", planbuild.ModeOdd, false)
+	if len(report.Blockers) != 1 || !strings.Contains(report.Blockers[0], "resolves outside") {
+		t.Fatalf("Blockers = %q, want the containment refusal", report.Blockers)
+	}
+	if _, err := os.Stat(oddCanonical(root, "capability")); !os.IsNotExist(err) {
+		t.Fatalf("odd/specs was written through a symlinked change tree (err = %v)", err)
+	}
+}
+
 // The OpenSpec entry point keeps the OpenSpec roots: the odd delta is invisible
 // to it, which is the S9 isolation the mode switch promises.
 func TestPromoteOpenSpecModeIgnoresOddDelta(t *testing.T) {

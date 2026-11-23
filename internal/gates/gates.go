@@ -15,6 +15,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"ai-specs.dev/ai-specs/internal/planbuild"
+	"ai-specs.dev/ai-specs/internal/specs"
 )
 
 // depthRe keeps the exact standalone-line contract: plan annotations must not
@@ -148,6 +151,33 @@ func CheckPremerge(repoRoot, slug string, tier *string) Result {
 	result.OK = len(result.Blockers) == 0
 	result.ArchivePath = archive
 	return result
+}
+
+// TierOdd is the guardian's label in odd mode: there is no Plan Build depth
+// there, because ODD owns planning.
+const TierOdd = "odd"
+
+// CheckPremergeOdd validates an ODD change before merge: the branch-paired plan
+// must be a regular file of the repository, and every delta under
+// odd/changes/<change>/specs/ must already be promoted into odd/specs/. There is
+// no OpenSpec archive and no tier artifact minimum; a change with no delta
+// passes with its plan alone. An empty change means the branch could not be
+// paired. The mode is resolved by the caller, which is the same resolver the
+// pre-tool-use gate uses.
+func CheckPremergeOdd(repoRoot, change string) Result {
+	if change == "" {
+		return Result{Blockers: []string{"ODD mode is active but the current branch cannot be " +
+			"resolved (detached HEAD), so no change can be paired"}, Tier: TierOdd}
+	}
+	plan := planbuild.PlanPath(repoRoot, change)
+	var blockers []string
+	if info, err := os.Lstat(plan); err != nil || !info.Mode().IsRegular() {
+		blockers = append(blockers, fmt.Sprintf(
+			"ODD plan 'odd/tasks/%s.md' is missing or is not a regular file for the current branch", change))
+	}
+	folder := filepath.Join(planbuild.ChangesBase(repoRoot, planbuild.ModeOdd), change)
+	blockers = append(blockers, specs.CheckFolderParityForMode(repoRoot, folder, planbuild.ModeOdd)...)
+	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: TierOdd, ArchivePath: plan}
 }
 
 // rawTier is the unresolved option value the short-circuit verdicts report.
