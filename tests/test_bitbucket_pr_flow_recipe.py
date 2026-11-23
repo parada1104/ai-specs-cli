@@ -291,11 +291,12 @@ class BitbucketPrFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         cmd = self.cache() / "commands" / "bb-pr-create.md"
         self.assertTrue(cmd.is_file(), f"missing command at {cmd}")
 
-    def test_materialize_produces_readme(self):
-        """Sync materializes the README doc."""
+    def test_materialize_no_longer_writes_a_recipe_readme(self):
+        """The recipe doc stays in the installed CLI's catalog, so sync writes
+        no README.md into ai-specs/recipes/<id>/."""
         self._synced_project()
         doc = self.root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
-        self.assertTrue(doc.is_file(), f"missing doc at {doc}")
+        self.assertFalse(doc.exists(), f"README must not be materialized at {doc}")
 
     def test_materialize_does_not_touch_github_assets(self):
         """Sync does not modify git-pr-flow recipe assets."""
@@ -599,10 +600,11 @@ class BitbucketPrFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("plan-build-flow", self.skill_text)
 
     def test_skill_invokes_tracker_ledger_host_before_merge(self):
-        """Tracker authorization is graded by the shell host's direct mode."""
-        self.assertIn("tracker-card-gate.sh", self.skill_text)
+        """Tracker authorization is graded by the CLI verb's direct mode."""
+        self.assertIn("ai-specs tracker-card-gate", self.skill_text)
         self.assertIn("--root <planning-root>", self.skill_text)
         self.assertIn("--checkpoint pre-merge", self.skill_text)
+        self.assertNotIn("tracker-card-gate.sh", self.skill_text)
         self.assertNotIn("tracker_ledger_host.py", self.skill_text)
         self.assertNotIn("premerge_guardian.py", self.skill_text)
 

@@ -124,7 +124,7 @@ class SessionContextRecipeTests(_CliFixtureMixin, unittest.TestCase):
         )
 
         doc = self.root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
-        self.assertTrue(doc.is_file(), f"missing doc at {doc}")
+        self.assertFalse(doc.exists(), f"README must not be materialized at {doc}")
 
 
 if __name__ == "__main__":

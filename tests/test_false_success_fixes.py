@@ -260,26 +260,15 @@ class TestSyncPreservesUserEditedRecipeDoc(unittest.TestCase):
             first = _run("sync", str(workspace))
             self.assertEqual(first.returncode, 0, first.stderr)
 
+            # D4' no longer has a subject: the recipe doc stays in the CLI's
+            # catalog, so sync writes none and cannot clobber a user edit.
+            # Assert the absence instead of preservation.
             doc = workspace / "ai-specs" / "recipes" / "git-pr-flow" / "README.md"
-            self.assertTrue(doc.is_file(), "recipe doc must materialize on first sync")
-
-            original = doc.read_text(encoding="utf-8")
-            doc.write_text(original + "\n<!-- user edit: local note -->\n", encoding="utf-8")
+            self.assertFalse(doc.exists(), "recipe doc must not materialize")
 
             second = _run("sync", str(workspace))
             self.assertEqual(second.returncode, 0, second.stderr)
-
-            self.assertIn(
-                "<!-- user edit: local note -->",
-                doc.read_text(encoding="utf-8"),
-                "user-edited recipe doc must not be clobbered by re-sync (D4')",
-            )
-            combined = second.stdout + second.stderr
-            self.assertIn(
-                "README.md",
-                combined,
-                "sync output must mention the preserved doc",
-            )
+            self.assertFalse(doc.exists(), "re-sync must not create a recipe doc")
 
 
 if __name__ == "__main__":

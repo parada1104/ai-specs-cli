@@ -4,7 +4,7 @@ Severity table (design §6.5 / spec "Diagnostics for gate implementation
 health"):
   OK    installed CLI serves worktree-gate and selftest passes
   INFO  leftover legacy launcher file
-  WARN  materialized launcher still resolves the retired separate binary
+  WARN  stale materialized gate launcher or retired cleanup override
   ERROR retired gate_impl=bash or missing/failing installed CLI (failing open)
 
 Every test drives `bin/ai-specs doctor` and asserts on its rendered output.
@@ -117,7 +117,14 @@ class WorktreeGateDoctorTests(unittest.TestCase):
 
     def _checks(self, root: Path) -> tuple[list[tuple[str, str]], int]:
         result = invoke(root, "doctor", cli_home=self.home)
-        return _named_checks(result.stdout, "worktree-gate"), result.returncode
+        checks = _named_checks(result.stdout, "worktree-gate")
+        # macOS resolves every temp path through /private, so the shared
+        # normalizer leaves a ``/private<TEMP>`` prefix on realpaths. Collapse
+        # it: the doctor line under test is the message, not the symlink.
+        return (
+            [(sev, body.replace("/private<TEMP>", "<TEMP>")) for sev, body in checks],
+            result.returncode,
+        )
 
     def test_recipe_disabled_skips_check(self):
         root = self._project(enabled=False)
@@ -148,6 +155,20 @@ class WorktreeGateDoctorTests(unittest.TestCase):
         self.assertTrue(errors)
         self.assertIn("retired", errors[0])
         self.assertEqual(code, 1)
+
+    def test_stale_launcher_reports_warn_with_rm_hint(self):
+        """T2 stopped materializing the launcher: a surviving copy is stale,
+        and the advisory names `rm` + sync rather than --refresh-gates."""
+        root = self._project(gate_impl="auto")
+        _stage_gate_cli(self.home)
+        self._write_launcher(root, 'cli_bin="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"\n')
+        checks, code = self._checks(root)
+        warns = [body for sev, body in checks if sev == "WARN"]
+        self.assertEqual(len(warns), 1, checks)
+        self.assertIn("retired", warns[0])
+        self.assertIn("rm ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh", warns[0])
+        self.assertNotIn("--refresh-gates", warns[0])
+        self.assertEqual(code, 0, "a stale launcher is advisory, not an ERROR")
 
     def test_leftover_legacy_file_reports_info_with_rm_hint(self):
         root = self._project(gate_impl="auto")

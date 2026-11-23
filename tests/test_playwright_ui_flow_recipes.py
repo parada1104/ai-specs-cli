@@ -248,7 +248,7 @@ class PlaywrightUiFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         self.assertTrue(cmd.is_file(), f"missing command at {cmd}")
 
         doc = self.root / "ai-specs" / "recipes" / BASE_ID / "README.md"
-        self.assertTrue(doc.is_file(), f"missing doc at {doc}")
+        self.assertFalse(doc.exists(), f"README must not be materialized at {doc}")
 
         mcp_json = self.root / ".mcp.json"
         self.assertFalse(

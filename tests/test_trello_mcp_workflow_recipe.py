@@ -10,8 +10,9 @@ golden skill/command/README content) through the CLI process boundary:
   from the recipe's own catalog declaration (recipe.toml), mirroring the
   golden-content pattern.
 - Sync stamping is observable through the materialized project manifest
-  (reconcile table, lifecycle defaults) and the stamped hook scripts under
-  ``ai-specs/recipes/trello-mcp-workflow/hooks/``.
+  (reconcile table, lifecycle defaults) and the per-project runtime snapshot
+  (``cache/projects/<key>/runtime.toml``). The gate hook itself is CLI-served,
+  so no ``ai-specs/recipes/trello-mcp-workflow/hooks/`` script may appear.
 - Per-agent hook rendering is observable via ``sync`` outputs: Claude's
   settings.json, Cursor's hooks.json + wrapper scripts, OMP's extensions.
 """
@@ -26,7 +27,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _blackbox import invoke, isolated_home  # noqa: E402
+from _blackbox import cache_project_dir, invoke, isolated_home  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 RECIPE_DIR = ROOT / "catalog" / "recipes" / "trello-mcp-workflow"
@@ -92,11 +93,15 @@ class _CliFixtureMixin:
             )
         )
 
-    def stamped_tracker_hook(self) -> Path:
+    def tracker_gate_script(self) -> Path:
         return (
             self.root / "ai-specs" / "recipes" / RECIPE_ID
             / "hooks" / "tracker-card-gate.sh"
         )
+
+    def runtime_snapshot(self) -> dict:
+        path = cache_project_dir(self.root, self.home) / "runtime.toml"
+        return tomllib.loads(path.read_text())
 
 
 class TrelloMcpWorkflowRecipeTests(_CliFixtureMixin, unittest.TestCase):
@@ -279,14 +284,10 @@ class TrelloMcpWorkflowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         self.configure_board_id()
         result = self.sync()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        hook = self.stamped_tracker_hook()
-        self.assertTrue(hook.is_file())
-        content = hook.read_text()
-        self.assertIn('stamped_gate_mode="warn"', content)
-        self.assertNotIn("__TRACKER_CARD_GATE_MODE__", content)
-        # CLI home stamped to the resolved install root the CLI actually ran from
-        self.assertIn(f'stamped_cli_home="{self.home.resolve()}"', content)
-        self.assertNotIn("__TRACKER_CLI_HOME__", content)
+        self.assertFalse(self.tracker_gate_script().exists(),
+                         "tracker-card-gate is CLI-served, never materialized")
+        # The verb reads the ledger hint from the sync snapshot, not the toml.
+        self.assertEqual(self.runtime_snapshot()["tracker_gate"]["gate_mode"], "warn")
 
     def test_sync_stamps_tracker_gate_mode_override(self):
         self.recipe_add(RECIPE_ID)
@@ -297,14 +298,11 @@ class TrelloMcpWorkflowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         )
         result = self.sync()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        content = self.stamped_tracker_hook().read_text()
-        self.assertIn('stamped_gate_mode="always"', content)
+        self.assertEqual(self.runtime_snapshot()["tracker_gate"]["gate_mode"], "always")
 
-    def test_materialize_hook_script_map_and_cli_home(self):
-        """Placeholder tokens are stamped per recipe through the same sync
-        materialize path: the worktree-gate hook receives its own gate_mode
-        while tracker tokens never leak into it (and vice versa via the
-        tracker hook stamping tests)."""
+    def test_each_cli_served_recipe_keeps_its_own_gate_mode(self):
+        """Both gates are CLI-served and each reads its own snapshot table: a
+        worktree-flow project never sees the tracker hint and vice versa."""
         self.recipe_add("worktree-flow")
         manifest = self.root / "ai-specs" / "ai-specs.toml"
         manifest.write_text(
@@ -316,30 +314,27 @@ class TrelloMcpWorkflowRecipeTests(_CliFixtureMixin, unittest.TestCase):
             self.root / "ai-specs" / "recipes" / "worktree-flow"
             / "hooks" / "worktree-gate.sh"
         )
-        self.assertTrue(wt_hook.is_file())
-        wt_text = wt_hook.read_text()
-        self.assertIn('stamped_gate_mode="ask"', wt_text)
-        self.assertNotIn("__WORKTREE_GATE_MODE__", wt_text)
-        # The worktree hook is stamped through the same path but never
-        # receives tracker tokens or any CLI-home stamp.
-        self.assertNotIn("__TRACKER_CLI_HOME__", wt_text)
-        self.assertNotIn("__TRACKER_CARD_GATE_MODE__", wt_text)
-        self.assertNotIn(str(self.home.resolve()), wt_text)
-        # TRIAGE: materialize_hook_script cli_home=None → empty-string stamp
-        # has no CLI-observable surface (no verb runs materialize without a
-        # resolved CLI home); the tracker side of the token map is observed by
-        # test_sync_stamps_tracker_gate_mode_*.
+        self.assertFalse(wt_hook.exists(), "the worktree gate is CLI-served too")
+        snap = self.runtime_snapshot()
+        self.assertEqual(snap["worktree_gate"]["gate_mode"], "ask")
+        # trello-mcp-workflow is not enabled here, so the tracker hint is empty
+        # (the retired launcher's default-warn stamp only existed for the
+        # recipe's own hook; the verb falls back to warn at run time).
+        self.assertEqual(snap["tracker_gate"]["gate_mode"], "")
 
-    def test_claude_dual_pretooluse_same_script(self):
+    def test_claude_dual_pretooluse_same_verb(self):
         self.recipe_add(RECIPE_ID)
         self.configure_board_id()
         result = self.sync()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        script = "ai-specs/recipes/trello-mcp-workflow/hooks/tracker-card-gate.sh"
         settings = json.loads((self.root / ".claude" / "settings.json").read_text())
         pre = settings["hooks"]["PreToolUse"]
-        managed = [e for e in pre if script in json.dumps(e)]
+        managed = [e for e in pre if "tracker-card-gate" in json.dumps(e)]
         self.assertEqual(len(managed), 2)
+        for entry in managed:
+            self.assertIn("exec", entry["hooks"][0]["command"])
+            self.assertIn("tracker-card-gate", entry["hooks"][0]["command"])
+            self.assertNotIn("tracker-card-gate.sh", entry["hooks"][0]["command"])
         matchers = {e.get("matcher") for e in managed}
         self.assertIn("Edit|Write|MultiEdit|NotebookEdit", matchers)
         self.assertIn("Bash|Shell|Execute|Terminal", matchers)
@@ -407,9 +402,9 @@ class TrelloMcpWorkflowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         """The generic Tracker recipe surfaces the lifecycle host as a reusable
         command, separate from Plan Build/OpenSpec and from provider mapping.
 
-        The host is the shell bridge's direct mode
-        (``tracker-card-gate.sh --root <root> --checkpoint <name>``) — the retired
-        Python host is gone and no new Python host replaces it.
+        The host is the CLI verb's direct mode
+        (``ai-specs tracker-card-gate --root <root> --checkpoint <name>``) — the
+        retired Python host and the materialized shell bridge are both gone.
         """
         skill = (RECIPE_DIR / "skills" / "trello-mcp-workflow" / "SKILL.md").read_text()
         quick = (RECIPE_DIR / "commands" / "trello-workflow.md").read_text()
@@ -418,8 +413,12 @@ class TrelloMcpWorkflowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         for name, text in (("skill", skill), ("quick-reference", quick),
                            ("README", readme), ("brief", brief)):
             with self.subTest(surface=name):
-                self.assertIn("tracker-card-gate.sh", text)
+                self.assertIn("ai-specs tracker-card-gate", text)
                 self.assertIn("--checkpoint", text)
+                if name != "brief":
+                    # The recipe declaration keeps its historical script path as
+                    # the CLI-served marker; the prose surfaces name the verb.
+                    self.assertNotIn("tracker-card-gate.sh", text)
                 self.assertNotIn("tracker_ledger_host.py", text)
         for name, text in (("skill", skill), ("README", readme)):
             with self.subTest(surface=name):

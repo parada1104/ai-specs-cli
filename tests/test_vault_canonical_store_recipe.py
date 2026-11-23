@@ -41,7 +41,8 @@ KEPANO_SKILLS = (
     ("obsidian-cli", "plugins/obsidian/skills/obsidian-cli"),
     ("defuddle", "plugins/obsidian/skills/defuddle"),
 )
-SCRIPT_ARG = "ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh"
+MCP_COMMAND = "ai-specs"
+MCP_ARGS = ["mcp", "vault-fs"]
 
 
 def _make_home(base: Path) -> Path:
@@ -164,35 +165,44 @@ class VaultCanonicalStoreRecipeTests(_CliFixtureMixin, unittest.TestCase):
             self.assertEqual(skill["url"], KEPANO_URL, skill_id)
             self.assertEqual(skill["path"], subpath, skill_id)
 
-    def test_recipe_mcp_uses_env_owned_wrapper_not_path_arg(self):
-        """MCP argv keeps the vault path out of args; the wrapper reads env.
+    def test_recipe_mcp_uses_env_owned_verb_not_path_arg(self):
+        """MCP argv keeps the vault path out of args; the CLI verb reads env.
 
-        Declared MCP config and wrapper template are read from the catalog
-        recipe (validated by ``recipe add``).
+        Declared MCP config is read from the catalog recipe (validated by
+        ``recipe add``). The verb's validation and npx pin are covered by the
+        Go tests (internal/cli), which replaced the wrapper.
         """
         raw = tomllib.loads((RECIPE_DIR / "recipe.toml").read_text())
         mcps = raw["provides"]["mcp"]
         self.assertEqual(len(mcps), 1)
         mcp = mcps[0]
         self.assertEqual(mcp["id"], "vault-canonical")
-        self.assertEqual(mcp.get("command"), "bash")
+        self.assertEqual(mcp.get("command"), MCP_COMMAND)
         args = mcp.get("args") or []
-        self.assertEqual(args, [SCRIPT_ARG])
-        # Path must NOT appear as an MCP argv placeholder — wrapper reads env.
+        self.assertEqual(args, MCP_ARGS)
+        # Path must NOT appear as an MCP argv placeholder — the verb reads env.
         joined = " ".join(str(a) for a in args)
         self.assertNotIn("CANONICAL_VAULT_PATH", joined)
         self.assertNotIn("server-filesystem", joined)
         env = mcp.get("env") or {}
         self.assertEqual(list(env.keys()), ["CANONICAL_VAULT_PATH"])
         self.assertNotIn("OBSIDIAN", str(env))
-        wrapper = RECIPE_DIR / "templates" / "vault-fs-mcp.sh"
-        self.assertTrue(wrapper.is_file())
-        self.assertIn("server-filesystem@2025.7.1", wrapper.read_text())
-        # zod pinned to 3.x: the package inherits zod from the SDK (now 4.x) and its
-        # zod-to-json-schema@3 emits empty inputSchemas for zod 4 definitions.
-        self.assertIn("zod@3", wrapper.read_text())
-        self.assertIn("CANONICAL_VAULT_PATH", wrapper.read_text())
-        self.assertNotIn("OBSIDIAN_VAULT_PATH", wrapper.read_text())
+        # The retired wrapper target survives only as the migration marker sync
+        # keys on; the project never receives a script copy (asserted below).
+        templates = raw["provides"]["templates"]
+        self.assertEqual(
+            [t["target"] for t in templates],
+            ["ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh"],
+        )
+        # The npx pins moved into the verb (internal/cli/mcp_vaultfs.go, pinned
+        # by its Go test): filesystem 2025.7.1 plus zod 3, because the package
+        # inherits zod from the SDK (now 4.x) and its zod-to-json-schema@3 emits
+        # empty inputSchemas for zod 4 definitions.
+        verb = (ROOT / "internal" / "cli" / "mcp_vaultfs.go").read_text()
+        self.assertIn("@modelcontextprotocol/server-filesystem@2025.7.1", verb)
+        self.assertIn('"zod@3"', verb)
+        self.assertIn("CANONICAL_VAULT_PATH", verb)
+        self.assertNotIn("OBSIDIAN_VAULT_PATH", verb)
 
     def test_recipe_version_is_1_2_0(self):
         raw = tomllib.loads((RECIPE_DIR / "recipe.toml").read_text())
@@ -277,14 +287,15 @@ class VaultCanonicalMcpSyncTests(_CliFixtureMixin, unittest.TestCase):
         self.assertEqual(rc, 0, out + err)
         return self.root
 
-    def test_sync_vault_mcp_uses_wrapper_across_agents(self):
+    def test_sync_vault_mcp_uses_the_cli_verb_across_agents(self):
         workspace = self._synced_workspace()
 
         wrapper = (
             workspace / "ai-specs" / "recipes" / RECIPE_ID
             / "bin" / "vault-fs-mcp.sh"
         )
-        self.assertTrue(wrapper.is_file(), f"missing materialized wrapper {wrapper}")
+        self.assertFalse(wrapper.exists(),
+                         "the vault MCP is CLI-served; no script is materialized")
 
         targets = {
             "claude": workspace / ".mcp.json",
@@ -297,9 +308,9 @@ class VaultCanonicalMcpSyncTests(_CliFixtureMixin, unittest.TestCase):
             servers = parsed.get("mcpServers") or parsed.get("mcp") or {}
             self.assertIn("vault-canonical", servers, agent)
             cfg = servers["vault-canonical"]
-            self.assertEqual(cfg.get("command"), "bash", agent)
+            self.assertEqual(cfg.get("command"), MCP_COMMAND, agent)
             args = cfg.get("args") or []
-            self.assertEqual(args, [SCRIPT_ARG], agent)
+            self.assertEqual(args, MCP_ARGS, agent)
             # Spaced path must not be baked into rendered MCP args.
             joined = " ".join(args)
             self.assertNotIn("Mobile", joined)
@@ -310,7 +321,7 @@ class VaultCanonicalMcpSyncTests(_CliFixtureMixin, unittest.TestCase):
         opencode = json.loads((workspace / "opencode.json").read_text())
         demo = opencode["mcp"]["vault-canonical"]
         cmd = demo["command"]
-        self.assertEqual(cmd, ["bash", SCRIPT_ARG])
+        self.assertEqual(cmd, [MCP_COMMAND, *MCP_ARGS])
         self.assertNotIn("$CANONICAL_VAULT_PATH", cmd)
         env_block = demo.get("environment") or {}
         self.assertEqual(env_block.get("CANONICAL_VAULT_PATH"), "{env:CANONICAL_VAULT_PATH}")

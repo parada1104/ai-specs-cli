@@ -174,8 +174,9 @@ class GitPrFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
 
-    def test_materialize_produces_skill_command_and_doc(self):
-        """Sync materializes the bundled skill, command, and README doc."""
+    def test_materialize_produces_skill_and_command_but_no_doc(self):
+        """Sync materializes the bundled skill and command; the recipe doc
+        stays in the CLI's catalog, never copied into the project."""
         self._synced_project()
 
         skill = (
@@ -188,7 +189,7 @@ class GitPrFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         self.assertTrue(cmd.is_file(), f"missing command at {cmd}")
 
         doc = self.root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
-        self.assertTrue(doc.is_file(), f"missing doc at {doc}")
+        self.assertFalse(doc.exists(), f"README must not be materialized at {doc}")
 
     def test_materialize_does_not_stage_premerge_guardian_into_project(self):
         """Sync never stages the Plan Build guardian into the project."""
@@ -242,16 +243,18 @@ class GitPrFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("plan-build-flow", self.skill_text)
 
     def test_skill_invokes_tracker_ledger_host_before_merge(self):
-        """Tracker authorization is graded by the shell host's direct mode."""
-        self.assertIn("tracker-card-gate.sh", self.skill_text)
+        """Tracker authorization is graded by the CLI verb's direct mode."""
+        self.assertIn("ai-specs tracker-card-gate", self.skill_text)
         self.assertIn("--root <planning-root>", self.skill_text)
         self.assertIn("--checkpoint pre-merge", self.skill_text)
+        self.assertNotIn("tracker-card-gate.sh", self.skill_text)
         self.assertNotIn("tracker_ledger_host.py", self.skill_text)
         self.assertNotIn("premerge_guardian.py", self.skill_text)
 
     def test_skill_requires_native_post_merge_cleanup_sequence(self):
         """Skill delegates ordered branch/worktree cleanup to the Go command."""
-        self.assertIn("worktree-cleanup.sh", self.skill_text)
+        self.assertIn("ai-specs worktree-cleanup", self.skill_text)
+        self.assertNotIn("worktree-cleanup.sh", self.skill_text)
         self.assertIn("git pull --ff-only", self.skill_text)
         self.assertIn("base sync is deliberately LAST", self.skill_text)
 
