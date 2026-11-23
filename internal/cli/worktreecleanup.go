@@ -59,9 +59,21 @@ func runWorktreeCleanup(home string, args []string, stdout, stderr io.Writer) in
 				return 2
 			}
 			i++
+			// An option is never a scope value: `--submodule --dry-run` must not
+			// clean up for real while the user asked for a preview.
+			if strings.HasPrefix(args[i], "-") {
+				fmt.Fprintf(stderr, "ERROR: %s requires a value, got the option %s\n", arg, args[i])
+				fmt.Fprintln(stderr, "Run 'ai-specs worktree-cleanup --help' for usage.")
+				return 2
+			}
 			scopes = append(scopes, args[i])
 		case strings.HasPrefix(arg, "--submodule=") || strings.HasPrefix(arg, "--subrepo="):
 			_, value, _ := strings.Cut(arg, "=")
+			if value == "" {
+				fmt.Fprintf(stderr, "ERROR: %s requires a value\n", arg)
+				fmt.Fprintln(stderr, "Run 'ai-specs worktree-cleanup --help' for usage.")
+				return 2
+			}
 			scopes = append(scopes, value)
 		default:
 			fmt.Fprintf(stderr, "ERROR: unknown argument: %s\n", arg)

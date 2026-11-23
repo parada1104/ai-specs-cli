@@ -84,7 +84,7 @@ func TestWorktreeCleanupWithoutSnapshotDeletesNothing(t *testing.T) {
 }
 
 // S4/S2: with a snapshot the pass is the existing cleanup, driven by the
-// snapshot values (here a custom worktrees dir), never by ai-specs.toml.
+// snapshot's worktrees_dir, never by ai-specs.toml.
 func TestWorktreeCleanupUsesSnapshotPolicy(t *testing.T) {
 	project := cleanupRepo(t)
 	home := t.TempDir()
@@ -116,8 +116,7 @@ func TestWorktreeCleanupUsesSnapshotPolicy(t *testing.T) {
 	}
 }
 
-// --dry-run mutates nothing, and an unknown flag is a usage error, not a
-// partial pass.
+// R3-001: an unknown flag is a usage error, not a partial pass.
 func TestWorktreeCleanupRejectsUnknownFlag(t *testing.T) {
 	project := cleanupRepo(t)
 	home := t.TempDir()
@@ -132,5 +131,52 @@ func TestWorktreeCleanupRejectsUnknownFlag(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(project, ".worktrees", "feat-merged")); err != nil {
 		t.Fatalf("a rejected invocation removed a worktree: %v", err)
+	}
+}
+
+// R1-dry-run-consumed-as-scope: an option must never satisfy a scope's value,
+// or `--submodule --dry-run` would clean up for real while the user asked for
+// a preview.
+func TestWorktreeCleanupRejectsOptionAsScopeValue(t *testing.T) {
+	project := cleanupRepo(t)
+	home := t.TempDir()
+	if _, err := projectcache.WriteRuntimeSnapshot(project, home, projectcache.RuntimeSnapshot{
+		RepoTopology: "standalone", WorktreesDir: ".worktrees", IntegrationBranch: "main", Protected: "main",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"--submodule", "--dry-run"},
+		{"--subrepo", "--dry-run"},
+		{"--submodule="},
+	} {
+		code, stdout, stderr := runWorktreeCleanupVerb(t, home, project, args...)
+		if code != 2 {
+			t.Fatalf("%v: exit = %d, want 2\nstdout: %s\nstderr: %s", args, code, stdout, stderr)
+		}
+		if _, err := os.Stat(filepath.Join(project, ".worktrees", "feat-merged")); err != nil {
+			t.Fatalf("%v: merged worktree was removed: %v", args, err)
+		}
+	}
+}
+
+// R3-001: --dry-run previews and mutates nothing.
+func TestWorktreeCleanupDryRunMutatesNothing(t *testing.T) {
+	project := cleanupRepo(t)
+	home := t.TempDir()
+	if _, err := projectcache.WriteRuntimeSnapshot(project, home, projectcache.RuntimeSnapshot{
+		RepoTopology: "standalone", WorktreesDir: ".worktrees", IntegrationBranch: "main", Protected: "main",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runWorktreeCleanupVerb(t, home, project, "--dry-run")
+	if code != 0 {
+		t.Fatalf("exit = %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".worktrees", "feat-merged")); err != nil {
+		t.Fatalf("--dry-run removed the merged worktree: %v", err)
+	}
+	if branches := gitOutput(t, project, "branch", "--list", "feat-merged"); branches == "" {
+		t.Fatal("--dry-run removed the merged branch")
 	}
 }
