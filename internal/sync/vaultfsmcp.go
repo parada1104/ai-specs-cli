@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"ai-specs.dev/ai-specs/internal/lock"
 )
@@ -30,6 +31,7 @@ const (
 	vaultMCPRecipeID   = "vault-canonical-store"
 	vaultMCPServerID   = "vault-canonical"
 	vaultMCPScriptPath = "ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh"
+	vaultMCPScriptBase = "vault-fs-mcp.sh"
 )
 
 // vaultMCPTemplateServesCLI reports the recipe template target the CLI writes
@@ -51,10 +53,49 @@ func vaultMCPPresetConfig(recipeID, presetID string, config *mcpObj) *mcpObj {
 	return out
 }
 
+// vaultMCPManifestServer returns the [mcp.*] entry of the project's manifest
+// that still launches the wrapper, if any: a hand-written entry wins over the
+// recipe preset render, so deleting the script would break its vault server.
+// The match is on the base name, so a relative or absolute spelling both count.
+func vaultMCPManifestServer(root string) string {
+	manifest, err := loadMaterializeManifest(materializeManifestPath(root))
+	if err != nil {
+		return ""
+	}
+	servers := mcpReadServers(manifest)
+	for _, name := range servers.keys {
+		if mcpMentionsVaultMCPScript(servers.vals[name]) {
+			return name
+		}
+	}
+	return ""
+}
+
+func mcpMentionsVaultMCPScript(value any) bool {
+	switch v := value.(type) {
+	case string:
+		return strings.HasSuffix(v, vaultMCPScriptBase)
+	case *mcpObj:
+		for _, key := range v.keys {
+			if mcpMentionsVaultMCPScript(v.vals[key]) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range v {
+			if mcpMentionsVaultMCPScript(item) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // retireVaultMCPScript removes the wrapper an older sync materialized. It is
 // lock-driven like the recipe README retirement: only a copy a record proves
 // ai-specs wrote is removed — with one notice when the bytes are no longer the
-// recorded ones — and an unrecorded copy is left to the user.
+// recorded ones — and an unrecorded copy is left to the user. A manifest entry
+// that still launches the script keeps it and its record, with one notice.
 func retireVaultMCPScript(root, lockPath string, out io.Writer) error {
 	lk, err := lock.LoadLock(lockPath)
 	if err != nil {
@@ -62,6 +103,11 @@ func retireVaultMCPScript(root, lockPath string, out io.Writer) error {
 	}
 	record, recorded := lk.Managed[vaultMCPScriptPath]
 	if !recorded {
+		return nil
+	}
+	if server := vaultMCPManifestServer(root); server != "" {
+		fmt.Fprintf(out, "  ! kept %s: your ai-specs.toml [mcp.%s] still launches it; switch that entry to `command = \"ai-specs\"` with `args = [\"mcp\", \"vault-fs\"]`, then run ai-specs sync to retire the script.\n",
+			vaultMCPScriptPath, server)
 		return nil
 	}
 	path := filepath.Join(root, filepath.FromSlash(vaultMCPScriptPath))

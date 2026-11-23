@@ -28,6 +28,21 @@ func vaultMCPNotice() string {
 		" (ai-specs now serves the vault MCP from the CLI)\n"
 }
 
+// vaultMCPKeptNotice is what a manifest entry that still launches the wrapper
+// gets instead of the deletion: one line naming the fix.
+func vaultMCPKeptNotice() string {
+	return "  ! kept " + vaultMCPScript + ": your ai-specs.toml [mcp.vault-canonical] still launches it; " +
+		"switch that entry to `command = \"ai-specs\"` with `args = [\"mcp\", \"vault-fs\"]`, then run ai-specs sync to retire the script.\n"
+}
+
+// vaultMCPRefManifest is a hand-written entry, which wins over the recipe preset
+// render and keeps pointing at the wrapper an older sync materialized.
+const vaultMCPRefManifest = vaultMCPManifest + `
+[mcp.vault-canonical]
+command = 'bash'
+args = ['ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh']
+`
+
 // readClaudeMCPServer returns the "vault-canonical" entry of the project's
 // .mcp.json, parsed with the renderer's own ordered JSON reader.
 func readClaudeMCPServer(t *testing.T, project, name string) *mcpObj {
@@ -156,6 +171,9 @@ func TestSyncPrunesVaultMCPScriptCopies(t *testing.T) {
 			if got, want := strings.Contains(stderr, vaultMCPNotice()), tc.wantNotice; got != want {
 				t.Fatalf("notice present = %v, want %v\nstderr: %q", got, want, stderr)
 			}
+			if strings.Contains(stderr, vaultMCPKeptNotice()) {
+				t.Fatalf("kept notice printed with no manifest reference\nstderr: %q", stderr)
+			}
 			lk, err := lock.LoadLock(lockPath)
 			if err != nil {
 				t.Fatal(err)
@@ -164,5 +182,42 @@ func TestSyncPrunesVaultMCPScriptCopies(t *testing.T) {
 				t.Errorf("lock still records the retired script")
 			}
 		})
+	}
+}
+
+// R1/R3: a hand-written [mcp.vault-canonical] wins over the recipe preset
+// render, so the script it launches is kept, stays recorded, and the user gets
+// the one migration notice.
+func TestSyncKeepsVaultMCPScriptWhileManifestLaunchesIt(t *testing.T) {
+	home, _ := spineEnv(t)
+	project := spineProject(t, vaultMCPRefManifest)
+	if rc, stdout, stderr := runCLIServedSync(t, home, project); rc != 0 {
+		t.Fatalf("sync rc=%d\n%s\n%s", rc, stdout, stderr)
+	}
+	path := filepath.Join(project, filepath.FromSlash(vaultMCPScript))
+	const body = "#!/usr/bin/env bash\nexec npx -y mcp-server-filesystem \"$CANONICAL_VAULT_PATH\"\n"
+	spineWrite(t, path, body, 0o755)
+	lockPath := filepath.Join(project, "ai-specs", ".ai-specs.lock")
+	lk, err := lock.LoadLock(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipe, source, kind, policy := "vault-canonical-store", "templates/vault-fs-mcp.sh", "template", "auto"
+	lock.SetManagedOverride(lk, vaultMCPScript, lock.Sha256Bytes([]byte(body)), &recipe, &source, &kind, &policy)
+	if err := lock.WriteLock(lockPath, lk); err != nil {
+		t.Fatal(err)
+	}
+	rc, stdout, stderr := runCLIServedSync(t, home, project)
+	if rc != 0 {
+		t.Fatalf("sync rc=%d\n%s\n%s", rc, stdout, stderr)
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("script removed while the manifest launches it: %v", err)
+	}
+	if !strings.Contains(stderr, vaultMCPKeptNotice()) {
+		t.Fatalf("kept notice missing\nstderr: %q", stderr)
+	}
+	if _, recorded := lk.Managed[vaultMCPScript]; !recorded {
+		t.Errorf("lock dropped the record of a kept script")
 	}
 }
