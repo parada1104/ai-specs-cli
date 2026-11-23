@@ -74,13 +74,9 @@ func (d *Doctor) checkWorktreeGate() {
 	}
 	override := filepath.Join(d.Root, "ai-specs", "recipes", "worktree-flow", "overrides", "bin", "worktree-cleanup.sh")
 	if isFile(override) {
-		if raw, err := os.ReadFile(override); err == nil &&
-			strings.Contains(string(raw), "cache/bin/worktree-gate") &&
-			!strings.Contains(string(raw), "dist/ai-specs") {
-			d.add(WARN, "worktree-gate",
-				"preserved worktree-cleanup.sh override still resolves the retired separate gate binary",
-				"delete ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh and run ai-specs sync (a preserved customized override is not refreshed by --refresh-gates)")
-		}
+		d.add(WARN, "worktree-gate",
+			"retired worktree-cleanup.sh override is still present; the CLI serves `ai-specs worktree-cleanup` now",
+			"run ai-specs sync (it removes the override, including a customized copy)")
 	}
 
 	binary := installedCLIPath(d.Home)

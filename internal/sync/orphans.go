@@ -300,6 +300,11 @@ func managedTargetAbsent(root, rel string) bool {
 }
 
 func applyRecipeArtifactPrune(root, lockPath string, doomed, stale []string, recipeDir func(string, map[string]any) string, enabled map[string]bool, out io.Writer) error {
+	// Retirement is unconditional and runs before the early return: the cleanup
+	// override is not a managed template, so no plan ever lists it (T3/S1).
+	if err := retireWorktreeCleanupOverride(root, lockPath, out); err != nil {
+		return err
+	}
 	if len(doomed) == 0 && len(stale) == 0 {
 		return nil
 	}

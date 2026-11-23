@@ -322,8 +322,8 @@ proven reachable from a resolved base candidate), preserves dirty and unmerged
 ones, and never touches the main worktree.
 
 - **Provides:** skill `worktree-flow`, commands `/worktree-new`,
-  `/worktree-clean`, script `bin/worktree-cleanup.sh`, and a `worktree-gate`
-  runtime hook (`[[provides.hooks]]`) that blocks writes to the main worktree on
+  `/worktree-clean`, the CLI verb `ai-specs worktree-cleanup`, and a
+  `worktree-gate` runtime hook (`[[provides.hooks]]`) that blocks writes to the main worktree on
   protected branches, supports `gate_mode` dispatch (`always` / `ask` / `off`),
   and applies the proven-topology `gate_scope` policy — see
   [`docs/runtime-hooks.md`](runtime-hooks.md); capabilities

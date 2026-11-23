@@ -182,8 +182,7 @@ post-merge remote deletion and independently verifies remote absence:
 
 
 ```bash
-bash ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh \
-  --dir <worktrees_dir> --base <integration_branch>
+ai-specs worktree-cleanup
 ```
 
 Optional `--submodule` / `--subrepo` scopes to one module; default = all

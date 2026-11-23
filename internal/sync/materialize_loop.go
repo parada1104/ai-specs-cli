@@ -120,8 +120,23 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 		}
 	}
 
+	postMerge := false
 	for _, tpl := range recipe.Templates {
+		if worktreeTemplateServesCLI(req.Recipe.ID, tpl.Target) {
+			// The CLI serves this target itself (T3/S4): the cleanup launcher is
+			// retired and the post-merge hook is generated after this loop.
+			if posixAsPosix(tpl.Target) == worktreePostMergeTarget {
+				postMerge = true
+			}
+			continue
+		}
 		if err := materializeTemplateArtifact(req, recipeDir, lockPath, tpl, mergedCfg); err != nil {
+			return nil, err
+		}
+	}
+	// Always regenerated when declared: the hook holds no policy, only the verb.
+	if postMerge {
+		if err := materializeWorktreePostMergeHook(req.ProjectRoot); err != nil {
 			return nil, err
 		}
 	}
