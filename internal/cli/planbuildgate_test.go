@@ -533,6 +533,18 @@ func TestPlanBuildGateOddModePlanMustNotBeASymlink(t *testing.T) {
 	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
 }
 
+// A branch with no commits yet is still a branch: HEAD is unborn, not detached,
+// so the paired plan resolves and the write is allowed.
+func TestPlanBuildGateOddModeAllowsOnAnUnbornBranch(t *testing.T) {
+	repo := t.TempDir()
+	gitTest(t, repo, "init", "-b", "feat/odd-change")
+	planBuildWriteMode(t, repo, "odd")
+	planBuildWriteOddPlan(t, repo, "odd-change")
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("gate on an unborn branch = (%d, %q, %q), want silence", code, stdout, stderr)
+	}
+}
+
 // A detached HEAD refuses instead of pairing an arbitrary plan.
 func TestPlanBuildGateOddModeDetachedHeadBlocks(t *testing.T) {
 	repo, _ := oddRepo(t)

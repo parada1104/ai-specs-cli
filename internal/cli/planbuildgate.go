@@ -203,7 +203,7 @@ func planBuildGateCommonDir(probeDir string) string {
 // planBuildGateOddPlan grades the odd-mode plan: the paired plan of the current
 // branch, a regular file at odd/tasks/<change>.md.
 func planBuildGateOddPlan(repoRoot, probeDir, tool, rel string, stderr io.Writer) int {
-	branch := worktreeGateGit(probeDir, "rev-parse", "--abbrev-ref", "HEAD")
+	branch := worktreeGateGit(probeDir, "symbolic-ref", "--short", "-q", "HEAD")
 	change, ok := planbuild.ChangeFromBranch(branch)
 	if !ok {
 		fmt.Fprintf(stderr, planBuildGateOddBranchRefusal, planBuildGateName, tool, rel)
