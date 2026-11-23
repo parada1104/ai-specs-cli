@@ -130,6 +130,11 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 			}
 			continue
 		}
+		if vaultMCPTemplateServesCLI(req.Recipe.ID, tpl.Target) {
+			// `ai-specs mcp vault-fs` serves the vault MCP server (T4/S5); the
+			// wrapper script is retired by the prune, never materialized.
+			continue
+		}
 		if err := materializeTemplateArtifact(req, recipeDir, lockPath, tpl, mergedCfg); err != nil {
 			return nil, err
 		}

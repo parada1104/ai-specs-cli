@@ -65,6 +65,7 @@ const (
 	routeHookNormalizePath                  // native: `hook normalize-path`, canonical hook target (GO-20 U2e U-F2a)
 	routeWorktreeGate                       // direct passthrough to the importable worktree-gate runner
 	routeWorktreeCleanup                    // native: `worktree-cleanup`, the CLI-served post-merge cleanup (T3)
+	routeMCPVaultFS                         // native: `mcp vault-fs`, the CLI-served vault filesystem MCP server (T4)
 	routeUnknown                            // unknown command: usage error, exit 2
 )
 
@@ -201,6 +202,15 @@ func Route(args []string) route {
 		}
 		return route{kind: routeGates}
 	}
+	// `mcp vault-fs` (T4/S5) is the family's only verb: it serves the vault
+	// filesystem MCP server the recipe used to materialize as a script. Every
+	// other arm of the family stays an unknown command.
+	if args[0] == "mcp" {
+		if len(args) > 1 && args[1] == "vault-fs" {
+			return route{kind: routeMCPVaultFS}
+		}
+		return route{kind: routeUnknown}
+	}
 	// `tracker slug` and `tracker evidence` (GO-20 U2e U-C) are the family's only
 	// verbs; every remaining arm (bare `tracker`, `--help|-h|help`, unknown
 	// subcommands) resolves to the native family remainder.
@@ -248,6 +258,10 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		return runner.Run(args[1:], stdin, stdout, stderr, version)
 	case routeWorktreeCleanup:
 		return runWorktreeCleanup(home, args[1:], stdout, stderr)
+	case routeMCPVaultFS:
+		// args[0]=mcp, args[1]=vault-fs: the verb parses no arguments, like the
+		// script it replaces.
+		return runVaultFSMCP(stdin, stdout, stderr)
 	case routeVersion:
 		if len(args) > 1 {
 			fmt.Fprintf(stderr, "ERROR: unexpected positional argument: %s\n", args[1])

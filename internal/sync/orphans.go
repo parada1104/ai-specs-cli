@@ -301,12 +301,16 @@ func managedTargetAbsent(root, rel string) bool {
 
 func applyRecipeArtifactPrune(root, lockPath string, doomed, stale []string, recipeDir func(string, map[string]any) string, enabled map[string]bool, out io.Writer) error {
 	// Retirement is unconditional and runs before the early return: the cleanup
-	// override is not a managed template and a recipe README is no longer a
-	// project artifact, so no plan ever lists either (T3/T5, S1).
+	// override is not a managed template, a recipe README is no longer a project
+	// artifact, and the vault MCP wrapper is served by `ai-specs mcp vault-fs`,
+	// so no plan ever lists any of them (T3/T4/T5, S1/S5).
 	if err := retireWorktreeCleanupOverride(root, lockPath, out); err != nil {
 		return err
 	}
 	if err := retireRecipeREADMEDocs(root, lockPath, out); err != nil {
+		return err
+	}
+	if err := retireVaultMCPScript(root, lockPath, out); err != nil {
 		return err
 	}
 	if len(doomed) == 0 && len(stale) == 0 {
