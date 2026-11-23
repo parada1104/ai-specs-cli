@@ -37,6 +37,9 @@ import (
 
 const hooksManagedKey = "_ai_specs_managed"
 
+// hooksCLIProjectRootPrefix binds the hook to the project that installed it.
+const hooksCLIProjectRootPrefix = "export AI_SPECS_PROJECT_ROOT="
+
 // hooksEventMap mirrors EVENT_MAP: abstract event → native event per harness.
 // A nil value means the harness has no native mapping (warn-and-skip).
 var hooksEventMap = map[string]map[string]any{
@@ -555,6 +558,7 @@ func hooksSpawnDecl(command, scriptPath string, cliServed bool) string {
 	if cliServed {
 		return "// CLI-served hook: the installed ai-specs CLI decides (a missing CLI\n" +
 			"// fails open); no script is materialized into the project.\n" +
+			"const PROJECT_ROOT = fileURLToPath(new URL(\"../../\", import.meta.url));\n" +
 			"const COMMAND = " + hooksJSONDumpsCompact(command) + ";\n"
 	}
 	return "// The materialized launcher resolves beside this generated module at\n" +
@@ -568,6 +572,14 @@ func hooksSpawnTarget(cliServed bool) string {
 		return `"sh", ["-c", COMMAND], `
 	}
 	return "SCRIPT, "
+}
+
+// hooksSpawnEnv is spawnSync's env; a CLI-served hook passes its module's root.
+func hooksSpawnEnv(cliServed bool) string {
+	if cliServed {
+		return "{ ...process.env, ...ENV, AI_SPECS_PROJECT_ROOT: PROJECT_ROOT }"
+	}
+	return "{ ...process.env, ...ENV }"
 }
 
 // hooksModuleScriptDecl mirrors _module_script_decl.
@@ -740,7 +752,10 @@ func hooksRenderClaude(h *mcpObj, nativeEvent, projectRoot, guardRoot string, st
 		entry.set("matcher", hooksGet(h, "matcher"))
 	}
 	command, cliServed := hooksHookCommand(h)
-	if !cliServed {
+	if cliServed {
+		// R1-project-policy-binding: the installing project's policy, from the runtime.
+		command = hooksCLIProjectRootPrefix + `"$CLAUDE_PROJECT_DIR"; ` + command
+	} else {
 		scriptPath, err := hooksRequireStr(h, "script_path")
 		if err != nil {
 			return err
@@ -826,7 +841,7 @@ func hooksRenderCursor(h *mcpObj, nativeEvent, projectRoot, guardRoot string, st
 	b.WriteString("# maps exit 2 \u2192 Cursor deny (decision channel is stdout JSON, snake_case).\n")
 	if cliServed {
 		b.WriteString("# CLI-served hook: the installed ai-specs CLI decides; a missing CLI fails open.\n")
-		b.WriteString("run_hook() {\n  " + command + "\n}\n")
+		b.WriteString("run_hook() {\n  " + hooksCLIProjectRootPrefix + `"$CURSOR_PROJECT_DIR"; ` + command + "\n}\n")
 	} else {
 		b.WriteString("script=\"" + script + "\"\n")
 	}
@@ -914,9 +929,7 @@ func hooksRenderOpencode(h *mcpObj, nativeEvent, projectRoot, guardRoot string) 
 	b.WriteString("// on stdin; exit 2 -> throw (block). NOTE: tool.execute.before does NOT\n")
 	b.WriteString("// fire for subagent (#5894) or MCP (#2319) tool calls.\n")
 	b.WriteString("import { spawnSync } from \"node:child_process\";\n")
-	if !cliServed {
-		b.WriteString("import { fileURLToPath } from \"node:url\";\n")
-	}
+	b.WriteString("import { fileURLToPath } from \"node:url\";\n")
 	b.WriteString("import { isAbsolute } from \"node:path\";\n")
 	b.WriteString("import { statSync } from \"node:fs\";\n\n")
 	b.WriteString(hooksSpawnDecl(command, scriptPath, cliServed))
@@ -960,7 +973,7 @@ func hooksRenderOpencode(h *mcpObj, nativeEvent, projectRoot, guardRoot string) 
 	b.WriteString("      try {\n")
 	b.WriteString("        res = spawnSync(" + hooksSpawnTarget(cliServed) + "{\n")
 	b.WriteString("          input: JSON.stringify(event),\n")
-	b.WriteString("          env: { ...process.env, ...ENV },\n")
+	b.WriteString("          env: " + hooksSpawnEnv(cliServed) + ",\n")
 	b.WriteString("          cwd,\n")
 	b.WriteString("          encoding: \"utf8\",\n")
 	b.WriteString("        });\n")
@@ -1021,11 +1034,12 @@ func hooksRenderPiExt(h *mcpObj, dir, extImport, adapter, nativeEvent, guardRoot
 	b.WriteString(hooksTSHeader + recipe + ":" + id + " (event " + event + ").\n")
 	b.WriteString("import type { ExtensionAPI } from \"" + extImport + "\";\n")
 	b.WriteString("import { spawnSync } from \"node:child_process\";\n")
+	b.WriteString("import { fileURLToPath } from \"node:url\";\n")
 	if cliServed {
 		b.WriteString("\n")
 		b.WriteString(hooksSpawnDecl(command, scriptPath, cliServed))
 	} else {
-		b.WriteString("import { fileURLToPath } from \"node:url\";\n\n")
+		b.WriteString("\n")
 		b.WriteString("// The materialized launcher resolves beside this generated module at\n")
 		b.WriteString("// runtime; the " + adapter + " event context stays process cwd (no workspace root\n")
 		b.WriteString("// is claimed by this adapter).\n")
@@ -1058,7 +1072,7 @@ func hooksRenderPiExt(h *mcpObj, dir, extImport, adapter, nativeEvent, guardRoot
 	b.WriteString("    };\n")
 	b.WriteString("    const res = spawnSync(" + hooksSpawnTarget(cliServed) + "{\n")
 	b.WriteString("      input: JSON.stringify(event),\n")
-	b.WriteString("      env: { ...process.env, ...ENV },\n")
+	b.WriteString("      env: " + hooksSpawnEnv(cliServed) + ",\n")
 	b.WriteString("      encoding: \"utf8\",\n")
 	b.WriteString("    });\n")
 	b.WriteString("    if (res.status === 2) {\n")

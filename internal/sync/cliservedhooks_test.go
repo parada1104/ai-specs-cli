@@ -197,8 +197,16 @@ func TestRenderHooksWiresCLICommandPerAgent(t *testing.T) {
 			if !strings.Contains(body, command) {
 				t.Fatalf("%s does not wire %q:\n%s", rel, command, body)
 			}
-			if strings.Contains(body, "script_path") || strings.Contains(body, "CLAUDE_PROJECT_DIR") || strings.Contains(body, "CURSOR_PROJECT_DIR") {
+			if strings.Contains(body, "script_path") {
 				t.Fatalf("%s still references a script path:\n%s", rel, body)
+			}
+			// R1-project-policy-binding: the root comes from the runtime.
+			want := map[string]string{"claude": `AI_SPECS_PROJECT_ROOT=\"$CLAUDE_PROJECT_DIR\"`, "cursor": `AI_SPECS_PROJECT_ROOT="$CURSOR_PROJECT_DIR"`}[agent]
+			if want == "" {
+				want = "AI_SPECS_PROJECT_ROOT: PROJECT_ROOT"
+			}
+			if !strings.Contains(body, want) {
+				t.Fatalf("%s does not bind %q:\n%s", rel, want, body)
 			}
 			// The block decision channel is unchanged per agent.
 			switch agent {
@@ -249,5 +257,25 @@ func TestSyncFailedRunKeepsPreviousSnapshot(t *testing.T) {
 	}
 	if snapshot != previous {
 		t.Fatalf("snapshot = %+v, want the previous %+v", snapshot, previous)
+	}
+}
+
+// R1-upgrade-enforcement-gap: with no previous snapshot to preserve, the first
+// sync after the upgrade publishes it BEFORE the prune, so a later failure still
+// leaves the gate enforced instead of failing open.
+func TestSyncFirstRunPublishesSnapshotBeforePrune(t *testing.T) {
+	home, _ := spineEnv(t)
+	project := spineProject(t, cliServedManifest)
+	// The fan-out fails after the prune: this unlocked path is a directory.
+	if err := os.MkdirAll(filepath.Join(project, ".pi/extensions/worktree-flow-worktree-gate.ts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rc, stdout, stderr := runCLIServedSync(t, home, project)
+	if rc == 0 {
+		t.Fatalf("sync must fail\n%s\n%s", stdout, stderr)
+	}
+	snapshot, found, err := projectcache.ReadRuntimeSnapshot(project, home)
+	if err != nil || !found || snapshot.GateMode != "ask" || snapshot.WorktreesDir != ".wt" {
+		t.Fatalf("snapshot = %+v found=%v err=%v, want the resolved policy", snapshot, found, err)
 	}
 }

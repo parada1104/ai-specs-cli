@@ -470,6 +470,18 @@ func (r *runner) run(opts options) int {
 		fmt.Fprintf(r.stderr, "ERROR: cannot plan prune: %v\n", inputErr)
 		return 1
 	}
+	// Upgrade gap (R1-upgrade-enforcement-gap): with no previous snapshot to
+	// preserve, publish the staged one BEFORE the launcher is pruned.
+	publishedSnapshot := false
+	if pendingSnapshot.Found {
+		if _, found, _ := projectcache.ReadRuntimeSnapshot(root, r.home); !found {
+			if _, err := projectcache.WriteRuntimeSnapshot(root, r.home, pendingSnapshot.Snapshot); err != nil {
+				fmt.Fprintf(r.stderr, "ERROR: cannot write the runtime snapshot: %v\n", err)
+				return 1
+			}
+			publishedSnapshot = true
+		}
+	}
 	if err := applyRecipePrune(r.stderr); err != nil {
 		fmt.Fprintf(r.stderr, "ERROR: cannot prune recipe artifacts: %v\n", err)
 		return 1
@@ -533,7 +545,7 @@ func (r *runner) run(opts options) int {
 		return 1
 	}
 
-	if pendingSnapshot.Found {
+	if pendingSnapshot.Found && !publishedSnapshot {
 		if _, err := projectcache.WriteRuntimeSnapshot(root, r.home, pendingSnapshot.Snapshot); err != nil {
 			fmt.Fprintf(r.stderr, "ERROR: cannot write the runtime snapshot: %v\n", err)
 			return 1

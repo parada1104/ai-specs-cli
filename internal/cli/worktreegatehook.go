@@ -16,7 +16,6 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -30,6 +29,10 @@ import (
 
 // worktreeGateHookFlag selects the CLI-served hook mode.
 const worktreeGateHookFlag = "--hook"
+
+// worktreeGateProjectRootEnv is the project root every renderer exports from its
+// runtime: the hook enforces the policy of the project that INSTALLED it.
+const worktreeGateProjectRootEnv = "AI_SPECS_PROJECT_ROOT"
 
 // worktreeGateNoSnapshotMessage is the S6 fail-open message. One paragraph, it
 // names the project, the consequence and the exact next action, and it asks the
@@ -51,14 +54,13 @@ func worktreeGateHookRequest(args []string) (string, bool) {
 
 // runWorktreeGateHook answers one agent hook invocation from the snapshot.
 func runWorktreeGateHook(home string, stdin io.Reader, stdout, stderr io.Writer, version string) int {
-	// The payload is read once: the event's cwd selects the project (the hook
-	// may be launched from anywhere) and the runner gets the same bytes.
+	// The payload is read once: the runner judges the event cwd it names.
 	input, err := io.ReadAll(stdin)
 	if err != nil {
 		fmt.Fprintf(stderr, "worktree-gate: cannot read the hook payload: %v\n", err)
 		return 0
 	}
-	roots := worktreeGateRoots(worktreeGateEventCwd(input))
+	roots := worktreeGateRoots()
 	var snapshot projectcache.RuntimeSnapshot
 	found := false
 	for _, root := range roots {
@@ -86,55 +88,28 @@ func runWorktreeGateHook(home string, stdin io.Reader, stdout, stderr io.Writer,
 	}, bytes.NewReader(input), stdout, stderr, version)
 }
 
-// worktreeGateEventCwd is the cwd the hook payload names — the directory the
-// gate runner judges — or the process cwd when the payload carries none.
-func worktreeGateEventCwd(input []byte) string {
-	var event struct {
-		Cwd string `json:"cwd"`
-	}
-	if json.Unmarshal(input, &event) == nil && event.Cwd != "" {
-		return event.Cwd
-	}
-	if cwd, cwdErr := os.Getwd(); cwdErr == nil {
-		return cwd
-	}
-	return "."
-}
-
-// worktreeGateRoots lists the candidate project roots for the snapshot lookup,
-// most specific first: the event cwd and every one of its ancestors up to the
-// filesystem root (ai-specs.toml may sit below the git toplevel, and a submodule
-// resolves to the superproject), then the git toplevel (a linked worktree
-// included) and the repository's main worktree, where sync usually ran. The
-// first root carrying a snapshot wins, so working inside a worktree never
-// reports a missing snapshot.
-func worktreeGateRoots(cwd string) []string {
-	// The cache key resolves the project root, and the S6 message names it, so
-	// start from the real path.
-	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
-		cwd = resolved
-	}
-	var roots []string
-	for dir := cwd; ; {
-		roots = append(roots, dir)
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	if top := worktreeGateGit(cwd, "rev-parse", "--show-toplevel"); top != "" {
-		roots = append(roots, top)
-	}
-	if main := worktreeGateGit(cwd, "worktree", "list", "--porcelain"); main != "" {
-		for _, line := range strings.Split(main, "\n") {
-			if path, ok := strings.CutPrefix(line, "worktree "); ok && path != "" {
-				roots = append(roots, path)
-				break
-			}
+// worktreeGateRoots lists the snapshot locations of the project that installed
+// this hook: the root its runtime exported (or, for an older hook, the process
+// cwd's git toplevel), then the main worktree of that repository, so a linked
+// worktree finds what sync wrote. No ancestor walk: a nested repo keeps its own.
+func worktreeGateRoots() []string {
+	root := os.Getenv(worktreeGateProjectRootEnv)
+	if root == "" {
+		if root = worktreeGateGit(".", "rev-parse", "--show-toplevel"); root == "" {
+			root, _ = os.Getwd()
 		}
 	}
-	return roots
+	// The cache key resolves the project root, and the S6 message names it.
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	if out := worktreeGateGit(root, "worktree", "list", "--porcelain"); strings.HasPrefix(out, "worktree ") {
+		main, _, _ := strings.Cut(strings.TrimPrefix(out, "worktree "), "\n")
+		if main != root {
+			return []string{root, main}
+		}
+	}
+	return []string{root}
 }
 
 // worktreeGateGit runs one read-only git query and returns its trimmed output,

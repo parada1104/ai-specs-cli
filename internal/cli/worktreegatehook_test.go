@@ -11,8 +11,16 @@ import (
 )
 
 // runHookCLI drives `ai-specs worktree-gate --hook <id>` from a project cwd.
+// No project root is exported: the verb falls back like an older hook.
 func runHookCLI(t *testing.T, cwd, home, input string) (int, string, string) {
+	return runHookCLIFor(t, "", cwd, home, input)
+}
+
+// runHookCLIFor drives the hook the way a rendered one runs: the runtime
+// exports the installing project's root it resolved.
+func runHookCLIFor(t *testing.T, projectRoot, cwd, home, input string) (int, string, string) {
 	t.Helper()
+	t.Setenv("AI_SPECS_PROJECT_ROOT", projectRoot)
 	t.Chdir(cwd)
 	var stdout, stderr strings.Builder
 	code := Run([]string{"worktree-gate", "--hook", "worktree-gate"}, home, strings.NewReader(input), &stdout, &stderr)
@@ -132,9 +140,8 @@ func TestWorktreeGateHookFindsMainWorktreeSnapshot(t *testing.T) {
 	}
 }
 
-// R1-001/R4-snapshot-root-lookup: the gate judges the EVENT's cwd, so the
-// snapshot lookup must use it too. A hook launched from an unrelated directory
-// still has to find the snapshot of the project the event targets.
+// R1-project-policy-binding: the snapshot is the INSTALLING project's, whatever
+// directory the hook is launched from.
 func TestWorktreeGateHookUsesEventProject(t *testing.T) {
 	repo, home, launchDir := newGateFixture(t), t.TempDir(), t.TempDir()
 	if _, err := projectcache.WriteRuntimeSnapshot(repo, home, projectcache.RuntimeSnapshot{
@@ -144,15 +151,15 @@ func TestWorktreeGateHookUsesEventProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := fmt.Sprintf(`{"tool_name":"Write","cwd":%q,"tool_input":{"file_path":"README.md"}}`, repo)
-	code, stdout, stderr := runHookCLI(t, launchDir, home, input)
+	code, stdout, stderr := runHookCLIFor(t, repo, launchDir, home, input)
 	if code != 2 || stdout != "" || !strings.Contains(stderr, "refusing to Write") {
 		t.Fatalf("hook = (%d, %q, %q), want blocked (2, blocked message)", code, stdout, stderr)
 	}
 }
 
-// The same lookup walks UP from the event cwd: a write inside a subdirectory of
-// the synced project (an ai-specs.toml below the git toplevel, or a submodule)
-// is judged by that project's snapshot.
+// A write inside a subdirectory of the synced project (an ai-specs.toml below
+// the git toplevel) is judged by that project's snapshot: the event cwd only
+// selects the file, never the policy.
 func TestWorktreeGateHookUsesNestedEventProject(t *testing.T) {
 	repo, home, launchDir := newGateFixture(t), t.TempDir(), t.TempDir()
 	if _, err := projectcache.WriteRuntimeSnapshot(repo, home, projectcache.RuntimeSnapshot{
@@ -166,8 +173,40 @@ func TestWorktreeGateHookUsesNestedEventProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := fmt.Sprintf(`{"tool_name":"Write","cwd":%q,"tool_input":{"file_path":"README.md"}}`, nested)
-	code, stdout, stderr := runHookCLI(t, launchDir, home, input)
+	code, stdout, stderr := runHookCLIFor(t, repo, launchDir, home, input)
 	if code != 2 || stdout != "" || !strings.Contains(stderr, "refusing to Write") {
 		t.Fatalf("hook = (%d, %q, %q), want blocked (2, blocked message)", code, stdout, stderr)
+	}
+}
+
+// R1-project-policy-binding / R3-001: a nested, separately synced project neither
+// disarms the installing project's policy nor lends its own to an unsynced
+// nested repository.
+func TestWorktreeGateHookBindsToInstallingProject(t *testing.T) {
+	repo, home, parentOnly := newGateFixture(t), t.TempDir(), t.TempDir()
+	writeSnapshot := func(cliHome, root, mode string) {
+		snapshot := projectcache.RuntimeSnapshot{GateMode: mode, GateScope: "auto", RepoTopology: "auto", Protected: "main", WorktreesDir: ".worktrees", IntegrationBranch: "main"}
+		if _, err := projectcache.WriteRuntimeSnapshot(root, cliHome, snapshot); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nested := filepath.Join(repo, "vendor", "app")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, nested, "init", "-b", "main")
+	event := fmt.Sprintf(`{"tool_name":"Write","cwd":%q,"tool_input":{"file_path":"README.md"}}`, nested)
+	// The nested project turned the gate off; the outer always still holds.
+	writeSnapshot(home, repo, "always")
+	writeSnapshot(home, nested, "off")
+	if code, _, stderr := runHookCLIFor(t, repo, repo, home, event); code != 2 || !strings.Contains(stderr, "refusing to Write") {
+		t.Fatalf("hook = (%d, %q), want the installing project's always", code, stderr)
+	}
+	// In a cache that knows only the parent, the nested repo gets S6, not `off`.
+	writeSnapshot(parentOnly, repo, "off")
+	resolved, _ := filepath.EvalSymlinks(nested)
+	want := fmt.Sprintf(worktreeGateNoSnapshotMessage, resolved) + "\n"
+	if code, _, stderr := runHookCLIFor(t, nested, nested, parentOnly, event); code != 0 || stderr != want {
+		t.Fatalf("hook = (%d, %q), want (%d, %q)", code, stderr, 0, want)
 	}
 }
