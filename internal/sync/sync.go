@@ -42,9 +42,11 @@ Arguments:
 
 Flags:
   --ignore-cli-version  Skip [tool] CLI version policy check (warns on stderr)
-  --refresh-gates       Explicitly refresh customized gate hooks: save exact
-                        pre-refresh bytes to a cache-only immutable backup,
-                        then replace (never set by an ordinary sync)
+  --refresh-gates       Explicitly refresh a customized materialized hook
+                        script: save exact pre-refresh bytes to a cache-only
+                        immutable backup, then replace (never set by an ordinary
+                        sync). Gate launchers are CLI-served, so this flag does
+                        not refresh them; doctor reports a stale one
   --adopt-brief         Explicitly adopt the current AGENTS.md as the managed
                         runtime-brief baseline
   -v, --verbose         Print full per-step detail instead of compact summaries
