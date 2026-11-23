@@ -378,7 +378,7 @@ func TestCLIServedHookCommandQuotesHookID(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skipf("bash not available: %v", err)
 	}
-	const unsafeID = "worktree gate; echo pwned"
+	const unsafeID = "worktree ' gate; printf unexpected; #"
 	hook := &schema.RuntimeHook{ID: unsafeID, Script: "hooks/worktree-gate.sh"}
 	command := cliServedHookCommand("worktree-flow", hook)
 	if command == "" {
