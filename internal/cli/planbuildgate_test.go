@@ -363,3 +363,18 @@ func TestPlanBuildGateFieldTextParity(t *testing.T) {
 		t.Errorf("invalid JSON = %q, want empty", got)
 	}
 }
+
+// R4-hasplan-glob-metachar-root: the changes directory is read literally, so a
+// repository path containing glob metacharacters neither hides a real plan nor
+// matches a sibling's plan.
+func TestPlanBuildGatePlanSurvivesGlobMetacharRoot(t *testing.T) {
+	repo := sharedRealPath(newGateFixture(t))
+	bracketed := filepath.Join(filepath.Dir(repo), "check[out]")
+	if err := os.Rename(repo, bracketed); err != nil {
+		t.Fatal(err)
+	}
+	planBuildWritePlan(t, bracketed, "bracketed-plan")
+	if code, stdout, stderr := runPlanBuildGateCLI(t, bracketed, planBuildGateEvent(bracketed, "Write", "src/x.go")); code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("plan under a bracketed root = (%d, %q, %q), want silence", code, stdout, stderr)
+	}
+}

@@ -213,16 +213,19 @@ func planBuildGateProduction(rel string) bool {
 }
 
 // planBuildGateHasPlan reports whether root holds an active change folder: a
-// glob match that resolves to a regular file. A match alone is not enough — a
-// directory or a dangling symlink named tasks.md would let a production write
-// through with no readable plan (R3-001). os.Stat follows symlinks.
+// change directory whose tasks.md resolves to a regular file. A match alone is
+// not enough — a directory or a dangling symlink named tasks.md would let a
+// production write through with no readable plan (R3-001); os.Stat follows
+// symlinks. The changes directory is read literally, never as a glob pattern,
+// so a repository path containing '[', '*' or '?' cannot wedge the gate.
 func planBuildGateHasPlan(root string) bool {
-	matches, err := filepath.Glob(filepath.Join(root, "openspec", "changes", "*", "tasks.md"))
+	changes, err := os.ReadDir(filepath.Join(root, "openspec", "changes"))
 	if err != nil {
 		return false
 	}
-	for _, match := range matches {
-		if info, err := os.Stat(match); err == nil && info.Mode().IsRegular() {
+	for _, change := range changes {
+		plan := filepath.Join(root, "openspec", "changes", change.Name(), "tasks.md")
+		if info, err := os.Stat(plan); err == nil && info.Mode().IsRegular() {
 			return true
 		}
 	}
