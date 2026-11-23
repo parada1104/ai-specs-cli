@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -211,11 +212,21 @@ func planBuildGateProduction(rel string) bool {
 	return false
 }
 
-// planBuildGateHasPlan reports whether root holds an active change folder. Any
-// match counts, as the shell host's nullglob loop did.
+// planBuildGateHasPlan reports whether root holds an active change folder: a
+// glob match that resolves to a regular file. A match alone is not enough — a
+// directory or a dangling symlink named tasks.md would let a production write
+// through with no readable plan (R3-001). os.Stat follows symlinks.
 func planBuildGateHasPlan(root string) bool {
 	matches, err := filepath.Glob(filepath.Join(root, "openspec", "changes", "*", "tasks.md"))
-	return err == nil && len(matches) > 0
+	if err != nil {
+		return false
+	}
+	for _, match := range matches {
+		if info, err := os.Stat(match); err == nil && info.Mode().IsRegular() {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Ledger work-start checkpoint -------------------------------------------
@@ -337,23 +348,28 @@ func planBuildGateOr(value, fallback string) string {
 // proof from the probe directory, the way the retired host asked the installed
 // CLI: `cd <probe> && ai-specs worktree-gate --resolve-central-root`. The proof
 // resolves upward from the process directory and lives unexported in the
-// imported gate module, so the query runs in process from the probe directory.
+// imported gate module, so it needs the probe directory as its working
+// directory; a child process has one of its own, while os.Chdir would move every
+// concurrent caller in this process and race their relative paths (R3-002).
 // Tests substitute it.
 var planBuildGateCentralRootQuerier = func(probeDir string) (string, bool) {
-	previous, err := os.Getwd()
+	exe, err := planBuildGateTopologyExecutable()
 	if err != nil {
 		return "", false
 	}
-	if err := os.Chdir(probeDir); err != nil {
-		return "", false
-	}
-	defer func() { _ = os.Chdir(previous) }()
+	cmd := exec.Command(exe, "worktree-gate", "--resolve-central-root")
+	cmd.Dir = probeDir
 	var out bytes.Buffer
-	if rc := runner.Run([]string{"--resolve-central-root"}, strings.NewReader(""), &out, io.Discard, "unknown"); rc != 0 {
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
 		return "", false
 	}
 	return out.String(), true
 }
+
+// planBuildGateTopologyExecutable is the CLI the child process runs: this one.
+// Tests substitute it.
+var planBuildGateTopologyExecutable = os.Executable
 
 // planBuildGateCentralProof validates the proof against this repository. A
 // missing binary, a nonzero exit, a malformed or empty payload, or a central

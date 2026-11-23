@@ -15,10 +15,26 @@ import (
 // event on stdin.
 func runPlanBuildGateCLI(t *testing.T, cwd, input string) (int, string, string) {
 	t.Helper()
+	// The topology proof runs in a child process, and the test binary is not that
+	// CLI: the default child proves nothing, the answer a standalone repository
+	// gets. Tests that want a proof stub planBuildGateCentralRootQuerier.
+	original := planBuildGateTopologyExecutable
+	t.Cleanup(func() { planBuildGateTopologyExecutable = original })
+	planBuildGateTopologyExecutable = func() (string, error) { return planBuildGateUnprovenBinary(t), nil }
 	t.Chdir(cwd)
 	var stdout, stderr strings.Builder
 	code := Run([]string{"plan-build-gate"}, t.TempDir(), strings.NewReader(input), &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
+}
+
+// planBuildGateUnprovenBinary is a stand-in CLI whose topology proof fails.
+func planBuildGateUnprovenBinary(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ai-specs")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // planBuildGateEvent renders one pre-tool-use event for a repo-relative target.
@@ -103,6 +119,38 @@ func TestPlanBuildGateAllowsWithActivePlan(t *testing.T) {
 	planBuildWritePlan(t, repo, "some-change")
 	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("gate = (%d, %q, %q), want silence", code, stdout, stderr)
+	}
+}
+
+// R3-001: only a usable plan file counts. A directory named tasks.md — or a
+// dangling symlink — is a glob match but not a plan, so a production write it
+// would otherwise allow stays refused. A symlink to a real plan does count.
+func TestPlanBuildGatePlanMustBeAFile(t *testing.T) {
+	repo := sharedRealPath(newGateFixture(t))
+	if err := os.MkdirAll(filepath.Join(repo, "openspec", "changes", "dir-plan", "tasks.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dangling := filepath.Join(repo, "openspec", "changes", "dangling-plan", "tasks.md")
+	if err := os.MkdirAll(filepath.Dir(dangling), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(repo, "gone.md"), dangling); err != nil {
+		t.Fatal(err)
+	}
+	want := planBuildNearestRefusal("Write", "src/x.go")
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/x.go")); code != 2 || stdout != "" || stderr != want {
+		t.Fatalf("non-file plans = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+	}
+	// The dangling link resolves to a real plan: the gate follows symlinks.
+	planBuildWritePlan(t, repo, "real-plan")
+	if err := os.Remove(dangling); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(repo, "openspec", "changes", "real-plan", "tasks.md"), dangling); err != nil {
+		t.Fatal(err)
+	}
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/x.go")); code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("plan via symlink = (%d, %q, %q), want silence", code, stdout, stderr)
 	}
 }
 
@@ -242,6 +290,38 @@ func TestPlanBuildGateUnprovenTopologyFallsBack(t *testing.T) {
 				t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
 			}
 		})
+	}
+}
+
+// R3-002: the topology query runs in a child process rooted at the probe
+// directory, so two queries in one process each answer for their own directory
+// and neither moves this process. A chdir implementation fails both checks.
+func TestPlanBuildGateTopologyQueryIsPerProbeDir(t *testing.T) {
+	first, second := sharedRealPath(t.TempDir()), sharedRealPath(t.TempDir())
+	// The stand-in binary answers like the proof: its own working directory.
+	script := filepath.Join(t.TempDir(), "ai-specs")
+	body := "#!/bin/sh\nprintf '{\"central_root\":\"%s\",\"submodule\":\"app\"}\\n' \"$PWD\"\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := planBuildGateTopologyExecutable
+	t.Cleanup(func() { planBuildGateTopologyExecutable = original })
+	planBuildGateTopologyExecutable = func() (string, error) { return script, nil }
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{first, second} {
+		out, ok := planBuildGateCentralRootQuerier(dir)
+		if !ok {
+			t.Fatalf("query %s failed", dir)
+		}
+		if got := planBuildGateField(out, "central_root"); got != dir {
+			t.Fatalf("query %s = %q, want that directory", dir, got)
+		}
+	}
+	if after, err := os.Getwd(); err != nil || after != cwd {
+		t.Fatalf("cwd = %q (err %v), want %q: the query must not move this process", after, err, cwd)
 	}
 }
 
