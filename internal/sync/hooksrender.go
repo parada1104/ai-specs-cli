@@ -40,6 +40,17 @@ const hooksManagedKey = "_ai_specs_managed"
 // hooksCLIProjectRootPrefix binds the hook to the project that installed it.
 const hooksCLIProjectRootPrefix = "export AI_SPECS_PROJECT_ROOT="
 
+// hooksCLIAgentExport names the runtime for the CLI verb, so its fail-open
+// no-snapshot message can ride that runtime's allow-with-message channel (S6).
+func hooksCLIAgentExport(agent string) string {
+	return "export AI_SPECS_HOOK_AGENT=" + agent + "; "
+}
+
+// hooksCursorJSONArg encodes "$out" as a JSON string scalar with POSIX awk under
+// LC_ALL=C: matches json.dumps for ASCII (0x01-0x1f as \u00XX, DEL raw) but emits
+// non-ASCII UTF-8 bytes raw (accepted divergence, GO-20 U2e T7).
+const hooksCursorJSONArg = `"$(printf %s "$out" | LC_ALL=C awk 'BEGIN{esc["\\"]="\\\\";esc["\""]="\\\"";esc["\r"]="\\r";esc["\t"]="\\t";esc["\b"]="\\b";esc["\f"]="\\f";for(i=1;i<32;i++){c=sprintf("%c",i);if(!(c in esc))esc[c]=sprintf("\\u%04x",i)}} {line=$0;if(NR>1)printf "%s","\\n";for(i=1;i<=length(line);i++){c=substr(line,i,1);printf "%s",((c in esc)?esc[c]:c)}}')"`
+
 // hooksEventMap mirrors EVENT_MAP: abstract event → native event per harness.
 // A nil value means the harness has no native mapping (warn-and-skip).
 var hooksEventMap = map[string]map[string]any{
@@ -574,10 +585,16 @@ func hooksSpawnTarget(cliServed bool) string {
 	return "SCRIPT, "
 }
 
-// hooksSpawnEnv is spawnSync's env; a CLI-served hook passes its module's root.
-func hooksSpawnEnv(cliServed bool) string {
+// hooksSpawnEnv is spawnSync's env; a CLI-served hook passes its module's root
+// and, for a runtime whose adapter forwards the CLI's fail-open message (S6),
+// the runtime name so the CLI can pick that channel.
+func hooksSpawnEnv(cliServed bool, agent string) string {
 	if cliServed {
-		return "{ ...process.env, ...ENV, AI_SPECS_PROJECT_ROOT: PROJECT_ROOT }"
+		env := "{ ...process.env, ...ENV, AI_SPECS_PROJECT_ROOT: PROJECT_ROOT"
+		if agent != "" {
+			env += ", AI_SPECS_HOOK_AGENT: " + mcpJSONString(agent)
+		}
+		return env + " }"
 	}
 	return "{ ...process.env, ...ENV }"
 }
@@ -754,7 +771,7 @@ func hooksRenderClaude(h *mcpObj, nativeEvent, projectRoot, guardRoot string, st
 	command, cliServed := hooksHookCommand(h)
 	if cliServed {
 		// R1-project-policy-binding: the installing project's policy, from the runtime.
-		command = hooksCLIProjectRootPrefix + `"$CLAUDE_PROJECT_DIR"; ` + command
+		command = hooksCLIProjectRootPrefix + `"$CLAUDE_PROJECT_DIR"; ` + hooksCLIAgentExport("claude") + command
 	} else {
 		scriptPath, err := hooksRequireStr(h, "script_path")
 		if err != nil {
@@ -841,7 +858,8 @@ func hooksRenderCursor(h *mcpObj, nativeEvent, projectRoot, guardRoot string, st
 	b.WriteString("# maps exit 2 \u2192 Cursor deny (decision channel is stdout JSON, snake_case).\n")
 	if cliServed {
 		b.WriteString("# CLI-served hook: the installed ai-specs CLI decides; a missing CLI fails open.\n")
-		b.WriteString("run_hook() {\n  " + hooksCLIProjectRootPrefix + `"$CURSOR_PROJECT_DIR"; ` + command + "\n}\n")
+		b.WriteString("run_hook() {\n  " + hooksCLIProjectRootPrefix + `"$CURSOR_PROJECT_DIR"; ` +
+			hooksCLIAgentExport("cursor") + command + "\n}\n")
 	} else {
 		b.WriteString("script=\"" + script + "\"\n")
 	}
@@ -857,10 +875,14 @@ func hooksRenderCursor(h *mcpObj, nativeEvent, projectRoot, guardRoot string, st
 	}
 	b.WriteString(")\"; code=$?\n")
 	b.WriteString("if [ \"$code\" = 2 ]; then\n")
-	// Deny message -> JSON scalar with POSIX awk under LC_ALL=C: matches
-	// json.dumps for ASCII (0x01-0x1f as \u00XX, DEL raw) but emits non-ASCII
-	// UTF-8 bytes raw (accepted divergence, GO-20 U2e T7).
-	b.WriteString(`  printf '{"permission":"deny","agent_message":"%s"}' "$(printf %s "$out" | LC_ALL=C awk 'BEGIN{esc["\\"]="\\\\";esc["\""]="\\\"";esc["\r"]="\\r";esc["\t"]="\\t";esc["\b"]="\\b";esc["\f"]="\\f";for(i=1;i<32;i++){c=sprintf("%c",i);if(!(c in esc))esc[c]=sprintf("\\u%04x",i)}} {line=$0;if(NR>1)printf "%s","\\n";for(i=1;i<=length(line);i++){c=substr(line,i,1);printf "%s",((c in esc)?esc[c]:c)}}')` + "\"\n")
+	// Deny message -> JSON scalar (hooksCursorJSONArg).
+	b.WriteString(`  printf '{"permission":"deny","agent_message":"%s"}' ` + hooksCursorJSONArg + "\n")
+	if cliServed {
+		// S6: exit 0 with a message on stdout is the CLI's fail-open notice; the
+		// action stays allowed and Cursor feeds the text to the agent.
+		b.WriteString("elif [ -n \"$out\" ]; then\n")
+		b.WriteString(`  printf '{"permission":"allow","agent_message":"%s"}' ` + hooksCursorJSONArg + "\n")
+	}
 	b.WriteString("else\n")
 	b.WriteString("  printf '{\"permission\":\"allow\"}'\n")
 	b.WriteString("fi\n")
@@ -973,7 +995,7 @@ func hooksRenderOpencode(h *mcpObj, nativeEvent, projectRoot, guardRoot string) 
 	b.WriteString("      try {\n")
 	b.WriteString("        res = spawnSync(" + hooksSpawnTarget(cliServed) + "{\n")
 	b.WriteString("          input: JSON.stringify(event),\n")
-	b.WriteString("          env: " + hooksSpawnEnv(cliServed) + ",\n")
+	b.WriteString("          env: " + hooksSpawnEnv(cliServed, "") + ",\n")
 	b.WriteString("          cwd,\n")
 	b.WriteString("          encoding: \"utf8\",\n")
 	b.WriteString("        });\n")
@@ -1072,12 +1094,20 @@ func hooksRenderPiExt(h *mcpObj, dir, extImport, adapter, nativeEvent, guardRoot
 	b.WriteString("    };\n")
 	b.WriteString("    const res = spawnSync(" + hooksSpawnTarget(cliServed) + "{\n")
 	b.WriteString("      input: JSON.stringify(event),\n")
-	b.WriteString("      env: " + hooksSpawnEnv(cliServed) + ",\n")
+	b.WriteString("      env: " + hooksSpawnEnv(cliServed, adapter) + ",\n")
 	b.WriteString("      encoding: \"utf8\",\n")
 	b.WriteString("    });\n")
 	b.WriteString("    if (res.status === 2) {\n")
 	b.WriteString("      return { block: true, reason: res.stderr || \"blocked by ai-specs runtime hook\" };\n")
 	b.WriteString("    }\n")
+	if cliServed {
+		// S6: exit 0 with a message on stdout is the CLI's fail-open notice; the
+		// extension hands it to the model and the call still proceeds.
+		b.WriteString("    if (res.status === 0 && res.stdout) {\n")
+		b.WriteString("      // Delivery is best effort: the gate already allowed the edit.\n")
+		b.WriteString("      try { void Promise.resolve(pi.sendMessage({ customType: \"ai-specs-worktree-gate\", content: res.stdout.trim(), display: false })).catch(() => {}); } catch {}\n")
+		b.WriteString("    }\n")
+	}
 	b.WriteString("    // any other exit code: fail-open (allow).\n")
 	b.WriteString("  });\n")
 	b.WriteString("}\n")

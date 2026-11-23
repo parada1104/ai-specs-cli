@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,8 +21,15 @@ func runHookCLI(t *testing.T, cwd, home, input string) (int, string, string) {
 // exports the installing project's root it resolved.
 func runHookCLIFor(t *testing.T, projectRoot, cwd, home, input string) (int, string, string) {
 	t.Helper()
+	return runHookCLIAgent(t, "", projectRoot, cwd, home, input)
+}
+
+// runHookCLIAgent drives the hook exactly as the renderer for `agent` wires it.
+func runHookCLIAgent(t *testing.T, agent, projectRoot, cwd, home, input string) (int, string, string) {
+	t.Helper()
 	t.Setenv("AI_SPECS_PROJECT_ROOT", projectRoot)
 	t.Chdir(cwd)
+	t.Setenv("AI_SPECS_HOOK_AGENT", agent)
 	var stdout, stderr strings.Builder
 	code := Run([]string{"worktree-gate", "--hook", "worktree-gate"}, home, strings.NewReader(input), &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
@@ -51,6 +59,50 @@ func TestWorktreeGateHookWithoutSnapshotFailsOpen(t *testing.T) {
 		if !strings.Contains(stderr, phrase) {
 			t.Errorf("message lost %q: %s", phrase, stderr)
 		}
+	}
+}
+
+// S6/R4-nosnapshot-message-channel: the fail-open message must reach the AGENT
+// on the channel each runtime reads on exit 0, and must still allow the edit.
+func TestWorktreeGateHookDeliversNoSnapshotMessageToAgent(t *testing.T) {
+	repo := newGateFixture(t)
+	resolved, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := fmt.Sprintf(worktreeGateNoSnapshotMessage, resolved)
+	input := `{"tool_name":"Write","cwd":"` + repo + `","tool_input":{"file_path":"README.md"}}`
+	claudeJSON := `{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":`
+	if encoded, err := json.Marshal(message); err != nil {
+		t.Fatal(err)
+	} else {
+		claudeJSON += string(encoded) + "}}"
+	}
+	cases := []struct {
+		agent  string
+		stdout string // "" means plain text: the message and a newline
+	}{
+		{agent: "claude", stdout: claudeJSON},
+		{agent: "cursor", stdout: message + "\n"},
+		{agent: "pi", stdout: message + "\n"},
+		{agent: "omp", stdout: message + "\n"},
+		{agent: "opencode", stdout: message + "\n"},
+		{agent: "", stdout: ""},
+	}
+	for _, tc := range cases {
+		t.Run("agent="+tc.agent, func(t *testing.T) {
+			// No snapshot: the gate allows the edit whatever the agent channel.
+			code, stdout, stderr := runHookCLIAgent(t, tc.agent, "", repo, t.TempDir(), input)
+			if code != 0 {
+				t.Fatalf("hook rc=%d, want fail-open 0", code)
+			}
+			if stdout != tc.stdout {
+				t.Fatalf("stdout = %q, want %q", stdout, tc.stdout)
+			}
+			if stderr != message+"\n" {
+				t.Fatalf("stderr = %q, want %q", stderr, message+"\n")
+			}
+		})
 	}
 }
 

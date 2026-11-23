@@ -12,6 +12,7 @@ package sync
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"ai-specs.dev/ai-specs/internal/projectcache"
 	"ai-specs.dev/ai-specs/internal/schema"
@@ -35,10 +36,18 @@ func cliServedHookCommand(recipeID string, hook *schema.RuntimeHook) string {
 	// The launcher's resolution order, kept machine-independent: the CLI that
 	// ran sync (AI_SPECS_HOME/dist) first, `ai-specs` on PATH second. A missing
 	// CLI fails open with exit 0, exactly like the launcher did.
+	//
+	// The id is shell-quoted: it is recipe data, so an id with spaces or shell
+	// metacharacters must reach the CLI as one argument instead of as source.
 	return `cli="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"; ` +
 		`[ -x "$cli" ] || cli=ai-specs; ` +
 		`command -v "$cli" >/dev/null 2>&1 || exit 0; ` +
-		`exec "$cli" ` + worktreeGateHookVerb + ` --hook ` + hook.ID
+		`exec "$cli" ` + worktreeGateHookVerb + ` --hook ` + shellQuote(hook.ID)
+}
+
+// shellQuote renders value as one POSIX sh single-quoted word.
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 // recipeServesCLIHook reports whether the recipe declares a CLI-served hook.

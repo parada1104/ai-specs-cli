@@ -16,6 +16,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -29,6 +30,11 @@ import (
 
 // worktreeGateHookFlag selects the CLI-served hook mode.
 const worktreeGateHookFlag = "--hook"
+
+// worktreeGateAgentEnv names the runtime the hook serves, so the fail-open
+// message can ride that runtime's allow-with-message channel (S6). The
+// renderers export it beside the project root; unknown or absent means silent.
+const worktreeGateAgentEnv = "AI_SPECS_HOOK_AGENT"
 
 // worktreeGateProjectRootEnv is the project root every renderer exports from its
 // runtime: the hook enforces the policy of the project that INSTALLED it.
@@ -52,6 +58,29 @@ func worktreeGateHookRequest(args []string) (string, bool) {
 	return args[1], true
 }
 
+// worktreeGateAgentMessage renders the fail-open message on the channel the
+// named runtime reads while allowing the call. Claude Code injects
+// hookSpecificOutput.additionalContext from a PreToolUse hook (exit 0,
+// "PreToolUse decision control"; docs.claude.com/en/docs/claude-code/hooks); the
+// generated Cursor wrapper and pi/omp extension forward the plain stdout line.
+// Runtimes with no such channel (opencode) simply ignore it and stay silent.
+// shortcut: the event name is fixed to PreToolUse because the only CLI-served
+// hooks are worktree-gate's pre-tool-use ones; derive it if that widens.
+func worktreeGateAgentMessage(stdout io.Writer, agent, message string) {
+	switch agent {
+	case "":
+		return
+	case "claude":
+		encoded, err := json.Marshal(message)
+		if err != nil {
+			return
+		}
+		fmt.Fprintf(stdout, `{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":%s}}`, encoded)
+	default:
+		fmt.Fprintf(stdout, "%s\n", message)
+	}
+}
+
 // runWorktreeGateHook answers one agent hook invocation from the snapshot.
 func runWorktreeGateHook(home string, stdin io.Reader, stdout, stderr io.Writer, version string) int {
 	// The payload is read once: the runner judges the event cwd it names.
@@ -72,7 +101,9 @@ func runWorktreeGateHook(home string, stdin io.Reader, stdout, stderr io.Writer,
 		break
 	}
 	if !found {
-		fmt.Fprintf(stderr, worktreeGateNoSnapshotMessage+"\n", roots[0])
+		message := fmt.Sprintf(worktreeGateNoSnapshotMessage, roots[0])
+		fmt.Fprintf(stderr, "%s\n", message)
+		worktreeGateAgentMessage(stdout, os.Getenv(worktreeGateAgentEnv), message)
 		return 0
 	}
 	// The launcher let WORKTREE_GATE_PROTECTED override its stamped value; the

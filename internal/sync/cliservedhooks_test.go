@@ -3,12 +3,15 @@ package sync
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/lock"
 	"ai-specs.dev/ai-specs/internal/projectcache"
+	"ai-specs.dev/ai-specs/internal/schema"
 )
 
 // cliServedManifest enables every agent the F1 renderers cover and the
@@ -86,7 +89,8 @@ func TestSyncServesWorktreeGateFromCLI(t *testing.T) {
 	if lk.Managed[cliServedLauncher] != nil {
 		t.Fatalf("launcher lock record must be gone: %v", lk.Managed[cliServedLauncher])
 	}
-	command := "worktree-gate --hook worktree-gate"
+	// The id is shell-quoted; the two hooks are worktree-gate and -shell.
+	command := "worktree-gate --hook 'worktree-gate"
 	for _, rel := range []string{
 		".claude/settings.json",
 		".cursor/hooks/worktree-flow-worktree-gate-shell.sh",
@@ -208,6 +212,18 @@ func TestRenderHooksWiresCLICommandPerAgent(t *testing.T) {
 			if !strings.Contains(body, want) {
 				t.Fatalf("%s does not bind %q:\n%s", rel, want, body)
 			}
+			// S6: the adapter names its runtime, so the CLI can shape the
+			// fail-open message for that runtime's allow-with-message channel.
+			agentExport := map[string]string{
+				"claude":   "export AI_SPECS_HOOK_AGENT=claude",
+				"cursor":   "export AI_SPECS_HOOK_AGENT=cursor",
+				"pi":       `AI_SPECS_HOOK_AGENT: "pi"`,
+				"omp":      `AI_SPECS_HOOK_AGENT: "omp"`,
+				"opencode": "", // opencode has no allow-with-message channel
+			}[agent]
+			if agentExport != "" && !strings.Contains(body, agentExport) {
+				t.Fatalf("%s does not name its runtime (%q):\n%s", rel, agentExport, body)
+			}
 			// The block decision channel is unchanged per agent.
 			switch agent {
 			case "claude":
@@ -277,5 +293,111 @@ func TestSyncFirstRunPublishesSnapshotBeforePrune(t *testing.T) {
 	snapshot, found, err := projectcache.ReadRuntimeSnapshot(project, home)
 	if err != nil || !found || snapshot.GateMode != "ask" || snapshot.WorktreesDir != ".wt" {
 		t.Fatalf("snapshot = %+v found=%v err=%v, want the resolved policy", snapshot, found, err)
+	}
+}
+
+// fakeCLI installs a stand-in for the installed CLI at $AI_SPECS_HOME/dist/ai-specs
+// that records its argv and replies with the CLI's fail-open no-snapshot output.
+func fakeCLI(t *testing.T, home, stdout string, rc int) string {
+	t.Helper()
+	args := filepath.Join(home, "argv.txt")
+	spineWrite(t, filepath.Join(home, "dist", "ai-specs"),
+		"#!/bin/sh\nprintf '%s\\n' \"$@\" > \""+args+"\"\nprintf '%s' \""+stdout+"\"\nexit "+strconv.Itoa(rc)+"\n", 0o755)
+	return args
+}
+
+// S6/R4-nosnapshot-message-channel (cursor): the generated wrapper turns the
+// CLI's exit-0 stdout into Cursor's agent_message and still allows the action.
+func TestCLIServedCursorWrapperDeliversMessageOnAllow(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	home, _ := spineEnv(t)
+	project := spineProject(t, cliServedManifest)
+	if rc, stdout, stderr := runCLIServedSync(t, home, project); rc != 0 {
+		t.Fatalf("sync rc=%d\n%s\n%s", rc, stdout, stderr)
+	}
+	message := "worktree-gate: /tmp/project has no ai-specs sync snapshot"
+	cliHome := t.TempDir()
+	argv := fakeCLI(t, cliHome, message, 0)
+
+	wrapper := filepath.Join(project, ".cursor", "hooks", "worktree-flow-worktree-gate-shell.sh")
+	cmd := exec.Command("bash", wrapper)
+	cmd.Dir = project
+	cmd.Env = append(os.Environ(), "AI_SPECS_HOME="+cliHome, "CURSOR_PROJECT_DIR="+project)
+	cmd.Stdin = strings.NewReader(`{"tool_name":"Shell","tool_input":{"command":"git commit"}}`)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("run wrapper: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+	}
+	want := `{"permission":"allow","agent_message":"` + message + `"}`
+	if stdout.String() != want {
+		t.Fatalf("wrapper stdout = %q, want %q", stdout.String(), want)
+	}
+	// The adapter still runs the CLI hook with its agent flag, never blocking.
+	if recorded := readFileString(t, argv); recorded != "worktree-gate\n--hook\nworktree-gate-shell\n" {
+		t.Fatalf("CLI argv = %q", recorded)
+	}
+}
+
+// S6/R4-nosnapshot-message-channel (pi/omp): the generated extension hands the
+// CLI's exit-0 stdout to the model and returns nothing, so the call proceeds.
+func TestCLIServedPiExtensionDeliversMessageOnAllow(t *testing.T) {
+	home, _ := spineEnv(t)
+	project := spineProject(t, cliServedManifest)
+	if rc, stdout, stderr := runCLIServedSync(t, home, project); rc != 0 {
+		t.Fatalf("sync rc=%d\n%s\n%s", rc, stdout, stderr)
+	}
+	for agent, rel := range map[string]string{
+		"pi":  ".pi/extensions/worktree-flow-worktree-gate-shell.ts",
+		"omp": ".omp/extensions/worktree-flow-worktree-gate-shell.ts",
+	} {
+		t.Run(agent, func(t *testing.T) {
+			body := readFileString(t, filepath.Join(project, filepath.FromSlash(rel)))
+			if !strings.Contains(body, `AI_SPECS_HOOK_AGENT: "`+agent+`"`) {
+				t.Fatalf("%s does not pass the runtime to the CLI:\n%s", rel, body)
+			}
+			want := "    if (res.status === 2) {\n" +
+				"      return { block: true, reason: res.stderr || \"blocked by ai-specs runtime hook\" };\n" +
+				"    }\n" +
+				"    if (res.status === 0 && res.stdout) {\n" +
+				"      // Delivery is best effort: the gate already allowed the edit.\n" +
+				"      try { void Promise.resolve(pi.sendMessage({ customType: \"ai-specs-worktree-gate\", content: res.stdout.trim(), display: false })).catch(() => {}); } catch {}\n" +
+				"    }\n"
+			if !strings.Contains(body, want) {
+				t.Fatalf("%s lost its allow-with-message channel:\n%s", rel, body)
+			}
+		})
+	}
+}
+
+// S1/S6: the CLI-served command quotes the hook id, so an id with spaces or
+// shell metacharacters reaches the CLI as one argument instead of shell source.
+func TestCLIServedHookCommandQuotesHookID(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	const unsafeID = "worktree gate; echo pwned"
+	hook := &schema.RuntimeHook{ID: unsafeID, Script: "hooks/worktree-gate.sh"}
+	command := cliServedHookCommand("worktree-flow", hook)
+	if command == "" {
+		t.Fatal("worktree-flow worktree-gate hook must be CLI-served")
+	}
+	cliHome := t.TempDir()
+	argv := fakeCLI(t, cliHome, "", 0)
+	// Run the rendered command from a script file (not `bash -c`) so the
+	// generated quoting is what parses the id.
+	script := filepath.Join(t.TempDir(), "run-hook.sh")
+	spineWrite(t, script, "#!/bin/sh\n"+command+"\n", 0o755)
+	cmd := exec.Command("bash", script)
+	cmd.Env = append(os.Environ(), "AI_SPECS_HOME="+cliHome)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("run command: %v\nstderr: %s", err, stderr.String())
+	}
+	if recorded := readFileString(t, argv); recorded != "worktree-gate\n--hook\n"+unsafeID+"\n" {
+		t.Fatalf("CLI argv = %q, want the id as one argument", recorded)
 	}
 }
