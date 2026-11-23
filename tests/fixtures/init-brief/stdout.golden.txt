@@ -11,7 +11,6 @@ ai-specs init
   ▸ recipe session-context
     ✓ bundled skill session-bootstrap
     ✓ bundled skill context-precedence
-    ✓ doc ai-specs/recipes/session-context/README.md
   ✓ wrote recipe MCP temp (0 server(s))
 RECIPE_MCP_TEMP:<BASE>/tmp/<MCP_TEMP>
   ✓ wrote resolved-config (1 recipe(s))

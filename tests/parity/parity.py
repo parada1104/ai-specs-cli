@@ -1194,10 +1194,11 @@ def _setup_doctor_healthy(project: Path) -> None:
     generated surface.
 
     Deliberately excludes the tracker recipe. Its required board_id makes sync
-    materialize a path-stamped tracker-card-gate.sh whose raw hash the lock
-    records, so the lock can never agree between two isolated scratch roots
-    (an environment artifact, not port behavior). The tracker recipe's own dep
-    and env coverage lives in doctor-degraded, which is zero-delta.
+    write a board-scoped project snapshot, so the recorded lock/hook surface can
+    never agree between two isolated scratch roots (an environment artifact, not
+    port behavior). The tracker gate itself is CLI-served and writes no script;
+    the tracker recipe's own dep and env coverage lives in doctor-degraded, which
+    is zero-delta.
     """
     _write(project, "ai-specs/ai-specs.toml", _manifest(
         agents=("claude", "pi"),
@@ -1308,12 +1309,11 @@ CORPUS: tuple[Fixture, ...] = (
         description="Synced project: `sync`, `sync-agent --all`, then "
                     "`doctor` must agree on the generated surface. Enables "
                     "`tdd-flow`, `session-context` and `worktree-flow` only: "
-                    "the tracker recipe's required `board_id` makes sync "
-                    "materialize a path-stamped `tracker-card-gate.sh` whose "
-                    "raw hash the lock records, so the lock can never agree "
-                    "between two isolated scratch roots; the tracker recipe's "
-                    "own dep and env coverage lives in `doctor-degraded`, "
-                    "which is zero-delta.",
+                    "the tracker recipe's required `board_id` makes sync write "
+                    "a board-scoped project snapshot, so the lock can never "
+                    "agree between two isolated scratch roots; the tracker "
+                    "recipe's own dep and env coverage lives in "
+                    "`doctor-degraded`, which is zero-delta.",
         setup=_setup_doctor_healthy,
         steps=(Step(("sync",)), Step(("sync-agent", "--all")),
                Step(("doctor",))),
