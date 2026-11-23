@@ -160,8 +160,9 @@ Suggested slugs for tranche 1, not created: `fix-manifest-lock-writes`, `fix-fal
 `fix-deps-layer`, `fix-docs-drift`.
 
 The diff between the two baselines is **provisioning output**, not worker content. On this repo
-it is reliably `AGENTS.md`, `ai-specs/.ai-specs.lock`, and
-`ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh`. Revert those before staging
+it is reliably `AGENTS.md` and `ai-specs/.ai-specs.lock` (the cleanup override
+that used to appear here is retired: `ai-specs worktree-cleanup` serves it).
+Revert those before staging
 anything. `AGENTS.md` is the blind spot: it is generated *and* tracked, so it is commit-eligible
 by accident. See the `dogfood-verification-isolation` skill.
 

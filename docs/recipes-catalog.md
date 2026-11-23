@@ -316,7 +316,7 @@ pull requests.
 
 **Isolated git worktrees under `.worktrees/` with safe post-merge cleanup.**
 File-writing change work runs in a dedicated worktree; pure exploration stays
-outside one. The bundled cleanup script removes only merged + clean worktrees
+outside one. The bundled cleanup command (`ai-specs worktree-cleanup`) removes only merged + clean worktrees
 (detecting regular, squash, and rebase merges by patch-id, plus a PR merge commit
 proven reachable from a resolved base candidate), preserves dirty and unmerged
 ones, and never touches the main worktree.
@@ -330,19 +330,20 @@ ones, and never touches the main worktree.
   `worktree-isolation`, `worktree-cleanup`.
 - **Gate implementation:** the gate ships inside the single zero-dependency
   Go CLI. `gate_impl` accepts `auto` (default) or `go`; both use the CLI's
-  `worktree-gate` route. `ai-specs sync` materializes a thin bash-3.2 launcher
-  at the unchanged hook path. There are no separate gate release assets, cache
-  acquisitions, or checksum trust root. If the CLI route is unavailable, the
-  launcher fails open with one stderr warning and `ai-specs doctor` reports
-  ERROR. `ai-specs doctor` reports the resolved implementation and version;
-  `gate_impl = bash` is rejected at sync.
-- **Gate provenance:** sync records a baseline of the exact bytes the CLI last
-  rendered for the generated gate hook. A baseline match means unmodified and
-  may be force-updated; a byte mismatch or missing baseline is preserved with a
-  warning (no seeding). An explicit refresh (`ai-specs sync --refresh-gates`)
-  saves the exact pre-refresh bytes to a cache-only immutable backup before
-  replacing a customized gate; `ai-specs doctor` warns on customized gates and
-  stays quiet on matching baselines.
+  `worktree-gate` route. No launcher and no `.sh` file is written into the
+  project: every harness's runtime hook carries the CLI command, and the gate
+  reads its policy from the per-project sync snapshot. There are no separate
+  gate release assets, cache acquisitions, or checksum trust root. If no CLI
+  resolves, the hook fails open with one stderr warning and `ai-specs doctor`
+  reports ERROR. `ai-specs doctor` reports the resolved implementation and
+  version; `gate_impl = bash` is rejected at sync.
+- **Gate provenance:** sync records, in `ai-specs/.ai-specs.lock`, the exact
+  bytes the CLI last rendered for any materialized hook. Because the gate hooks
+  are CLI-served, a `worktree-gate.sh` still on disk is a stale pre-migration
+  launcher: `ai-specs doctor` reports it as a WARN with `rm <path> && ai-specs
+  sync`, and sync itself neither rewrites nor removes it (it holds no record).
+  `--refresh-gates` still refreshes a genuinely materialized hook after backing
+  up its pre-refresh bytes; it has no gate-hook subject any more.
 - **Worktree ledger port (cleanup classification):** cleanup classifies each
   candidate through the pure `ledger.EvaluateWorktree` domain port of the same Go
   binary — a deterministic evaluator over a normalized observation (`detached`,

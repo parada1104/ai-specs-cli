@@ -112,9 +112,9 @@ With the separate gate binary retired, `sync` no longer tries to acquire it, so
 the warning it printed when no usable gate binary was available (for example
 offline) is gone. The stderr of that scenario is therefore no longer compared in
 the frozen materialization differential. The gate is now served by the
-installed CLI: `doctor` reports a missing or failing CLI (`ERROR`) and a
-materialized launcher that still resolves the retired binary (`WARN`), and the
-launcher itself fails open with its own one-line warning.
+installed CLI: `doctor` reports a missing or failing CLI (`ERROR`) and a stale
+materialized launcher (`WARN`), and the rendered hook command itself fails open
+with its own one-line warning.
 
 #### `worktree-gate` verb in help — accepted divergence (gate-into-cli)
 
@@ -244,25 +244,28 @@ cache**. Non-negotiable.
 | `ai-specs/ai-specs.toml` | **Never overwritten by `init`**, not even with `--force` |
 | `AGENTS.md` | Written only in states `missing` / `managed_stale`; `marker`, `untracked`, `user_modified`, `undetermined` preserved |
 | Templates (`condition = not_exists`) | Refreshed only when lock state is `managed_stale` **and** policy is `auto` |
-| Gate hooks | Preserved when `user_modified` or lacking provenance, unless `--refresh-gates` |
-| Recipe **docs** | `copy2`, **unconditional overwrite** — inconsistent with templates/gates (defect) |
+| Gate hooks | **CLI-served, never materialized** since cli-served-recipes (F1/F2/F3): sync renders a command bound to the sync-time CLI install and prunes a lock-recorded launcher. A surviving copy is stale; doctor reports it and `rm <path> && ai-specs sync` clears it |
+| Cleanup launcher (`overrides/bin/worktree-cleanup.sh`) | **Retired**: `ai-specs worktree-cleanup` replaces it; sync removes every copy, managed or user-edited, with one notice |
+| Recipe **docs** (`ai-specs/recipes/<id>/README.md`) | **Retired**: never materialized; the doc stays in the installed CLI's catalog (`catalog/recipes/<id>/README.md`) |
+| Vault MCP wrapper (`bin/vault-fs-mcp.sh`) | **Retired**: `ai-specs mcp vault-fs` replaces it; sync keeps a copy only while a manifest string still mentions it, and warns how to migrate |
+| `--refresh-gates` | Still refreshes a **materialized** hook after a cache-only backup of the pre-refresh bytes. It has no subject among gate hooks now that they are CLI-served: it neither rewrites nor removes a stale launcher |
 | Bundled skills/commands in project | Deleted only when byte-identical to source or to a legacy lock hash |
 | `.gitignore` (root) | Only the block between `# --- ai-specs: … ---` and `# --- end ai-specs ---` is managed |
 | `.envrc` | Only the block between `# managed-by: ai-specs (do not remove block)` and `# end managed-by: ai-specs` |
 | `<target>/.claude/commands/` etc. | **`rm -rf` every run** — user-added command files are destroyed |
 | git index | **Never touched.** Remediation is printed as copy-pasteable `git rm --cached` text |
 
-T6b (`odd/tasks/gate-into-cli.md`): sync replaces a launcher whose bytes still
-match the lock's managed hash when the rendered catalog version differs;
-customized launchers are preserved and already emit the hook-actuator warning
-with `rm <path> && ai-specs sync` / `--refresh-gates` guidance. The
-`--refresh-gates` option explicitly bypasses ownership classification and
-replaces the launcher after backing up its previous bytes. This task adds an
-advisory `worktree-gate` doctor warning for the retired cache-binary launcher;
-it directs users to `ai-specs sync` and names `--refresh-gates` for customized
-files. Sync's existing warning and output are unchanged: adding another
-stderr line would alter the FROZEN exact-output surface (S5), so no special
-old-launcher sync warning is added here.
+T6b (`odd/tasks/gate-into-cli.md`) described launcher refresh under the old
+ownership model; cli-served-recipes F1 superseded it. `ai-specs sync` no longer
+materializes a gate launcher, so there is nothing to replace: the renderers emit
+a shell command bound to the install that ran sync (`dist/ai-specs` first,
+`ai-specs` on `PATH` second, exit `0` fail-open when neither resolves), and every
+hook verb reads its run-time config from the per-project sync snapshot
+(`cache/projects/<key>/runtime.toml`), never `ai-specs.toml`. `doctor` reports a
+surviving launcher as a stale `worktree-gate` WARN with `rm <path> && ai-specs
+sync`; it does not name `--refresh-gates`, which no longer owns that file. Sync's
+exact-output surface is unchanged for everything else (S5), so no new stderr line
+accompanies a stale launcher.
 
 ### Symlink kinds — FROZEN
 
