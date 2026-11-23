@@ -21,6 +21,13 @@ default = "openspec"
 enum = ["openspec", "engram", "both"]
 help_text = "External-session persistence preference for this project's planning artifacts: openspec, engram, or both. Plan-build readiness is always proven by file-backed artifacts in the canonical change-folder tree."
 
+[config.mode]
+required = false
+type = "string"
+default = "auto"
+enum = ["auto", "odd", "openspec"]
+help_text = "Plan Build execution mode. auto infers odd when <git-common-dir>/gentle-ai/ exists, otherwise openspec; odd keeps the change plan in odd/tasks/<change>.md with deltas under odd/changes/ and canonical specs under odd/specs/; openspec keeps the OpenSpec-centered flow. An explicit value wins over the inference."
+
 [provides]
 skills = [{ id = "plan-build-flow", source = "bundled" }]
 
