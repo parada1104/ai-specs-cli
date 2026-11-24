@@ -127,11 +127,12 @@ func validDate(value string) bool {
 	return err == nil
 }
 
-// checkVerifyEvidence returns the staged verify blockers; Light is always
-// advisory. Evidence is read from the plan's `## Verification` when the plan has
-// that section, otherwise from the legacy verify-report.md.
+// checkVerifyEvidence returns the staged verify blockers; a change derived as
+// none or light has no verification duty. Evidence is read from the plan's
+// `## Verification` when the plan has that section, otherwise from the legacy
+// verify-report.md.
 func checkVerifyEvidence(changeDir, tier string) []string {
-	if tier == TierLight {
+	if tier == TierNone || tier == TierLight {
 		return nil
 	}
 	plan, _ := ParsePlan(readText(filepath.Join(changeDir, "tasks.md")))
