@@ -2,7 +2,7 @@ package gates
 
 // ODD pre-merge gate (plan-build-odd-companion, open decision B): the mode is
 // resolved by the caller, the change comes from the branch pairing, and the
-// verdict is the paired plan plus the promotion parity of its deltas. No
+// verdict is the paired plan, its archive and the parity of its deltas. No
 // OpenSpec archive and no tier minimum apply.
 
 import (
@@ -74,12 +74,15 @@ func TestCheckPremergeOddBlocksOnDetachedHead(t *testing.T) {
 	}
 }
 
-// A change with no delta passes with its plan: no archive, no tier minimum.
-func TestCheckPremergeOddPassesATaskOnlyChange(t *testing.T) {
+// A change with no delta still needs its dated archive, with no Depth: line too.
+func TestCheckPremergeOddRequiresTheArchiveOfATaskOnlyChange(t *testing.T) {
 	root := oddRepo(t)
+	wantBlocked(t, CheckPremergeOdd(root, "thing"),
+		"missing archive at odd/changes/archive/thing/ or a valid dated archive named YYYY-MM-DD-thing/")
+	oddWriteArchive(t, root, "thing")
 	got := CheckPremergeOdd(root, "thing")
 	if !got.OK || len(got.Blockers) != 0 {
-		t.Fatalf("Result = %+v, want OK with no blocker", got)
+		t.Fatalf("Result = %+v, want OK with no blocker once archived", got)
 	}
 }
 
@@ -165,9 +168,7 @@ func TestCheckPremergeOddRefusesASymlinkedChangeTree(t *testing.T) {
 	wantBlocked(t, CheckPremergeOdd(root, "thing"), "symlinked odd change tree")
 }
 
-// A plan that declares its tier has no project config duty in odd mode: a
-// config.yaml written under odd/ is ignored, valid or not, and its absence never
-// blocks. A plan with no Depth: line keeps the narrower #589 contract.
+// blocks. Every plan pays the same contract, whatever its `Depth:` line says.
 func TestCheckPremergeOddIgnoresAnOddConfig(t *testing.T) {
 	root := oddDeclaredTierRepo(t)
 	oddWriteArchive(t, root, "thing")
@@ -187,29 +188,16 @@ func TestCheckPremergeOddIgnoresAnOddConfig(t *testing.T) {
 	}
 }
 
-// A declared-tier plan reaches the verification grader: a row with the matching
-// runner and a recorded non-zero exit blocks (C3).
-func TestCheckPremergeOddGradesTheVerificationRows(t *testing.T) {
+// The odd path grades no verification rows: a non-zero exit is not a blocker.
+func TestCheckPremergeOddDoesNotGradeTheVerificationRows(t *testing.T) {
 	root := oddDeclaredTierRepo(t)
 	plan := strings.Replace(readText(filepath.Join(root, "odd", "tasks", "thing.md")),
 		"exit 0", "exit 1", 1)
 	writeFile(t, filepath.Join(root, "odd", "tasks", "thing.md"), plan)
 	oddWriteArchive(t, root, "thing")
 
-	wantBlocked(t, CheckPremergeOdd(root, "thing"), "records a failing run (exit 1)")
-}
-
-// The declared-tier archive is required: a deleted or never-created archive
-// blocks, because archiving always leaves a dated folder holding the plan (F3).
-func TestCheckPremergeOddRequiresTheArchiveOfADeclaredTierPlan(t *testing.T) {
-	root := oddDeclaredTierRepo(t)
-
-	wantBlocked(t, CheckPremergeOdd(root, "thing"),
-		"missing archive at odd/changes/archive/thing/ or a valid dated archive named YYYY-MM-DD-thing/")
-
-	oddWriteArchive(t, root, "thing")
 	if got := CheckPremergeOdd(root, "thing"); !got.OK {
-		t.Fatalf("Result = %+v, want OK once the dated archive exists", got)
+		t.Fatalf("Result = %+v, want OK: the odd contract grades no verification rows", got)
 	}
 }
 
@@ -229,15 +217,14 @@ func oddDeclaredTierRepo(t *testing.T) string {
 	return root
 }
 
-// oddWriteArchive creates the dated archive folder the declared tier requires,
-// holding a copy of the plan exactly as `changes archive` does for a delta-less
-// change: an empty folder proves nothing (R2).
+// oddWriteArchive creates the dated archive folder the contract requires, holding
+// the archived.md marker `changes archive` writes for a delta-less change.
 func oddWriteArchive(t *testing.T, root, change string) {
 	t.Helper()
 	archive := filepath.Join(root, "odd", "changes", "archive", "2026-01-02-"+change)
 	mkdirAll(t, archive)
-	writeFile(t, filepath.Join(archive, "tasks.md"),
-		readText(filepath.Join(root, "odd", "tasks", change+".md")))
+	writeFile(t, filepath.Join(archive, "archived.md"),
+		change+"\n2026-01-02\nodd/tasks/"+change+".md\n")
 }
 
 // An empty archive folder never satisfies the requirement, dated or not: it holds
@@ -263,13 +250,4 @@ func TestCheckPremergeOddBlocksAnArchivedUnpromotedDelta(t *testing.T) {
 
 	wantBlocked(t, CheckPremergeOdd(root, "thing"),
 		"specs/capability/spec.md is not promoted into odd/specs/capability/spec.md")
-}
-
-// A plan without a Depth: line is legacy: no config duty, so existing ODD
-// repositories do not retro-block.
-func TestCheckPremergeOddLeavesALegacyPlanWithoutADepthLine(t *testing.T) {
-	root := oddRepo(t)
-	if got := CheckPremergeOdd(root, "thing"); !got.OK {
-		t.Fatalf("Result = %+v, want OK for a legacy plan with no Depth: line", got)
-	}
 }

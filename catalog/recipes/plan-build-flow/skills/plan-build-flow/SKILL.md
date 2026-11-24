@@ -335,8 +335,8 @@ The archive move itself is mechanical and mandatory before merge, in both modes:
 unpromoted, refuses when a dated archive for the change already exists, refuses
 a destination that resolves through a symlink or outside the repository, and
 never deletes anything. A change with no delta folder is still archived: the
-dated folder is created holding a copy of the plan and the original plan stays
-where it is, so "archived" always means a dated folder exists. `--change`
+dated folder is created holding a three-line `archived.md` marker (change name,
+ISO date, plan path) and the original plan stays where it is. `--change`
 accepts a branch-shaped value — CI passes `GITHUB_HEAD_REF` — and keeps its last
 path segment, the same normalization the branch pairing applies. An empty
 `<slug>` or an explicitly empty `--change=` is a usage error, never "omitted".
@@ -546,8 +546,8 @@ deltas are never blocked by it.
 The plan grammar is graded on **every** archive, whatever its folder is called:
 the folder name never decides which rules apply, so an undated `archive/<slug>/`
 is graded exactly like a dated one. An archive also has to prove it holds
-something of the change — its delta (`specs/**/*.md`) or a copy of its plan
-(`tasks.md`); an empty folder, dated or not, blocks with
+something of the change — its delta, its plan, or the `archived.md` marker; an
+empty folder, dated or not, blocks with
 `archive candidate <path> is empty: an archive must hold the change's plan (tasks.md) or its delta (specs/**/*.md)`.
 An archive that predates this contract and still has a free-form `tasks.md`
 must be re-worded into the plan shape if anyone needs to re-run the guardian on
@@ -560,10 +560,9 @@ from the archived folder once the change is archived, so a delta that is not
 promoted blocks after archiving with the same "is not promoted into
 odd/specs/..." wording — and the active `odd/changes/<change>/` folder must be
 gone. A folder that is still active blocks with `ai-specs changes archive`,
-which is the mandatory archive step before merge. Once archived, the dated
-folder must exist for a plan that declares `Depth:` and it must hold something
-of the change — a delta-less change archives a copy of its plan — while a legacy
-plan with no `Depth:` line keeps the narrower contract. `odd` mode has no
+which is the mandatory archive step before merge. Every odd change pays that one
+uniform contract, with no `Depth:` exemption: once archived, the dated folder
+must exist and hold the plan, the delta, or the `archived.md` marker. `odd` mode has no
 OpenSpec archive and no tier minimum. Because
 `odd/tasks/<change>.md` survives the archive, the branch still pairs the change
 after archiving; in `openspec` pass the slug or `--change`, since the plan moved
@@ -585,7 +584,9 @@ trusted/dist/ai-specs gates premerge \
   --root "$GITHUB_WORKSPACE/candidate" --change "$GITHUB_HEAD_REF"
 ```
 
-`actions/checkout` leaves `HEAD` detached on `pull_request`, so the gate cannot
+The workflow triggers on `pull_request_target`: definition and evaluator come
+from the base branch, and `candidate/` is data only.
+`actions/checkout` leaves `HEAD` detached, so the gate cannot
 derive the change from the branch and the explicit `--change` is mandatory. A
 branch-shaped value is accepted as is: `--change feat/alpha` keeps its last path
 segment (`alpha`), so `GITHUB_HEAD_REF` needs no preprocessing. Making that job a **required** status check is a repository setting, not a file

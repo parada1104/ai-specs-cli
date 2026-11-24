@@ -40,17 +40,6 @@ func inferTier(tasksText string) string {
 	return TierStandard
 }
 
-// declaredTier reports the tier the plan declares on its Depth: line, and
-// whether it declares one at all. It exists so a legacy plan without the line
-// keeps the narrower contract instead of inheriting the standard default.
-func declaredTier(tasksText string) (string, bool) {
-	match := depthRe.FindStringSubmatch(tasksText)
-	if match == nil {
-		return "", false
-	}
-	return strings.ToLower(match[1]), true
-}
-
 // resolveTier applies an explicit --tier when given, blocking an unknown value
 // and then falling back to the inference.
 func resolveTier(tasksText string, tier *string, blockers *[]string) string {
@@ -182,11 +171,11 @@ const TierOdd = "odd"
 // CheckPremergeOdd validates an ODD change before merge: the branch-paired plan
 // must be a regular file of the repository, every delta under
 // odd/changes/<change>/specs/ must already be promoted into odd/specs/ — read from
-// the archived folder once the change is archived — and the active delta folder
-// must be archived (plan-build-openspec-odd-align I5/P4). A change that never
-// carried a delta folder is not required to be archived: there is nothing to
-// archive, so the paired plan alone passes. There is no OpenSpec archive and no
-// tier artifact minimum. An empty change means the branch could not be paired.
+// the archived folder once the change is archived — and the change must be gone
+// from the active tree behind a dated, content-provable archive
+// (plan-build-openspec-odd-align I5/P4). The contract is uniform: a plan with no
+// Depth: line pays the same archive duty, and there is no tier artifact minimum.
+// An empty change means the branch could not be paired.
 // The mode is resolved by the caller, which is the same resolver the pre-tool-use
 // gate uses.
 func CheckPremergeOdd(repoRoot, change string) Result {
@@ -215,20 +204,9 @@ func CheckPremergeOdd(repoRoot, change string) Result {
 	blockers = append(blockers, oddParityBlockers(repoRoot, changesBase, folder)...)
 	archive, archiveBlockers := resolveArchive(planbuild.ArchiveBase(repoRoot, planbuild.ModeOdd),
 		change, "odd")
+	blockers = append(blockers, archiveBlockers...)
 	if archive != "" {
 		blockers = append(blockers, oddParityBlockers(repoRoot, changesBase, archive)...)
-	}
-	// A plan that declares its tier also requires the change to be archived with
-	// something of the change in it. A plan with no Depth: line is legacy and keeps
-	// the #589 contract (plan, parity and no archive duty), so existing ODD
-	// repositories do not retro-block. There is no project config in odd mode.
-	if declared, ok := declaredTier(readText(plan)); ok {
-		blockers = append(blockers, archiveBlockers...)
-		// The plan lives at odd/tasks/<change>.md, so it is graded by the same
-		// plan-verification grader the OpenSpec path uses (C3).
-		if declared != TierLight {
-			blockers = append(blockers, checkPlanVerification(plan, declared)...)
-		}
 	}
 	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: TierOdd, ArchivePath: plan}
 }

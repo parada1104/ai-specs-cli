@@ -424,16 +424,6 @@ func TestCheckPremergeOddBlocksAnActiveDeltaFolder(t *testing.T) {
 	wantBlocked(t, got, "before merge")
 }
 
-// A change that never had a delta folder is not required to be archived: there
-// is nothing to archive, so the guardian passes with the paired plan alone.
-func TestCheckPremergeOddPassesAChangeThatNeverHadADelta(t *testing.T) {
-	root := oddRepo(t)
-	got := CheckPremergeOdd(root, "thing")
-	if !got.OK || len(got.Blockers) != 0 {
-		t.Fatalf("Result = %+v, want OK for a change with no delta folder", got)
-	}
-}
-
 // Once the promoted delta is archived, the active folder is gone and the guardian
 // passes: the archive is read for parity, and it is already promoted (R3).
 func TestCheckPremergeOddPassesAnArchivedPromotedDelta(t *testing.T) {

@@ -2,16 +2,7 @@
 # three: the CLI verb, the skill that obeys it, and this workflow that runs
 # the verb on every pull request even when no agent is watching.
 #
-# The evaluator is trusted, the candidate is data (C4): the binary is built from
-# the pull request's base revision in trusted/, and the head revision is checked
-# out separately in candidate/. The run grades candidate/ with the trusted
-# binary, so a pull request that edits the guardian cannot vouch for itself.
-#
-# Bootstrap exception: on the first pull request that introduces this workflow,
-# the trusted base revision predates the --change flag. If the trusted binary
-# exits 2 it reported a usage error — it is older than this contract, not that
-# the candidate is bad — so the step prints a notice and a ::warning:: and
-# passes. Any other non-zero exit stays a failure.
+# Grades the pull request's head tree with a base-branch evaluator; candidate/ is data, never executed.
 #
 # Being a *required* status check is a repository setting, not a file in this
 # repo: the owner applies it once with `gh api` against
@@ -24,7 +15,7 @@
 name: pr-gate
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [development]
 
 permissions:
@@ -53,17 +44,6 @@ jobs:
       # change from the branch: the explicit change is mandatory here.
       - name: Grade the candidate with the trusted evaluator
         run: |
-          set +e
           trusted/dist/ai-specs gates premerge \
             --root "$GITHUB_WORKSPACE/candidate" \
             --change "${GITHUB_HEAD_REF}"
-          status=$?
-          set -e
-          if [ "$status" -eq 2 ]; then
-            echo "The trusted evaluator predates the --change contract"
-            echo "(exit 2: usage error)."
-            notice="Bootstrap: the base evaluator predates --change"
-            echo "::warning::$notice; skipping the grade for this PR."
-            exit 0
-          fi
-          exit "$status"

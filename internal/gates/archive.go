@@ -138,9 +138,11 @@ func archiveWithContent(candidate string) (string, []string) {
 }
 
 // archiveHoldsChange reports whether an archive folder holds something of the
-// change: its delta (specs/**/*.md) or a copy of its plan (tasks.md).
+// change: its delta (specs/**/*.md), a copy of its plan (tasks.md) or the
+// archived.md marker `changes archive` writes for a delta-less change.
 func archiveHoldsChange(folder string) bool {
-	return isFile(filepath.Join(folder, "tasks.md")) || hasSpecDelta(folder)
+	return isFile(filepath.Join(folder, "tasks.md")) ||
+		isFile(filepath.Join(folder, "archived.md")) || hasSpecDelta(folder)
 }
 
 // validArchiveDate is the exact YYYY-MM-DD form plus the calendar date.

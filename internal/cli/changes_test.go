@@ -235,8 +235,9 @@ func TestChangesArchiveValidatesTheDate(t *testing.T) {
 }
 
 // A delta-less change is still archived: the verb creates the dated folder
-// holding a copy of the plan and leaves the original where it is (F3).
-func TestChangesArchiveCopiesThePlanForADeltaLessChange(t *testing.T) {
+// holding a three-line archived.md marker and leaves the original plan where it
+// is (F3). The plan is never copied, so a long plan is not duplicated.
+func TestChangesArchiveWritesTheMarkerForADeltaLessChange(t *testing.T) {
 	root := changesOddRepo(t)
 	plan := filepath.Join(root, "odd", "tasks", "thing.md")
 	changesWrite(t, plan, changesPlan)
@@ -248,16 +249,19 @@ func TestChangesArchiveCopiesThePlanForADeltaLessChange(t *testing.T) {
 	if code != 0 || stderr != "" {
 		t.Fatalf("exit = %d, stderr = %q; want 0/empty", code, stderr)
 	}
-	if !strings.Contains(stdout, dst) {
-		t.Errorf("stdout = %q, want the dated archive %s", stdout, dst)
+	want := "changes archive: archived the plan of thing at " + dst + " (no delta folder)\n"
+	if stdout != want {
+		t.Errorf("stdout = %q, want %q", stdout, want)
 	}
-	copyPath := filepath.Join(dst, "tasks.md")
-	copied, err := os.ReadFile(copyPath)
+	marker, err := os.ReadFile(filepath.Join(dst, "archived.md"))
 	if err != nil {
-		t.Fatalf("archive folder does not hold the plan: %v", err)
+		t.Fatalf("archive folder does not hold the marker: %v", err)
 	}
-	if string(copied) != changesPlan {
-		t.Errorf("archived plan = %q, want a copy of %q", copied, changesPlan)
+	if got, wantMarker := string(marker), "# archived: thing\n2026-01-02\nodd/tasks/thing.md\n"; got != wantMarker {
+		t.Errorf("marker = %q, want %q", got, wantMarker)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "tasks.md")); !os.IsNotExist(err) {
+		t.Errorf("the plan must not be copied into the archive: %v", err)
 	}
 	if original, err := os.ReadFile(plan); err != nil || string(original) != changesPlan {
 		t.Errorf("odd plan must stay at odd/tasks/thing.md: %q (%v)", original, err)

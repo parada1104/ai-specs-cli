@@ -47,8 +47,8 @@ The verb refuses while the promotion is pending (run 'ai-specs specs promote'
 first), refuses when a dated archive for the change already exists, refuses a
 destination that resolves through a symlink or outside the repository, and never
 deletes anything. A change with no delta folder is still archived: the dated
-folder is created holding a copy of the plan, and the original plan stays where
-it is.
+folder is created holding a three-line archived.md marker (change name, ISO date,
+plan path), and the original plan stays where it is.
 
 Arguments:
   <change>            Change override; wins over --change and the branch pairing
@@ -224,8 +224,8 @@ func runChangesArchive(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// A delta-less change is still archived (F3): the dated folder holds a copy
-	// of the plan, and the original plan stays where it is.
+	// A delta-less change is still archived (F3): the dated folder holds an
+	// archived.md marker naming the change, the date and the plan path.
 	plan := planbuild.TasksPath(root, mode, change)
 	if !isActive {
 		if !planbuild.PlanIsValidForMode(root, mode, change) {
@@ -234,18 +234,14 @@ func runChangesArchive(args []string, stdout, stderr io.Writer) int {
 				repoRelative(root, plan))
 			return 1
 		}
-		content, readErr := os.ReadFile(plan)
-		if readErr != nil {
-			fmt.Fprintf(stderr, "changes archive: cannot read %s: %s\n", plan, readErr)
-			return 1
-		}
 		if err := os.MkdirAll(dst, 0o755); err != nil {
 			fmt.Fprintf(stderr, "changes archive: cannot create %s: %s\n", dst, err)
 			return 1
 		}
-		if err := os.WriteFile(filepath.Join(dst, "tasks.md"), content, 0o644); err != nil {
+		marker := "# archived: " + change + "\n" + date + "\n" + repoRelative(root, plan) + "\n"
+		if err := os.WriteFile(filepath.Join(dst, "archived.md"), []byte(marker), 0o644); err != nil {
 			fmt.Fprintf(stderr, "changes archive: cannot write %s: %s\n",
-				filepath.Join(dst, "tasks.md"), err)
+				filepath.Join(dst, "archived.md"), err)
 			return 1
 		}
 		fmt.Fprintf(stdout, "changes archive: archived the plan of %s at %s (no delta folder)\n", change, dst)

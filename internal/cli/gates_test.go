@@ -360,6 +360,9 @@ func TestGatesPremergeResolvesTheChangeWithoutASlug(t *testing.T) {
 	if err := os.Rename(active, archive); err != nil {
 		t.Fatal(err)
 	}
+	// The archive must hold something of the change: the marker `changes archive`
+	// writes for a delta-less change.
+	gatesWrite(t, filepath.Join(archive, "archived.md"), "ok-change\n2026-01-02\nodd/tasks/ok-change.md\n")
 	code, stdout, stderr = runGatesCLI(t, "gates", "premerge", "ok-change", "--root", root)
 	if code != 0 || stderr != "" {
 		t.Fatalf("archived: exit = %d, stderr = %q; want 0/empty", code, stderr)
