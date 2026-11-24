@@ -60,7 +60,9 @@ Options:
                       contradicts them blocks. The former full tier was removed:
                       declaring it blocks with a migration message pointing at
                       standard.
-  --stage <stage>     Enforcement stage: pre-merge or pre-archive
+  --stage <stage>     Enforcement stage: pre-merge or pre-archive. pre-archive
+                      is an openspec stage; odd mode archives with 'changes
+                      archive' and grades it with pre-merge
                       (default: pre-merge)
   --help, -h          Show this help
 `
@@ -211,6 +213,12 @@ func runGatesPremerge(args []string, stdout, stderr io.Writer) int {
 	}
 
 	mode := planbuild.ResolveRepo(root)
+	// pre-archive is an openspec stage: it grades openspec/changes/<slug>/, a tree
+	// odd mode does not use, and running it there blocked every odd change (T18).
+	if stage == "pre-archive" && mode == planbuild.ModeOdd {
+		return usageError("ERROR: --stage pre-archive is an openspec stage: odd mode archives " +
+			"with 'ai-specs changes archive' and grades the result with 'gates premerge'")
+	}
 	// In odd mode a positional slug is accepted and ignored: the change comes from
 	// the branch unless an override named one.
 	if stage == "pre-merge" && mode == planbuild.ModeOdd && source == "positional" {

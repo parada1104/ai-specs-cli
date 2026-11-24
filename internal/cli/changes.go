@@ -74,8 +74,8 @@ The verb refuses while the promotion is pending (run 'ai-specs specs promote'
 first), refuses when a dated archive for the change already exists, refuses a
 destination that resolves through a symlink or outside the repository, and never
 deletes anything. A change with no delta folder is still archived: the dated
-folder is created holding a three-line archived.md marker (change name, ISO date,
-plan path), and the original plan stays where it is.
+folder is created holding a two-line archived.md marker (change name, ISO date),
+and the original plan stays where it is.
 
 Arguments:
   <change>            Change override; wins over --change and the branch pairing
@@ -309,7 +309,7 @@ func runChangesArchive(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// A delta-less change is still archived (F3): the dated folder holds an
-	// archived.md marker naming the change, the date and the plan path.
+	// archived.md marker naming the change and its date.
 	plan := planbuild.TasksPath(root, mode, change)
 	if !isActive {
 		if !planbuild.PlanIsValidForMode(root, mode, change) {

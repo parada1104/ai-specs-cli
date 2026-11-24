@@ -244,13 +244,13 @@ Regla de reparto que se propone dejar escrita: **lo que el CLI puede comprobar s
 | T9 | S10 | I5/P4: verbo `changes archive`, archivado obligatorio en `odd`, premerge de ambos modos | inline | `ca374e7` |
 | T10 | S11, S13 | I6/P5+P7: validación de `config.yaml` con bucle de frescura, `pr-gate.yml`, SKILL §7.3/§7.4, README | inline | `85acb2c` |
 
-| T11 | S24 | Integrar `stash@{0}` (config opcional, `full` fuera de Go) como base y dejar la matriz en verde | worker | pendiente |
-| T12 | S15 | Derivar el tier de los artefactos en el gate y en el premerge (`none`/`light`/`standard`) | worker | pendiente |
-| T13 | S16, S17 | Refutaciones objetivas R-a y R-b, con `ai-specs.toml` como lista del proyecto y respuesta distinta por modo | worker | pendiente |
-| T14 | S19 | `ai-specs changes start --none` y su aceptación en el hook de `openspec` | worker | pendiente |
-| T15 | S18 | Hook de `odd`: quitar la exigencia de plan, proteger solo `odd/specs/**` | worker | pendiente |
-| T16 | S20, S21 | Delta sin plan permitido; archivado en `odd` solo cuando hay carpeta de change | worker | pendiente |
-| T17 | S22 | Pasar los bloqueos nuevos al estilo del gate: regla, lo que falta y salidas | worker | pendiente |
+| T11 | S24 | Integrar `stash@{0}` (config opcional, `full` fuera de Go) como base y dejar la matriz en verde | inline | `bb6b2b4e` |
+| T12 | S15 | Derivar el tier de los artefactos en el gate y en el premerge (`none`/`light`/`standard`) | inline | `97bdb6ab` |
+| T13 | S16, S17 | Refutaciones objetivas R-a y R-b, con `ai-specs.toml` como lista del proyecto y respuesta distinta por modo | worker | `f8427109` |
+| T14 | S19 | `ai-specs changes start --none` y su aceptación en el hook de `openspec` | worker | `a4775c16` |
+| T15 | S18 | Hook de `odd`: quitar la exigencia de plan, proteger solo `odd/specs/**` | worker | `db24cd00` |
+| T16 | S20, S21 | Delta sin plan permitido; archivado en `odd` solo cuando hay carpeta de change | worker | `e3e7b3a2` |
+| T17 | S22 | Pasar los bloqueos nuevos al estilo del gate: regla, lo que falta y salidas | inline | `3fb8bd96` |
 | T18 | S23 | Alinear SKILL (Task Size de ODD), README y `SKILL.md:231` con el código | inline | pendiente |
 | T19 | — | Cierre: suite completa, smoke en ambos modos y revisión por commit con `assess --committed-only` | inline | pendiente |
 ## Implementación propuesta (change siguiente, no esta vuelta)
@@ -329,4 +329,8 @@ Seis unidades de trabajo en este orden; cada una deja el suite en verde y admite
   - el linaje de revisión aparcado **queda como está**.
 - **L24** — Estudio de ODD versionado en `odd/tasks/plan-build-openspec-odd-align.study.md` (239 líneas, copiado verbatim desde el scratchpad de Robert). Es la referencia normativa de S15–S23 y cita `file:line` del árbol `82101c05`.
 - **L25** — Handoff: esta implementación **no se hace en esta sesión** (contexto al 44 %). La continuidad queda en el plan (S15–S24, T11–T19), en el estudio versionado y en Engram. La revisión nativa del próximo árbol irá **por commit con `assess --committed-only`**, y no se abre otro linaje sobre el candidato actual. Orden de trabajo sugerido por dependencia: T11 primero (es la base del stash), T12 después (cambia la matriz), luego T15 y T16 (el hook de `odd`, que es el bug de Robert), y T13/T14/T17/T18 cuando la matriz ya esté estable.
+- **L26** — Implementación de T11–T17 en el orden de L25, un commit por unidad: T11 `bb6b2b4e` (stash integrado: `config.yaml` opcional y `full` fuera de Go), T12 `97bdb6ab` (tier derivado de los artefactos, `Depth:`/`--tier` como aserción de coherencia, paridad gobernada por el delta), T15 `db24cd00` (el hook de `odd` deja de exigir plan y protege solo `odd/specs/**`: el bug de Robert), T16 `e3e7b3a2` (archivado solo con carpeta, `none` en el premerge de `odd`, y `resolveArchive` distingue «existe entrada» de «satisface las reglas» para no reabrir el BLOCKER de la ronda 3), T13 `f8427109` (R-a/R-b sobre el diff, `--base`, `pr-gate.yml` sin el paso que exigía artefactos), T14 `a4775c16` (`changes start --none`), T17 `3fb8bd96` (auditoría de S22: un solo bloqueo no nombraba las salidas).
+  Desviaciones, mías: T11, T12 y T17 se hicieron **inline** —los tres eran una unidad acotada, sin disparador de delegación—, y T15/T16/T13/T14 fueron a worker con superficies de edición disjuntas. El backstop de contexto disparó en T15 y desde ahí el trabajo de varios pasos salió delegado.
+- **L27** — Correcciones que la implementación encontró y que no venían del spec: `HasDelta` pasó a significar «lleva delta, activo **o archivado**», porque mirando solo la carpeta activa R-a y el hook de `odd` habrían rechazado una promoción ya archivada y legítima; la ruta `none` del premerge de `openspec` hace cumplir la coherencia del tier declarado, que si no pasaba en silencio un `--tier standard` sin artefactos; y `changes start` entra en la ayuda raíz y en el arnés de paridad con una normalización N16, igual que `worktree-gate`, para no falsear los goldens congelados del legado.
+- **L28** — Smoke de T19 con el binario real en repos temporales, **15/15** en los dos modos: `none` pasa en hook y premerge, plan solo no debe archivo, carpeta sin archivo bloquea nombrando `ai-specs changes archive`, delta sin plan no bloquea por plan, R-a bloquea en ambos modos, R-b bloquea sin plan en `openspec` y deja de bloquear con plan, R-b bloquea en `odd` sin trailer y pasa con `Risk: item N`, `changes start --none` declara y el hook acepta solo en esa rama. Dos fallos iniciales fueron del propio script (tabla TOML duplicada que rompía el manifiesto), no del binario.
 

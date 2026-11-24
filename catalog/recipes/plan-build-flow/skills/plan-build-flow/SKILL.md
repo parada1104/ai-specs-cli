@@ -1,9 +1,10 @@
 ---
 name: plan-build-flow
 description: >
-  Ambient change workflow. Classify planning depth, produce reviewable artifacts,
-  stop for authorization, then implement, validate, and close without exposing
-  slash commands. Block PR creation without planning files; archive before merge.
+  Ambient change workflow. Derive the change's tier from its artifacts, produce
+  the plan and its optional delta, stop for authorization, then implement,
+  validate, and close without exposing slash commands. Block PR creation without
+  planning files; archive before merge.
 license: MIT
 metadata:
   author: ai-specs
@@ -15,88 +16,72 @@ metadata:
     - "User describes a multi-step change that needs planning before implementation"
     - "Continuing implementation after the user authorizes a plan"
     - "Opening a PR or finishing a change: validate artifacts, archive pre-merge, close out"
-    - "Deciding how much planning ceremony a change needs (spec+tasks vs tasks-only)"
+    - "Deciding how much planning ceremony a change needs (a plan alone or a plan with a delta)"
     - "Deciding how to run planning/build phases when no orchestrator or memory is available"
 ---
 
 # Ambient Plan / Build Flow
 
 This skill runs invisibly behind normal agent work. There are **no** `/plan` or
-`/build` slash commands. Classify every substantial request, plan to the
-appropriate depth, stop for authorization, then implement, validate, and close.
+`/build` slash commands. Derive what each substantial request needs, write the
+plan and its delta, stop for authorization, then implement, validate, and close.
 
 ## 1. What plan and build mean (internal)
 
 | Phase | Contract |
 |---|---|
-| **Plan** | Classify depth, write the minimum reviewable planning artifacts for that tier, stop and wait for human review/authorization. Never implement production code. |
+| **Plan** | Derive the tier from the artifacts, write the plan and, when the change alters a rule, its delta, stop and wait for human review/authorization. Never implement production code. |
 | **Build** | Implement an authorized plan, validate, ensure planning files are committed on the review branch, open PR only when the artifact gate passes, and run archive-tail **before merge**. |
 
 Speak to the user in plain language ("here is the plan", "implementing now") —
 never expose internal phase names, tier names, or slash verbs.
 
-## 2. Change depth classifier
+## 2. The tier is derived from the artifacts
 
-Before any production edit, classify the request into exactly one tier. Always
-compute the signal tier from size and scope, then separately detect an explicit
-depth request when the user names a tier or a clearly equivalent planning depth.
-Record the decided tier in `tasks.md` as one standalone lowercase line, for
-example `Depth: standard`. Downgrade is allowed when new facts appear; upgrade
-when scope grows.
+There is nothing to classify and no size to estimate. In `openspec` mode the
+tier of a change is read by the CLI, at the gate and at the pre-merge guardian,
+from the artifacts the branch carries (`odd` mode has no tier: ODD owns planning,
+Section 4.1):
 
-Illustrative request phrases include (this is an illustrative set, not an
-exhaustive parser or fixed token whitelist):
+| Tier | Artifacts | What the guardian grades |
+|---|---|---|
+| **none** | no plan, no delta, no change folder — an ODD small change | nothing: the diff is only refuted by R-a and R-b (Section 7.4) |
+| **light** | a plan alone, or a delta alone | the plan grammar (`## Specs`, `## Tasks`), every `Commit` cell an ancestor of `HEAD`, and promotion of the delta when the change carries one |
+| **standard** | a plan and a delta | the plan grammar, `## Log` with `L1`, one `## Verification` row per `S#`, a command that resolves, promotion parity, and every `Commit` cell an ancestor of `HEAD` |
 
-- **Standard** — "standard", "spec + tasks", or "acotado con spec".
-- **Light** — "light", "tasks only", "solo tasks", or "solo tareas".
+A delta with no plan stays light: a delta never forces a plan. Whether a change
+needs a plan at all is ODD's Task Size, not an estimate — the outcome is
+understood, the risk is contained, and the work stays resumable from the diff.
+The number of files, lines, commands or tests never decides the size, and no
+line count forces a split; the ~400 authored-line figure slices work units
+(Section 7.3), never a tier. A change that needs no durable task artifact writes
+no plan, no folder and no delta.
+
+`Depth: <tier>` in the plan and `--tier <tier>` on the guardian are coherence
+assertions, never a choice: a value that contradicts the artifacts blocks,
+naming the derived tier and both exits. Keep the line only when it matches, and
+drop it freely.
+
+```text
+archive/<folder>: the tier is derived from the artifacts of the change, and they derive 'light', not the declared 'standard' — add a specs/ delta to reach standard, or drop the declaration
+```
 
 A request for the removed full tier ("full SDD", "full planning", "flujo
-completo") is not a tier any more: explain that it was removed, point at
-standard, and ask before recording `Depth: standard`. A change that still
-declares `Depth: full`, or is graded with `--tier full`, blocks with the
-migration message that names the removed tier and `Depth: standard` — never a
-silent downgrade.
+completo") is not a tier any more: explain that it was removed, point at the
+artifacts above, and let the delta decide whether the change is light or
+standard.
 
-The explicit request is compared with the signal; it never replaces signal
-classification. If they match, proceed with that shared tier. If they differ,
-this is a **depth conflict**: do not silently adopt either side. Ask the user
-which value wins before writing planning artifacts for the decided tier. The ask
-must fire in both directions, including when the user requests a deeper tier
-than the signal suggests; it may recommend a tier, but the user decides.
+### Deriving the artifacts while you work
 
-The ask is required unless the same user turn already states which side wins,
-such as "use standard even if it looks light". A same-turn resolution adopts the
-stated value without a second ask and records `Decision source: user`. Merely
-restating the requested tier or adding scope detail does not resolve the
-conflict. Until the conflict is resolved, do not implement production code or
-pretend that a tier is decided. With no explicit request, preserve signal-only
-classification and proceed without conflict handling.
+| Situation | Artifacts |
+|---|---|
+| A small change that leaves no durable task artifact (ODD small) | none: no plan, no folder, no delta |
+| A change that needs a plan and alters no rule | the plan alone, `openspec/changes/<slug>/tasks.md` |
+| A change that adds, modifies or removes an observable rule | the plan plus a delta under `specs/<domain>/spec.md` |
+| A rule change that needs no plan | the delta alone |
+| "Implement/build/fix now" with no artifact yet | derive first — verbs never skip the plan the change needs |
 
-Whenever a conflict was detected, annotate `tasks.md` with the following labels
-on separate lines. Keep the `Depth:` line standalone; never append annotation to
-it:
-
-Depth: standard
-
-Requested depth: standard
-Signal depth: light
-Decided depth: standard
-Decision source: user
-
-`Decided depth` MUST equal the tier on the `Depth:` line. Use
-`Decision source: user` whenever a human chose, including same-turn resolution.
-When there is no conflict, the ordinary standalone `Depth:` line remains
-sufficient and no conflict annotation is required.
-The annotation labels are prefixed so existing tier inference sees exactly one
-`Depth:` line. If conflict resolution selects a deeper tier than the signal,
-complete the entire planning chain required by that decided tier before build
-authorization counts as satisfied; never relabel a shallower artifact set as a
-deeper chain.
-
-| Tier | When to use | Planning chain (private) | Minimum artifacts before build |
-|---|---|---|---|
-| **Standard** | Scoped feature, multi-file fix or new capability in a known area; intent is clear but needs written requirements | conditional explore → proposal → spec → tasks | `tasks.md` plan (`## Specs`, `## Tasks`, `## Verification`) and at least one spec delta under `specs/`; explore when criteria below fire |
-| **Light** | Small bugfix, single-file tweak, typo, or user names exact file(s) and expected edit | proposal → tasks | `tasks.md` plan only, no delta |
+Trivial read-only questions write nothing.
 
 ### Standard explore criteria
 
@@ -112,28 +97,16 @@ signal applies. Record the decision in `tasks.md` as one line:
 `Explore: skipped — <short reason>`. Missing `explore.md` is a plan-phase gap;
 the archive and merge guardians never block on it.
 
-### Classifier signals (quick)
-
-| Signal | Tier |
-|---|---|
-| "Add OAuth", "redesign sync", "new recipe", "breaking v3" | Standard (the deepest tier) |
-| "Add field to X", "extend handler for Y", bounded multi-file feature | Standard |
-| "Fix typo in README", "change default in config.toml line 12", one-line bug | Light |
-| User says "implement/build/fix now" but **no** `openspec/changes/<slug>/` exists yet | Classify first — verbs do **not** skip planning |
-| User says "go ahead" and a matching change folder already exists | Build (tier already chosen) |
-
-Trivial read-only questions skip the classifier entirely.
-
 ## 3. Removed: the full tier (private)
 
 The former **Full** tier is gone. It used to run a logical phase machine
 (`explore -> proposal -> spec/design -> tasks`) with a host-advertised executor
 per phase. That dispatch is no longer part of this recipe: a change declaring
-`Depth: full` blocks with the migration message that names the removed tier and
-`Depth: standard`. Migrate by rewriting the `Depth:` line to `standard` and
-keeping the plan plus its spec delta; standard and light remain collapsed and
-unchanged, and the recipe stays provider-neutral with no runtime or model
-configuration.
+`Depth: full`, or graded with `--tier full`, blocks with the migration message
+that names the removed tier and `Depth: standard`. Migrate by rewriting the
+`Depth:` line to `standard` and keeping the plan plus its spec delta; standard
+and light remain collapsed and unchanged, and the recipe stays provider-neutral
+with no runtime or model configuration.
 
 ## 3.1 Preflight composition
 
@@ -156,11 +129,11 @@ artifacts available so far:
 
 | Field | Evidence |
 |---|---|
-| **Intent** | Original request and `proposal.md` |
-| **Scope** | `proposal.md` in-scope and out-of-scope boundaries |
-| **Key decisions** | Proposal, spec, design, and task choices |
-| **Affected areas** | Proposal/design paths and task work units |
-| **Risks** | `explore.md`, design trade-offs, and unresolved constraints |
+| **Intent** | The original request and the plan's `## Specs` |
+| **Scope** | The `## Specs` requirements and, when the change carries one, the delta |
+| **Key decisions** | Plan prose (`## Design` when it exists) and task choices |
+| **Affected areas** | The `## Tasks` rows and their paths |
+| **Risks** | `explore.md`, trade-offs, and unresolved constraints |
 | **Open questions** | Questions recorded by the phase that exposed them |
 | **Recommendations / assumptions** | Explicitly labeled conclusions derived from the artifacts |
 
@@ -174,7 +147,7 @@ product decision.
 
 ## 3.3 Plan/build lifecycle
 
-- **Plan** runs the chain for the classified tier (Section 2), then **stops**.
+- **Plan** writes the plan and, when the change alters a rule, the delta (Section 2), then **stops**.
 - **Build** runs: apply -> verify -> artifact/PR gates -> archive-tail (pre-merge).
 
 ## 4. When to invoke
@@ -182,35 +155,37 @@ product decision.
 | Situation | Invoke plan? | Invoke build? |
 |---|---|---|
 | Quick question / read-only exploration | No | No |
-| Substantial or direct implementation request without prior change folder | Yes — classify, plan, stop | No |
+| Substantial or direct implementation request without prior artifacts | Yes — derive the artifacts, plan, stop | No |
 | User approves a pending plan ("go ahead", "implement it", "build it") | No | Yes |
 | User asks to open a PR | No | Yes — but only after artifact gate (Section 7) |
-| Trivial one-line fix explicitly scoped by user | Light tier — plan (`proposal.md` + `tasks.md`) then may build inline | Maybe same turn after micro-plan |
+| Trivial one-line fix explicitly scoped by user | Light tier — `tasks.md` plan only, then may build inline | Maybe same turn after micro-plan |
 
 Prefer the project's native plan/review UX when available (e.g. plan mode) —
-this skill supplies the artifact trail behind that surface. **All classified
-planning artifacts MUST be written during plan mode**; production code is never
+this skill supplies the artifact trail behind that surface. **All planning
+artifacts MUST be written during plan mode**; production code is never
 modified while planning. Do not tell the user to "run /plan" or similar —
-respond to natural requests ("necesito implementar…") by classifying and
-planning.
+respond to natural requests ("necesito implementar…") by writing the plan and
+its delta before touching production code.
 
 ## 4.1 Companion mode (ODD owns the change)
 
 Applies only when the repository resolves to `odd` mode: `[recipes.plan-build-flow.config] mode` in the project manifest, default `auto`, which infers `odd` when the Gentle AI state directory exists at `<git-common-dir>/gentle-ai/`. An installed tool or a leftover `odd/tasks/` file is not evidence. In `openspec` mode, Sections 2-7 apply unchanged.
 
-- ODD owns planning, approval and verification. Do not classify a depth, write a second proposal/design/tasks, or ask for another go-ahead. Tracker and delivery obligations still apply.
-- The change plan is `odd/tasks/<change>.md`, where `<change>` is the last path segment of the branch name (`feat/thing` and `fix/thing` both resolve to `thing`). The plan-before-build gate blocks a production write when that file is missing; writing under `odd/` is never blocked.
+- ODD owns planning, approval and verification. Do not classify a tier, write a second proposal/design/tasks, or ask for another go-ahead. Tracker and delivery obligations still apply.
+- The change plan is `odd/tasks/<change>.md`, where `<change>` is the last path segment of the branch name (`feat/thing` and `fix/thing` both resolve to `thing`). No guardian demands it: a small ODD change writes none, and the pre-tool-use gate requires no plan for a production write.
+- The one protected odd path is the canonical spec tree `odd/specs/`, because promotion is its only writer. A hand write there is refused unless the branch pairs a change that carries a delta under `odd/changes/<change>/specs/`, active or already archived; the refusal names the missing delta and `ai-specs specs promote`. Every other write under `odd/`, and every write under `openspec/changes/`, is allowed.
 - Write a delta at `odd/changes/<change>/specs/<domain>/spec.md` only when the change adds, modifies or removes an observable product rule, or corrects a documented rule to match verified behavior. Label a documentation correction as such, never as a behavior change. A behavior-preserving change carries no delta and no change folder.
 - Reuse ODD verification as the evidence, then promote with `ai-specs specs promote <slug> --root <root>` before the guardian and merge (Section 7). In `odd` mode it composes `odd/changes/<slug>/specs/<domain>/spec.md` into `odd/specs/<domain>/spec.md`; `openspec/specs/**` is neither read nor written.
-- In companion mode the Section 6 file-backed readiness and the Section 7 change-folder and tier-minimum requirements apply only to a change that carries a delta, and then only to the delta; they never require a second proposal, design or tasks.
-- The mode selects the plan tree and never waives the plan requirement: `openspec` mode still needs its change folder, and `odd` mode needs the paired ODD plan.
-- In `odd` mode the pre-merge guardian reads the branch pairing, validates the paired plan and the delta parity against `odd/specs/`, and requires the delta folder to be archived with no active folder left; it applies no tier minimum. Archiving is mechanical and mandatory before merge: `ai-specs changes archive <change> --root <planning-root>` moves only `odd/changes/<change>/` to `odd/changes/archive/YYYY-MM-DD-<change>/`; the plan stays at `odd/tasks/<change>.md` because it belongs to the feature, not to the change. A change that never carried `odd/changes/<change>/` is still archived: the verb creates the dated folder holding a copy of the plan (`tasks.md`) and leaves the original where it is, so an archive always exists once the change is archived. A plan that declares `Depth:` must therefore have that dated archive before merge, while a plan with no `Depth:` line is legacy and passes on its plan and parity alone, so existing ODD repositories are not retro-blocked.
+- In companion mode the OpenSpec plan shape, the `## Verification` rows and the tier are not graded at all: ODD owns the plan's shape and the evidence. The delta is the only artifact the guardian reads. Sections 4.2, 6 and 7 apply in `odd` only where they talk about that delta.
+- The pre-merge guardian reads the branch pairing and grades only what the change's folder and delta say: no active `odd/changes/<change>/` may remain when the change carries one, the dated archive must hold the change, and every delta must be promoted into `odd/specs/`. It never reads the plan: ODD owns that document's shape and its evidence. A change with no plan, no folder and no archive is `none` and passes with `OK (none, change <change>)` unless the diff refutes it (Section 7.4).
+- Archiving is mechanical when the change carries a folder: `ai-specs changes archive <change> --root <planning-root>` moves only `odd/changes/<change>/` to `odd/changes/archive/YYYY-MM-DD-<change>/`; the plan stays at `odd/tasks/<change>.md` because it belongs to the feature, not to the change. The verb also accepts a change with no folder: it creates the dated folder holding an `archived.md` marker naming the change and the date, and leaves the plan where it is. Without a folder, nothing requires that archive.
 
 ### 4.2 The plan file (`openspec` mode, normative)
 
 The plan of a change is one file, `openspec/changes/<slug>/tasks.md`, and the CLI
 parses it. Its sections, in this order, are `## Specs`, `## Tasks`, `## Design`
-(optional), `## Verification`, and `## Log` last. `S#` quotes the human request
+(optional), `## Verification`, and `## Log` last; `## Verification` and
+`## Log` are graded from standard up. `S#` quotes the human request
 verbatim — it never restates `proposal.md` — and every `## Tasks` row links the
 `S#` it implements. `proposal.md`, `design.md` and `verify-report.md` may still
 be written, but the plan is what the CLI reads. Any other section is prose the
@@ -230,10 +205,9 @@ CLI ignores.
 - **L1** — <the human's original request, verbatim>
 ```
 
-`## Log` with `L1` is required at Standard and optional for Light (the
-tier matrix of Section 4). A plan that declares `Depth: standard`
-and carries no `## Log` blocks with
-``archive/<folder>/tasks.md: `## Log` section is missing``.
+`## Log` with `L1` is required at standard — a plan plus a delta — and optional
+for light. A standard change with no `## Log` blocks with
+``archive/<folder>/tasks.md: `## Log` section is missing: add `- **L1** — <the human request>` because tier standard requires it``.
 
 Migration: an in-flight change written before this release must be rewritten
 into the plan shape before it can be archived.
@@ -258,10 +232,10 @@ never proves readiness.
 
 Readiness is always proven by file-backed artifacts in the canonical
 change-folder tree, and the readiness artifact is the plan: `tasks.md` with its
-`## Specs` and `## Tasks` sections (Section 4.2), plus the tier minimums and the
-verification evidence that tier asks for. `proposal.md` alone is never the
-readiness marker. The resolved store (`openspec|engram|both`) is never
-consulted for readiness and never alters any classifier, PR/archive gate,
+`## Specs` and `## Tasks` sections (Section 4.2), plus, from standard up, its
+`## Log` and one `## Verification` row per `S#`. There are no per-tier file
+minima beyond that. `proposal.md` alone is never the readiness marker. The resolved store (`openspec|engram|both`) is never
+consulted for readiness and never alters any artifact gate, PR/archive gate,
 staged verify gate, or pre-merge guardian decision. Engram MAY mirror artifacts
 but never replaces them.
 
@@ -269,10 +243,18 @@ but never replaces them.
 
 ### 7.1 Change folder required
 
-Every non-trivial change MUST have a slug folder at `openspec/changes/<slug>/`
+A change that carries a plan MUST have a slug folder at `openspec/changes/<slug>/`
 (excluding `archive/`) before implementation begins on that change. If the user
-jumps straight to "implement X", create the folder and run the classified plan
-first.
+jumps straight to "implement X" and the change needs a plan, create the folder
+and write the plan first. A change that needs no plan (`none`) creates no folder
+and passes unless its diff is refuted (Section 7.4).
+
+The `openspec` hook accepts a local declaration that the branch needs no plan:
+`ai-specs changes start --none --root <planning-root>` writes
+`branch.<branch>.aiSpecsCeremony=none` into this clone's local git config. It is
+never an artifact, never travels with the branch and is never committed, and it
+relaxes only that plan requirement: the ledger `work-start` checkpoint still
+runs, the mode is untouched, and the pre-merge refutations still grade the diff.
 
 Exception — `odd` mode (Section 4.1): the plan is `odd/tasks/<change>.md` and no
 `openspec/changes/<slug>/` folder is created. A change that carries a delta keeps
@@ -283,43 +265,44 @@ folder for the tail gates.
 
 Do **not** run `gh pr create`, `glab mr create`, or equivalent until:
 
-1. The matching `openspec/changes/<slug>/` folder exists on the current branch. In
-   `odd` mode (Section 4.1) that folder is not required: the gate is satisfied by
-   `odd/tasks/<change>.md` and, when the change carries a delta, by
+1. The matching `openspec/changes/<slug>/` folder exists on the current branch
+   with the plan from Section 4.2, or with the delta when the change carries no
+   plan. In `odd` mode (Section 4.1) that folder is not required: the gate is
+   satisfied by `odd/tasks/<change>.md` and, when the change carries a delta, by
    `odd/changes/<change>/`.
-2. The plan from Section 4.2 is present and **committed**, plus, from Standard
-   up, at least one delta under `specs/`. `proposal.md`, `design.md` and
-   `verify-report.md` are still accepted and honoured when present; they are not
-   required.
+2. The plan and, when the change carries one, its delta are present and
+   **committed**. `proposal.md`, `design.md` and `verify-report.md` are still
+   accepted and honoured when present; they are not required.
 3. Implementation and verification for that slug are complete (or the user
-   explicitly accepts opening a draft-only PR for review of planning — still
-   requires the plan, and the delta from Standard up).
+   explicitly accepts opening a draft-only PR for review of planning).
 
-If the gate fails, stop with a plain-language blocker: complete planning for
-the classified depth, commit the files, then retry PR creation.
+If the gate fails, stop with a plain-language blocker: complete the artifacts the
+change needs, commit the files, then retry PR creation.
 
 ### 7.3 Pre-merge archive gate (hard stop)
 
 Archive-tail MUST run on the **review branch** before merge — never defer until
-after the merge lands on the base branch. Standard changes require
-conforming verification evidence before this step; Light verification is
+after the merge lands on the base branch, in both modes. Standard changes
+require conforming verification evidence before this step; light verification is
 advisory.
 
-The archive move itself is mechanical and mandatory before merge, in both modes:
+The archive move itself is mechanical and mandatory before merge whenever the
+change carries a change folder, in both modes:
 `ai-specs changes archive [<slug>] --root <planning-root>` (optional
 `--date YYYY-MM-DD`, default today in UTC). It refuses while a delta is
 unpromoted, refuses when a dated archive for the change already exists, refuses
 a destination that resolves through a symlink or outside the repository, and
 never deletes anything. A change with no delta folder is still archived: the
-dated folder is created holding a three-line `archived.md` marker (change name,
-ISO date, plan path) and the original plan stays where it is. `--change`
+dated folder is created holding an `archived.md` marker that names the change
+and the date, and the original plan stays where it is. `--change`
 accepts a branch-shaped value — CI passes `GITHUB_HEAD_REF` — and keeps its last
 path segment, the same normalization the branch pairing applies. An empty
 `<slug>` or an explicitly empty `--change=` is a usage error, never "omitted".
 A change name that is not a single path segment (`..`, `../../../offtree`,
 `a/b`) is a usage error too: the guardian exits `2` with
 `ERROR: invalid change name: <name> (expected a single path segment)` and never
-grades a folder outside the change tree.
+grades a folder outside the change tree. A change with no plan, no folder and no
+archive is `none`: it owes no archive and passes unless its diff is refuted.
 
 The evidence artifact is the plan's `## Verification` section (Section 4.2): one
 row per `S#` declared under `## Specs`, in the same file.
@@ -359,7 +342,9 @@ exactly as before: a dedicated report whose canonical block is
 ```
 
 On that legacy source, Standard requires the dedicated report with a non-failing
-verdict, command, exit `0`, date, and 7–40 character commit SHA. `S1` and
+verdict, command, exit `0`, date, and 7–40 character commit SHA. The report is
+read only when the plan has no `## Verification` section at all; a present but
+unparseable section is a blocker, never a fallback. `S1` and
 `Criterion 1` are interchangeable labels, so an old mapping row keeps satisfying
 a plan requirement. Light may warn when evidence is absent but MUST NOT block
 solely for it.
@@ -373,11 +358,15 @@ both stages.
 Sequence on the review branch:
 
 1. Implement and verify.
-2. Commit and push, one commit per `## Tasks` row. When a row exceeds roughly
-   400 authored changed lines, split it into one commit per work unit of that
-   size instead. Every commit is a Conventional Commit, and tests and docs land
-   in the same commit as the behavior they cover. Write each commit's sha into
-   the `Commit` cell of its row.
+2. Commit and push, one commit per `## Tasks` row, or one per work unit when a
+   row runs past roughly 400 authored changed lines. That figure is a planning
+   heuristic for slicing: it is never a cap, a counter-trigger or a forced
+   split, and a single reviewable unit may exceed it with its reason stated.
+   Every commit is a Conventional Commit, and tests and docs land in the same
+   commit as the behavior they cover. Write each commit's sha into the `Commit`
+   cell of its row. When native review is on, grade each work-unit commit as it
+   lands — `assess --base-ref <last reviewed boundary> --committed-only` — so a
+   candidate never grows into the accumulated branch.
 3. Open a PR (artifact gate satisfied).
 4. Promote canonical specs. Compose every delta under
    `openspec/changes/<slug>/specs/<domain>/spec.md` into
@@ -400,10 +389,10 @@ ai-specs specs promote <slug> --root <planning-root>
    and never mutates `openspec/specs/`. Light and changes with no `specs/`
    deltas have nothing to promote.
 
-5. Before moving the change folder, run the executable pre-archive gate and stop
-if it exits nonzero. `--root` is the resolved planning root from the request
-context — required, never the process cwd; a subrepo request passes the proven
-superproject root:
+5. In `openspec` mode, before moving the change folder, run the executable
+pre-archive gate and stop if it exits nonzero. `--root` is the resolved planning
+root from the request context — required, never the process cwd; a subrepo
+request passes the proven superproject root:
 
 ```bash
 ai-specs gates premerge <slug> --root <planning-root> --stage pre-archive
@@ -412,7 +401,8 @@ ai-specs gates premerge <slug> --root <planning-root> --stage pre-archive
 The command must pass for Standard; do not archive or continue when it
 reports missing or failed evidence, or an unpromoted or unresolved delta. Light
 remains advisory. This is the pre-archive check; the pre-merge guardian below
-remains required after archive.
+remains required after archive. `--stage pre-archive` grades the OpenSpec tree,
+so `odd` mode skips it and goes straight to archiving the change folder.
 
 6. After the pre-archive gate passes, run archive-tail with the verb:
    `ai-specs changes archive <slug> --root <planning-root>` moves
@@ -427,7 +417,9 @@ remains required after archive.
    candidates, dated-plus-undated candidates, invalid dates, or near-match
    names are present.
 7. Run the pre-merge guardian; merge only after you have asked the user whether
-   it is time to go and they explicitly approved.
+   it is time to go and they explicitly approved. Pass `--base <ref>` when the
+   base ref does not resolve here, so the refutations of a `none` change are
+   graded against the right diff.
 
 The commit check has two declared limits. It holds only on the review branch,
 because a squash-merge rewrites the shas and the guardian never runs on the base
@@ -467,8 +459,16 @@ guardian inspects the canonical tree and never a subrepo-local change folder.
 
 ```bash
 ai-specs gates premerge <slug> --root <planning-root>
-# optional: --tier light|standard
+# optional: --tier none|light|standard   (coherence assertion, never a choice)
+# optional: --base <ref>                (ref the objective refutations grade against)
 ```
+
+`--tier` is graded against the tier the artifacts derive (Section 2): a value
+that contradicts them blocks naming the derived tier and both exits, and
+`--tier full` blocks with the migration message. `--base` pins the ref the
+diff refutations of a `none` change are graded against; without it the guardian
+uses the project's `[recipes.git-pr-flow.config] base_branch`, resolved as
+`origin/<base>`, `<base>`, then `main` or `master`.
 
 The helper ships with the CLI install under `~/.ai-specs` (not copied into
 consumer projects).
@@ -481,11 +481,12 @@ Hard blockers (do **not** merge):
    `openspec/changes/archive/<slug>/` form is accepted only as a legacy
    fallback when no dated candidate exists, is graded by the same plan grammar,
    and must hold the plan or the delta like any other archive.
-3. Archived folder lacks the tier minimum files (every tier: `tasks.md`
-   parsing as the plan; Standard: also `specs/**/*.md` and a `## Log` section
-   with `L1`).
-   `proposal.md`, `design.md` and `verify-report.md` are accepted and honoured
-   when present, but they are not required.
+3. The archive holds nothing of the change — its plan, its delta, or the
+   `archived.md` marker — or its `tasks.md` does not parse as the plan, or a
+   standard change has no `## Log` with `L1`. There are no per-tier file minima
+   beyond the plan's own grammar. `proposal.md`, `design.md` and
+   `verify-report.md` are accepted and honoured when present, but they are not
+   required.
 4. Standard verification is incomplete: a declared `S#` has no row in
    `## Verification`, or a row is `FAIL`.
 5. A Standard delta under `specs/<domain>/spec.md` is not promoted into
@@ -500,8 +501,8 @@ Hard blockers (do **not** merge):
    blocker names the plan and the offending command; `openspec/config.yaml` is
    neither required nor graded.
 
-The promotion check is tier-scoped: Light changes and changes with no `specs/`
-deltas are never blocked by it.
+The promotion check is delta-scoped: a light change and a change with no
+`specs/` deltas are never blocked by it.
 
 The plan grammar is graded on **every** archive, whatever its folder is called:
 the folder name never decides which rules apply, so an undated `archive/<slug>/`
@@ -513,19 +514,46 @@ An archive that predates this contract and still has a free-form `tasks.md`
 must be re-worded into the plan shape if anyone needs to re-run the guardian on
 it; historical archives are otherwise never rewritten.
 
-In `odd` mode the guardian grades the ODD tree instead (Section 4.1): the paired
-plan at `odd/tasks/<change>.md` must be a regular file of the repository, every
+In `odd` mode the guardian grades the ODD tree instead (Section 4.1): an active
+`odd/changes/<change>/` folder must be gone, the dated archive must exist and
+hold the plan, the delta, or the `archived.md` marker, and every
 `odd/changes/<change>/specs/` delta must be promoted into `odd/specs/` — read
 from the archived folder once the change is archived, so a delta that is not
 promoted blocks after archiving with the same "is not promoted into
-odd/specs/..." wording — and the active `odd/changes/<change>/` folder must be
-gone. A folder that is still active blocks with `ai-specs changes archive`,
-which is the mandatory archive step before merge. Every odd change pays that one
-uniform contract, with no `Depth:` exemption: once archived, the dated folder
-must exist and hold the plan, the delta, or the `archived.md` marker. Because
-`odd/tasks/<change>.md` survives the archive, the branch still pairs the change
-after archiving; in `openspec` pass the slug or `--change`, since the plan moved
-into the archive with the change folder.
+odd/specs/..." wording. It never grades `odd/tasks/<change>.md`: ODD owns that
+document's shape and its evidence. The archive is owed only by a change that
+carries a folder, in both
+modes; a change with no folder and no archive is `none` and passes with
+`OK (none, change <change>)`. Because `odd/tasks/<change>.md`
+survives the archive, the branch still pairs the change after archiving; in
+`openspec` pass the slug or `--change`, since the plan moved into the archive
+with the change folder.
+
+### Refutations of a `none` change
+
+The CLI cannot prove an ODD small task, so a change with no plan, no folder and
+no archive is a valid declaration that passes. Only a contradiction of the diff
+refutes it, graded at the pre-merge guardian and in CI, never at the gate:
+
+- **R-a** — the branch changes `odd/specs/**` or `openspec/specs/**` and the
+  change carries no delta, active or archived. That is a promotion bypass.
+  Exit: write the delta under `<mode>/changes/<change>/specs/` and run
+  `ai-specs specs promote`. The blocker names the canonical spec, the change and
+  the delta path.
+- **R-b** — the branch changes a path the project declares as high-risk. The
+  list is opt-in and project-owned: `[recipes.plan-build-flow.config]
+  high_risk_paths` in `ai-specs/ai-specs.toml`, an array of path patterns where a
+  trailing `/**` covers a prefix and anything else is a whole-path shell-style
+  match. The key is not declared in the recipe schema, so write it by hand; a
+  project that declares nothing is never refused by R-b. The response is
+  per-mode: in `openspec` the change must carry a plan (tier light), because the
+  plan is where the verification evidence lives; in `odd` one commit of the
+  range must carry a `Risk: item N (<reason>)` trailer, N in 1..6 — a bare
+  `Risk: none` does not satisfy it.
+
+No diff computable means no refutation: without a base ref, in a shallow clone
+or outside a repository, the guardian refutes nothing rather than blocking every
+small change. `--base <ref>` pins it, and CI passes the pull request's base sha.
 
 Tracker item closure (`ai-specs tracker-card-gate --root <root> --checkpoint
 archive-close`) is a separate Tracker-domain checkpoint: it is not this OpenSpec
@@ -540,8 +568,12 @@ The third is `.github/workflows/pr-gate.yml`: on every pull request against
 
 ```bash
 trusted/dist/ai-specs gates premerge \
-  --root "$GITHUB_WORKSPACE/candidate" --change "$GITHUB_HEAD_REF"
+  --root "$GITHUB_WORKSPACE/candidate" --change "$GITHUB_HEAD_REF" \
+  --base "$BASE_SHA"
 ```
+
+`--base` is the pull request's base sha: a CI clone may have no base ref to
+resolve, so without it the refutations degrade to none.
 
 The workflow triggers on `pull_request_target`: definition and evaluator come
 from the base branch, and `candidate/` is data only.
@@ -555,11 +587,13 @@ so the archive commit must be pushed for the check to pass.
 
 ### In-flight plans and stale PRs
 
-Plans already in flight when these minima ship are grandfathered only through
-their current work: add missing `proposal.md` or verify evidence before PR or
-archive, without restarting the plan. The one mandatory edit is the removed
-tier: a plan still declaring `Depth: full` rewrites it to `Depth: standard` and
-keeps its spec delta, otherwise the guardian blocks with the migration message.
+Plans already in flight when this contract ships are grandfathered through
+their current work: a plan that no longer matches the grammar is rewritten before
+its PR or archive, without restarting the plan. The one mandatory edit is the
+removed tier: a plan still declaring `Depth: full` rewrites it to
+`Depth: standard` and keeps its spec delta, otherwise the guardian blocks with
+the migration message; a `Depth:` line that no longer matches the artifacts is
+either corrected or dropped.
 Historical archives are never rewritten; a stale PR is handled by its owning
 agent when that change resumes.
 Missing `explore.md` is never a guardian blocker. The guardian evaluates only

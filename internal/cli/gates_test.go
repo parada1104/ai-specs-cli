@@ -432,3 +432,21 @@ func TestGatesPremergeDepthFullPlanBlocksWithAMigrationMessage(t *testing.T) {
 		t.Errorf("stderr = %q, want the migration message", stderr)
 	}
 }
+
+// pre-archive grades openspec/changes/<slug>/, which odd mode does not use; run
+// there it blocked every odd change, so it is a usage error naming the mode's own
+// archive verb.
+func TestGatesPremergeRefusesThePreArchiveStageInOddMode(t *testing.T) {
+	root := gatesRepo(t)
+	gatesWrite(t, filepath.Join(root, "ai-specs", "ai-specs.toml"),
+		"[recipes.plan-build-flow.config]\nmode = \"odd\"\n")
+
+	code, stdout, stderr := runGatesCLI(t, "gates", "premerge", "thing", "--root", root,
+		"--stage", "pre-archive")
+	if code != 2 || stdout != "" {
+		t.Fatalf("exit = %d, stdout = %q; want 2 and empty stdout", code, stdout)
+	}
+	if !strings.Contains(stderr, "--stage pre-archive is an openspec stage") {
+		t.Fatalf("stderr = %q, want the odd refusal", stderr)
+	}
+}
