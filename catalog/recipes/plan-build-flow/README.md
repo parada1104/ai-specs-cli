@@ -7,34 +7,35 @@ or `/build` commands.
 
 ## What it provides
 
-- **Skill `plan-build-flow`** (bundled) — depth classifier (full / standard /
+- **Skill `plan-build-flow`** (bundled) — depth classifier (standard /
   light), ambient planning/build contract, PR artifact gate, pre-merge archive
-  gate, and graceful degradation without an orchestrator.
+gate, and graceful degradation without an orchestrator.
 - **Doc** — this README at `ai-specs/recipes/plan-build-flow/README.md`.
 
 ## Planning depth (classifier)
 
 | Tier | Typical use | Planning chain | Minimum artifacts before build |
 |------|-------------|----------------|-------------------------------|
-| **Full** | New capability, architecture, breaking or ambiguous scope | explore → proposal → spec → design → tasks | `tasks.md` plus `proposal.md` or `design.md`, and at least one `specs/**/*.md` |
-| **Standard** | Scoped feature or bounded multi-file work | conditional explore → proposal → spec → tasks | `proposal.md`, `tasks.md`, and at least one `specs/**/*.md` |
-| **Light** | Small fix with clear file/symbol target | proposal → tasks | `proposal.md` + `tasks.md` |
+| **Standard** | Scoped feature, bounded multi-file work, or a new capability | conditional explore → proposal → spec → tasks | `tasks.md` plan (`## Specs`, `## Tasks`) plus at least one `specs/**/*.md` delta |
+| **Light** | Small fix with clear file/symbol target | proposal → tasks | `tasks.md` plan only, no delta |
 
 Direct "implement this" requests still run the classifier first when no change
 folder exists yet.
 
-## Full phase compatibility
+## Removed: the full tier
 
-Full planning uses the logical chain `explore -> proposal -> spec/design ->
-tasks`. Proposal follows explore; spec and design may run in parallel only after
-proposal; tasks waits for both. Each phase has explicit file-backed inputs and
-outputs, and a host-advertised executor may implement only the current phase.
-When no executor is advertised, the phase runs inline. An unavailable executor
-may use that same fallback; malformed, partial, or blocked results stop and
-preserve state rather than silently rerunning or skipping a phase.
+The former **Full** tier no longer exists. A change that declares `Depth: full`
+(or is graded with `--tier full`) blocks instead of being downgraded silently,
+with a migration message that points at standard:
 
-Standard and Light behavior remains collapsed and unchanged. The recipe stays
-provider-neutral and adds no runtime or model configuration.
+```text
+archive/<folder>: the full tier was removed: migrate the change to `Depth: standard` (the plan plus at least one `specs/` delta)
+```
+
+Migrate by rewriting `Depth: full` to `Depth: standard` and keeping the plan
+plus at least one `specs/` delta. The former explore → proposal → spec/design →
+tasks phase machine is no longer part of this recipe; standard and light remain
+collapsed and unchanged.
 
 Preflight is one session-level authority for execution mode, artifact store,
 review budget, delivery strategy, and chain strategy. Plan-build consumes those
@@ -46,10 +47,12 @@ and blocks unresolved product decisions. The final review requires explicit
 accept, adjust, or stop.
 
 The classifier always computes a signal tier and separately checks for an
-explicit requested depth. Illustrative requests such as “full planning”,
-“acotado con spec”, or “solo tasks” are compared with that signal; this is
-guidance, not an exhaustive parser. A mismatch is a depth conflict: the agent
-must ask which tier wins in either direction before writing that planning chain.
+explicit requested depth. Illustrative requests such as “acotado con spec” or
+“solo tasks” are compared with that signal; this is guidance, not an exhaustive
+parser. A request for “full planning” names the removed tier: explain that it
+was removed, point at standard, and record `Depth: standard` only once the human
+agrees. A mismatch is a depth conflict: the agent must ask which tier wins in
+either direction before writing that planning chain.
 When the conflict is resolved, `tasks.md` records standalone `Depth: <tier>` plus
 the requested, signal, decided, and decision-source annotation lines. A same-turn
 preference may resolve the conflict without a repeat ask; a deeper decision still
@@ -84,82 +87,52 @@ requires the delta folder to be archived before merge.
 There is no `odd/config.yml`: the mode lives in the project manifest.
 - **`openspec`** is the unchanged OpenSpec-centered flow described below.
 
-## Project config (`config.yaml`)
+## Project config (`config.yaml`) — optional and ungraded
 
 `config.yaml` configures the **project**, not the change. It is an `openspec`
 artefact only, at `openspec/config.yaml` (`odd` mode has no config file, and
-`.yml` is not read).
+`.yml` is not read). The premerge neither requires nor grades it: the CLI does
+not depend on the OpenSpec CLI, so a missing file never blocks and its
+`schema:`, `testing.runner:` and `strict_tdd:` keys are not validated. OpenSpec
+and agents may still read `context`, `rules.*` and `ai_specs_guidance`; the
+`tracking:` block is read by the Tracker domain (`internal/doctor`, the ledger
+witness) and must be kept intact.
 
-The CLI validates only the keys it consumes, line by line, with no YAML
-library:
+### Verification commands
 
-- the file must exist and be a regular file whose real path stays inside the
-  repository (a symlink pointing outside blocks);
-- `schema:` must be non-empty;
-- a `testing:` block must declare a non-empty `runner:` — the command that runs
-  the project tests;
-- `strict_tdd:`, when present, must be `true` or `false`; omitting it is fine.
+One rule survives, graded from Standard up over the change's own
+`## Verification` rows: every command a row records must resolve here — a `./`-
+or `/`-prefixed path must exist and be a regular file, a bare word must be found
+on `PATH`. A change with no rows, or with no command in any row, is exempt: that
+is the proportional-ceremony rule (S12), not a bypass. The blocker names the plan
+that records it:
 
-Everything else — `context`, `rules.*`, `ai_specs_guidance` — is **opaque
-prose** for the agent, and nothing validates it. A strict schema would repeat
-the frozen schema oracle trap that already blocked declaring `[config.mode]` in
-#589, so the file stays a superset the CLI reads selectively. The `tracking:`
-block is read by the Tracker domain (`internal/doctor`, the ledger witness) and
-must be kept intact.
+```text
+openspec/changes/archive/<slug>/tasks.md: verification for S1 names command "./nope.sh" which does not exist: record the real command
+```
 
-### Freshness loop
-
-The cause of a stale `config.yaml` is that nothing read it while grading. Now
-it is graded, indirectly but deterministically, through the change's own
-`## Verification` rows:
-
-1. every backticked command that starts a row's evidence must resolve here — a
-   `./`- or `/`-prefixed path must exist and be a regular file, a bare word must
-   be found on `PATH`;
-2. the `testing.runner` declared in the config must match the first word of at
-   least one row.
-
-Every `## Verification` row of a Standard or Full change must also name the
+Every `## Verification` row of a Standard change must also name the
 command it ran in backticks: a verdict without a command records no run, so
 `- **S1: PASS** — nothing executed` blocks with `verification for S1 must name
 the command it ran in backticks: record "- **S1: PASS** — `go test ./...`"`.
 The row must record exactly one command with no prose before it and no bare
 second backticked value; a row recording `exit 1`, `exit 2` or `failed` blocks as
 a failing run; an `N/A` row with a reason is exempt; and two rows for the same
-`S#` block naming the id. A plan that declares `Depth: standard` or
-`Depth: full` also requires `## Log` with `L1`; Light keeps it optional.
-
-Standard and Full changes require both. A change with no verification rows —
-Light, or a plan without `## Verification` — is exempt from both: that is the
-proportional-ceremony rule (S12), not a bypass. A change that migrates the test
-runner cannot pass the gate without updating `config.yaml` in the same change,
-so obsolescence fails the gate instead of staying silent. Blockers name the
-offending command and the config path, for example:
-
-```text
-openspec/config.yaml: verification for S1 names command "./nope.sh" which does
-not exist: run the configured tests and record the real command
-openspec/config.yaml: verification never runs the configured testing.runner
-"./tests/run.sh": name it in at least one row or update config.yaml
-```
+`S#` block naming the id. A plan that declares `Depth: standard` also requires
+`## Log` with `L1`; Light keeps it optional.
 
 ## PR and merge gates
 
 - **No PR** until the change's plan parses: `openspec/changes/<slug>/tasks.md`
   with `## Specs` and `## Tasks`, plus `## Log` with `L1` from Standard up (Light
-  keeps it optional) and a spec delta for Standard and Full. `proposal.md`,
+  keeps it optional) and a spec delta for Standard. `proposal.md`,
   `design.md` and `verify-report.md` are still accepted, but they are no longer
   required. Every archive is graded by that grammar whatever its folder is
   called, and it must hold the plan or the delta: an empty folder blocks.
 - **Verify before archive:** Standard requires a dedicated `verify-report.md`
   with command, exit `0`, a valid calendar date, commit SHA, and a non-failing
-  verdict. Full additionally requires strict `PASS`, `ready_for_archive: true`,
-  and exactly one strict-PASS `Criterion N` mapping row for every top-level
-  bullet under `## Success Criteria` in the authoritative source: `proposal.md`
-  when present, otherwise `design.md`. A missing, empty, or duplicate heading
-  in the authoritative source blocks Full; it never falls back to `design.md`.
-  Light is advisory only.
-- **Promote canonical specs before archiving:** Standard and Full deltas under
+  verdict. Light is advisory only.
+- **Promote canonical specs before archiving:** Standard deltas under
   `openspec/changes/<slug>/specs/<domain>/spec.md` are composed into
   `openspec/specs/<domain>/spec.md` by the promotion helper
   `ai-specs specs promote <slug> --root <planning-root>`. ADDED
@@ -174,7 +147,7 @@ openspec/config.yaml: verification never runs the configured testing.runner
   `openspec/specs/`. Light changes and changes with no deltas are unaffected.
 - **Two enforcement points:** run the verify gate before archive-tail and run
   the pre-merge guardian again after archive. Both points also block a Standard
-  or Full delta that is unpromoted or unresolved. Missing `explore.md` is never a
+  delta that is unpromoted or unresolved. Missing `explore.md` is never a
   guardian blocker.
 - **Archive before merge** on the review branch — never after merge lands on the
   base branch. OpenSpec's canonical destination is
@@ -207,9 +180,9 @@ openspec/config.yaml: verification never runs the configured testing.runner
   --checkpoint archive-close [slug]`). It
   never moves the change folder, never infers closure from OpenSpec archive
   state, and writes nothing. Plan Build's artifact guardian is tracker-free.
-- **Project config freshness:** a Standard or Full change requires a valid
-  `config.yaml` (see above), every command it records in `## Verification` must
-  resolve, and its `testing.runner` must appear in at least one row.
+- **Verification commands resolve:** every command a Standard change records in
+  `## Verification` must resolve on disk (see above). `config.yaml` is neither
+  required nor graded.
 
 ## Third assurance layer: pull-request CI
 
@@ -245,9 +218,12 @@ JSON
 ```
 
 Plans already in flight when this contract ships add missing `proposal.md` or
-verify evidence before their PR/archive; no replan or restart is needed.
-Historical archives are never rewritten. A stale PR is handled by its owning
-agent, which adds the missing artifacts when that change resumes.
+verify evidence before their PR/archive; no replan or restart is needed. One
+edit is mandatory: a plan still declaring `Depth: full` rewrites it to
+`Depth: standard` and keeps its spec delta, otherwise the guardian blocks with
+the migration message. Historical archives are never rewritten. A stale PR is
+handled by its owning agent, which adds the missing artifacts when that change
+resumes.
 
 ## Capability
 

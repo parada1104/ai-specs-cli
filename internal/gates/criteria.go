@@ -9,12 +9,9 @@ import (
 
 var (
 	successCriteriaHeadingRe = regexp.MustCompile(`(?i)^[ ]{0,3}##[ \t]+Success criteria[ \t]*$`)
-	mappingHeadingRe         = regexp.MustCompile(`(?i)^[ ]{0,3}##[ \t]+Success-criteria mapping[ \t]*$`)
 	criterionItemRe          = regexp.MustCompile(`^(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]*)?\S`)
-	criterionMappingRe       = regexp.MustCompile(
-		`(?i)^[ ]{0,3}[-*][ \t]+Criterion[ \t]+(\d+)[ \t]*:[ \t]*([^\s—–-]+)(?:[ \t]+[—–-].*)?[ \t]*$`)
-	criterionRowRe = regexp.MustCompile(`(?i)^Criterion[ \t]+(\d+)$`)
-	planSpecIDRe   = regexp.MustCompile(`^S(\d+)$`)
+	criterionRowRe           = regexp.MustCompile(`(?i)^Criterion[ \t]+(\d+)$`)
+	planSpecIDRe             = regexp.MustCompile(`^S(\d+)$`)
 )
 
 // criteria is the authoritative requirement declaration of one change: the
@@ -32,15 +29,10 @@ func (c criteria) rangeLabel() string {
 	return c.ids[0] + "-" + c.ids[len(c.ids)-1]
 }
 
-// parseRequirements resolves the requirement source chain (P2): the plan's
-// `## Specs` when it declares at least one `S#`, otherwise the legacy
-// `## Success Criteria` of proposal.md, otherwise of design.md.
-func parseRequirements(folder string) (criteria, string) {
-	return parseRequirementsFor(folder, readText(filepath.Join(folder, "tasks.md")))
-}
-
-// parseRequirementsFor resolves the same source chain from a plan that does not
-// live inside the folder, as the ODD plan at odd/tasks/<change>.md does (C3).
+// parseRequirementsFor resolves the requirement source chain (P2) from a plan
+// that does not live inside the folder, as the ODD plan at odd/tasks/<change>.md
+// does (C3): the plan's `## Specs` when it declares at least one `S#`, otherwise
+// the legacy `## Success Criteria` of proposal.md, otherwise of design.md.
 func parseRequirementsFor(folder, planText string) (criteria, string) {
 	plan, _ := ParsePlan(planText)
 	if len(plan.Specs) > 0 {
@@ -121,71 +113,4 @@ func requirementNumber(label string) (int, error) {
 		return number, err
 	}
 	return 0, strconv.ErrSyntax
-}
-
-// checkFullCriteriaMapping requires one strict PASS mapping row for every
-// declared requirement on the legacy verify-report.md source.
-func checkFullCriteriaMapping(folder, reportText string) []string {
-	declared, issue := parseRequirements(folder)
-	if len(declared.ids) == 0 {
-		if issue == "" {
-			issue = "verify-report.md could not parse Success Criteria"
-		}
-		return []string{issue}
-	}
-
-	lines := markdownContentLines(splitLines(reportText))
-	var headings []int
-	for index, line := range lines {
-		if mappingHeadingRe.MatchString(line) {
-			headings = append(headings, index)
-		}
-	}
-	if len(headings) == 0 {
-		return []string{"verify-report.md Full evidence requires canonical ## Success-criteria mapping block"}
-	}
-	if len(headings) > 1 {
-		return []string{"verify-report.md has duplicate canonical ## Success-criteria mapping blocks"}
-	}
-
-	start := headings[0] + 1
-	end := len(lines)
-	for index := start; index < len(lines); index++ {
-		if sectionHeadingRe.MatchString(lines[index]) {
-			end = index
-			break
-		}
-	}
-
-	var blockers []string
-	seen := map[int]bool{}
-	for _, line := range lines[start:end] {
-		match := criterionMappingRe.FindStringSubmatch(line)
-		if match == nil {
-			continue
-		}
-		number, _ := strconv.Atoi(match[1])
-		status := strings.ToUpper(match[2])
-		if seen[number] {
-			blockers = append(blockers, "verify-report.md has duplicate success-criteria mapping for criterion "+
-				strconv.Itoa(number))
-			continue
-		}
-		seen[number] = true
-		if number < 1 || number > len(declared.ids) {
-			blockers = append(blockers, "verify-report.md maps unknown success criterion "+strconv.Itoa(number)+
-				" (expected 1-"+strconv.Itoa(len(declared.ids))+" from "+declared.source+")")
-		} else if status != "PASS" {
-			blockers = append(blockers, "verify-report.md criterion "+strconv.Itoa(number)+
-				" mapping must be strict PASS for tier full")
-		}
-	}
-
-	for number := 1; number <= len(declared.ids); number++ {
-		if !seen[number] {
-			blockers = append(blockers, "verify-report.md is missing success-criteria mapping for criterion "+
-				strconv.Itoa(number))
-		}
-	}
-	return blockers
 }

@@ -15,7 +15,7 @@ metadata:
     - "User describes a multi-step change that needs planning before implementation"
     - "Continuing implementation after the user authorizes a plan"
     - "Opening a PR or finishing a change: validate artifacts, archive pre-merge, close out"
-    - "Deciding how much planning ceremony a change needs (full vs spec+tasks vs tasks-only)"
+    - "Deciding how much planning ceremony a change needs (spec+tasks vs tasks-only)"
     - "Deciding how to run planning/build phases when no orchestrator or memory is available"
 ---
 
@@ -47,10 +47,15 @@ when scope grows.
 Illustrative request phrases include (this is an illustrative set, not an
 exhaustive parser or fixed token whitelist):
 
-- **Full** — "full SDD", "full planning", "flujo completo", or
-  "planificación completa".
 - **Standard** — "standard", "spec + tasks", or "acotado con spec".
 - **Light** — "light", "tasks only", "solo tasks", or "solo tareas".
+
+A request for the removed full tier ("full SDD", "full planning", "flujo
+completo") is not a tier any more: explain that it was removed, point at
+standard, and ask before recording `Depth: standard`. A change that still
+declares `Depth: full`, or is graded with `--tier full`, blocks with the
+migration message that names the removed tier and `Depth: standard` — never a
+silent downgrade.
 
 The explicit request is compared with the signal; it never replaces signal
 classification. If they match, proceed with that shared tier. If they differ,
@@ -60,7 +65,7 @@ must fire in both directions, including when the user requests a deeper tier
 than the signal suggests; it may recommend a tier, but the user decides.
 
 The ask is required unless the same user turn already states which side wins,
-such as "use full even if it looks standard". A same-turn resolution adopts the
+such as "use standard even if it looks light". A same-turn resolution adopts the
 stated value without a second ask and records `Decision source: user`. Merely
 restating the requested tier or adding scope detail does not resolve the
 conflict. Until the conflict is resolved, do not implement production code or
@@ -71,11 +76,11 @@ Whenever a conflict was detected, annotate `tasks.md` with the following labels
 on separate lines. Keep the `Depth:` line standalone; never append annotation to
 it:
 
-Depth: full
+Depth: standard
 
-Requested depth: full
-Signal depth: standard
-Decided depth: full
+Requested depth: standard
+Signal depth: light
+Decided depth: standard
 Decision source: user
 
 `Decided depth` MUST equal the tier on the `Depth:` line. Use
@@ -90,18 +95,16 @@ deeper chain.
 
 | Tier | When to use | Planning chain (private) | Minimum artifacts before build |
 |---|---|---|---|
-| **Full** | New capability, architecture or cross-cutting refactor, breaking change, ambiguous scope, or user cannot point to concrete files | explore → proposal → spec → design → tasks | `tasks.md` plan (`## Specs`, `## Tasks`, `## Verification`) and at least one spec delta under `specs/` |
-| **Standard** | Scoped feature or multi-file fix in a known area; intent is clear but needs written requirements | conditional explore → proposal → spec → tasks | `tasks.md` plan and at least one spec delta under `specs/`; explore when criteria below fire |
-| **Light** | Small bugfix, single-file tweak, typo, or user names exact file(s) and expected edit | proposal → tasks | `tasks.md` plan |
+| **Standard** | Scoped feature, multi-file fix or new capability in a known area; intent is clear but needs written requirements | conditional explore → proposal → spec → tasks | `tasks.md` plan (`## Specs`, `## Tasks`, `## Verification`) and at least one spec delta under `specs/`; explore when criteria below fire |
+| **Light** | Small bugfix, single-file tweak, typo, or user names exact file(s) and expected edit | proposal → tasks | `tasks.md` plan only, no delta |
 
-### Standard and Full explore criteria
+### Standard explore criteria
 
 At Standard, write `explore.md` before authorization when any of these signals
 apply: **multi-approach** (two or more plausible approaches with material
 trade-offs), **unknown surface** (concrete files cannot yet be named), a docs or
 skill **conflict**, user **uncertainty** about the approach or location, or a
-prior attempt on the same intent that failed or was reverted. Full keeps
-`explore.md` first in its chain.
+prior attempt on the same intent that failed or was reverted.
 
 Skip explore only when concrete paths and expected behavior are known, one
 obvious approach exists in a known area, and no conflict, uncertainty, or retry
@@ -113,7 +116,7 @@ the archive and merge guardians never block on it.
 
 | Signal | Tier |
 |---|---|
-| "Add OAuth", "redesign sync", "new recipe", "breaking v3" | Full |
+| "Add OAuth", "redesign sync", "new recipe", "breaking v3" | Standard (the deepest tier) |
 | "Add field to X", "extend handler for Y", bounded multi-file feature | Standard |
 | "Fix typo in README", "change default in config.toml line 12", one-line bug | Light |
 | User says "implement/build/fix now" but **no** `openspec/changes/<slug>/` exists yet | Classify first — verbs do **not** skip planning |
@@ -121,43 +124,16 @@ the archive and merge guardians never block on it.
 
 Trivial read-only questions skip the classifier entirely.
 
-## 3. Full phase compatibility (private)
+## 3. Removed: the full tier (private)
 
-Full planning runs these logical phases in order:
-
-`explore -> proposal -> spec/design -> tasks`
-
-| Phase | Required inputs | Output artifact | Dependency |
-|---|---|---|---|
-| **explore** | User intent, repository context, and known constraints | `explore.md` | None |
-| **proposal** | `explore.md` plus the original intent | `proposal.md` | After explore |
-| **spec** | `proposal.md` | `specs/**/*.md` | After proposal |
-| **design** | `proposal.md` | `design.md` | After proposal |
-| **tasks** | `proposal.md`, the spec delta, and `design.md` | `tasks.md` | After both spec and design |
-
-Spec and design may run in parallel only after proposal is complete. Tasks waits
-for both outputs. Each phase owns its output artifact and must leave prior
-artifacts intact.
-
-The host may advertise a **host-advertised executor** for the **current** logical phase. The
-advertisement is an optional capability boundary consisting of the phase name,
-the required input artifacts, and the output artifact it can produce. The
-recipe remains provider-neutral: it does not select a runtime, model, or
-external execution service.
-
-Dispatch one phase at a time. If no phase executor is advertised, run the
-current phase inline. An advertised executor that is unavailable may also use
-the inline fallback. A complete result is accepted only after its output is
-present and matches the current phase contract.
-
-Malformed, partial, or blocked executor results are a stop condition. Stop and
-preserve all existing artifacts and state, report the blocked phase and result status,
-and wait for a decision. Do not silently rerun the executor, accept an
-incomplete artifact, or skip the phase. Do not skip phases because an earlier
-executor was unavailable; inline fallback still completes that phase.
-
-This phase compatibility applies only to Full. Standard and Light remain
-collapsed and unchanged; they do not acquire Full's phase dispatch.
+The former **Full** tier is gone. It used to run a logical phase machine
+(`explore -> proposal -> spec/design -> tasks`) with a host-advertised executor
+per phase. That dispatch is no longer part of this recipe: a change declaring
+`Depth: full` blocks with the migration message that names the removed tier and
+`Depth: standard`. Migrate by rewriting the `Depth:` line to `standard` and
+keeping the plan plus its spec delta; standard and light remain collapsed and
+unchanged, and the recipe stays provider-neutral with no runtime or model
+configuration.
 
 ## 3.1 Preflight composition
 
@@ -247,16 +223,16 @@ CLI ignores.
 ## Tasks
 | ID | Spec | Tarea | Ruta | Commit |
 | T1 | S1, S2 | <what is done + its tests> | worker | pending |
-## Design                              (full tier only, and only if a decision needs explaining)
-## Verification                        (standard/full: one row per S#)
+## Design                              (optional, only if a decision needs explaining)
+## Verification                        (standard: one row per S#)
 - **S1: PASS** — `<command>`, exit 0, commit `<sha>`, `<date>`
 ## Log
 - **L1** — <the human's original request, verbatim>
 ```
 
-`## Log` with `L1` is required from Standard up and optional for Light (the
-tier matrix of Section 4). A plan that declares `Depth: standard` or
-`Depth: full` and carries no `## Log` blocks with
+`## Log` with `L1` is required at Standard and optional for Light (the
+tier matrix of Section 4). A plan that declares `Depth: standard`
+and carries no `## Log` blocks with
 ``archive/<folder>/tasks.md: `## Log` section is missing``.
 
 Migration: an in-flight change written before this release must be rewritten
@@ -325,7 +301,7 @@ the classified depth, commit the files, then retry PR creation.
 ### 7.3 Pre-merge archive gate (hard stop)
 
 Archive-tail MUST run on the **review branch** before merge — never defer until
-after the merge lands on the base branch. Standard and Full changes require
+after the merge lands on the base branch. Standard changes require
 conforming verification evidence before this step; Light verification is
 advisory.
 
@@ -363,7 +339,6 @@ value beside it, because a verdict without a command records no run: a row like
 A row that records `exit 1`, `exit 2` or `failed` blocks as a failing run, and
 two rows for the same `S#` block naming the id. An `N/A` row is exempt from the
 command requirement because its reason replaces the run. Any `FAIL` blocks.
-Full requires that same coverage, no `FAIL`, and at least one `PASS` row.
 `ready_for_archive` is not part of the plan artifact: coverage replaces it there.
 
 `verify-report.md` remains **accepted as the legacy evidence artifact**, graded
@@ -384,24 +359,16 @@ exactly as before: a dedicated report whose canonical block is
 ```
 
 On that legacy source, Standard requires the dedicated report with a non-failing
-verdict, command, exit `0`, date, and 7–40 character commit SHA. Full
-additionally requires strict `PASS` and `ready_for_archive: true`, plus exactly
-one `Criterion N: PASS` mapping row for every top-level bullet under
-`## Success Criteria` in the authoritative source: `proposal.md` when present,
-otherwise `design.md`. Missing or empty criteria in an existing `proposal.md`
-block Full; the guardian does not fall back to `design.md`. Duplicate
-`## Success Criteria` headings in the authoritative source are also rejected.
-Criterion numbers are 1-based and contiguous; duplicate mapping rows, missing
-numbers, unknown numbers, and non-PASS mapping statuses block Full. `S1` and
+verdict, command, exit `0`, date, and 7–40 character commit SHA. `S1` and
 `Criterion 1` are interchangeable labels, so an old mapping row keeps satisfying
-a plan requirement. The guardian enforces this deterministic mapping at both
-gates. Light may warn when evidence is absent but MUST NOT block solely for it.
+a plan requirement. Light may warn when evidence is absent but MUST NOT block
+solely for it.
 
 Enforce the evidence gate twice: before archive-tail and again in the guardian
 before merge. There is no bypass flag. Labels may use `Status`/`Overall`,
 `Exit code`/`Exit status`, and `SHA`/`Revision` synonyms.
-Verification enforcement is advisory for Light, blocking for Standard, and
-required for Full at both stages.
+Verification enforcement is advisory for Light and blocking for Standard at
+both stages.
 
 Sequence on the review branch:
 
@@ -442,7 +409,7 @@ superproject root:
 ai-specs gates premerge <slug> --root <planning-root> --stage pre-archive
 ```
 
-The command must pass for Standard and Full; do not archive or continue when it
+The command must pass for Standard; do not archive or continue when it
 reports missing or failed evidence, or an unpromoted or unresolved delta. Light
 remains advisory. This is the pre-archive check; the pre-merge guardian below
 remains required after archive.
@@ -467,32 +434,27 @@ because a squash-merge rewrites the shas and the guardian never runs on the base
 branch. And the CLI grades the recorded sha, never whether a slice was a
 reasonable size: the granularity stays in prose, and only the record is graded.
 
-#### Project config (`openspec/config.yaml`)
+#### Project config (`openspec/config.yaml`) — optional and ungraded
 
-Standard and Full changes also require the project config before merge. It is an
-`openspec` artefact only: `openspec/config.yaml` (`internal/planbuild.ConfigPath`).
-`odd` mode has no config file and never grades one. The CLI validates only what it
-consumes: the file must be a regular file whose real path stays inside the
-repository, `schema:` must be non-empty, `testing.runner:` must declare the
-command that runs the project tests, and `strict_tdd:`, when present, must be
-`true` or `false`. `context`, `rules.*` and `ai_specs_guidance` are opaque prose
-for the agent: nothing validates them, because a strict schema would repeat the
-frozen schema oracle trap that already blocked declaring `[config.mode]`.
+`openspec/config.yaml` is an optional project artefact, and the premerge neither
+requires nor grades it: the CLI does not depend on the OpenSpec CLI, so a missing
+file never blocks and its `schema:`, `testing.runner:` and `strict_tdd:` keys are
+not validated. `odd` mode has no config file and never grades one. OpenSpec and
+agents may still read `context`, `rules.*` and `ai_specs_guidance`; the `tracking:`
+block is read by the Tracker domain (`internal/doctor`, the ledger witness) and
+must be kept intact.
 
-That config is kept honest by a freshness loop over this change's own
-`## Verification` rows:
+One rule survives, over this change's own `## Verification` rows and graded from
+Standard up: every command a row records must resolve here — a relative or
+absolute path must exist on disk, a bare word must be on `PATH`. The blocker
+names the plan that records the command:
 
-- every backticked command that starts a row's evidence must resolve here — a
-  relative or absolute path must exist on disk, a bare word must be on `PATH`;
-- the `testing.runner` declared in the config must match the first word of at
-  least one row.
+```text
+openspec/changes/archive/<slug>/tasks.md: verification for S1 names command "./nope.sh" which does not exist: record the real command
+```
 
-A change with no rows, or with no backticked command in any row, is exempt: that
-is the Light ceremony reduction, not a loophole. Consequence: a change that
-migrates the runner (say `./tests/run.sh` to `go test ./internal/...`) must
-update `config.yaml` in the same change, or the guardian blocks with
-`verification never runs the configured testing.runner "…": name it in at least
-one row or update config.yaml`.
+A change with no rows, or with no command in any row, is exempt: that is the
+Light ceremony reduction, not a loophole.
 
 ### 7.4 Pre-merge merge guardian (hard stop)
 
@@ -505,7 +467,7 @@ guardian inspects the canonical tree and never a subrepo-local change folder.
 
 ```bash
 ai-specs gates premerge <slug> --root <planning-root>
-# optional: --tier light|standard|full
+# optional: --tier light|standard
 ```
 
 The helper ships with the CLI install under `~/.ai-specs` (not copied into
@@ -520,25 +482,23 @@ Hard blockers (do **not** merge):
    fallback when no dated candidate exists, is graded by the same plan grammar,
    and must hold the plan or the delta like any other archive.
 3. Archived folder lacks the tier minimum files (every tier: `tasks.md`
-   parsing as the plan; Standard and Full: also `specs/**/*.md` and a
-   `## Log` section with `L1`).
+   parsing as the plan; Standard: also `specs/**/*.md` and a `## Log` section
+   with `L1`).
    `proposal.md`, `design.md` and `verify-report.md` are accepted and honoured
    when present, but they are not required.
 4. Standard verification is incomplete: a declared `S#` has no row in
    `## Verification`, or a row is `FAIL`.
-5. Full verification is incomplete: same as Standard, and at least one row
-   must be `PASS`.
-6. A Standard or Full delta under `specs/<domain>/spec.md` is not promoted into
+5. A Standard delta under `specs/<domain>/spec.md` is not promoted into
    `openspec/specs/<domain>/spec.md`, or cannot be composed (collision, missing
    `MODIFIED` target, unsupported `RENAMED`, destructive `REMOVED` without
    explicit approval). Run the promoter first; the guardian only validates and
    never writes canonical specs or tracker state.
-7. Standard or Full: the project config (`openspec/config.yaml`; `odd` mode has
-   none) is missing or is not a regular file of the
-   repository, `schema:` or `testing.runner:` is empty, `strict_tdd:` is not
-   `true`/`false`, a verification row names a command that does not resolve, or
-   no row runs the configured `testing.runner`. The blockers name the offending
-   command and the config path.
+6. A plan declaring the removed full tier (`Depth: full`, or `--tier full`)
+   blocks with the migration message that points at `Depth: standard`; it is
+   never downgraded silently.
+7. Standard: a verification row names a command that does not resolve. The
+   blocker names the plan and the offending command; `openspec/config.yaml` is
+   neither required nor graded.
 
 The promotion check is tier-scoped: Light changes and changes with no `specs/`
 deltas are never blocked by it.
@@ -597,8 +557,11 @@ so the archive commit must be pushed for the check to pass.
 
 Plans already in flight when these minima ship are grandfathered only through
 their current work: add missing `proposal.md` or verify evidence before PR or
-archive, without restarting the plan. Historical archives are never rewritten;
-a stale PR is handled by its owning agent when that change resumes.
+archive, without restarting the plan. The one mandatory edit is the removed
+tier: a plan still declaring `Depth: full` rewrites it to `Depth: standard` and
+keeps its spec delta, otherwise the guardian blocks with the migration message.
+Historical archives are never rewritten; a stale PR is handled by its owning
+agent when that change resumes.
 Missing `explore.md` is never a guardian blocker. The guardian evaluates only
 the slug under check; older archived changes and stale PRs are not rewritten.
 

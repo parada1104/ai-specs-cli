@@ -1,125 +1,47 @@
 package gates
 
-// The project config (plan-build-openspec-odd-align P5/S11): openspec/config.yaml
-// configures the project, not the change. It is an openspec artefact only; odd
-// mode has no config.yaml. The CLI
-// validates only the keys it consumes -- containment, a non-empty `schema:`, a
-// `testing:` block with a non-empty `runner:`, and a boolean `strict_tdd:` --
-// and then keeps the runner honest against the change's verification rows.
+// Verification commands (plan-build-openspec-odd-align D1): `openspec/config.yaml`
+// is an optional project file that OpenSpec and agents may read, but the CLI
+// neither requires nor grades it. The OpenSpec CLI is not a dependency of the
+// premerge, so the former config validation, the `testing.runner` freshness
+// matching and the missing-config blocker are gone.
 //
-// Everything else (`context`, `rules.*`, `ai_specs_guidance`) is opaque prose for
-// the agent and is never validated: a strict schema would repeat the frozen
-// schema oracle trap of internal/schema that already blocked declaring
-// [config.mode] in #589. The file is line-scanned on purpose; the freshness loop
-// below, not a YAML dependency, is what keeps it true.
+// One rule survives: every command recorded in a `## Verification` row must
+// resolve here -- a relative or absolute path must exist on disk, a bare word
+// must be on PATH. Light stays advisory, so the rule is graded from standard up.
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"ai-specs.dev/ai-specs/internal/planbuild"
 )
 
-// ProjectConfig is the consumed part of the project configuration.
-type ProjectConfig struct {
-	Schema    string
-	Runner    string
-	StrictTDD *bool // nil when the key is absent
-}
-
-// ReadProjectConfig reads and validates the project config. Every error is a
-// ready blocker in the house voice `config.yaml: <what is wrong>: <what to
-// write>`.
-func ReadProjectConfig(root string) (ProjectConfig, error) {
-	path := planbuild.ConfigPath(root)
-	if !containedRegularFile(root, path) {
-		return ProjectConfig{}, fmt.Errorf(
-			"config.yaml: the project config is missing or is not a regular file inside the "+
-				"repository: write %s as a file of this repository", repoRelative(root, path))
+// checkVerificationCommands resolves the command of every graded row against the
+// machine that records it. A row without a command is already refused by the
+// plan grammar, so only rows that record one are resolved here.
+func checkVerificationCommands(repoRoot, planPath, tier string) []string {
+	if tier != TierStandard {
+		return nil
 	}
-	return parseProjectConfig(readText(path))
-}
-
-// parseProjectConfig line-scans the consumed keys and blocks the invalid shapes.
-func parseProjectConfig(text string) (ProjectConfig, error) {
-	cfg := ProjectConfig{}
-	strictSeen, strictInvalid := false, false
-	open := false // inside the top-level `testing:` block
-	for _, raw := range splitLines(text) {
-		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "#") {
+	plan, _ := ParsePlan(readText(planPath))
+	location := repoRelative(repoRoot, planPath)
+	var blockers []string
+	for _, row := range plan.Verification {
+		// An N/A row records no run (C3).
+		if row.Verdict == "N/A" {
 			continue
 		}
-		indent := len(raw) - len(strings.TrimLeft(raw, " \t"))
-		key, value, ok := splitYAMLKey(line)
+		command, ok := verificationCommand(row.Evidence)
 		if !ok {
 			continue
 		}
-		value = strings.Trim(value, `"'`)
-		if indent > 0 {
-			if open && key == "runner" {
-				cfg.Runner = value
-			}
-			continue
-		}
-		open = key == "testing"
-		switch key {
-		case "schema":
-			cfg.Schema = value
-		case "strict_tdd":
-			strictSeen = true
-			switch strings.ToLower(value) {
-			case "true":
-				truth := true
-				cfg.StrictTDD = &truth
-			case "false":
-				truth := false
-				cfg.StrictTDD = &truth
-			default:
-				strictInvalid = true
-			}
+		if word := firstWord(command); !commandResolves(repoRoot, word) {
+			blockers = append(blockers, location+`: verification for `+row.ID+
+				` names command "`+command+`" which does not exist: record the real command`)
 		}
 	}
-	switch {
-	case cfg.Schema == "":
-		return cfg, fmt.Errorf("config.yaml: schema is missing: declare the project schema with schema: spec-driven")
-	case cfg.Runner == "":
-		return cfg, fmt.Errorf("config.yaml: testing.runner is missing: declare the command that runs the project tests")
-	case strictSeen && strictInvalid:
-		return cfg, fmt.Errorf("config.yaml: strict_tdd must be true or false: write strict_tdd: true or strict_tdd: false")
-	}
-	return cfg, nil
-}
-
-// splitYAMLKey splits `key: value` on the first top-level colon.
-func splitYAMLKey(line string) (key, value string, ok bool) {
-	index := strings.Index(line, ":")
-	if index <= 0 {
-		return "", "", false
-	}
-	return strings.TrimSpace(line[:index]), strings.TrimSpace(line[index+1:]), true
-}
-
-// containedRegularFile is planbuild's plan predicate shape applied to any path: a
-// regular file whose real path stays inside root, resolved through the same
-// helper so a relative root is graded like an absolute one.
-func containedRegularFile(root, path string) bool {
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return false
-	}
-	real, err := planbuild.RealPath(path)
-	if err != nil {
-		return false
-	}
-	base, err := planbuild.RealPath(root)
-	if err != nil {
-		return false
-	}
-	return real == base || strings.HasPrefix(real, base+string(filepath.Separator))
+	return blockers
 }
 
 // repoRelative is the repository-relative path the blockers name.
@@ -129,91 +51,6 @@ func repoRelative(root, path string) string {
 		return path
 	}
 	return relative
-}
-
-// checkProjectConfig is the standard/full config layer: the config must exist and
-// validate, and its declared runner must stay fresh against the plan's
-// verification rows. Light is exempt, and so is a change with no rows.
-func checkProjectConfig(repoRoot, planPath, tier string) []string {
-	if tier != TierStandard && tier != TierFull {
-		return nil
-	}
-	path := planbuild.ConfigPath(repoRoot)
-	cfg, err := ReadProjectConfig(repoRoot)
-	if err != nil {
-		return []string{err.Error()}
-	}
-	plan, _ := ParsePlan(readText(planPath))
-	return checkConfigFreshness(repoRoot, repoRelative(repoRoot, path), cfg, plan)
-}
-
-// checkConfigFreshness enforces P5's two freshness rules over one plan:
-//
-//	(a) every backticked command in a `## Verification` row must resolve here --
-//	    a relative or absolute path must exist on disk, a bare word must be on PATH;
-//	(b) the configured testing.runner must match the first word of at least one row.
-//
-// A change with no rows, or with no backticked command in any row, is not subject
-// to either rule: there is nothing to keep fresh (S12 ceremony reduction).
-// commandHead is the program plus its subcommand ("go test", "./tests/run.sh").
-// Freshness compares this, not the whole command and not the first word: a
-// narrower run of the same runner still counts as running it, while moving from
-// ./tests/run.sh to "go test" is exactly the staleness this rule must catch.
-func commandHead(command string) string {
-	fields := strings.Fields(command)
-	if len(fields) == 0 {
-		return ""
-	}
-	if len(fields) == 1 {
-		return fields[0]
-	}
-	return fields[0] + " " + fields[1]
-}
-
-func checkConfigFreshness(root, configPath string, cfg ProjectConfig, plan Plan) []string {
-	var blockers, commands []string
-	for _, row := range plan.Verification {
-		// An N/A row records no run, so its evidence cannot credit the runner (C3).
-		if row.Verdict == "N/A" {
-			continue
-		}
-		command, ok := backtickedCommand(row.Evidence)
-		if !ok {
-			continue
-		}
-		commands = append(commands, command)
-		if word := firstWord(command); !commandResolves(root, word) {
-			blockers = append(blockers, configPath+`: verification for `+row.ID+
-				` names command "`+command+`" which does not exist: `+
-				"run the configured tests and record the real command")
-		}
-	}
-	if len(commands) == 0 {
-		return blockers
-	}
-	runner := commandHead(cfg.Runner)
-	for _, command := range commands {
-		if commandHead(command) == runner {
-			return blockers
-		}
-	}
-	return append(blockers, configPath+`: verification never runs the configured testing.runner "`+
-		cfg.Runner+`": name it in at least one row or update config.yaml`)
-}
-
-// backtickedCommand reads the command a row's evidence starts with: the
-// `\x60<command>\x60, exit 0` shape the SKILL shows.
-func backtickedCommand(evidence string) (string, bool) {
-	if !strings.HasPrefix(evidence, "`") {
-		return "", false
-	}
-	rest := evidence[1:]
-	end := strings.Index(rest, "`")
-	if end <= 0 {
-		return "", false
-	}
-	command := strings.TrimSpace(rest[:end])
-	return command, command != ""
 }
 
 // firstWord is the shell word that decides whether a command can run.
@@ -241,4 +78,12 @@ func commandResolves(root, word string) bool {
 	}
 	_, err := exec.LookPath(word)
 	return err == nil
+}
+
+// removedTierBlocker is the migration message for a change that declares the
+// full tier this contract removed. It points at standard so nobody is downgraded
+// silently.
+func removedTierBlocker(location string) string {
+	return location + ": the full tier was removed: migrate the change to `Depth: standard` " +
+		"(the plan plus at least one `specs/` delta)"
 }

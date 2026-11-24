@@ -25,20 +25,14 @@ const gatesPlanBody = "## Specs\n\n- **S1.** Fixture requirement\n\n## Tasks\n\n
 	"| T1 | S1 | Fixture task | inline | pending |\n\n" +
 	"## Log\n\n- **L1** — fixture request\n"
 
-// gatesConfig is a valid project config: `go` is on PATH, so a fixture that
-// records a command keeps the freshness rules quiet.
-const gatesConfig = "schema: spec-driven\n\nstrict_tdd: true\n\ntesting:\n  runner: go test ./internal/...\n"
-
-// gatesRepo is an empty planning tree. It carries a valid project config, since
-// the CLI requires one from Standard up; a test about the config rules removes
-// that duty by using its own root.
+// gatesRepo is an empty planning tree. It carries no project config: the
+// config is optional and ungraded.
 func gatesRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "openspec", "changes", "archive"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	gatesWrite(t, filepath.Join(root, "openspec", "config.yaml"), gatesConfig)
 	return root
 }
 
@@ -263,7 +257,6 @@ func gatesGitRepo(t *testing.T, branch string) string {
 	gitTest(t, root, "config", "user.email", "test@example.invalid")
 	gitTest(t, root, "config", "user.name", "test")
 	gitTest(t, root, "commit", "--allow-empty", "-m", "initial")
-	gatesWrite(t, filepath.Join(root, "openspec", "config.yaml"), gatesConfig)
 	return root
 }
 
@@ -369,5 +362,38 @@ func TestGatesPremergeResolvesTheChangeWithoutASlug(t *testing.T) {
 	}
 	if stdout != "premerge-guardian: OK (odd)\n" {
 		t.Errorf("stdout = %q, want the OK verdict", stdout)
+	}
+}
+
+// The former full tier is removed: --tier full blocks with a migration message
+// that points at standard instead of silently downgrading the change.
+func TestGatesPremergeFullTierBlocksWithAMigrationMessage(t *testing.T) {
+	root := gatesRepo(t)
+	gatesConformingArchive(t, root, "ok-change")
+
+	code, stdout, stderr := runGatesCLI(t, "gates", "premerge", "ok-change", "--root", root, "--tier", "full")
+	if code != 1 || stdout != "" {
+		t.Fatalf("exit = %d, stdout = %q; want 1/empty", code, stdout)
+	}
+	for _, want := range []string{"the full tier was removed", "`Depth: standard`"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr = %q, want %q", stderr, want)
+		}
+	}
+}
+
+// A plan declaring Depth: full blocks at the default tier resolution too.
+func TestGatesPremergeDepthFullPlanBlocksWithAMigrationMessage(t *testing.T) {
+	root := gatesRepo(t)
+	folder := filepath.Join(root, "openspec", "changes", "archive", "full-depth")
+	gatesWrite(t, filepath.Join(folder, "tasks.md"), "Depth: full\n\n"+gatesPlanBody)
+	gatesWrite(t, filepath.Join(folder, "specs", "cap", "spec.md"), "# cap\n")
+
+	code, _, stderr := runGatesCLI(t, "gates", "premerge", "full-depth", "--root", root)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if !strings.Contains(stderr, "the full tier was removed") {
+		t.Errorf("stderr = %q, want the migration message", stderr)
 	}
 }
