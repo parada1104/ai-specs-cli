@@ -1,7 +1,8 @@
 package gates
 
 // The project config (plan-build-openspec-odd-align P5/S11): openspec/config.yaml
-// (odd/config.yaml in odd mode) configures the project, not the change. The CLI
+// configures the project, not the change. It is an openspec artefact only; odd
+// mode has no config.yaml. The CLI
 // validates only the keys it consumes -- containment, a non-empty `schema:`, a
 // `testing:` block with a non-empty `runner:`, and a boolean `strict_tdd:` --
 // and then keeps the runner honest against the change's verification rows.
@@ -29,11 +30,11 @@ type ProjectConfig struct {
 	StrictTDD *bool // nil when the key is absent
 }
 
-// ReadProjectConfig reads and validates one mode's project config. Every error is
-// a ready blocker in the house voice `config.yaml: <what is wrong>: <what to
+// ReadProjectConfig reads and validates the project config. Every error is a
+// ready blocker in the house voice `config.yaml: <what is wrong>: <what to
 // write>`.
-func ReadProjectConfig(root, mode string) (ProjectConfig, error) {
-	path := planbuild.ConfigPath(root, mode)
+func ReadProjectConfig(root string) (ProjectConfig, error) {
+	path := planbuild.ConfigPath(root)
 	if !containedRegularFile(root, path) {
 		return ProjectConfig{}, fmt.Errorf(
 			"config.yaml: the project config is missing or is not a regular file inside the "+
@@ -133,12 +134,12 @@ func repoRelative(root, path string) string {
 // checkProjectConfig is the standard/full config layer: the config must exist and
 // validate, and its declared runner must stay fresh against the plan's
 // verification rows. Light is exempt, and so is a change with no rows.
-func checkProjectConfig(repoRoot, mode, planPath, tier string) []string {
+func checkProjectConfig(repoRoot, planPath, tier string) []string {
 	if tier != TierStandard && tier != TierFull {
 		return nil
 	}
-	path := planbuild.ConfigPath(repoRoot, mode)
-	cfg, err := ReadProjectConfig(repoRoot, mode)
+	path := planbuild.ConfigPath(repoRoot)
+	cfg, err := ReadProjectConfig(repoRoot)
 	if err != nil {
 		return []string{err.Error()}
 	}

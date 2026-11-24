@@ -46,7 +46,7 @@ Numeración nueva. Las rechazadas de la revisión 1 (check de presencia de `Log`
 
 - `Change(mode, repoRoot, branch)` → nombre del change, de `Branch` + `ChangeFromBranch`.
 - `PlanPath` consciente del modo: `odd/tasks/<change>.md` u `openspec/changes/<change>/tasks.md`.
-- `ConfigPath` consciente del modo: `odd/config.yaml` u `openspec/config.yaml`.
+- `ConfigPath`: `openspec/config.yaml`, y solo ese. El modo `odd` no tiene archivo de configuración (L20).
 - `ArchivePath` consciente del modo: `odd/changes/archive/YYYY-MM-DD-<c>/` u `openspec/changes/archive/YYYY-MM-DD-<c>/`.
 - `PlanIsValid` sigue siendo el **único** predicado de contención y regularidad, y ahora lo usan gate, premerge, promoción y archivado.
 - Escalera de desambiguación: la rama empareja → ese change; si no empareja y hay exactamente un change activo → ese; si hay dos o más activos y la rama no empareja → **bloqueo** nombrando la regla y los candidatos.
@@ -135,7 +135,7 @@ El plan absorbe lo que hacían los tres artefactos, en este orden:
 - el **CLI** lee solo las claves que él mismo usa: `tracking:` (hoy, `internal/doctor/checks_tracker.go:52`) y `testing.runner:` (nuevo);
 - el **SKILL** lee la prosa: `context`, `strict_tdd`, `rules.*`, `ai_specs_guidance`.
 
-**Dónde vive.** Misma regla que todo lo demás, vía `ConfigPath` de P0: `openspec/config.yaml` en `openspec`, `odd/config.yaml` en `odd`. Aviso de contradicción a resolver: `catalog/recipes/plan-build-flow/README.md:84` **excluye hoy** `odd/config.yml`, y el proposal de #589 también; esa línea hay que enmendarla o elegir un camino único para los dos modos (decisión A' de abajo).
+**Dónde vive.** Solo en `openspec`: `openspec/config.yaml`, vía `ConfigPath` de P0. El modo `odd` no tiene archivo de configuración y `README.md:84` lo sigue excluyendo tal cual, sin enmienda (L20).
 
 **Qué valida el CLI, y qué no.** Solo lo que consume: que sea un fichero regular contenido en el repo (el mismo predicado de P0), que parsee, que `schema:` y `testing.runner:` no estén vacíos y que `strict_tdd`, si está, sea booleano. `context` y `rules.*` son prosa opaca: **nadie las valida**, porque un esquema estricto repetiría la trampa del oráculo congelado de `internal/schema` que ya bloqueó declarar `[config.mode]` en #589.
 
@@ -214,7 +214,7 @@ Fechado del archive, paridad de deltas contra `openspec/specs/`, guardián de pr
 | Archivado | `internal/cli/changes.go` (nuevo), `internal/gates/gates.go` | verbo `changes archive`; archive obligatorio en `odd` | Un solo `os.Rename`, se niega con pendientes. |
 | Promoción | `internal/specs/promote.go` | identidad de P0 | Reuse de `PlanIsValid`/`SourceContained`. |
 | CI | `.github/workflows/pr-gate.yml` (nuevo) | `pull_request` + `gates premerge --change` | El gate es el mismo binario, sin lógica paralela. |
-| SKILL / docs | `skills/plan-build-flow/SKILL.md`, `catalog/recipes/plan-build-flow/README.md`, `openspec/config.yaml` | §4, §6, §7.1–§7.4, §8; enmendar `odd/config.yml` | La prosa describe lo que el CLI comprueba, sin reglas paralelas. |
+| SKILL / docs | `skills/plan-build-flow/SKILL.md`, `catalog/recipes/plan-build-flow/README.md`, `openspec/config.yaml` | §4, §6, §7.1–§7.4, §8 | La prosa describe lo que el CLI comprueba, sin reglas paralelas. |
 
 Regla de reparto que se propone dejar escrita: **lo que el CLI puede comprobar sin juzgar historial se comprueba en Go; lo que requiere juicio se queda en prosa y no se simula con un check débil.** Deterministas: identidad, validez y gramática del plan, `S#`↔`PASS`, ancestro del sha, existencia del comando de tests, paridad, archivado. En prosa: redacción verbatim, granularidad de la unidad, ruta (`worker`/`inline`), y el juicio de cuándo es momento de ir.
 
@@ -248,7 +248,7 @@ Seis unidades de trabajo en este orden; cada una deja el suite en verde y admite
 
 ## Puntos abiertos (decisiones de Robert)
 
-- **A'.** `config.yaml` en `odd`: ¿`odd/config.yaml` (simétrico, pero contradice `README.md:84` y el proposal de #589, que hay que enmendar), o un camino único para los dos modos? Recomiendo `odd/config.yaml` y enmendar la línea.
+- **A'.** *(resuelta por L20)* `config.yaml` es solo de `openspec`. En `odd` no se exige ni se valida, no hay `ConfigPath` para ese modo y el premerge de `odd` no lo mira. `README.md:84` queda como estaba.
 - **B'.** `odd/tasks/<c>.md` al archivar: ¿se queda como registro permanente de la feature (mi recomendación, diff mínimo sobre #589) o se mueve al archive como en `openspec` (más simétrico, mueve el documento que citan los handoffs)?
 - **C'.** Obligatoriedad de `## Verification` en standard: ¿una fila por `S#` aunque el `S#` sea prosa sin test posible, o permitir `S#: N/A — <razón>`? Recomiendo permitir `N/A` con razón, porque sin esa válvula la gente escribe `PASS` sin probar nada.
 - **D'.** `--change` en el gate: ¿override solo para CI (y el premerge del día a día sigue derivando de la rama), o override general aplicable a mano? Recomiendo general, con el valor derivado impreso en el veredicto para que se vea qué se calificó.
@@ -284,4 +284,8 @@ Seis unidades de trabajo en este orden; cada una deja el suite en verde y admite
 - **L18** — Defecto de CI que señaló Robert, arreglado y verificado: `auto` sondea `<git-common-dir>/gentle-ai/`, que existe en un checkout de desarrollo pero nunca en un clon de CI, así que el check resolvía `openspec` y calificaba el árbol equivocado. Se declara el modo en el manifiesto (`[recipes.plan-build-flow.config] mode = "odd"` en `ai-specs/ai-specs.toml`); `plan-build-flow` sigue sin declararse como receta porque este repo la desarrolla, no la consume. Evidencia en tres pasos: en un clon sin `.git/gentle-ai/` con el manifiesto anterior, `gates premerge` → `BLOCKED` por archive de `openspec`; con el manifiesto arreglado → `OK (odd, change plan-build-openspec-odd-align)`; y el run real del workflow en el PR (`45320985323`) termina con el job `premerge` en verde.
 - **L19** — Revisión nativa por tramos de commits (decisión de Robert): **no es expresable a través del facade**. `assess`/`inspect` comparan siempre `baseRef..HEAD`, así que un rango interior se convierte en todo lo que va desde ese commit hasta la punta. Evidencia: con `baseRef = 01d159d` (la unidad I4, ~250 líneas) el informe devuelve 29 ficheros y 2.681 líneas; con `baseRef = 86b152a` (I1) el `review.start` paró en `lens_context_budget_exceeded` por la misma razón; y un candidato realmente pequeño (el arreglo del manifiesto, 1 fichero y 9 líneas) sí se evalúa y queda `not-due`/`under_budget`. Conclusión: la única forma de que cada tramo quede por debajo del presupuesto es que la **base** del candidato sea el tramo anterior, que es exactamente la forma de las rebanadas encadenadas. Ninguna autoridad quedó creada en los intentos (`mutation_outcome: not_started`), así que no hay linaje que abandonar.
 - **Estado al cierre (2)**: código entregado y pusheado, PR [#590](https://github.com/parada1104/ai-specs-cli/pull/590) abierto con el check de CI en verde, `go test ./...` en verde, paridad en su baseline, 13 defectos de dos pasadas independientes cerrados con test. Merge **no** hecho. Siguiente paso autorizado: rebanadas encadenadas sobre la misma secuencia de commits (sin reescribir historia), cada una con su base en la anterior para que su candidato quepa en el presupuesto y su revisión nativa pueda correr.
+- **L20** — Corrección de alcance de Robert sobre el `config.yaml`, verbatim: *«el config.yml no me agrada para el modo odd, solo para el modo sdd»*. Consecuencias, que revierten la mitad de P5 y la decisión A':
+  - en `odd` no hay archivo de configuración: no se exige, no se valida, `ConfigPath` no tiene rama por modo y el premerge de `odd` no lo consulta; `README.md:84` vuelve a excluir `odd/config.yml` tal como estaba en `3a4e548`;
+  - `openspec/config.yaml` sigue siendo el único, y el bucle de frescura del runner sigue aplicándose donde ya estaba: el camino de `openspec`.
+  Un test nuevo afirma lo contrario de lo anterior: `TestCheckPremergeOddIgnoresAnOddConfig` demuestra que un `odd/config.yaml` con contenido que antes habría bloqueado se ignora. Doc actualizado en SKILL §7.5 y README.
 

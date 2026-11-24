@@ -165,27 +165,25 @@ func TestCheckPremergeOddRefusesASymlinkedChangeTree(t *testing.T) {
 	wantBlocked(t, CheckPremergeOdd(root, "thing"), "symlinked odd change tree")
 }
 
-// A plan that declares its tier is graded like an OpenSpec change: the project
-// config must exist and the runner it declares must be the one that ran. A plan
-// with no Depth: line keeps the narrower #589 contract.
-func TestCheckPremergeOddGradesTheConfigForADeclaredTier(t *testing.T) {
+// A plan that declares its tier has no project config duty in odd mode: a
+// config.yaml written under odd/ is ignored, valid or not, and its absence never
+// blocks. A plan with no Depth: line keeps the narrower #589 contract.
+func TestCheckPremergeOddIgnoresAnOddConfig(t *testing.T) {
 	root := oddDeclaredTierRepo(t)
-
-	wantBlocked(t, CheckPremergeOdd(root, "thing"), "config.yaml")
-
-	if err := os.WriteFile(filepath.Join(root, "odd", "config.yaml"),
-		[]byte("schema: spec-driven\ntesting:\n  runner: go vet ./internal/...\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	wantBlocked(t, CheckPremergeOdd(root, "thing"), "never runs the configured testing.runner")
-
-	if err := os.WriteFile(filepath.Join(root, "odd", "config.yaml"),
-		[]byte("schema: spec-driven\ntesting:\n  runner: go test ./internal/...\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	oddWriteArchive(t, root, "thing")
+
 	if got := CheckPremergeOdd(root, "thing"); !got.OK {
-		t.Fatalf("Result = %+v, want OK with a matching runner", got)
+		t.Fatalf("Result = %+v, want OK without a config.yaml", got)
+	}
+
+	// An odd config that would block if it were read at all, naming a runner no
+	// row runs, is dead weight: odd has no config.yaml.
+	if err := os.WriteFile(filepath.Join(root, "odd", "config.yaml"),
+		[]byte("schema: \ntesting:\n  runner: go vet ./internal/...\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := CheckPremergeOdd(root, "thing"); !got.OK {
+		t.Fatalf("Result = %+v, want OK with an odd config.yaml ignored", got)
 	}
 }
 
@@ -196,8 +194,6 @@ func TestCheckPremergeOddGradesTheVerificationRows(t *testing.T) {
 	plan := strings.Replace(readText(filepath.Join(root, "odd", "tasks", "thing.md")),
 		"exit 0", "exit 1", 1)
 	writeFile(t, filepath.Join(root, "odd", "tasks", "thing.md"), plan)
-	writeFile(t, filepath.Join(root, "odd", "config.yaml"),
-		"schema: spec-driven\ntesting:\n  runner: go test ./internal/...\n")
 	oddWriteArchive(t, root, "thing")
 
 	wantBlocked(t, CheckPremergeOdd(root, "thing"), "records a failing run (exit 1)")
@@ -207,10 +203,6 @@ func TestCheckPremergeOddGradesTheVerificationRows(t *testing.T) {
 // blocks, because archiving always leaves a dated folder holding the plan (F3).
 func TestCheckPremergeOddRequiresTheArchiveOfADeclaredTierPlan(t *testing.T) {
 	root := oddDeclaredTierRepo(t)
-	if err := os.WriteFile(filepath.Join(root, "odd", "config.yaml"),
-		[]byte("schema: spec-driven\ntesting:\n  runner: go test ./internal/...\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 
 	wantBlocked(t, CheckPremergeOdd(root, "thing"),
 		"missing archive at odd/changes/archive/thing/ or a valid dated archive named YYYY-MM-DD-thing/")
@@ -252,8 +244,6 @@ func oddWriteArchive(t *testing.T, root, change string) {
 // nothing of the change (R2).
 func TestCheckPremergeOddRejectsAnEmptyArchive(t *testing.T) {
 	root := oddDeclaredTierRepo(t)
-	writeFile(t, filepath.Join(root, "odd", "config.yaml"),
-		"schema: spec-driven\ntesting:\n  runner: go test ./internal/...\n")
 	mkdirAll(t, filepath.Join(root, "odd", "changes", "archive", "2026-01-02-thing"))
 
 	wantBlocked(t, CheckPremergeOdd(root, "thing"), "is empty: an archive must hold")

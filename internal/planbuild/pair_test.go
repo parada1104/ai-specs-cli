@@ -83,28 +83,30 @@ func TestTasksPathPerMode(t *testing.T) {
 	}
 }
 
-// ChangeFolder, ConfigPath and ArchiveBase follow the mode's own tree.
+// ChangeFolder and ArchiveBase follow the mode's own tree; ConfigPath is the
+// openspec artefact alone, so odd mode has no config path at all.
 func TestModePaths(t *testing.T) {
 	root := t.TempDir()
-	for _, tc := range []struct{ mode, folder, config, archive string }{
+	for _, tc := range []struct{ mode, folder, archive string }{
 		{ModeOdd,
 			filepath.Join(root, "odd", "changes", "thing"),
-			filepath.Join(root, "odd", "config.yaml"),
 			filepath.Join(root, "odd", "changes", "archive")},
 		{ModeOpenspec,
 			filepath.Join(root, "openspec", "changes", "thing"),
-			filepath.Join(root, "openspec", "config.yaml"),
 			filepath.Join(root, "openspec", "changes", "archive")},
 	} {
 		if got := ChangeFolder(root, tc.mode, "thing"); got != tc.folder {
 			t.Errorf("ChangeFolder(%q) = %q, want %q", tc.mode, got, tc.folder)
 		}
-		if got := ConfigPath(root, tc.mode); got != tc.config {
-			t.Errorf("ConfigPath(%q) = %q, want %q", tc.mode, got, tc.config)
-		}
 		if got := ArchiveBase(root, tc.mode); got != tc.archive {
 			t.Errorf("ArchiveBase(%q) = %q, want %q", tc.mode, got, tc.archive)
 		}
+	}
+	if got, want := ConfigPath(root), filepath.Join(root, "openspec", "config.yaml"); got != want {
+		t.Errorf("ConfigPath = %q, want %q", got, want)
+	}
+	if strings.HasPrefix(ConfigPath(root), filepath.Join(root, "odd")) {
+		t.Errorf("ConfigPath = %q, want no odd-mode config path", ConfigPath(root))
 	}
 }
 

@@ -60,11 +60,9 @@ func ChangeFolder(root, mode, change string) string {
 	return filepath.Join(ChangesBase(root, mode), change)
 }
 
-// ConfigPath is the project configuration of the mode.
-func ConfigPath(root, mode string) string {
-	if mode == ModeOdd {
-		return filepath.Join(root, "odd", "config.yaml")
-	}
+// ConfigPath is the project configuration: an openspec artefact, the only mode
+// that has one. odd mode has no config.yaml at all.
+func ConfigPath(root string) string {
 	return filepath.Join(root, "openspec", "config.yaml")
 }
 

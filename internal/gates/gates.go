@@ -128,7 +128,7 @@ func inspectFolder(folder string, tier *string, location, repoRoot string) Resul
 	blockers = append(blockers, checkPlan(folder, location, resolved)...)
 	blockers = append(blockers, checkTaskCommits(folder, repoRoot, location)...)
 	blockers = append(blockers, checkVerifyEvidence(folder, resolved)...)
-	blockers = append(blockers, checkProjectConfig(repoRoot, planbuild.ModeOpenspec, filepath.Join(folder, "tasks.md"), resolved)...)
+	blockers = append(blockers, checkProjectConfig(repoRoot, filepath.Join(folder, "tasks.md"), resolved)...)
 	blockers = append(blockers, promotionBlockers(repoRoot, folder, resolved, location)...)
 	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: resolved, ArchivePath: folder}
 }
@@ -218,14 +218,12 @@ func CheckPremergeOdd(repoRoot, change string) Result {
 	if archive != "" {
 		blockers = append(blockers, oddParityBlockers(repoRoot, changesBase, archive)...)
 	}
-	// A plan that declares its tier is graded like an OpenSpec change: the project
-	// config must exist and its runner must be the one that ran, and the change
-	// must be archived with something of the change in it. A plan with no Depth:
-	// line is legacy and keeps the #589 contract (plan, parity and no archive
-	// duty), so existing ODD repositories do not retro-block.
+	// A plan that declares its tier also requires the change to be archived with
+	// something of the change in it. A plan with no Depth: line is legacy and keeps
+	// the #589 contract (plan, parity and no archive duty), so existing ODD
+	// repositories do not retro-block. There is no project config in odd mode.
 	if declared, ok := declaredTier(readText(plan)); ok {
 		blockers = append(blockers, archiveBlockers...)
-		blockers = append(blockers, checkProjectConfig(repoRoot, planbuild.ModeOdd, plan, declared)...)
 		// The plan lives at odd/tasks/<change>.md, so it is graded by the same
 		// plan-verification grader the OpenSpec path uses (C3).
 		if declared != TierLight {

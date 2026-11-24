@@ -1,7 +1,7 @@
 package gates
 
 // Project config (plan-build-openspec-odd-align P5/S11): openspec/config.yaml is
-// the project's configuration. The CLI validates only the keys it consumes --
+// the project's configuration, and the only mode that has one. The CLI validates only the keys it consumes --
 // containment, `schema:`, `testing.runner:` and a boolean `strict_tdd:` -- and
 // keeps the declared runner fresh against the plan's `## Verification` rows.
 
@@ -42,10 +42,10 @@ ai_specs_guidance:
     test_command: ./tests/run.sh
 `
 
-// writeProjectConfig writes the fixture config at the mode's resolved path.
+// writeProjectConfig writes the fixture config at the openspec config path.
 func writeProjectConfig(t *testing.T, root, body string) {
 	t.Helper()
-	writeFile(t, planbuild.ConfigPath(root, planbuild.ModeOpenspec), body)
+	writeFile(t, planbuild.ConfigPath(root), body)
 }
 
 // A relative root is graded exactly like the absolute one (R4): the config
@@ -54,7 +54,7 @@ func TestReadProjectConfigAcceptsARelativeRoot(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root, projectConfig)
 	t.Chdir(root)
-	if _, err := ReadProjectConfig(".", planbuild.ModeOpenspec); err != nil {
+	if _, err := ReadProjectConfig("."); err != nil {
 		t.Fatalf("ReadProjectConfig(\".\") = %v, want no error", err)
 	}
 }
@@ -63,7 +63,7 @@ func TestReadProjectConfigReadsTheConsumedKeys(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root, projectConfig)
 
-	cfg, err := ReadProjectConfig(root, planbuild.ModeOpenspec)
+	cfg, err := ReadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("ReadProjectConfig = %v, want no error", err)
 	}
@@ -85,7 +85,7 @@ func TestReadProjectConfigIgnoresOpaqueProse(t *testing.T) {
 	writeProjectConfig(t, root, "schema: spec-driven\n\ncontext: |\n  runner: this is prose\n"+
 		"\nstrict_tdd: false\n\ntesting:\n  runner: go test ./internal/...\n")
 
-	cfg, err := ReadProjectConfig(root, planbuild.ModeOpenspec)
+	cfg, err := ReadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("ReadProjectConfig = %v, want no error", err)
 	}
@@ -101,7 +101,7 @@ func TestReadProjectConfigBlocksWithoutTestingRunner(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root, "schema: spec-driven\n\ntesting:\n  detected: 2026-04-24\n")
 
-	_, err := ReadProjectConfig(root, planbuild.ModeOpenspec)
+	_, err := ReadProjectConfig(root)
 	if err == nil {
 		t.Fatal("a config without testing.runner must block")
 	}
@@ -115,7 +115,7 @@ func TestReadProjectConfigBlocksAnEmptySchema(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root, "schema:\n\ntesting:\n  runner: go test ./internal/...\n")
 
-	if _, err := ReadProjectConfig(root, planbuild.ModeOpenspec); err == nil ||
+	if _, err := ReadProjectConfig(root); err == nil ||
 		!strings.Contains(err.Error(), "config.yaml: schema is missing") {
 		t.Fatalf("error = %v, want the schema blocker", err)
 	}
@@ -125,7 +125,7 @@ func TestReadProjectConfigValidatesStrictTDD(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root, "schema: spec-driven\nstrict_tdd: maybe\n\n"+
 		"testing:\n  runner: go test ./internal/...\n")
-	_, err := ReadProjectConfig(root, planbuild.ModeOpenspec)
+	_, err := ReadProjectConfig(root)
 	if err == nil {
 		t.Fatal("strict_tdd: maybe must block")
 	}
@@ -136,7 +136,7 @@ func TestReadProjectConfigValidatesStrictTDD(t *testing.T) {
 
 	// Absent is accepted: the key is optional.
 	writeProjectConfig(t, root, "schema: spec-driven\n\ntesting:\n  runner: go test ./internal/...\n")
-	cfg, err := ReadProjectConfig(root, planbuild.ModeOpenspec)
+	cfg, err := ReadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("ReadProjectConfig without strict_tdd = %v, want no error", err)
 	}
@@ -153,11 +153,11 @@ func TestReadProjectConfigBlocksASymlinkOutsideTheRepository(t *testing.T) {
 	}
 	root := t.TempDir()
 	mkdirAll(t, filepath.Join(root, "openspec"))
-	if err := os.Symlink(external, planbuild.ConfigPath(root, planbuild.ModeOpenspec)); err != nil {
+	if err := os.Symlink(external, planbuild.ConfigPath(root)); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := ReadProjectConfig(root, planbuild.ModeOpenspec)
+	_, err := ReadProjectConfig(root)
 	if err == nil {
 		t.Fatal("a config symlinked outside the repository must block")
 	}
@@ -271,7 +271,7 @@ func TestChangeWithoutCommandsBlocksAndTheFreshnessRulesStayQuiet(t *testing.T) 
 			"`go test ./...`\"")
 	assertBlockerLacks(t, result, "never runs the configured testing.runner")
 
-	cfg, err := ReadProjectConfig(root, planbuild.ModeOpenspec)
+	cfg, err := ReadProjectConfig(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestChangeWithoutCommandsBlocksAndTheFreshnessRulesStayQuiet(t *testing.T) 
 // This repository's own config must satisfy the validator it ships: the stale
 // Bash/Python file is the reason the freshness loop exists (S11).
 func TestRepositoryProjectConfigIsValid(t *testing.T) {
-	cfg, err := ReadProjectConfig(docsRepoRoot(t), planbuild.ModeOpenspec)
+	cfg, err := ReadProjectConfig(docsRepoRoot(t))
 	if err != nil {
 		t.Fatalf("openspec/config.yaml: %v", err)
 	}

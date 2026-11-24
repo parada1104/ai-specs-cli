@@ -467,11 +467,11 @@ because a squash-merge rewrites the shas and the guardian never runs on the base
 branch. And the CLI grades the recorded sha, never whether a slice was a
 reasonable size: the granularity stays in prose, and only the record is graded.
 
-#### Project config (`openspec/config.yaml`, `odd/config.yaml`)
+#### Project config (`openspec/config.yaml`)
 
-Standard and Full changes also require the project config before merge. The
-path follows the mode (`internal/planbuild.ConfigPath`): `openspec/config.yaml`
-in `openspec`, `odd/config.yaml` in `odd`. The CLI validates only what it
+Standard and Full changes also require the project config before merge. It is an
+`openspec` artefact only: `openspec/config.yaml` (`internal/planbuild.ConfigPath`).
+`odd` mode has no config file and never grades one. The CLI validates only what it
 consumes: the file must be a regular file whose real path stays inside the
 repository, `schema:` must be non-empty, `testing.runner:` must declare the
 command that runs the project tests, and `strict_tdd:`, when present, must be
@@ -533,8 +533,8 @@ Hard blockers (do **not** merge):
    `MODIFIED` target, unsupported `RENAMED`, destructive `REMOVED` without
    explicit approval). Run the promoter first; the guardian only validates and
    never writes canonical specs or tracker state.
-7. Standard or Full: the project config (`openspec/config.yaml`, or
-   `odd/config.yaml` in odd mode) is missing or is not a regular file of the
+7. Standard or Full: the project config (`openspec/config.yaml`; `odd` mode has
+   none) is missing or is not a regular file of the
    repository, `schema:` or `testing.runner:` is empty, `strict_tdd:` is not
    `true`/`false`, a verification row names a command that does not resolve, or
    no row runs the configured `testing.runner`. The blockers name the offending

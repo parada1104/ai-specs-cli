@@ -81,16 +81,14 @@ both pair with the plan `odd/tasks/thing.md`. `ai-specs specs promote` composes
 `odd/specs/<domain>/spec.md`; `openspec/specs/**` is neither read nor written. `ai-specs gates premerge` pairs the change from the branch, checks that
 the plan exists and every `odd/changes/<slug>/specs/` delta was promoted, and
 requires the delta folder to be archived before merge.
-There is no `odd/config.yml` recipe manifest: the mode lives in the project
-manifest. The project config is a separate file, `odd/config.yaml` — the same
-shape and the same rules as `openspec/config.yaml`, described below.
+There is no `odd/config.yml`: the mode lives in the project manifest.
 - **`openspec`** is the unchanged OpenSpec-centered flow described below.
 
 ## Project config (`config.yaml`)
 
-`config.yaml` configures the **project**, not the change. It survives in both
-modes and is resolved per mode, never guessed: `openspec/config.yaml` in
-`openspec`, `odd/config.yaml` in `odd` (`.yml` is not read).
+`config.yaml` configures the **project**, not the change. It is an `openspec`
+artefact only, at `openspec/config.yaml` (`odd` mode has no config file, and
+`.yml` is not read).
 
 The CLI validates only the keys it consumes, line by line, with no YAML
 library:
