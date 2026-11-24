@@ -1,169 +1,259 @@
 # plan-build-openspec-odd-align
 
-Acercar el modo `openspec` de Plan Build a las prácticas de ODD sin abandonar sus artefactos (proposal, delta de `specs/`, `tasks.md`, `verify-report.md`, archivado y paridad). Solo diseño: esta revisión no toca código de producción.
-Rama `plan-build-openspec-odd-align` desde `development` `3a4e548`. El modo `odd` entregado en #589 (`3a4e548`) no se toca. Card: pendiente de crear al aprobar el diseño.
+Acercar el modo `openspec` de Plan Build a ODD: rescatar `specs/` y `config.yaml`, colapsar el resto del change en **un solo archivo de plan** con forma ODD, y hacer el archivado obligatorio pre-merge en ambos modos.
+Revisión 2 (L5): sustituye el alcance de la revisión 1, que mantenía `proposal.md`, `design.md` y `verify-report.md` como artefactos obligatorios. Solo diseño: no se toca código de producción.
+Rama `plan-build-openspec-odd-align` desde `development` `3a4e548`. El archivado obligatorio en `odd` revierte a propósito una decisión de #589 (S10). Card: pendiente al aprobar.
 
 ## Specs
 
-- **S1.** Alcance: solo el modo `openspec`. *«solo el modo openspec, es decir cuando ODD no existe. El modo odd entregado en #589 no se toca. El comando de migración odd↔openspec es otro change.»*
+- **S1.** Alcance: solo el modo `openspec`, más la reversión explícita de S10 en `odd`. *«solo el modo openspec, es decir cuando ODD no existe. El modo odd entregado en #589 no se toca. El comando de migración odd↔openspec es otro change.»* La reversión de #589 entra por S10 (L5); lo demás de `odd` no se toca.
 - **S2.** Objetivo: *«mejorar un poco el flujo actual de plan-build-flow centrado en openspec, pero más acercando lo que ya tenemos a odd»*.
 - **S3.** Sin código en esta vuelta: *«Esta vuelta es SOLO DISEÑO: no toques código.»*
-- **S4.** Se conservan los artefactos de openspec: proposal, `tasks.md`, `specs/` y archivado. Ninguna propuesta puede sustituirlos por el árbol `odd/`.
-- **S5.** Forma del plan, si se adopta: *«tasks.md con Specs S# que citan verbatim, Tasks enlazadas a S# y Log»*.
-- **S6.** Prácticas candidatas a evaluar, una por una con valor y costo: *«commit o evidencia por tarea; verificación por S#; commits por unidad de trabajo; el gate y premerge usando el mismo resolvedor»*.
-- **S7.** Cada propuesta declara *«qué piezas del CLI o del SKILL cambian y cómo se mantiene determinista desde el CLI»*, y cuáles se recomiendan.
-- **S8.** La evidencia del change anterior se commitea como primer commit: *«el cambio sin commitear en odd/tasks/plan-build-odd-companion.md es la evidencia final del change anterior (#589, ya mergeado). Commitéalo como primer commit: docs, conventional commit.»*
+- **S4.** *(reescrita por L5)* De los artefactos actuales del change sobreviven dos: el delta `specs/` y **un** archivo de plan con forma ODD. `proposal.md`, `design.md` y `verify-report.md` dejan de ser obligatorios; lo que aportaban (criterios y verificación por requisito) vive dentro del plan. Sigue prohibido sustituir el árbol de OpenSpec por el de `odd/`.
+- **S5.** Forma del plan: *«tasks.md con Specs S# que citan verbatim, Tasks enlazadas a S# y Log»*.
+- **S6.** Prácticas candidatas, evaluadas una por una: *«commit o evidencia por tarea; verificación por S#; commits por unidad de trabajo; el gate y premerge usando el mismo resolvedor»*.
+- **S7.** Cada propuesta declara *«qué piezas del CLI o del SKILL cambian y cómo se mantiene determinista desde el CLI»*, con valor, costo y recomendación.
+- **S8.** La evidencia de #589 se commitea como primer commit, docs y conventional commit. *(Hecho: `d007708`.)*
+- **S9.** Un solo archivo: *«lo que debemos rescatar es specs + un solo archivo que haga lo que hace odd hoy en día pero solo specs + tasks pero bajo openspec»*. El change en `openspec/changes/<c>/` queda con `specs/` y el plan; nada más obligatorio.
+- **S10.** Archivado obligatorio: *«el archive en ambos casos debe ser obligatorio pre merge»*. Aplica a `openspec` y a `odd`; en `odd` revierte la decisión de #589 de no exigir archivado.
+- **S11.** Configuración del proyecto rescatada: *«specs + un solo archivo… y creo que el config.yaml [y] el archive en ambos casos debe ser obligatorio pre merge»*. `openspec/config.yaml` (schema, context, strict_tdd, testing) sobrevive como configuración del proyecto en ambos modos, y hay que mantenerlo vigente: hoy describe Bash/Python y `./tests/run.sh`, y el CLI ya es Go.
+- **S12.** Ceremonia proporcional: *«también debe achicarse la ceremonia cuando no sea necesaria»*. Un change Light lleva plan corto, sin delta si no cambia reglas y sin pasos de más.
+- **S13.** El merge lo decide el humano: *«el agente pregunta si es momento de ir»*. El agente no mergea por iniciativa propia; el aseguramiento va en capas para que tampoco se pueda mergear a mano sin archivado.
+- **S14.** El delta y el plan son el contrato de entrega: nada de lo que se retire de obligatorio puede dejar una regla sin comprobación determinista en el CLI.
 
 ## Divergencias actuales entre ODD y el modo `openspec`
 
-Evidencia leída en esta rama; el spot-check se hizo sobre los tres puntos marcados **(v)**.
-
-| Práctica ODD | Cómo está hoy en `openspec` | Dónde |
+| Práctica ODD | Cómo estaba antes de esta revisión | Dónde |
 | --- | --- | --- |
-| Identidad del change derivada de la rama | El gate abre si existe **cualquier** `openspec/changes/*/tasks.md`; ignora rama y slug **(v)** | `internal/cli/planbuildgate.go:282` |
-| Un único predicado de plan por modo | `PlanIsValid` solo se usa en `odd`; `openspec` no pasa por él | `internal/planbuild/pair.go:65`, `internal/gates/gates.go:167` |
-| `## Specs` con citas verbatim | No existe. El `tasks.md` es libre; lo único que el código lee es `Depth:` y `## Tracker` | `internal/cli/gates.go:30`, `internal/tracker/ledger.go:252` |
-| `## Tasks` con `S#`, ruta y commit | No existe formato; hay ejemplos P0–P5 y un "Review Workload Forecast" en archives | `openspec/changes/archive/2026-08-02-plan-build-delivery-contracts/tasks.md` |
-| `## Log` con `L1` verbatim | No existe: las correcciones del humano se pierden al archivar | — |
-| Verificación por requisito | Solo tier `full`, y contra `## Success Criteria` de `proposal.md`/`design.md` **(v)** | `internal/gates/criteria.go:26`, `internal/gates/evidence.go:127` |
-| Commits por tarea / por unidad de trabajo | Un solo mandato: "Commit and push implementation **and** planning files" | `skills/plan-build-flow/SKILL.md:332` |
-| Una tarea a la vez | No se menciona en ninguna sección | `SKILL.md` (sin coincidencias de "one task"/"per task") |
-| Gate y premerge con el mismo resolvedor | Comparten el resolvedor de **modo** (`planbuild.ResolveRepo`); la identidad del change es un `<slug>` a mano, y en premerge el archivado es obligatorio | `internal/cli/gates.go:148-155` |
-
-Lo que **sí** está alineado y no hay que inventar: tier mínimo por profundidad, `verify-report.md` con veredicto/comando/commit/fecha, paridad de promoción de deltas, y el guardián de premerge. En `odd` eso se sustituye por el plan emparejado; en `openspec` es su contrato y se queda.
+| Identidad del change derivada de la rama | El gate abre con **cualquier** `openspec/changes/*/tasks.md`; ignora rama y slug | `internal/cli/planbuildgate.go:282` |
+| Un predicado de plan por modo | `PlanIsValid` solo se usa en `odd` | `internal/planbuild/pair.go:65` |
+| Un solo documento de plan | Tres artefactos obligatorios repartidos (`proposal.md`, `design.md`, `verify-report.md`) por tier | `internal/gates/gates.go:78-105`, `evidence.go:127` |
+| `## Specs` verbatim / `## Tasks` / `## Log` | No existen; el código solo lee `Depth:` y `## Tracker` | `internal/cli/gates.go:25`, `internal/tracker/ledger.go:252` |
+| Verificación por requisito | Solo `full`, y contra `## Success Criteria` de `proposal.md` | `internal/gates/criteria.go:29` |
+| Commits por tarea / unidad | Un solo "Commit and push implementation **and** planning files" | `skills/plan-build-flow/SKILL.md:332` |
+| Archivado obligatorio | Obligatorio en `openspec`, **inexistente** en `odd` | `gates.go:134` vs `gates.go:167` |
+| Configuración del proyecto vigente | `openspec/config.yaml` existe y **solo el tracker lo lee** (`tracking:`); ningún validador lo mira | `internal/doctor/checks_tracker.go:52` |
+| Aseguramiento fuera del agente | Ningún workflow corre en `pull_request`; el único workflow es por tag | `.github/workflows/release-binaries.yml:14` |
 
 ## Propuestas
 
-Formato: valor, costo y recomendación. Los números de línea son de esta rama.
+Numeración nueva. Las rechazadas de la revisión 1 (check de presencia de `Log`, `gates workunits`, importar la ceremonia ODD completa) pasan a **R1–R3**; ver L5.
 
-### P0 — Un resolvedor de change para ambos modos *(recomendada)*
+### P0 — Un resolvedor para change, plan, config y archivo *(recomendada; A aprobada)*
 
-`internal/planbuild` gana la identidad del change en los dos modos, con la misma forma que ya usa `odd`:
+`internal/planbuild` centraliza las cuatro rutas y la identidad, igual que ya hace con el modo:
 
-- `Change(mode, repoRoot, branch)` → nombre del change, derivado de `Branch` + `ChangeFromBranch`.
-- `PlanPath` pasa a ser consciente del modo: `odd/tasks/<change>.md` u `openspec/changes/<change>/tasks.md`.
-- `PlanIsValid` sigue siendo el **único** predicado (fichero regular y contenido en el repo) y ahora lo usan el gate, el premerge y `specs promote` en ambos modos.
-- Regla de desambiguación, para no romper el uso actual:
-  1. si la rama empareja con un change existente, ese change;
-  2. si la rama no empareja y hay **exactamente un** change activo, ese (comportamiento de hoy);
-  3. si hay dos o más activos y la rama no empareja, **bloqueo** nombrando la regla de emparejamiento y los candidatos. La ambigüedad es el error, no la ausencia.
-- `--slug`/`<slug>` sigue aceptándose y gana como override explícito sobre (2) y (3).
+- `Change(mode, repoRoot, branch)` → nombre del change, de `Branch` + `ChangeFromBranch`.
+- `PlanPath` consciente del modo: `odd/tasks/<change>.md` u `openspec/changes/<change>/tasks.md`.
+- `ConfigPath` consciente del modo: `odd/config.yaml` u `openspec/config.yaml`.
+- `ArchivePath` consciente del modo: `odd/changes/archive/YYYY-MM-DD-<c>/` u `openspec/changes/archive/YYYY-MM-DD-<c>/`.
+- `PlanIsValid` sigue siendo el **único** predicado de contención y regularidad, y ahora lo usan gate, premerge, promoción y archivado.
+- Escalera de desambiguación: la rama empareja → ese change; si no empareja y hay exactamente un change activo → ese; si hay dos o más activos y la rama no empareja → **bloqueo** nombrando la regla y los candidatos.
+- **`--change` como override explícito**, por encima de la escalera. No es un adorno: sin él la capa de CI de P7 no es viable (ver más abajo).
 
-**Valor.** Cierra el agujero de determinismo más grande que tiene el modo: hoy un `tasks.md` de otro change satisface el gate de la rama actual, y el premerge depende de un slug escrito a mano en la línea de comandos. Con P0 la identidad del change es una función del repo, no del historial de la shell: la misma función decide en el hook, en el premerge y en la promoción. Es además el gesto más "ODD" que existe — ODD identifica el change por la rama — y no toca ni un artefacto.
+**Valor.** Cierra el agujero de determinismo (cualquier `tasks.md` satisface el gate de cualquier rama) y da una sola identidad a gate, premerge, promoción y archivado. Cuatro rutas en una función es menos código que cuatro derivaciones repartidas.
 
-**Costo.** Medio. Cambia la semántica de `plan-build-gate` (puede bloquear donde antes pasaba), toca tres llamadores y pide tests de emparejamiento en ambos modos. Riesgo real: ramas con nombres que no son el change (hay repos así) y el caso (3) bloqueando trabajo legítimo. Mitigación: la escalera de tres pasos de arriba, y que el mensaje de bloqueo liste los candidatos y la regla, nunca solo "no encuentro el plan".
+**Costo.** Medio. Cambia la semántica de `plan-build-gate`, toca tres llamadores, y la escalera nuevas necesita tests de emparejamiento y de ambigüedad. **Risk item 3**: gates ya consumidos por repos en `openspec`.
 
-### P1 — Contrato formal de `tasks.md`: Specs `S#` / Tasks / Log *(recomendada)*
+### P1 — Un solo archivo de plan por change *(recomendada; reemplaza al contrato de la revisión 1)*
 
-Gramática única, versionada en el SKILL y fijada con un golden test:
+`openspec/changes/<c>/` queda con dos cosas:
 
 ```text
-## Specs
-- **S1.** <requisito en una línea> — *"<cita verbatim del humano>"*
+openspec/changes/<c>/
+├── specs/<dominio>/spec.md      # delta, sin cambios (S9)
+└── tasks.md                     # el plan completo, forma ODD
+```
 
+El plan absorbe lo que hacían los tres artefactos, en este orden:
+
+```text
+# <change>                            (2-3 líneas de cabecera: qué, delta, card)
+## Specs
+- **S1.** <requisito, una línea> — *"<cita verbatim del humano>"*
 ## Tasks
 | ID | Spec | Tarea | Ruta | Commit |
 | T1 | S1, S2 | <qué se hace + sus tests> | worker | pendiente |
-
+## Design                              (solo tier full, y solo si hay decisión que explicar)
+## Verification                        (solo standard/full: una fila por S#)
+- **S1: PASS** — `<comando>`, exit 0, commit `<sha>`, `<fecha>`
 ## Log
 - **L1** — <petición original del humano, verbatim>
 ```
 
-- `S#` cita la petición **del humano**, no el `proposal.md`: el valor de ODD es no parafrasear al humano, y el proposal ya es texto del agente.
-- Cuando el tier produce delta de `specs/`, la celda `Spec` cita además el requirement del delta; el delta sigue siendo la capacidad normalizada y el `S#` la petición. No se duplica el texto.
-- `L1` es obligatorio; cada corrección posterior del humano se añade verbatim, como en ODD.
-- `Log` va último, y el handoff a un worker dice `Spec: openspec/changes/<c>/tasks.md, T2, S3-S4`.
+- `S#` cita al **humano**, no al `proposal.md`: el valor de ODD es no parafrasear, y el proposal ya era texto del agente.
+- Cuando hay delta, la celda `Spec` cita también el requirement del delta; el `S#` es la petición, el delta la capacidad normalizada. No se duplica texto.
+- `Log` va al final; `L1` es obligatorio y cada corrección posterior entra verbatim.
+- `proposal.md`, `design.md` y `verify-report.md` **se siguen aceptando si están** (compatibilidad con quien los tiene y con los archives históricos), pero no se exigen. «No obligatorio» no es «prohibido».
 
-**Valor.** Es el mismo artefacto cognitivo que ODD, así que cambiar de modo no cambia lo que el agente tiene que saber hacer. Devuelve la trazabilidad de correcciones que hoy se pierde al archivar, y hace el plan gradeable (habilita P2 y P3). Sin este contrato, las demás propuestas no tienen dónde leer.
+**Valor.** Un change es un archivo que se lee de arriba abajo, igual que en ODD: es lo que Robert pidió literalmente (S9) y lo que hace que cambiar de modo no cambie lo que el agente tiene que saber. Además **simplifica** el grader: una fuente de requisitos, una de evidencia, un archivo que parsear.
 
-**Costo.** Bajo en Go (un parser de ~120 líneas y un golden), medio en prosa: reescribe §4, §6 y §7.2 del SKILL y la sección de readiness. Costo de adopción para quien ya tiene changes viejos: los archives existentes no se reescriben — el parser solo se aplica al change activo.
+**Costo.** Medio. Un parser estricto con golden (unas 150 líneas), reescritura de §4, §6 y §7.2 del SKILL, y aceptar que `## Verification` es una sección nueva que ODD no tiene (por eso va después de `## Tasks`, y solo cuando el tier la pide). **Risk item 3**: cambia el contrato de entrega para todo change `openspec`.
 
-### P2 — Verificación por `S#`, generalizando el grader que ya existe *(recomendada)*
+### P2 — Verificación por `S#`, con un solo grader *(recomendada; B aprobada y simplificada)*
 
-`internal/gates/criteria.go` ya resuelve exactamente este problema para `full`: una fuente autoritativa de requisitos (`## Success Criteria`), una fila `Criterion N: PASS` por requisito y rechazo de duplicados. La propuesta no añade un grader nuevo, **generaliza el que existe**:
+`internal/gates/criteria.go` ya resuelve este problema para `full`: una fuente autoritativa de requisitos, una fila de veredicto por requisito, rechazo de duplicados. Se **generaliza**, no se duplica:
 
-- la fuente de requisitos es `## Specs` de `tasks.md` cuando existe (modo `openspec`), y `## Success Criteria` cuando no;
-- el mapeo acepta `S1: PASS` o `Criterion 1: PASS`, así los `verify-report.md` históricos siguen válidos y `full` no se degrada;
-- `verify-report.md` gana `S<n>: PASS|FAIL — <evidencia>` para todos los tiers, no solo `full`.
+- la fuente de requisitos pasa a ser `## Specs` del plan; `## Success Criteria` de `proposal.md`/`design.md` solo se usa si `## Specs` no existe (archives viejos);
+- la evidencia se lee de `## Verification` del plan; `verify-report.md` solo si `## Verification` no existe;
+- el mapeo acepta `S1: PASS` y `Criterion 1: PASS`;
+- si `## Specs` existe y no parsea, es **bloqueo**, nunca fallback silencioso.
 
-**Valor.** La verificación deja de ser un boilerplate de tier y pasa a estar anclada a lo que el humano pidió, que es justo la práctica de ODD que más se nota. Y se hace sin un segundo grader: la lección de #589 (L9) fue que un predicado copiado se corrige en un sitio y no en el otro.
+**Valor.** La verificación queda anclada a lo que pidió el humano y deja de ser boilerplate de tier. Y sale más barato que en la revisión 1: sin `verify-report.md` obligatorio, el grader tiene una sola fuente en vez de dos con cadena de fallback.
 
-**Costo.** Medio. Hay que cambiar una función que hoy tiene un fallback delicado (`proposal.md` autoritativo, `design.md` solo si falta el proposal) y ampliar sus tests. Riesgo: un `tasks.md` con `## Specs` mal formado pasaría a ser la fuente autoritativa y podría relajar la verificación; se mitiga con el parser estricto de P1 — si `## Specs` existe y no parsea, es bloqueo, nunca fallback.
+**Costo.** Bajo-medio: una función con dos fuentes ordenadas y tests. **Risk item 3**: reglas de entrega ya consumidas.
 
-### P3 — Commits por tarea y por unidad de trabajo *(recomendada)*
+### P3 — Commits por tarea y por unidad de trabajo *(recomendada; C aprobada)*
 
-Hoy `§7.3` dice una sola cosa: commitear implementación y planificación juntas. Se sustituye por:
+- Un commit por fila de `## Tasks`, o por unidad de ~400 líneas cambiadas cuando una tarea lo exceda; Conventional Commit; tests y docs junto al comportamiento.
+- El sha se escribe en la celda `Commit` de esa fila.
+- El premerge comprueba que toda celda distinta de `pendiente` es un sha que existe y es ancestro de `HEAD`.
 
-- un commit por fila de `## Tasks`, o por unidad de ~400 líneas cambiadas cuando una tarea lo exceda, con Conventional Commit y tests+docs junto al comportamiento;
-- el sha se escribe en la celda `Commit` de esa fila;
-- el premerge comprueba que toda celda `Commit` distinta de `pendiente` es un sha que existe y es ancestro de `HEAD`.
+**Valor.** Rebanadas revisables, `git bisect` útil, y evidencia por tarea sin inventar artefactos: es el mismo sha que ya pide la verificación.
 
-**Valor.** Rebanadas revisables, `git bisect` útil y evidencia de "esto se entregó como se planeó". El commit por tarea es la forma más barata de tener evidencia por tarea: no hace falta ningún artefacto nuevo, es el mismo sha que ya pide el `verify-report.md`.
+**Costo.** Bajo: prosa en §7.3 y unas 30 líneas de Go (`git merge-base --is-ancestor`). Dos límites que se declaran y no se esconden: (a) el check de ancestro vale solo en la rama de review, porque un squash invalida los shas en `development`; (b) el CLI no puede juzgar si una unidad es «razonable», así que la granularidad se queda en prosa y el CLI solo comprueba el registro.
 
-**Costo.** Bajo: prosa en §7.3 más unas 30 líneas de Go (`git merge-base --is-ancestor`). Dos límites que hay que declarar y no esconder: (a) la comprobación de ancestro vale solo en la rama de review, porque un squash-merge invalida los shas en `development`; (b) el CLI no puede juzgar si una unidad de trabajo es "razonable", así que la granularidad se queda en prosa y el CLI solo comprueba el registro, no el juicio.
+### P4 — Archivado obligatorio pre-merge en ambos modos *(recomendada; S10)*
 
-### P4 — `Log` con gate de presencia *(no recomendada como check)*
+**Qué es archivar en `openspec`** (ya existe, no cambia): promover los deltas a `openspec/specs/`, mover `openspec/changes/<c>/` (con su plan dentro) a `openspec/changes/archive/YYYY-MM-DD-<c>/`, y commitear en la rama de review (`SKILL.md:369-371`).
 
-Se descarta añadir un check de "existe `## Log` y `L1` no está vacío". Presencia de un encabezado no es evidencia de nada, y un check débil que se puede satisfacer con una línea invita a satisfacerlo con una línea. El `Log` entra en el contrato (P1) y se queda en prosa: lo revisa el humano y la revisión nativa, no el CLI.
+**Qué es archivar en `odd`** (nuevo, revierte #589): promover los deltas a `odd/specs/` y mover `odd/changes/<c>/` a `odd/changes/archive/YYYY-MM-DD-<c>/`. **`odd/tasks/<c>.md` se queda donde está**: es el plan de la feature, vive con los otros 154 planes, y es lo que citan los handoffs (`Spec: odd/tasks/<c>.md`). La asimetría con `openspec` (donde el plan sí se mueve) es real y se documenta: en `openspec` el plan pertenece al change, en `odd` pertenece a la feature.
 
-### P5 — `gates workunits`: contar commits y líneas por tarea *(no recomendada)*
+**Premerge, ambos modos:** no debe quedar ninguna carpeta de change activa, el archivo con fecha debe existir y contener el plan y su delta, y los deltas deben estar promovidos. En `odd` eso significa que `CheckPremergeOdd` gana exactamente una condición nueva (archivo presente, change activo ausente) y conserva `PlanIsValid` + paridad. El `PlanIsValid` sobre `odd/tasks/<c>.md` sigue siendo lo que vigila el hook durante la implementación, para lo que fue construido.
 
-Un verbo que gradúe la forma del historial (¿cuántos commits por tarea?, ¿cuántas líneas por commit?) es caro, frágil y se equivoca con los casos legítimos: un refactor de una tarea puede tocar dos ficheros, y una tarea de infraestructura puede ser un commit de 500 líneas con razón. Se queda fuera. La parte determinista y honesta de esta idea ya está en P3.
+**Verbo nuevo: `ai-specs changes archive [<change>]`.** Sin él, «archivar» es una instrucción en prosa que el agente puede olvidar, y la capa 1 del aseguramiento no tiene dientes. Hace: rechazar si la promoción tiene pendientes, mover la carpeta a la fecha indicada o a hoy, rechazar si ya existe un archive para ese change (misma ambigüedad que ya detecta `resolveArchive`), y usar la identidad de P0. Determinista y atómico: un solo `os.Rename` dentro del mismo árbol.
 
-### P6 — Importar la ceremonia ODD completa en `openspec` *(fuera de alcance)*
+**Valor.** Los dos modos terminan igual: un change archivado, con fecha, con plan y delta promovido. Y el merge deja de depender de que alguien recuerde mover una carpeta.
 
-Candidato de revisión = un commit, línea `Risk: item N` obligatoria, espejo del documento en memoria, `gentle-ai-verify` obligatorio en alto riesgo. Todo eso existe para el switch de RDD y para usuarios que corren ODD. El modo `openspec` existe precisamente para quien no lo hace, y `S4` prohíbe sustituir sus artefactos. No se trae.
+**Costo.** Medio-alto, y hay que decirlo claro: **cambia código entregado ayer** (`CheckPremergeOdd`, #589), añade un verbo con tests, y toca la prosa de §7.4 y del README. **Risk item 3** por el premerge y item 1 en la medida en que mover carpetas toca evidencia versionada — mitigado porque el verbo se niega a mover si hay pendientes y nunca borra.
+
+### P5 — `config.yaml` rescatado, y con bucle de frescura *(recomendada; S11)*
+
+**Papel.** `config.yaml` es la configuración del **proyecto**, no del change: contexto para el agente, rigor de TDD y el comando de tests que el proyecto considera su verificación. Lo leen dos consumidores distintos y ninguno debe invadir al otro:
+
+- el **CLI** lee solo las claves que él mismo usa: `tracking:` (hoy, `internal/doctor/checks_tracker.go:52`) y `testing.runner:` (nuevo);
+- el **SKILL** lee la prosa: `context`, `strict_tdd`, `rules.*`, `ai_specs_guidance`.
+
+**Dónde vive.** Misma regla que todo lo demás, vía `ConfigPath` de P0: `openspec/config.yaml` en `openspec`, `odd/config.yaml` en `odd`. Aviso de contradicción a resolver: `catalog/recipes/plan-build-flow/README.md:84` **excluye hoy** `odd/config.yml`, y el proposal de #589 también; esa línea hay que enmendarla o elegir un camino único para los dos modos (decisión A' de abajo).
+
+**Qué valida el CLI, y qué no.** Solo lo que consume: que sea un fichero regular contenido en el repo (el mismo predicado de P0), que parsee, que `schema:` y `testing.runner:` no estén vacíos y que `strict_tdd`, si está, sea booleano. `context` y `rules.*` son prosa opaca: **nadie las valida**, porque un esquema estricto repetiría la trampa del oráculo congelado de `internal/schema` que ya bloqueó declarar `[config.mode]` en #589.
+
+**Cómo se mantiene vigente** (el problema real que señala Robert: el archivo describe Bash/Python y `./tests/run.sh` mientras el CLI es Go). La causa es que nada lo lee al calificar, así que nada lo obliga a ser cierto. Se convierte su afirmación central en carga estructural:
+
+1. cada comando de una fila de `## Verification` debe resolverse en disco (una ruta relativa tiene que existir; un comando suelto, estar en `PATH`);
+2. el comando declarado en `testing.runner` debe **aparecer** entre los comandos de verificación de un change standard/full.
+
+Con eso, un change que migre el gate de `./tests/run.sh` a `go test` no puede pasar el premerge sin actualizar `config.yaml` en el mismo change. La obsolescencia deja de ser silenciosa: **falla el gate**. Es la única forma barata y determinista que encontré.
+
+**Opcional, no en esta entrega:** que `ai-specs init` siembre el archivo si falta y que `doctor` avise de rutas que ya no existen.
+
+**Costo.** Bajo-medio: dos comprobaciones y una ruta más en P0. **Risk item 3** por el premerge; **item 6** si se implementa sin test del bucle de frescura.
+
+### P6 — Ceremonia proporcional al tier *(recomendada; S12)*
+
+Matriz que sustituye a los mínimos actuales (`gates.go:78-105`) y a la evidencia por tier (`evidence.go:127`):
+
+| | light | standard | full |
+| --- | --- | --- | --- |
+| plan ODD (`## Specs` + `## Tasks`) | sí, corto: 1-3 tareas, `Log` opcional | sí, con `## Log` | sí, con `## Log` |
+| delta `specs/` | solo si cambia una regla | ≥1 dominio | ≥1 dominio |
+| `## Design` en el plan | no | no | sí, si hay decisión que explicar |
+| `## Verification` con `S#: PASS` | no | una fila por `S#` | una fila por `S#`, veredicto estricto `PASS` |
+| `config.yaml` | no | sí | sí |
+| archivado obligatorio | sí | sí | sí |
+| `proposal.md` / `design.md` / `verify-report.md` | no | no | no |
+
+Lo que se **borra** de obligatorio es tanto como lo que se añade: `proposal.md` para light y standard, `design.md` para full, `verify-report.md` para standard y full. `checkMinimums` se encoge a tres reglas y la evidencia pasa a leerse de `## Verification`.
+
+**Valor.** Es la mitad del pedido de Robert y la mitad del ahorro: menos archivos obligatorios, menos prosa ceremonial, y el tier sigue decidiendo con la misma granularidad de hoy.
+
+**Costo.** Bajo (borrar condiciones y ajustar tests), pero cambia expectativas que ya tienen los repos en `openspec`: **Risk item 3**.
+
+### P7 — Aseguramiento en capas *(recomendada; S13)*
+
+1. **CLI.** `ai-specs gates premerge` bloquea si no está archivado, en ambos modos (P4). Es determinista y es lo único que no depende de que el agente obedezca.
+2. **El verbo de archivado no tiene atajos.** `changes archive` se niega si la promoción tiene pendientes, así que la capa 1 no se puede satisfacer saltándose la promoción.
+3. **SKILL.** Obliga a promover y archivar antes de mergear, y a **preguntar**: «¿es momento de ir?», con la aprobación explícita del humano registrada antes de abrir el PR o mergear. No es invención: `SKILL.md:377` ya dice «merge only after explicit user approval»; lo que falta es que la pregunta sea el paso, no una nota.
+4. **CI.** Un workflow nuevo en `pull_request` que construya el binario y corra `ai-specs gates premerge --change "$GITHUB_HEAD_REF"`, marcado como *required check* en la protección de `development`.
+
+**Viabilidad del CI en este repo, con la evidencia:** el único workflow es `release-binaries.yml`, disparado por tag `v*`, y ya sabe construir y testear Go (`go vet`/`go test ./cmd/... ./internal/...`); **no hay ningún workflow en `pull_request` ni ninguna invocación de un verbo `ai-specs`**. Así que la capa 4 es viable pero es trabajo nuevo: un `pr-gate.yml` con `actions/checkout`, setup de Go, `go build ./cmd/ai-specs` y la invocación del gate. Dos obstáculos reales:
+
+- **HEAD detached.** `actions/checkout` en `pull_request` deja HEAD detached, y el premerge de `odd` resuelve el change con `symbolic-ref`, que devuelve vacío y produce el bloqueo «detached HEAD». Por eso P0 incluye `--change`: el workflow debe pasarlo explícitamente desde `GITHUB_HEAD_REF`. Sin ese override, la capa 4 no funciona en `odd`.
+- **«Required» no vive en el repo.** La protección de rama y los required checks son configuración del repositorio (`gh api`), no un archivo versionado: hoy no hay ni ruleset ni CODEOWNERS en `.github/`. Es un paso manual de una vez, del dueño del repo, y hay que documentarlo en el README o se pierde.
+- Límite honesto: el CI solo ve lo commiteado, así que el archive tiene que estar en la rama del PR — coherente con `SKILL.md:369-371` («then commit and push to the review branch») y con el squash, que ya invalida los shas de P3.
+
+**Costo.** Medio para la capa 4 (workflow nuevo + un paso de configuración del repo) y bajo para las capas 2 y 3. **Risk item 5** (delivery/CI).
+
+### R1 — Check de presencia de `Log` *(rechazada)*
+
+Presencia de un encabezado no es evidencia de nada, y un check débil se satisface con una línea. `Log` entra en el contrato (P1) y se queda en prosa.
+
+### R2 — `gates workunits`: contar commits y líneas por tarea *(rechazada)*
+
+Gradúa la forma del historial, es frágil y se equivoca con casos legítimos (un refactor de 500 líneas con razón). La parte determinista y honesta ya está en P3.
+
+### R3 — Importar la ceremonia ODD completa en `openspec` *(fuera de alcance)*
+
+Candidato de revisión = un commit, `Risk: item N` obligatoria, espejo en memoria, verificador independiente: todo eso existe para el switch de RDD y para quien corre ODD. `openspec` existe para quien no lo hace, y S4 prohíbe sustituir sus artefactos.
 
 ### Lo que no se toca
 
-Archivado con fecha, paridad de deltas contra `openspec/specs/`, mínimos por tier, `verify-report.md` como prueba de entrega y el guardián de premerge. `odd` queda byte a byte como está en `3a4e548`; el comando de migración odd↔openspec es otro change (`S1`).
+Fechado del archive, paridad de deltas contra `openspec/specs/`, guardián de premerge, promoción atómica, y todo `odd` salvo la condición nueva de archivado de P4 (S1).
 
 ## Qué pieza cambia y cómo sigue siendo determinista
 
 | Pieza | Archivo | Cambio | Determinismo |
 | --- | --- | --- | --- |
-| Resolvedor | `internal/planbuild/pair.go`, `mode.go` | `Change`; `PlanPath` por modo; `PlanIsValid` compartido | Identidad del change = función de rama + repo. Misma función en gate, premerge y promote. |
-| Gate | `internal/cli/planbuildgate.go` | `planBuildGateHasPlan` pasa a change emparejado + `PlanIsValid`; bloqueo por ambigüedad con candidatos | Sí: deja de depender de que exista "algún" plan. |
-| Premerge | `internal/cli/gates.go`, `internal/gates/gates.go` | El `<slug>` es override; por defecto sale del resolvedor | Sí: un solo camino de resolución, el del hook. |
-| Parser del plan | `internal/gates/tasks.go` (nuevo) | Gramática `## Specs` / `## Tasks` / `## Log`, estricta, con golden | Sí, y es la base de P2 y P3. Un solo parser, sin copia en el hook. |
-| Evidencia | `internal/gates/criteria.go` | La fuente de requisitos pasa a ser `Specs` cuando existe; mapeo `S#` o `Criterion N` | Sí: cuenta filas contra requisitos declarados. |
-| Promoción | `internal/specs/promote.go` | Slug por resolvedor, arg como override | Sí: reuse de `PlanIsValid`/`SourceContained`. |
-| SKILL | `skills/plan-build-flow/SKILL.md` | §4 (contrato de `tasks.md`), §6 (readiness), §7.2 (PR gate), §7.3 (commits), §7.4 (bloqueos), §8 (slug ← rama) | La prosa describe lo que el CLI comprueba; no introduce reglas paralelas. |
-| README / docs | `catalog/recipes/plan-build-flow/README.md`, `docs/go-migration-parity-contract.md` | Superficies nuevas y límites declarados de P3 | — |
+| Resolvedor | `internal/planbuild/{pair,mode}.go` | `Change`, `PlanPath`, `ConfigPath`, `ArchivePath`, `--change` | Identidad = función de rama + repo, con override explícito para CI. |
+| Gate | `internal/cli/planbuildgate.go` | plan del change emparejado + `PlanIsValid`; bloqueo por ambigüedad | Deja de depender de que exista «algún» plan. |
+| Parser del plan | `internal/gates/tasks.go` (nuevo) | gramática `## Specs`/`## Tasks`/`## Design`/`## Verification`/`## Log`, con golden | Base de P1, P2, P3 y P6. Un solo parser. |
+| Mínimos | `internal/gates/gates.go:78-105` | se encoge a la matriz de P6 | Menos reglas, mismas garantías por tier. |
+| Evidencia | `internal/gates/{criteria,evidence}.go` | fuente `## Specs`/`## Verification`, mapeo `S#` o `Criterion N` | Cuenta filas contra requisitos declarados. |
+| Config | `internal/planbuild` + nuevo en `internal/gates` | validación mínima + bucle de frescura del runner | El comando declarado debe existir y aparecer en la evidencia. |
+| Archivado | `internal/cli/changes.go` (nuevo), `internal/gates/gates.go` | verbo `changes archive`; archive obligatorio en `odd` | Un solo `os.Rename`, se niega con pendientes. |
+| Promoción | `internal/specs/promote.go` | identidad de P0 | Reuse de `PlanIsValid`/`SourceContained`. |
+| CI | `.github/workflows/pr-gate.yml` (nuevo) | `pull_request` + `gates premerge --change` | El gate es el mismo binario, sin lógica paralela. |
+| SKILL / docs | `skills/plan-build-flow/SKILL.md`, `catalog/recipes/plan-build-flow/README.md`, `openspec/config.yaml` | §4, §6, §7.1–§7.4, §8; enmendar `odd/config.yml` | La prosa describe lo que el CLI comprueba, sin reglas paralelas. |
 
-Regla de reparto que se propone dejar escrita: **lo que el CLI puede comprobar sin juzgar historial se comprueba en Go; lo que requiere juicio se queda en prosa y no se simula con un check débil.** Aplicado, quedan deterministas la identidad, la validez del plan, la gramática, el `S#`↔`PASS`, el sha ancestro, la paridad y el archivado; quedan en prosa la redacción verbatim, la granularidad de la unidad de trabajo, la ruta (`worker`/`inline`) y el momento de escribir las tareas.
+Regla de reparto que se propone dejar escrita: **lo que el CLI puede comprobar sin juzgar historial se comprueba en Go; lo que requiere juicio se queda en prosa y no se simula con un check débil.** Deterministas: identidad, validez y gramática del plan, `S#`↔`PASS`, ancestro del sha, existencia del comando de tests, paridad, archivado. En prosa: redacción verbatim, granularidad de la unidad, ruta (`worker`/`inline`), y el juicio de cuándo es momento de ir.
 
 ## Tasks
-
-Diseño solamente (`S3`); la implementación es la lista de abajo, pendiente de aprobación.
 
 | ID | Spec | Tarea | Ruta | Commit |
 | --- | --- | --- | --- | --- |
 | T1 | S8 | Commit de la evidencia final de #589 en `odd/tasks/plan-build-odd-companion.md` | inline | `d007708` |
-| T2 | S1–S7 | Este documento: divergencias, P0–P6 con valor/costo, recomendación y mapa CLI/SKILL | inline | pendiente |
-| T3 | S3, S7 | Commit del diseño | inline | pendiente |
+| T2 | S1–S7 | Diseño revisión 1: divergencias, P0–P6, mapa CLI/SKILL | inline | `c52120d` |
+| T3 | S9–S14 | Diseño revisión 2: un solo archivo de plan, archivado en ambos modos, `config.yaml`, ceremonia por tier, capas de aseguramiento | inline | pendiente |
+| T4 | S3 | Commit de la revisión 2 | inline | pendiente |
 
 ## Implementación propuesta (change siguiente, no esta vuelta)
 
-Cuatro unidades de trabajo, en este orden; cada una deja el suite en verde y admite revisión sola.
+Seis unidades de trabajo en este orden; cada una deja el suite en verde y admite revisión sola.
 
-| ID | Propuesta | Contenido | Riesgo a declarar |
+| ID | Propuesta | Contenido | Risk |
 | --- | --- | --- | --- |
-| I1 | P0 | `Change`, `PlanPath` por modo, gate y premerge con el resolvedor único, tests de emparejamiento y de ambigüedad | item 3: cambia la semántica de un gate que ya consumen los repos en `openspec` |
-| I2 | P1 | `internal/gates/tasks.go`, golden de la gramática, SKILL §4/§6/§8 | item 3: formato nuevo para el mismo artefacto |
-| I3 | P2 | `criteria.go` generalizado, `verify-report.md` con `S#`, compatibilidad `Criterion N` | item 3: reglas de entrega ya consumidas |
-| I4 | P3 | Prosa de commits por tarea, check de ancestro en premerge, límites documentados | item 3: el premerge gana un bloqueo nuevo |
+| I1 | P0 | `Change`, `PlanPath`, `ConfigPath`, `ArchivePath`, `--change`, gate y premerge con el resolvedor único, tests de emparejamiento y ambigüedad | item 3 |
+| I2 | P1+P6 | `internal/gates/tasks.go` con golden, matriz de mínimos por tier, SKILL §4/§6/§8 | item 3 |
+| I3 | P2 | `criteria.go`/`evidence.go` generalizados con doble fuente, compatibilidad `Criterion N` | item 3 |
+| I4 | P3 | Prosa de commits por tarea, check de ancestro en premerge, límites documentados | item 3 |
+| I5 | P4 | Verbo `changes archive`, archivado obligatorio en `odd`, premerge de ambos modos | item 3, item 1 |
+| I6 | P5+P7 | Validación de `config.yaml` y bucle de frescura; workflow `pr-gate.yml`; SKILL §7.3/§7.4 | item 3, item 5 |
 
 ## Puntos abiertos (decisiones de Robert)
 
-- **A. Pairing en `openspec`.** ¿La escalera de P0 (rama → único activo → bloqueo por ambigüedad), o emparejamiento estricto que bloquee cualquier rama sin change homónimo? Recomiendo la escalera: es determinista y no rompe a quien nombra ramas a su manera.
-- **B. `S#` frente al delta.** Verificado: `S#` cita la petición del humano y el `Spec` cita además el requirement del delta cuando existe. ¿Basta, o quiere que el `S#` sea la única fuente y el delta se derive de él?
-- **C. Alcance del check de `Commit`.** Solo en la rama de review, porque un squash invalida los shas. ¿Aceptable, o prefiere que el check también corra post-merge ignorando filas cuyo sha no sea ancestro?
-- **D. Forma de entrega.** Un change con las cuatro unidades (I1–I4) o dos changes separados (resolvedor+contrato, después verificación+commits). Recomiendo uno con cuatro commits: comparten el parser.
+- **A'.** `config.yaml` en `odd`: ¿`odd/config.yaml` (simétrico, pero contradice `README.md:84` y el proposal de #589, que hay que enmendar), o un camino único para los dos modos? Recomiendo `odd/config.yaml` y enmendar la línea.
+- **B'.** `odd/tasks/<c>.md` al archivar: ¿se queda como registro permanente de la feature (mi recomendación, diff mínimo sobre #589) o se mueve al archive como en `openspec` (más simétrico, mueve el documento que citan los handoffs)?
+- **C'.** Obligatoriedad de `## Verification` en standard: ¿una fila por `S#` aunque el `S#` sea prosa sin test posible, o permitir `S#: N/A — <razón>`? Recomiendo permitir `N/A` con razón, porque sin esa válvula la gente escribe `PASS` sin probar nada.
+- **D'.** `--change` en el gate: ¿override solo para CI (y el premerge del día a día sigue derivando de la rama), o override general aplicable a mano? Recomiendo general, con el valor derivado impreso en el veredicto para que se vea qué se calificó.
+- Las antiguas A–D (rigidez del pairing, `S#` frente a delta, alcance del check de sha, un change o dos) quedan **resueltas por L6**: escalera de P0, `S#` verbatim con cita del delta, check de sha solo en la rama de review, un solo change.
 
 ## Log
 
 - **L1** — Petición original, verbatim: *«Cody: sesión nueva para un change nuevo. - Worktree: esta. Rama: plan-build-openspec-odd-align, desde development 3a4e548. - Primero: el cambio sin commitear en odd/tasks/plan-build-odd-companion.md es la evidencia final del change anterior (#589, ya mergeado). Commitéalo como primer commit: docs, conventional commit. Objetivo, en palabras de Robert: «mejorar un poco el flujo actual de plan-build-flow centrado en openspec, pero más acercando lo que ya tenemos a odd». Alcance: solo el modo openspec, es decir cuando ODD no existe. El modo odd entregado en #589 no se toca. El comando de migración odd↔openspec es otro change. Recupera contexto en Engram (obs 502 y 503, el cierre de #589) y en el contrato ODD de Gentle Shell (contracts/review-provider-contract-mirror/.../routing/pi.md). Esta vuelta es SOLO DISEÑO: no toques código. Propón qué prácticas de ODD llevar al modo openspec sin dejar de usar sus artefactos (proposal, tasks.md, specs y archivado). Por ejemplo: - tasks.md con Specs S# que citan verbatim, Tasks enlazadas a S# y Log; - commit o evidencia por tarea; - verificación por S#; - commits por unidad de trabajo; - el gate y premerge usando el mismo resolvedor. Para cada propuesta da su valor y su costo, y cuáles recomiendas. Indica qué piezas del CLI o del SKILL cambian y cómo se mantiene determinista desde el CLI. Escribe el plan en odd/tasks/plan-build-openspec-odd-align.md, porque este repo ya está en modo odd. Commit del plan permitido, sin push. Reporte corto con las propuestas y tu recomendación. Cierra con 'LISTO DISEÑO'.»*
-- **L2** — Contexto recuperado de Engram: obs 502 (entrega de #589, decisiones, pendientes reales) y obs 503 (resumen de sesión, próximos pasos). El contrato ODD está en `/Users/robert/.gentle-shell/…/gentle-pi/assets/orchestrator-memory.md` (orden del documento, `S#` verbatim, `L1`, columnas del plan) y `assets/orchestrator.md:27-29` (línea `Risk:`); el `routing/pi.md` citado en la petición no existe en esa ruta del paquete instalado.
-- **L3** — Evidencia de código, spot-check propio sobre las tres afirmaciones decisivas: `planbuildgate.go:282` (el gate abre con cualquier `tasks.md`), `criteria.go:26` (una sola fuente de requisitos, `proposal.md` autoritativo), `gates.go:100-160` (premerge exige archivado y recibe el slug por argumento). El resto del mapa lo devolvió una exploración delegada de solo lectura.
-- **L4** — Decisión de esta vuelta: solo diseño; se commitea `d007708` (evidencia de #589) y este documento. Sin push, sin implementación, sin crear el árbol `odd/changes/` porque en `odd` un change sin delta pasa con su plan.
+- **L2** — Contexto recuperado de Engram: obs 502 y obs 503 (entrega de #589, decisiones, pendientes). El contrato ODD está en `assets/orchestrator-memory.md` y `assets/orchestrator.md:27-29` del paquete gentle-pi; el `routing/pi.md` que citaba la petición no existe en esa ruta.
+- **L3** — Evidencia de código, spot-check propio: `planbuildgate.go:282` (el gate abría con cualquier `tasks.md`), `criteria.go:29` (fuente única de requisitos), `gates.go:100-160` (premerge recibía el slug por argumento). El resto lo devolvió exploración delegada de solo lectura.
+- **L4** — Decisión de la revisión 1: solo diseño; commits `d007708` (evidencia de #589) y `c52120d` (diseño v1). Sin push, sin implementación, sin crear `odd/changes/`.
+- **L5** — Redirección de Robert, verbatim en sus fragmentos clave: *«lo que debemos rescatar es specs + un solo archivo que haga lo que hace odd hoy en día pero solo specs + tasks pero bajo openspec»*; *«el archive en ambos casos debe ser obligatorio pre merge»*; *«también debe achicarse la ceremonia cuando no sea necesaria»*; *«el agente pregunta si es momento de ir»*. Aprueba A–D y pide rehacer el diseño con P0, P2 y P3 ajustados; que el plan sea UN archivo con Specs/Tasks/Log y que `proposal.md`, `design.md` y `verify-report.md` dejen de ser obligatorios («lo que hoy aportan vive dentro de ese archivo»). El resto del mensaje llegó como resumen de Cody, no como texto literal de Robert. Consecuencias: S4 se reescribe; la numeración de propuestas cambia y las rechazadas pasan a R1–R3; el archivado obligatorio en `odd` revierte a propósito #589, así que S1 se matiza.
+- **L6** — Robert aprueba A–D de la revisión 1: escalera de emparejamiento de P0, `S#` verbatim con cita del delta, check de sha solo en la rama de review, y un solo change (no dos).
+- **L7** — Aclaración de Robert sobre «el config.yml»: es `openspec/config.yaml` (schema, context, strict_tdd, testing), y su frase completa es *«specs + un solo archivo… y creo que el config.yaml [y] el archive en ambos casos debe ser obligatorio pre merge»*. Pide integrarlo: se rescata como configuración del proyecto, hay que proponer su papel en ambos modos y si el premerge exige que exista y sea válido, y hay que resolver que el actual está obsoleto (describe Bash/Python y `./tests/run.sh` mientras el CLI es Go). Resuelto en P5 y en S11.
+- **L8** — Evidencia de la revisión 2, verificada antes de escribir: no existe ningún workflow en `pull_request` (`.github/workflows/release-binaries.yml:14` es solo por tag, y ya construye y testea Go), `openspec/config.yaml` solo lo lee el tracker (`checks_tracker.go:52`) y ningún validador lo mira, `.github/` no tiene ruleset ni CODEOWNERS, y `actions/checkout` en `pull_request` deja HEAD detached, lo que invalida un premerge de `odd` derivado solo de la rama. De ahí el `--change` en P0 y el obstáculo declarado en P7.
