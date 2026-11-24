@@ -674,3 +674,62 @@ func TestPlanBuildGateOpenspecPairedFolderNeedsAPlan(t *testing.T) {
 	}
 	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
 }
+
+// --- Local no-plan declaration (plan-build-openspec-odd-align T14/S19) ------
+
+// In openspec mode the local declaration lets a production write through with no
+// plan at all.
+func TestPlanBuildGateOpenspecDeclarationAllowsWithoutAPlan(t *testing.T) {
+	repo := sharedRealPath(newGateFixture(t))
+	planBuildWriteMode(t, repo, "openspec")
+	planBuildBranch(t, repo, "feat/alpha")
+	if err := planbuild.DeclareCeremonyNone(repo, "feat/alpha"); err != nil {
+		t.Fatalf("DeclareCeremonyNone: %v", err)
+	}
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("declared gate = (%d, %q, %q), want silence", code, stdout, stderr)
+	}
+}
+
+// Without the declaration the same write keeps today's refusal, so the
+// declaration is the only thing that relaxed it.
+func TestPlanBuildGateOpenspecWithoutDeclarationStillRefuses(t *testing.T) {
+	repo := sharedRealPath(newGateFixture(t))
+	planBuildWriteMode(t, repo, "openspec")
+	planBuildBranch(t, repo, "feat/alpha")
+	want := planBuildResolverRefusal(t, repo, "Write", "src/app.go")
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
+		t.Fatalf("undeclared gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+	}
+	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
+}
+
+// The declaration is per branch: one written for another branch never applies.
+func TestPlanBuildGateDeclarationOnAnotherBranchDoesNotApply(t *testing.T) {
+	repo := sharedRealPath(newGateFixture(t))
+	planBuildWriteMode(t, repo, "openspec")
+	planBuildBranch(t, repo, "feat/alpha")
+	if err := planbuild.DeclareCeremonyNone(repo, "feat/other"); err != nil {
+		t.Fatalf("DeclareCeremonyNone: %v", err)
+	}
+	want := planBuildResolverRefusal(t, repo, "Write", "src/app.go")
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
+		t.Fatalf("other-branch declaration = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+	}
+}
+
+// The declaration does not touch odd mode: the canonical spec tree still needs a
+// delta on the declared branch.
+func TestPlanBuildGateDeclarationDoesNotRelaxOddSpecs(t *testing.T) {
+	repo, _ := oddRepo(t)
+	if err := planbuild.DeclareCeremonyNone(repo, "feat/odd-change"); err != nil {
+		t.Fatalf("DeclareCeremonyNone: %v", err)
+	}
+	target := "odd/specs/cap/spec.md"
+	want := planBuildOddSpecsRefusal("Write", target, "odd-change")
+	code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", target))
+	if code != 2 || stdout != "" || stderr != want {
+		t.Fatalf("declared odd gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+	}
+	planBuildAssertAbsent(t, filepath.Join(repo, filepath.FromSlash(target)))
+}

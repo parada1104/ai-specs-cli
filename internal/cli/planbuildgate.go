@@ -22,8 +22,11 @@ package cli
 // In `openspec` mode the plan is still required: the tasks.md of the change the
 // branch pairs (openspec/changes/<change>/tasks.md) under the nearest repository
 // root, or the only active change when the branch pairs none; ambiguity refuses
-// instead of accepting any tasks.md. For a proven submodule topology the central
-// planning root keeps its own plan scan.
+// instead of accepting any tasks.md. A branch can declare that its change needs
+// no plan with `ai-specs changes start --none`, which writes the local git config
+// entry branch.<branch>.aiSpecsCeremony=none: the declaration is never an
+// artifact, and only this plan requirement is relaxed. For a proven submodule
+// topology the central planning root keeps its own plan scan.
 //
 // Exit codes: 0 allows the write, 2 refuses it. Malformed, unrelated or
 // unprovable input fails open, except the topology proof, which fails closed
@@ -69,11 +72,14 @@ const planBuildGateUsage = `Usage: ai-specs plan-build-gate
 Pre-tool-use hook: read one hook event (JSON) on stdin and grade the write. In
 "openspec" mode a production path write is refused until the plan of the change
 the branch pairs exists (openspec/changes/<change>/tasks.md): the branch's last
-segment pairs the change folder, or the only active change is used. In "odd"
-mode no plan is required for a production write, because a small ODD change
-leaves no durable artifact. The only protected odd path is the canonical spec
-tree odd/specs/: promotion is its only writer, so a hand write there is refused
-unless the paired change carries a delta under odd/changes/<change>/specs/.
+segment pairs the change folder, or the only active change is used. A branch
+that declared it needs no plan (ai-specs changes start --none, stored as the
+local git config entry branch.<branch>.aiSpecsCeremony=none, never an artifact)
+is accepted without a plan; the declaration relaxes this requirement only. In
+"odd" mode no plan is required for a production write, because a small ODD
+change leaves no durable artifact. The only protected odd path is the canonical
+spec tree odd/specs/: promotion is its only writer, so a hand write there is
+refused unless the paired change carries a delta under odd/changes/<change>/specs/.
 Planning artifacts under openspec/changes/ and, in "odd" mode, under odd/ are
 always writable, and the agent's own .claude config is never graded.
 
@@ -207,7 +213,13 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 		// only protected odd path (odd/specs/) was graded above.
 		return 0
 	}
-	change, err := planbuild.ResolveChange(repoRoot, planbuild.ModeOpenspec, planbuild.Branch(target.Probe), "")
+	// A local no-plan declaration on this branch relaxes the plan requirement
+	// only (S19): every other refusal above already ran.
+	branch := planbuild.Branch(target.Probe)
+	if planbuild.CeremonyNone(repoRoot, branch) {
+		return 0
+	}
+	change, err := planbuild.ResolveChange(repoRoot, planbuild.ModeOpenspec, branch, "")
 	if err == nil && planbuild.PlanIsValidForMode(repoRoot, planbuild.ModeOpenspec, change) {
 		return 0
 	}

@@ -8,6 +8,11 @@ package cli
 // odd/tasks/<change>.md; in openspec it lives inside the change folder and moves
 // with it.
 //
+// Native `ai-specs changes start --none --root <planning-root>`
+// (plan-build-openspec-odd-align T14/S19): the local, per-branch declaration that
+// the change needs no plan, written as one git config entry. Only the plan
+// requirement of the openspec hook is relaxed; it never becomes an artifact.
+//
 // The root dispatcher has NO `archive` verb: the verb is reachable only through
 // the `changes` family, and the root help announces the family alone.
 
@@ -32,7 +37,28 @@ const changesUsage = `Usage: ai-specs changes <subcommand> [args]
 Subcommands:
   archive [<change>] --root <planning-root> [--date YYYY-MM-DD] [--change <name>]
                              Move the change folder into the dated archive
+  start --none --root <planning-root>
+                             Declare that this branch needs no plan
 Run 'ai-specs changes archive --help' for full options.
+Run 'ai-specs changes start --help' for full options.
+`
+
+const changesStartUsage = `Usage: ai-specs changes start --none --root <planning-root>
+
+Declare that the change on the current branch needs no plan. The declaration is
+one entry of this clone's local git config,
+branch.<branch>.aiSpecsCeremony=none: it is never an artifact, never travels
+with the branch and is never committed. The pre-tool-use hook then accepts a
+production write on that branch without a plan.
+
+Only the plan requirement of "openspec" mode is relaxed. The odd mode is not
+touched, the ledger work-start checkpoint still runs, and a high-risk path on a
+declared branch is still refused at pre-merge by the objective refutation.
+
+Options:
+  --none              Declare this branch ceremony-free. Required.
+  --root <path>       Resolved repository root. Required.
+  --help, -h          Show this help
 `
 
 const changesArchiveUsage = `Usage: ai-specs changes archive [<change>] --root <planning-root> [--date YYYY-MM-DD] [--change <name>]
@@ -64,6 +90,63 @@ Options:
                       GITHUB_HEAD_REF can be passed as is.
   --help, -h          Show this help
 `
+
+// runChangesStart is the bash-free declaration verb: it resolves the branch of
+// the repository at --root and writes the local no-plan entry. Re-running it is
+// idempotent and prints the same confirmation.
+func runChangesStart(args []string, stdout, stderr io.Writer) int {
+	none := false
+	root := ""
+	usageError := func(message string) int {
+		fmt.Fprintln(stderr, message)
+		fmt.Fprintln(stderr, "Run 'ai-specs changes start --help' for usage.")
+		return 2
+	}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--help" || arg == "-h":
+			fmt.Fprint(stdout, changesStartUsage)
+			return 0
+		case arg == "--none":
+			none = true
+		case arg == "--root":
+			if i+1 >= len(args) {
+				return usageError("ERROR: --root requires a value")
+			}
+			i++
+			root = args[i]
+		case strings.HasPrefix(arg, "--root="):
+			root = strings.TrimPrefix(arg, "--root=")
+		case strings.HasPrefix(arg, "-"):
+			return usageError("ERROR: unknown flag: " + arg)
+		default:
+			return usageError("ERROR: unexpected positional argument: " + arg)
+		}
+	}
+
+	if root == "" {
+		return usageError("ERROR: missing required option: --root")
+	}
+	if !none {
+		fmt.Fprint(stderr, changesStartUsage)
+		return 2
+	}
+	branch := planbuild.Branch(root)
+	if branch == "" {
+		return usageError(fmt.Sprintf("ERROR: cannot resolve the current branch at %s "+
+			"(detached HEAD or not a Git repository); run this from the branch that carries the change", root))
+	}
+	if err := planbuild.DeclareCeremonyNone(root, branch); err != nil {
+		fmt.Fprintf(stderr, "changes start: %s\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "changes start: declared no-plan ceremony for branch '%s' "+
+		"(git config branch.%s.%s none); the declaration is local and never committed\n",
+		branch, branch, planbuild.CeremonyKey)
+	return 0
+}
 
 // runChangesDispatch is the family remainder: help on stdout, usage on stderr
 // for the bare verb, and the unknown-subcommand pair.
