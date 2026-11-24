@@ -169,15 +169,7 @@ func TestCheckPremergeOddRefusesASymlinkedChangeTree(t *testing.T) {
 // config must exist and the runner it declares must be the one that ran. A plan
 // with no Depth: line keeps the narrower #589 contract.
 func TestCheckPremergeOddGradesTheConfigForADeclaredTier(t *testing.T) {
-	root := oddRepo(t)
-	plan := "# plan\n\nDepth: standard\n\n## Specs\n- **S1.** x — *\"x\"*\n\n" +
-		"## Tasks\n| ID | Spec | Tarea | Ruta | Commit |\n| --- | --- | --- | --- | --- |\n" +
-		"| T1 | S1 | x | inline | pendiente |\n\n" +
-		"## Verification\n- **S1: PASS** — `go test ./internal/...`, exit 0\n\n" +
-		"## Log\n- **L1** — x\n"
-	if err := os.WriteFile(filepath.Join(root, "odd", "tasks", "thing.md"), []byte(plan), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	root := oddDeclaredTierRepo(t)
 
 	wantBlocked(t, CheckPremergeOdd(root, "thing"), "config.yaml")
 
@@ -191,8 +183,52 @@ func TestCheckPremergeOddGradesTheConfigForADeclaredTier(t *testing.T) {
 		[]byte("schema: spec-driven\ntesting:\n  runner: go test ./internal/...\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	oddWriteArchive(t, root, "thing")
 	if got := CheckPremergeOdd(root, "thing"); !got.OK {
 		t.Fatalf("Result = %+v, want OK with a matching runner", got)
+	}
+}
+
+// The declared-tier archive is required: a deleted or never-created archive
+// blocks, because archiving always leaves a dated folder (F3).
+func TestCheckPremergeOddRequiresTheArchiveOfADeclaredTierPlan(t *testing.T) {
+	root := oddDeclaredTierRepo(t)
+	if err := os.WriteFile(filepath.Join(root, "odd", "config.yaml"),
+		[]byte("schema: spec-driven\ntesting:\n  runner: go test ./internal/...\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	wantBlocked(t, CheckPremergeOdd(root, "thing"),
+		"missing archive at odd/changes/archive/thing/ or a valid dated archive named YYYY-MM-DD-thing/")
+
+	oddWriteArchive(t, root, "thing")
+	if got := CheckPremergeOdd(root, "thing"); !got.OK {
+		t.Fatalf("Result = %+v, want OK once the dated archive exists", got)
+	}
+}
+
+// oddDeclaredTierRepo is oddRepo with a valid plan declaring Depth: standard
+// and the verification row that names the configured runner.
+func oddDeclaredTierRepo(t *testing.T) string {
+	t.Helper()
+	root := oddRepo(t)
+	plan := "# plan\n\nDepth: standard\n\n## Specs\n- **S1.** x — *\"x\"*\n\n" +
+		"## Tasks\n| ID | Spec | Tarea | Ruta | Commit |\n| --- | --- | --- | --- | --- |\n" +
+		"| T1 | S1 | x | inline | pendiente |\n\n" +
+		"## Verification\n- **S1: PASS** — `go test ./internal/...`, exit 0\n\n" +
+		"## Log\n- **L1** — x\n"
+	if err := os.WriteFile(filepath.Join(root, "odd", "tasks", "thing.md"), []byte(plan), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// oddWriteArchive creates the dated archive folder the declared tier requires.
+func oddWriteArchive(t *testing.T, root, change string) {
+	t.Helper()
+	archive := filepath.Join(root, "odd", "changes", "archive", "2026-01-02-"+change)
+	if err := os.MkdirAll(archive, 0o755); err != nil {
+		t.Fatal(err)
 	}
 }
 

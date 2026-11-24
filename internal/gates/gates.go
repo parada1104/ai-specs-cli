@@ -113,13 +113,16 @@ func checkPlan(folder, location string) []string {
 	return located
 }
 
-// inspectFolder runs the whole gate over one change folder.
-func inspectFolder(folder string, tier *string, location, repoRoot string) Result {
+// inspectFolder runs the whole gate over one change folder. gradePlan is false
+// only for a legacy undated archive, which predates the plan contract.
+func inspectFolder(folder string, tier *string, location, repoRoot string, gradePlan bool) Result {
 	var blockers []string
 	tasksText := readText(filepath.Join(folder, "tasks.md"))
 	resolved := resolveTier(tasksText, tier, &blockers)
 	blockers = append(blockers, checkMinimums(folder, resolved, location)...)
-	blockers = append(blockers, checkPlan(folder, location)...)
+	if gradePlan {
+		blockers = append(blockers, checkPlan(folder, location)...)
+	}
 	blockers = append(blockers, checkTaskCommits(folder, repoRoot, location)...)
 	blockers = append(blockers, checkVerifyEvidence(folder, resolved)...)
 	blockers = append(blockers, checkProjectConfig(repoRoot, planbuild.ModeOpenspec, filepath.Join(folder, "tasks.md"), resolved)...)
@@ -130,6 +133,7 @@ func inspectFolder(folder string, tier *string, location, repoRoot string) Resul
 // CheckPrearchive inspects the active openspec/changes/<slug>/ before
 // archive-tail.
 func CheckPrearchive(repoRoot, slug string, tier *string) Result {
+	slug = planbuild.NormalizeChange(slug)
 	active := filepath.Join(repoRoot, "openspec", "changes", slug)
 	if !isDir(active) {
 		return Result{
@@ -138,12 +142,13 @@ func CheckPrearchive(repoRoot, slug string, tier *string) Result {
 			ArchivePath: active,
 		}
 	}
-	return inspectFolder(active, tier, "changes/"+slug, repoRoot)
+	return inspectFolder(active, tier, "changes/"+slug, repoRoot, true)
 }
 
 // CheckPremerge inspects the archived artifacts and staged evidence before
-// merge.
+// merge. A branch-shaped slug (CI passes GITHUB_HEAD_REF) keeps its last segment.
 func CheckPremerge(repoRoot, slug string, tier *string) Result {
+	slug = planbuild.NormalizeChange(slug)
 	changes := filepath.Join(repoRoot, "openspec", "changes")
 	active := filepath.Join(changes, slug)
 	var blockers []string
@@ -152,13 +157,17 @@ func CheckPremerge(repoRoot, slug string, tier *string) Result {
 			"active change folder still present at openspec/changes/%s/ — "+
 				"run archive-tail on the review branch before merge", slug))
 	}
-	archive, archiveBlockers := resolveArchive(filepath.Join(changes, "archive"), slug)
+	archive, archiveBlockers := resolveArchive(filepath.Join(changes, "archive"), slug, "openspec")
 	blockers = append(blockers, archiveBlockers...)
 	if archive == "" {
 		return Result{Blockers: blockers, Tier: rawTier(tier)}
 	}
 
-	result := inspectFolder(archive, tier, "archive/"+filepath.Base(archive), repoRoot)
+	// A legacy undated archive (archive/<slug>) predates the plan contract, so it
+	// is not graded by the plan grammar; a dated archive is. Nothing else is
+	// weakened for it.
+	gradePlan := datedArchiveRe.MatchString(filepath.Base(archive))
+	result := inspectFolder(archive, tier, "archive/"+filepath.Base(archive), repoRoot, gradePlan)
 	result.Blockers = append(blockers, result.Blockers...)
 	result.OK = len(result.Blockers) == 0
 	result.ArchivePath = archive
@@ -179,6 +188,7 @@ const TierOdd = "odd"
 // branch could not be paired. The mode is resolved by the caller, which is the
 // same resolver the pre-tool-use gate uses.
 func CheckPremergeOdd(repoRoot, change string) Result {
+	change = planbuild.NormalizeChange(change)
 	if change == "" {
 		return Result{Blockers: []string{"ODD mode is active but the current branch cannot be " +
 			"resolved (detached HEAD), so no change can be paired"}, Tier: TierOdd}
@@ -205,10 +215,15 @@ func CheckPremergeOdd(repoRoot, change string) Result {
 				"so the OpenSpec tree would become the parity source", folder))
 	}
 	// A plan that declares its tier is graded like an OpenSpec change: the
-	// project config must exist and its runner must be the one that ran. A plan
-	// with no Depth: line is legacy and keeps the #589 contract (plan, archive
-	// and parity only), so existing ODD repositories do not retro-block.
+	// project config must exist and its runner must be the one that ran, and the
+	// change must be archived. Archiving always leaves a dated folder, even for a
+	// delta-less change (F3). A plan with no Depth: line is legacy and keeps the
+	// #589 contract (plan, archive and parity only), so existing ODD repositories
+	// do not retro-block.
 	if declared, ok := declaredTier(readText(plan)); ok {
+		_, archiveBlockers := resolveArchive(planbuild.ArchiveBase(repoRoot, planbuild.ModeOdd),
+			change, "odd")
+		blockers = append(blockers, archiveBlockers...)
 		blockers = append(blockers, checkProjectConfig(repoRoot, planbuild.ModeOdd, plan, declared)...)
 	}
 	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: TierOdd, ArchivePath: plan}

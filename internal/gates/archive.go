@@ -13,13 +13,13 @@ import (
 var datedArchiveRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})-(.+)$`)
 
 // resolveArchive resolves one exact dated archive, or the exact undated legacy
-// fallback. Symlinked roots and candidates are rejected outright: is_dir()
-// follows symlinks, so a dated archive symlink to content outside the planning
-// tree could otherwise have its external files satisfy artifact/verification
-// gates.
-func resolveArchive(archiveRoot, slug string) (string, []string) {
-	missing := fmt.Sprintf("missing archive at openspec/changes/archive/%s/ or a valid dated "+
-		"archive named YYYY-MM-DD-%s/", slug, slug)
+// fallback, under the given planning tree ("openspec" or "odd"). Symlinked roots
+// and candidates are rejected outright: is_dir() follows symlinks, so a dated
+// archive symlink to content outside the planning tree could otherwise have its
+// external files satisfy artifact/verification gates.
+func resolveArchive(archiveRoot, slug, tree string) (string, []string) {
+	missing := fmt.Sprintf("missing archive at %s/changes/archive/%s/ or a valid dated "+
+		"archive named YYYY-MM-DD-%s/", tree, slug, slug)
 	var symlinkBlockers []string
 	if isSymlink(archiveRoot) {
 		symlinkBlockers = append(symlinkBlockers, fmt.Sprintf(

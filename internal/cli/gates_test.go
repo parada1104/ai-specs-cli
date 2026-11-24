@@ -86,7 +86,7 @@ func TestGatesPremergeOKPrintsTheTier(t *testing.T) {
 
 func TestGatesPremergeBlockedPrintsTheBlockerList(t *testing.T) {
 	root := gatesRepo(t)
-	gatesWrite(t, filepath.Join(root, "openspec", "changes", "archive", "bad-change", "tasks.md"),
+	gatesWrite(t, filepath.Join(root, "openspec", "changes", "archive", "2026-01-02-bad-change", "tasks.md"),
 		"Depth: standard\n")
 
 	code, stdout, stderr := runGatesCLI(t, "gates", "premerge", "bad-change", "--root", root)
@@ -100,9 +100,9 @@ func TestGatesPremergeBlockedPrintsTheBlockerList(t *testing.T) {
 		t.Fatalf("stderr = %q, want the BLOCKED header then indented blockers", stderr)
 	}
 	for _, want := range []string{
-		"  - archive/bad-change/specs/ must contain at least one *.md for tier standard\n",
-		"  - archive/bad-change/tasks.md: `## Specs` section is missing: add the `## Specs` section above `## Tasks`\n",
-		"  - archive/bad-change/tasks.md: `## Tasks` section is missing: add the `## Tasks` table\n",
+		"  - archive/2026-01-02-bad-change/specs/ must contain at least one *.md for tier standard\n",
+		"  - archive/2026-01-02-bad-change/tasks.md: `## Specs` section is missing: add the `## Specs` section above `## Tasks`\n",
+		"  - archive/2026-01-02-bad-change/tasks.md: `## Tasks` section is missing: add the `## Tasks` table\n",
 		"  - standard verify evidence requires dedicated verify-report.md\n",
 	} {
 		if !strings.Contains(stderr, want) {
@@ -220,6 +220,50 @@ func gatesGitRepo(t *testing.T, branch string) string {
 	gitTest(t, root, "commit", "--allow-empty", "-m", "initial")
 	gatesWrite(t, filepath.Join(root, "openspec", "config.yaml"), gatesConfig)
 	return root
+}
+
+// A branch-shaped --change (CI passes GITHUB_HEAD_REF) is normalized to its last
+// path segment before use (F6).
+func TestGatesPremergeAcceptsABranchShapedChangeOverride(t *testing.T) {
+	root := gatesRepo(t)
+	gatesConformingArchive(t, root, "alpha")
+
+	code, stdout, stderr := runGatesCLI(t,
+		"gates", "premerge", "--change", "feat/alpha", "--root", root)
+
+	if code != 0 || stderr != "" {
+		t.Fatalf("exit = %d, stderr = %q; want 0/empty", code, stderr)
+	}
+	if stdout != "premerge-guardian: OK (standard, change alpha)\n" {
+		t.Errorf("stdout = %q, want the normalized change in the verdict", stdout)
+	}
+}
+
+// An empty positional or an explicitly empty --change= is a usage error, never
+// "omitted": only a genuinely absent argument means absent (F2).
+func TestGatesPremergeRefusesAnEmptyChangeArgument(t *testing.T) {
+	root := gatesRepo(t)
+	gatesConformingArchive(t, root, "alpha")
+
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		needle string
+	}{
+		{"empty positional", []string{"gates", "premerge", ""}, "empty change argument"},
+		{"empty --change=", []string{"gates", "premerge", "--change="}, "--change requires a non-empty value"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append(append([]string{}, tc.args...), "--root", root)
+			code, stdout, stderr := runGatesCLI(t, args...)
+			if code != 2 || stdout != "" {
+				t.Fatalf("exit = %d, stdout = %q; want 2/empty", code, stdout)
+			}
+			if !strings.Contains(stderr, tc.needle) {
+				t.Errorf("stderr = %q, want %q", stderr, tc.needle)
+			}
+		})
+	}
 }
 
 // A positional slug keeps the legacy verdict byte for byte; --change instead

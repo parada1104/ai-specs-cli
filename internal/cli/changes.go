@@ -44,19 +44,23 @@ stays at odd/tasks/<change>.md; in openspec the plan lives inside the change
 folder and moves with it.
 
 The verb refuses while the promotion is pending (run 'ai-specs specs promote'
-first), refuses when a dated archive for the change already exists, and never
-deletes anything. A change with no delta folder has nothing to archive: it is a
-no-op with exit 0, matching the pre-merge rule that a change which never had a
-delta folder is not required to be archived.
+first), refuses when a dated archive for the change already exists, refuses a
+destination that resolves through a symlink or outside the repository, and never
+deletes anything. A change with no delta folder is still archived: the dated
+folder is created holding a copy of the plan, and the original plan stays where
+it is.
 
 Arguments:
   <change>            Change override; wins over --change and the branch pairing
+                      An empty <change> is a usage error, never "omitted".
 
 Options:
   --root <path>       Resolved planning root (never the process cwd). Required.
   --date <date>       Archive date prefix, a real ISO calendar date
                       (YYYY-MM-DD). Defaults to today in UTC.
-  --change <name>     Explicit change override, for CI and detached HEAD.
+  --change <name>     Explicit change override, for CI and detached HEAD. A
+                      value containing '/' keeps its last path segment, so
+                      GITHUB_HEAD_REF can be passed as is.
   --help, -h          Show this help
 `
 
@@ -84,7 +88,9 @@ func runChangesDispatch(args []string, stdout, stderr io.Writer) int {
 // runChangesArchive is the verb's own argument contract and its reporting.
 func runChangesArchive(args []string, stdout, stderr io.Writer) int {
 	change := ""
+	positional := false
 	override := ""
+	changeFlag := false
 	root := ""
 	date := ""
 	usageError := func(message string) int {
@@ -119,17 +125,29 @@ func runChangesArchive(args []string, stdout, stderr io.Writer) int {
 			if i+1 >= len(args) {
 				return usageError("ERROR: --change requires a value")
 			}
+			changeFlag = true
 			i++
 			override = args[i]
 		case strings.HasPrefix(arg, "--change="):
+			changeFlag = true
 			override = strings.TrimPrefix(arg, "--change=")
 		case strings.HasPrefix(arg, "-"):
 			return usageError("ERROR: unknown flag: " + arg)
-		case change == "":
-			change = arg
 		default:
-			return usageError("ERROR: unexpected positional argument: " + arg)
+			if positional {
+				return usageError("ERROR: unexpected positional argument: " + arg)
+			}
+			// An empty argument is an explicit value, not an omitted one (F2):
+			// silently treating it as absent would archive the only active change.
+			if arg == "" {
+				return usageError("ERROR: empty change argument: name a change or omit the argument entirely")
+			}
+			positional = true
+			change = arg
 		}
+	}
+	if changeFlag && override == "" {
+		return usageError("ERROR: --change requires a non-empty value")
 	}
 
 	if root == "" {
@@ -160,6 +178,17 @@ func runChangesArchive(args []string, stdout, stderr io.Writer) int {
 		return usageError(fmt.Sprintf("ERROR: invalid change name: %s (expected a single path segment)", change))
 	}
 
+	archiveBase := planbuild.ArchiveBase(root, mode)
+	dst := filepath.Join(archiveBase, date+"-"+change)
+	// The archive write is contained (F1): a symlinked archive tree, or a
+	// destination outside the repository, is refused before anything moves.
+	if !specs.PathContained(root, dst) {
+		fmt.Fprintf(stderr, "changes archive: refusing to archive %s: %s resolves through a symlink "+
+			"or outside the repository; make it a real directory of this repository and retry\n",
+			change, repoRelative(root, archiveBase))
+		return 1
+	}
+
 	src := planbuild.ChangeFolder(root, mode, change)
 	isActive := false
 	if info, statErr := os.Stat(src); statErr == nil && info.IsDir() {
@@ -174,29 +203,58 @@ func runChangesArchive(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
-	if existing, found := datedArchiveFor(planbuild.ArchiveBase(root, mode), change); found {
+	if existing, found := datedArchiveFor(archiveBase, change); found {
 		fmt.Fprintf(stderr, "changes archive: an archive for '%s' already exists at %s; "+
 			"refusing to create a second one\n", change, existing)
 		return 1
 	}
+
+	// A delta-less change is still archived (F3): the dated folder holds a copy
+	// of the plan, and the original plan stays where it is.
+	plan := planbuild.TasksPath(root, mode, change)
 	if !isActive {
-		fmt.Fprintf(stdout, "changes archive: %s has no delta under %s; nothing to archive\n",
-			change, planbuild.ChangesBase(root, mode))
+		if !planbuild.PlanIsValidForMode(root, mode, change) {
+			fmt.Fprintf(stderr, "changes archive: %s has no change folder under %s and no plan at %s; "+
+				"nothing to archive\n", change, planbuild.ChangesBase(root, mode),
+				repoRelative(root, plan))
+			return 1
+		}
+		content, readErr := os.ReadFile(plan)
+		if readErr != nil {
+			fmt.Fprintf(stderr, "changes archive: cannot read %s: %s\n", plan, readErr)
+			return 1
+		}
+		if err := os.MkdirAll(dst, 0o755); err != nil {
+			fmt.Fprintf(stderr, "changes archive: cannot create %s: %s\n", dst, err)
+			return 1
+		}
+		if err := os.WriteFile(filepath.Join(dst, "tasks.md"), content, 0o644); err != nil {
+			fmt.Fprintf(stderr, "changes archive: cannot write %s: %s\n",
+				filepath.Join(dst, "tasks.md"), err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "changes archive: archived the plan of %s at %s (no delta folder)\n", change, dst)
 		return 0
 	}
 
-	archiveBase := planbuild.ArchiveBase(root, mode)
 	if err := os.MkdirAll(archiveBase, 0o755); err != nil {
 		fmt.Fprintf(stderr, "changes archive: cannot create %s: %s\n", archiveBase, err)
 		return 1
 	}
-	dst := filepath.Join(archiveBase, date+"-"+change)
 	if err := os.Rename(src, dst); err != nil {
 		fmt.Fprintf(stderr, "changes archive: cannot move %s to %s: %s\n", src, dst, err)
 		return 1
 	}
 	fmt.Fprintf(stdout, "changes archive: moved %s to %s\n", src, dst)
 	return 0
+}
+
+// repoRelative is the repository-relative path the blockers name.
+func repoRelative(root, path string) string {
+	if relative, err := filepath.Rel(root, path); err == nil {
+		return relative
+	}
+	return path
 }
 
 // archiveDateRe is the exact YYYY-MM-DD shape the dated archive demands;

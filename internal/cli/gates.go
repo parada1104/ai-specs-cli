@@ -80,7 +80,9 @@ func runGatesDispatch(args []string, stdout, stderr io.Writer) int {
 // --stage) and the Python main()'s reporting.
 func runGatesPremerge(args []string, stdout, stderr io.Writer) int {
 	slug := ""
+	positional := false
 	override := ""
+	changeFlag := false
 	root := ""
 	var tier *string
 	stage := "pre-merge"
@@ -130,17 +132,29 @@ func runGatesPremerge(args []string, stdout, stderr io.Writer) int {
 			if i+1 >= len(args) {
 				return usageError("ERROR: --change requires a value")
 			}
+			changeFlag = true
 			i++
 			override = args[i]
 		case strings.HasPrefix(arg, "--change="):
+			changeFlag = true
 			override = strings.TrimPrefix(arg, "--change=")
 		case strings.HasPrefix(arg, "-"):
 			return usageError("ERROR: unknown flag: " + arg)
-		case slug == "":
-			slug = arg
 		default:
-			return usageError("ERROR: unexpected positional argument: " + arg)
+			if positional {
+				return usageError("ERROR: unexpected positional argument: " + arg)
+			}
+			// An empty argument is an explicit value, not an omitted one (F2):
+			// silently treating it as absent would grade the only active change.
+			if arg == "" {
+				return usageError("ERROR: empty change argument: name a change or omit the argument entirely")
+			}
+			positional = true
+			slug = arg
 		}
+	}
+	if changeFlag && override == "" {
+		return usageError("ERROR: --change requires a non-empty value")
 	}
 
 	// D': the positional slug wins silently over --change, which is the general
@@ -161,6 +175,9 @@ func runGatesPremerge(args []string, stdout, stderr io.Writer) int {
 	if change == "" {
 		return usageError("ERROR: missing required argument: <slug>")
 	}
+	// The verdict prints, and the guardian grades, the normalized change: a
+	// branch-shaped override (CI passes GITHUB_HEAD_REF) keeps its last segment.
+	change = planbuild.NormalizeChange(change)
 	if root == "" {
 		return usageError("ERROR: missing required option: --root")
 	}

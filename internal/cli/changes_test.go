@@ -234,21 +234,111 @@ func TestChangesArchiveValidatesTheDate(t *testing.T) {
 	}
 }
 
-// No delta folder is a no-op, not an error: there is nothing to archive.
-func TestChangesArchiveWithoutADeltaFolderIsANoOp(t *testing.T) {
+// A delta-less change is still archived: the verb creates the dated folder
+// holding a copy of the plan and leaves the original where it is (F3).
+func TestChangesArchiveCopiesThePlanForADeltaLessChange(t *testing.T) {
 	root := changesOddRepo(t)
-	changesWrite(t, filepath.Join(root, "odd", "tasks", "thing.md"), changesPlan)
+	plan := filepath.Join(root, "odd", "tasks", "thing.md")
+	changesWrite(t, plan, changesPlan)
+	dst := filepath.Join(root, "odd", "changes", "archive", "2026-01-02-thing")
 
-	code, stdout, stderr := runChangesCLI(t, "changes", "archive", "thing", "--root", root)
+	code, stdout, stderr := runChangesCLI(t,
+		"changes", "archive", "thing", "--root", root, "--date", "2026-01-02")
 
 	if code != 0 || stderr != "" {
 		t.Fatalf("exit = %d, stderr = %q; want 0/empty", code, stderr)
 	}
-	if !strings.Contains(stdout, "no delta") || !strings.Contains(stdout, "nothing to archive") {
-		t.Errorf("stdout = %q, want the no-delta line", stdout)
+	if !strings.Contains(stdout, dst) {
+		t.Errorf("stdout = %q, want the dated archive %s", stdout, dst)
 	}
-	if _, err := os.Stat(filepath.Join(root, "odd", "changes", "archive")); !os.IsNotExist(err) {
-		t.Errorf("archive tree was created for a change with no delta: %v", err)
+	copyPath := filepath.Join(dst, "tasks.md")
+	copied, err := os.ReadFile(copyPath)
+	if err != nil {
+		t.Fatalf("archive folder does not hold the plan: %v", err)
+	}
+	if string(copied) != changesPlan {
+		t.Errorf("archived plan = %q, want a copy of %q", copied, changesPlan)
+	}
+	if original, err := os.ReadFile(plan); err != nil || string(original) != changesPlan {
+		t.Errorf("odd plan must stay at odd/tasks/thing.md: %q (%v)", original, err)
+	}
+}
+
+// An archive destination that resolves through a symlink or outside the
+// repository is refused before any move (F1).
+func TestChangesArchiveRefusesASymlinkedArchiveDestination(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		link string
+	}{
+		{"archive tree", filepath.Join("odd", "changes", "archive")},
+		{"destination folder", filepath.Join("odd", "changes", "archive", "2026-01-02-thing")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := changesOddRepo(t)
+			src := changesOddChange(t, root, "thing")
+			outside := t.TempDir()
+			link := filepath.Join(root, tc.link)
+			if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, link); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+
+			code, stdout, stderr := runChangesCLI(t,
+				"changes", "archive", "thing", "--root", root, "--date", "2026-01-02")
+
+			if code != 1 || stdout != "" {
+				t.Fatalf("exit = %d, stdout = %q; want 1/empty", code, stdout)
+			}
+			if !strings.Contains(stderr, "resolves through a symlink or outside the repository") {
+				t.Errorf("stderr = %q, want the containment refusal", stderr)
+			}
+			if _, err := os.Stat(src); err != nil {
+				t.Errorf("delta folder moved on a refusal: %v", err)
+			}
+			entries, err := os.ReadDir(outside)
+			if err != nil || len(entries) != 0 {
+				t.Errorf("outside tree = %v (%v), want nothing written", entries, err)
+			}
+		})
+	}
+}
+
+// An empty positional or an explicitly empty --change= is a usage error, never
+// "omitted": only a genuinely absent argument means absent (F2).
+func TestChangesArchiveRefusesAnEmptyChangeArgument(t *testing.T) {
+	cases := []struct {
+		name   string
+		args   []string
+		needle string
+	}{
+		{"empty positional", []string{"changes", "archive", ""}, "empty change argument"},
+		{"empty --change=", []string{"changes", "archive", "--change="}, "--change requires a non-empty value"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := changesOddRepo(t)
+			src := changesOddChange(t, root, "thing")
+			args := append([]string{}, tc.args...)
+			args = append(args, "--root", root)
+
+			code, stdout, stderr := runChangesCLI(t, args...)
+
+			if code != 2 || stdout != "" {
+				t.Fatalf("exit = %d, stdout = %q; want 2/empty", code, stdout)
+			}
+			if !strings.Contains(stderr, tc.needle) {
+				t.Errorf("stderr = %q, want %q", stderr, tc.needle)
+			}
+			if _, err := os.Stat(src); err != nil {
+				t.Errorf("delta folder moved on an empty change argument: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "odd", "changes", "archive")); !os.IsNotExist(err) {
+				t.Errorf("archive tree was created on a usage error: %v", err)
+			}
+		})
 	}
 }
 
@@ -362,7 +452,7 @@ func TestChangesArchiveRefusesAChangeNameWithAPathSeparator(t *testing.T) {
 	root := changesOddRepo(t)
 	src := changesOddChange(t, root, "thing")
 
-	for _, name := range []string{"../thing", "..", ".", "a/b"} {
+	for _, name := range []string{"../thing", "..", ".", "a/../b"} {
 		code, _, stderr := runChangesCLI(t,
 			"changes", "archive", name, "--root", root, "--date", "2026-01-02")
 		if code != 2 {
@@ -377,5 +467,29 @@ func TestChangesArchiveRefusesAChangeNameWithAPathSeparator(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "odd", "changes", "archive")); !os.IsNotExist(err) {
 		t.Errorf("archive tree was created on a refusal: %v", err)
+	}
+}
+
+// A branch-shaped --change (CI passes GITHUB_HEAD_REF) keeps its last path
+// segment before use (F6).
+func TestChangesArchiveNormalizesABranchShapedChange(t *testing.T) {
+	root := changesOddRepo(t)
+	src := changesOddChange(t, root, "thing")
+	if report := specs.PromoteChangeForMode(root, "thing", planbuild.ModeOdd, false); len(report.Blockers) != 0 {
+		t.Fatalf("promote Blockers = %q", report.Blockers)
+	}
+
+	code, stdout, stderr := runChangesCLI(t,
+		"changes", "archive", "--change", "feat/thing", "--root", root, "--date", "2026-01-02")
+
+	if code != 0 || stderr != "" {
+		t.Fatalf("exit = %d, stderr = %q; want 0/empty", code, stderr)
+	}
+	dst := filepath.Join(root, "odd", "changes", "archive", "2026-01-02-thing")
+	if !strings.Contains(stdout, dst) || !strings.Contains(stdout, src) {
+		t.Errorf("stdout = %q, want the move to %s", stdout, dst)
+	}
+	if _, err := os.Stat(dst); err != nil {
+		t.Errorf("archive folder missing: %v", err)
 	}
 }

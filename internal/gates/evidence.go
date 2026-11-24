@@ -14,6 +14,9 @@ var (
 	bulletPrefixRe    = regexp.MustCompile(`^[-*]\s+`)
 	dateRe            = regexp.MustCompile(`^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$`)
 	shaRe             = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
+	// verificationCommandRe is the backticked command every verification row must
+	// carry; a row without one records no run (F4).
+	verificationCommandRe = regexp.MustCompile("`[^`]+`")
 )
 
 // failureVerdicts are the verdict tokens Standard refuses.
@@ -175,9 +178,9 @@ func checkVerifyEvidence(changeDir, tier string) []string {
 }
 
 // checkPlanVerification grades the plan's `## Verification` rows: coverage of
-// every declared requirement, no FAIL verdict, and at least one PASS at full.
-// `ready_for_archive: true` belongs to the legacy verify-report.md source only,
-// because coverage replaces it here.
+// every declared requirement, a backticked command in every row, no FAIL verdict,
+// and at least one PASS at full. `ready_for_archive: true` belongs to the legacy
+// verify-report.md source only, because coverage replaces it here.
 func checkPlanVerification(folder string, plan Plan, tier string) []string {
 	declared, issue := parseRequirements(folder)
 	if len(declared.ids) == 0 {
@@ -195,9 +198,16 @@ func checkPlanVerification(folder string, plan Plan, tier string) []string {
 			continue
 		}
 		covered[number-1] = true
+		id := declared.ids[number-1]
+		// Prose is not evidence (F4): a row without a backticked command records
+		// no run, so "PASS — nothing executed" cannot satisfy the gate.
+		if !verificationCommandRe.MatchString(row.Evidence) {
+			blockers = append(blockers, "verification for "+id+
+				` must name the command it ran in backticks: record "- **`+id+
+				": PASS** — `go test ./...`\"")
+		}
 		switch row.Verdict {
 		case "FAIL":
-			id := declared.ids[number-1]
 			blockers = append(blockers, `verification for `+id+` is FAIL: fix it or record "- **`+
 				id+`: N/A** — <why>"`)
 		case "PASS":

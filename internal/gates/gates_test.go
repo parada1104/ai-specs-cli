@@ -269,19 +269,45 @@ func TestInspectFolderBlocksAFreeFormTasksFile(t *testing.T) {
 	root := newRepo(t)
 	folder := archiveWith(t, root, "free-form", "Depth: standard\n\n"+planFixtureBody, archiveOpts{
 		proposal: true, spec: true, report: repoString(standardReport),
+		archiveName: "2026-01-02-free-form",
 	})
 	writeFile(t, filepath.Join(folder, "tasks.md"), "Depth: standard\n- [x] una tarea suelta\n")
 	result := CheckPremerge(root, "free-form", tierOpt("standard"))
 	if result.OK {
 		t.Fatal("a free-form tasks.md must block for every tier")
 	}
-	assertBlockerContains(t, result, "archive/free-form/tasks.md: `## Specs` section is missing",
-		"archive/free-form/tasks.md: `## Tasks` section is missing")
+	assertBlockerContains(t, result, "archive/2026-01-02-free-form/tasks.md: `## Specs` section is missing",
+		"archive/2026-01-02-free-form/tasks.md: `## Tasks` section is missing")
 
 	writeFile(t, filepath.Join(folder, "tasks.md"), "Depth: standard\n\n"+planFixtureBody)
 	if result := CheckPremerge(root, "free-form", tierOpt("standard")); !result.OK {
 		t.Fatalf("conforming plan = %+v, want OK", result)
 	}
+}
+
+// A legacy undated archive predates the plan contract, so it is not graded by
+// the plan grammar; a dated archive is (F5). Nothing else is weakened: the
+// artifact minima and the legacy verify-report source still apply.
+func TestLegacyUndatedArchiveIsNotGradedByThePlanGrammar(t *testing.T) {
+	root := newRepo(t)
+	legacy := archiveWith(t, root, "legacy-free-form", "Depth: standard\n", archiveOpts{
+		spec: true, report: repoString(standardReport),
+	})
+	writeFile(t, filepath.Join(legacy, "tasks.md"), "Depth: standard\n- [x] una tarea suelta\n")
+
+	if result := CheckPremerge(root, "legacy-free-form", tierOpt("standard")); !result.OK {
+		t.Fatalf("legacy undated archive = %+v, want OK without plan-grammar blockers", result)
+	}
+
+	dated := archiveWith(t, root, "dated-free-form", "Depth: standard\n", archiveOpts{
+		spec: true, report: repoString(standardReport), archiveName: "2026-01-02-dated-free-form",
+	})
+	writeFile(t, filepath.Join(dated, "tasks.md"), "Depth: standard\n- [x] una tarea suelta\n")
+	result := CheckPremerge(root, "dated-free-form", tierOpt("standard"))
+	if result.OK {
+		t.Fatal("a dated archive with a free-form tasks.md must block")
+	}
+	assertBlockerContains(t, result, "archive/2026-01-02-dated-free-form/tasks.md: `## Specs` section is missing")
 }
 
 func TestStandardMinimumNeedsThePlanAndOneDelta(t *testing.T) {

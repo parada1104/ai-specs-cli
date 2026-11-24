@@ -180,6 +180,4 @@ func TestLegacyArchiveKeepsCriterionGradingAndReadyForArchive(t *testing.T) {
 
 	complete := CheckPremerge(root, "legacy-full", tierOpt(TierFull))
 	assertBlockerLacks(t, complete, "ready_for_archive", "mapping", "success criteria")
-	// The pre-plan shape keeps I2's plan requirement; nothing else remains.
-	assertBlockerContains(t, complete, "`## Specs` section is missing")
 }

@@ -279,11 +279,39 @@ func TestFullVerificationAllPassIsOK(t *testing.T) {
 
 func TestVerificationAcceptsCriterionLabelsForCompat(t *testing.T) {
 	root := planEvidenceArchive(t, "verify-criterion-labels", TierStandard, 2,
-		"- **Criterion 1: PASS** — covered\n- **Criterion 2: N/A** — prosa\n", archiveOpts{spec: true})
+		"- **Criterion 1: PASS** — `go test ./internal/gates/`, exit 0\n"+
+			"- **Criterion 2: N/A** — `go test ./internal/gates/`, exit 0\n", archiveOpts{spec: true})
 
 	result := CheckPremerge(root, "verify-criterion-labels", tierOpt(TierStandard))
 	if !result.OK {
 		t.Fatalf("Criterion N rows = %+v, want OK for compatibility", result)
+	}
+}
+
+// A verdict without a backticked command is prose, not evidence: every row must
+// name the command it ran, which closes the "PASS — nothing executed" bypass
+// (F4).
+func TestVerificationRowWithoutABacktickedCommandBlocks(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		row  string
+		id   string
+	}{
+		{"pass", "- **S1: PASS** — nothing executed\n", "S1"},
+		{"n/a", "- **S1: N/A** — the CLI cannot judge this requirement\n", "S1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := planEvidenceArchive(t, "verify-no-command", TierStandard, 1, tc.row,
+				archiveOpts{spec: true})
+
+			result := CheckPremerge(root, "verify-no-command", tierOpt(TierStandard))
+			if result.OK {
+				t.Fatal("a row without a backticked command must block")
+			}
+			assertBlockerContains(t, result, "verification for "+tc.id+
+				` must name the command it ran in backticks: record "- **`+tc.id+
+				`: PASS** — `+"`go test ./...`\"")
+		})
 	}
 }
 

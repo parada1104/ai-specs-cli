@@ -228,7 +228,7 @@ Applies only when the repository resolves to `odd` mode: `[recipes.plan-build-fl
 - Reuse ODD verification as the evidence, then promote with `ai-specs specs promote <slug> --root <root>` before the guardian and merge (Section 7). In `odd` mode it composes `odd/changes/<slug>/specs/<domain>/spec.md` into `odd/specs/<domain>/spec.md`; `openspec/specs/**` is neither read nor written.
 - In companion mode the Section 6 file-backed readiness and the Section 7 change-folder and tier-minimum requirements apply only to a change that carries a delta, and then only to the delta; they never require a second proposal, design or tasks.
 - The mode selects the plan tree and never waives the plan requirement: `openspec` mode still needs its change folder, and `odd` mode needs the paired ODD plan.
-- In `odd` mode the pre-merge guardian reads the branch pairing, validates the paired plan and the delta parity against `odd/specs/`, and requires the delta folder to be archived with no active folder left; it applies no tier minimum. A change that never carried `odd/changes/<change>/` has nothing to archive and passes with its plan alone. Archiving is mechanical and mandatory before merge: `ai-specs changes archive <change> --root <planning-root>` moves only `odd/changes/<change>/` to `odd/changes/archive/YYYY-MM-DD-<change>/`; the plan stays at `odd/tasks/<change>.md` because it belongs to the feature, not to the change.
+- In `odd` mode the pre-merge guardian reads the branch pairing, validates the paired plan and the delta parity against `odd/specs/`, and requires the delta folder to be archived with no active folder left; it applies no tier minimum. Archiving is mechanical and mandatory before merge: `ai-specs changes archive <change> --root <planning-root>` moves only `odd/changes/<change>/` to `odd/changes/archive/YYYY-MM-DD-<change>/`; the plan stays at `odd/tasks/<change>.md` because it belongs to the feature, not to the change. A change that never carried `odd/changes/<change>/` is still archived: the verb creates the dated folder holding a copy of the plan (`tasks.md`) and leaves the original where it is, so an archive always exists once the change is archived. A plan that declares `Depth:` must therefore have that dated archive before merge, while a plan with no `Depth:` line is legacy and passes on its plan and parity alone, so existing ODD repositories are not retro-blocked.
 
 ### 4.2 The plan file (`openspec` mode, normative)
 
@@ -327,10 +327,14 @@ advisory.
 The archive move itself is mechanical and mandatory before merge, in both modes:
 `ai-specs changes archive [<slug>] --root <planning-root>` (optional
 `--date YYYY-MM-DD`, default today in UTC). It refuses while a delta is
-unpromoted, refuses when a dated archive for the change already exists, and
-never deletes anything. A change with no delta folder has nothing to archive and
-is a no-op with exit 0, matching the guardian rule that such a change is not
-required to be archived.
+unpromoted, refuses when a dated archive for the change already exists, refuses
+a destination that resolves through a symlink or outside the repository, and
+never deletes anything. A change with no delta folder is still archived: the
+dated folder is created holding a copy of the plan and the original plan stays
+where it is, so "archived" always means a dated folder exists. `--change`
+accepts a branch-shaped value — CI passes `GITHUB_HEAD_REF` — and keeps its last
+path segment, the same normalization the branch pairing applies. An empty
+`<slug>` or an explicitly empty `--change=` is a usage error, never "omitted".
 
 The evidence artifact is the plan's `## Verification` section (Section 4.2): one
 row per `S#` declared under `## Specs`, in the same file.
@@ -342,9 +346,13 @@ row per `S#` declared under `## Specs`, in the same file.
 ```
 
 Standard requires one row — `PASS`, `FAIL` or `N/A` — for every declared `S#`;
-`N/A` must carry its reason. Any `FAIL` blocks. Full requires that same
-coverage, no `FAIL`, and at least one `PASS` row. `ready_for_archive` is not part
-of the plan artifact: coverage replaces it there.
+`N/A` must carry its reason. Every row must also name the command it ran inside
+backticks, because a verdict without a command records no run: a row like
+`- **S1: PASS** — nothing executed` blocks with
+`verification for S1 must name the command it ran in backticks: record "- **S1: PASS** — `go test ./...`"`.
+Any `FAIL` blocks. Full requires that same coverage, no `FAIL`, and at least one
+`PASS` row. `ready_for_archive` is not part of the plan artifact: coverage
+replaces it there.
 
 `verify-report.md` remains **accepted as the legacy evidence artifact**, graded
 exactly as before: a dedicated report whose canonical block is
@@ -521,13 +529,19 @@ Hard blockers (do **not** merge):
 The promotion check is tier-scoped: Light changes and changes with no `specs/`
 deltas are never blocked by it.
 
+The plan grammar is graded on dated archives. An undated legacy
+`archive/<slug>/` folder predates this contract, so its `tasks.md` is not read
+as a plan; every other rule above still applies to it.
+
 In `odd` mode the guardian grades the ODD tree instead (Section 4.1): the paired
 plan at `odd/tasks/<change>.md` must be a regular file of the repository, every
 `odd/changes/<change>/specs/` delta must be promoted into `odd/specs/`, and the
 active `odd/changes/<change>/` folder must be gone. A folder that is still
 active blocks with `ai-specs changes archive`, which is the mandatory archive
-step before merge. A change that never carried a delta folder is not required to
-be archived. `odd` mode has no OpenSpec archive and no tier minimum. Because
+step before merge. Once archived, the dated folder must exist for a plan that
+declares `Depth:` — a delta-less change archives a copy of its plan — while a
+legacy plan with no `Depth:` line keeps the narrower contract. `odd` mode has no
+OpenSpec archive and no tier minimum. Because
 `odd/tasks/<change>.md` survives the archive, the branch still pairs the change
 after archiving; in `openspec` pass the slug or `--change`, since the plan moved
 into the archive with the change folder.
@@ -548,8 +562,9 @@ The third is `.github/workflows/pr-gate.yml`: on every pull request against
 ```
 
 `actions/checkout` leaves `HEAD` detached on `pull_request`, so the gate cannot
-derive the change from the branch and the explicit `--change` is mandatory.
-Making that job a **required** status check is a repository setting, not a file
+derive the change from the branch and the explicit `--change` is mandatory. A
+branch-shaped value is accepted as is: `--change feat/alpha` keeps its last path
+segment (`alpha`), so `GITHUB_HEAD_REF` needs no preprocessing. Making that job a **required** status check is a repository setting, not a file
 in this repo — see `catalog/recipes/plan-build-flow/README.md` for the exact
 `gh api` command the owner runs once. The workflow grades committed state only,
 so the archive commit must be pushed for the check to pass.

@@ -242,17 +242,23 @@ func TestConfiguredRunnerMatchingOneRowPasses(t *testing.T) {
 	}
 }
 
-// A change whose rows name no command has nothing to keep fresh, so the
-// freshness rules never fire (ceremony reduction, S12).
-func TestChangeWithoutCommandsSkipsTheFreshnessRules(t *testing.T) {
+// A row with no command now blocks at Standard (F4), and the freshness rules
+// themselves keep their "nothing to keep fresh" case: a plan with no rows is not
+// kept fresh by either rule (ceremony reduction, S12).
+func TestChangeWithoutCommandsBlocksAndTheFreshnessRulesStayQuiet(t *testing.T) {
 	root := newRepo(t)
 	writeProjectConfig(t, root, "schema: spec-driven\n\ntesting:\n  runner: ./tests/run.sh\n")
 	archiveWith(t, root, "std-no-commands", "Depth: standard\n\n"+verificationPlan(1,
 		"- **S1: PASS** — covered by hand\n"), archiveOpts{spec: true})
 
-	if result := CheckPremerge(root, "std-no-commands", tierOpt(TierStandard)); !result.OK {
-		t.Fatalf("standard = %+v, want OK because no row names a command", result)
+	result := CheckPremerge(root, "std-no-commands", tierOpt(TierStandard))
+	if result.OK {
+		t.Fatal("standard with no backticked command must block")
 	}
+	assertBlockerContains(t, result,
+		`verification for S1 must name the command it ran in backticks: record "- **S1: PASS** — `+
+			"`go test ./...`\"")
+	assertBlockerLacks(t, result, "never runs the configured testing.runner")
 
 	cfg, err := ReadProjectConfig(root, planbuild.ModeOpenspec)
 	if err != nil {

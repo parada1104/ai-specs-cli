@@ -124,13 +124,34 @@ func ValidChangeName(change string) bool {
 	return !strings.ContainsAny(change, "/\\\x00")
 }
 
+// NormalizeChange normalizes a change name that arrived from the CLI: a
+// branch-shaped value keeps its last path segment through ChangeFromBranch, the
+// same helper the branch pairing uses, so CI can pass GITHUB_HEAD_REF (e.g.
+// "feat/alpha") directly. A value with an empty, "." or ".." segment is returned
+// unchanged, so the caller's ValidChangeName refusal still names it instead of
+// silently reinterpreting a traversal attempt as a different change.
+func NormalizeChange(name string) string {
+	if !strings.Contains(name, "/") {
+		return name
+	}
+	for _, part := range strings.Split(name, "/") {
+		if part == "" || part == "." || part == ".." {
+			return name
+		}
+	}
+	if normalized, ok := ChangeFromBranch(name); ok {
+		return normalized
+	}
+	return name
+}
+
 // ResolveChange is the one change ladder: an explicit override wins, then a
 // branch that pairs an existing change folder or its surviving plan, then the
 // only active change; anything else refuses instead of guessing which change is
-// being built.
+// being built. A branch-shaped override is normalized through NormalizeChange.
 func ResolveChange(root, mode, branch, override string) (string, error) {
 	if override != "" {
-		return override, nil
+		return NormalizeChange(override), nil
 	}
 	if name, ok := ChangeFromBranch(branch); ok {
 		if info, err := os.Stat(ChangeFolder(root, mode, name)); err == nil && info.IsDir() {

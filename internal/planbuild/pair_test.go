@@ -154,6 +154,21 @@ func TestResolveChangeOverrideWins(t *testing.T) {
 	}
 }
 
+// A branch-shaped override (CI passes GITHUB_HEAD_REF) is normalized to its
+// last segment through the same helper the branch pairing uses.
+func TestResolveChangeNormalizesABranchShapedOverride(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(ChangeFolder(root, ModeOpenspec, "alpha"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, override := range []string{"feat/alpha", "user/feat/alpha", "alpha"} {
+		got, err := ResolveChange(root, ModeOpenspec, "", override)
+		if err != nil || got != "alpha" {
+			t.Errorf("ResolveChange(%q) = (%q, %v), want (alpha, nil)", override, got, err)
+		}
+	}
+}
+
 // Ladder step 2: a branch pairs its last segment when that change folder
 // exists, in both modes.
 func TestResolveChangePairsTheBranch(t *testing.T) {
