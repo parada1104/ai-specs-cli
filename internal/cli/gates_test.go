@@ -92,8 +92,9 @@ func TestGatesPremergeBlockedPrintsTheBlockerList(t *testing.T) {
 		t.Fatalf("stderr = %q, want the BLOCKED header then indented blockers", stderr)
 	}
 	for _, want := range []string{
-		"  - archive/bad-change/proposal.md is required for tier standard\n",
 		"  - archive/bad-change/specs/ must contain at least one *.md for tier standard\n",
+		"  - archive/bad-change/tasks.md: `## Specs` section is missing: add the `## Specs` section above `## Tasks`\n",
+		"  - archive/bad-change/tasks.md: `## Tasks` section is missing: add the `## Tasks` table\n",
 		"  - standard verify evidence requires dedicated verify-report.md\n",
 	} {
 		if !strings.Contains(stderr, want) {

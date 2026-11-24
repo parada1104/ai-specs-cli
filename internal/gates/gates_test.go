@@ -100,10 +100,13 @@ func assertBlockerContains(t *testing.T, result Result, needles ...string) {
 	}
 }
 
-func assertBlockerLacks(t *testing.T, result Result, needle string) {
+func assertBlockerLacks(t *testing.T, result Result, needles ...string) {
 	t.Helper()
-	if strings.Contains(joined(result), strings.ToLower(needle)) {
-		t.Fatalf("blockers %q unexpectedly contain %q", result.Blockers, needle)
+	text := joined(result)
+	for _, needle := range needles {
+		if strings.Contains(text, strings.ToLower(needle)) {
+			t.Fatalf("blockers %q unexpectedly contain %q", result.Blockers, needle)
+		}
 	}
 }
 
@@ -148,44 +151,40 @@ func TestStandardMinimumPasses(t *testing.T) {
 	}
 }
 
-func TestLightTierRequiresProposal(t *testing.T) {
+func TestLightTierPlanPasses(t *testing.T) {
 	root := newRepo(t)
-	archiveWith(t, root, "ok-light", "Depth: light\n", archiveOpts{proposal: true})
+	archiveWith(t, root, "ok-light", "Depth: light\n", archiveOpts{})
 	result := CheckPremerge(root, "ok-light", tierOpt("light"))
 	if !result.OK {
 		t.Fatalf("light archive = %+v, want OK", result)
 	}
 }
 
-func TestLightMinimumRequiresProposalButNotVerifyEvidence(t *testing.T) {
+func TestLightMinimumRequiresOnlyThePlan(t *testing.T) {
 	root := newRepo(t)
-	archiveWith(t, root, "light-proposal", "Depth: light\n", archiveOpts{})
-	result := CheckPremerge(root, "light-proposal", tierOpt("light"))
+	folder := filepath.Join(root, "openspec", "changes", "archive", "light-no-plan")
+	mkdirAll(t, folder)
+	writeFile(t, filepath.Join(folder, "proposal.md"), "# proposal\n")
+
+	result := CheckPremerge(root, "light-no-plan", tierOpt("light"))
 	if result.OK {
-		t.Fatal("light without proposal must block")
+		t.Fatal("light without tasks.md must block")
 	}
-	assertBlockerContains(t, result, "proposal.md")
-	assertBlockerLacks(t, result, "verify")
+	assertBlockerContains(t, result, "/tasks.md is required for all tiers")
+	assertBlockerLacks(t, result, "proposal.md", "verify")
 }
 
-func TestFullTierRequiresProposalOrDesign(t *testing.T) {
+func TestFullMinimumBlocksWithoutADelta(t *testing.T) {
 	root := newRepo(t)
-	slug := "full-change"
-	folder := archiveWith(t, root, slug, "Depth: full\n", archiveOpts{spec: true})
-	if result := CheckPremerge(root, slug, tierOpt("full")); result.OK {
-		t.Fatal("full without proposal.md or design.md must block")
-	}
+	archiveWith(t, root, "full-no-delta", "Depth: full\n\n"+verificationPlan(1,
+		"- **S1: PASS** — `go test ./internal/gates/`, exit 0\n"), archiveOpts{})
 
-	writeFile(t, filepath.Join(folder, "design.md"),
-		"# design\n\n## Success Criteria\n- [ ] Criterion fixture\n")
-	writeFile(t, filepath.Join(folder, "verify-report.md"),
-		"## Verify evidence\n- Verdict: PASS\n- Command: ./tests/validate.sh\n"+
-			"- Exit: 0\n- Date: 2026-08-07\n- Commit: 1234567\n"+
-			"- ready_for_archive: true\n\n## Success-criteria mapping\n"+
-			"- Criterion 1: PASS — covered\n")
-	if result := CheckPremerge(root, slug, tierOpt("full")); !result.OK {
-		t.Fatalf("full with design.md = %+v, want OK", result)
+	result := CheckPremerge(root, "full-no-delta", tierOpt("full"))
+	if result.OK {
+		t.Fatal("full without a delta must block")
 	}
+	assertBlockerContains(t, result, "/specs/ must contain at least one *.md for tier full")
+	assertBlockerLacks(t, result, "proposal.md", "design.md")
 }
 
 func TestInferTierFromTasksDepthLine(t *testing.T) {
@@ -270,24 +269,16 @@ func TestInspectFolderBlocksAFreeFormTasksFile(t *testing.T) {
 	}
 }
 
-func TestInspectFolderStillRequiresProposalForLightAndStandard(t *testing.T) {
-	for _, tier := range []string{TierLight, TierStandard} {
-		t.Run(tier, func(t *testing.T) {
-			root := newRepo(t)
-			slug := "plan-only-" + tier
-			opts := archiveOpts{}
-			if tier == TierStandard {
-				opts.spec = true
-				opts.report = repoString(standardReport)
-			}
-			archiveWith(t, root, slug, "Depth: "+tier+"\n\n"+planFixtureBody, opts)
-			result := CheckPremerge(root, slug, tierOpt(tier))
-			if result.OK {
-				t.Fatalf("tier %s without proposal.md must still block", tier)
-			}
-			assertBlockerContains(t, result, "/proposal.md is required for tier "+tier)
-		})
+func TestStandardMinimumNeedsThePlanAndOneDelta(t *testing.T) {
+	root := newRepo(t)
+	archiveWith(t, root, "std-plan-delta", "Depth: standard\n\n"+verificationPlan(1,
+		"- **S1: PASS** — `go test ./internal/gates/`, exit 0\n"), archiveOpts{spec: true})
+
+	result := CheckPremerge(root, "std-plan-delta", tierOpt(TierStandard))
+	if !result.OK {
+		t.Fatalf("standard plan plus delta = %+v, want OK", result)
 	}
+	assertBlockerLacks(t, result, "proposal.md", "verify-report")
 }
 
 func TestPrearchiveBlocksMissingActiveFolder(t *testing.T) {
@@ -303,4 +294,24 @@ func TestPrearchiveKeepsTheRawTierWhenTheFolderIsMissing(t *testing.T) {
 	if result.Tier != "Standard" {
 		t.Fatalf("tier = %q, want the raw option value", result.Tier)
 	}
+}
+
+func TestLightMinimumNeedsOnlyThePlan(t *testing.T) {
+	root := newRepo(t)
+	archiveWith(t, root, "light-plan-only", "Depth: light\n", archiveOpts{})
+	if result := CheckPremerge(root, "light-plan-only", tierOpt(TierLight)); !result.OK {
+		t.Fatalf("light plan-only = %+v, want OK", result)
+	}
+}
+
+func TestFullMinimumNeedsThePlanAndOneDelta(t *testing.T) {
+	root := newRepo(t)
+	archiveWith(t, root, "full-plan-delta", "Depth: full\n\n"+verificationPlan(1,
+		"- **S1: PASS** — `go test ./internal/gates/`, exit 0\n"), archiveOpts{spec: true})
+
+	result := CheckPremerge(root, "full-plan-delta", tierOpt(TierFull))
+	if !result.OK {
+		t.Fatalf("full plan plus delta = %+v, want OK", result)
+	}
+	assertBlockerLacks(t, result, "proposal.md", "design.md")
 }

@@ -1,6 +1,7 @@
 package gates
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -205,4 +206,95 @@ func TestLightIsAdvisoryAboutEvidence(t *testing.T) {
 	if result := CheckPremerge(root, "light-no-report", tierOpt("light")); !result.OK {
 		t.Fatalf("light = %+v, want OK without a report", result)
 	}
+}
+
+// verificationPlan builds a valid plan whose `## Verification` rows are given,
+// so the evidence chain (plan section first, verify-report.md second) can be
+// asserted through the public premerge entry point.
+func verificationPlan(specs int, rows string) string {
+	specLines := ""
+	for number := 1; number <= specs; number++ {
+		specLines += fmt.Sprintf("- **S%d.** Fixture requirement %d\n", number, number)
+	}
+	return "## Specs\n\n" + specLines + "\n## Tasks\n\n" +
+		"| ID | Spec | Tarea | Ruta | Commit |\n| --- | --- | --- | --- | --- |\n" +
+		"| T1 | S1 | Fixture task | inline | pendiente |\n\n" +
+		"## Verification\n\n" + rows
+}
+
+// planEvidenceArchive archives a change whose evidence lives in the plan.
+func planEvidenceArchive(t *testing.T, slug, tier string, specs int, rows string, opts archiveOpts) string {
+	t.Helper()
+	root := newRepo(t)
+	archiveWith(t, root, slug, "Depth: "+tier+"\n\n"+verificationPlan(specs, rows), opts)
+	return root
+}
+
+func TestStandardVerificationRequiresARowPerSpec(t *testing.T) {
+	root := planEvidenceArchive(t, "verify-coverage", TierStandard, 2,
+		"- **S1: PASS** — `go test ./internal/gates/`, exit 0\n", archiveOpts{spec: true})
+
+	result := CheckPremerge(root, "verify-coverage", tierOpt(TierStandard))
+	if result.OK {
+		t.Fatal("a spec without a verification row must block at standard")
+	}
+	assertBlockerContains(t, result,
+		`verification is missing a row for S2: add "- **S2: PASS** — <evidence>"`)
+}
+
+func TestStandardVerificationFailBlocks(t *testing.T) {
+	root := planEvidenceArchive(t, "verify-fail", TierStandard, 2,
+		"- **S1: PASS** — covered\n- **S2: FAIL** — broken\n", archiveOpts{spec: true})
+
+	result := CheckPremerge(root, "verify-fail", tierOpt(TierStandard))
+	if result.OK {
+		t.Fatal("a FAIL verdict must block at standard")
+	}
+	assertBlockerContains(t, result,
+		`verification for S2 is FAIL: fix it or record "- **S2: N/A** — <why>"`)
+}
+
+func TestFullVerificationNeedsAtLeastOnePass(t *testing.T) {
+	root := planEvidenceArchive(t, "verify-all-na", TierFull, 2,
+		"- **S1: N/A** — prosa que el CLI no juzga\n- **S2: N/A** — otra prosa\n", archiveOpts{spec: true})
+
+	result := CheckPremerge(root, "verify-all-na", tierOpt(TierFull))
+	if result.OK {
+		t.Fatal("full with no PASS row must block")
+	}
+	assertBlockerContains(t, result, "full tier needs at least one PASS row in verification")
+	assertBlockerLacks(t, result, "ready_for_archive")
+}
+
+func TestFullVerificationAllPassIsOK(t *testing.T) {
+	root := planEvidenceArchive(t, "verify-all-pass", TierFull, 2,
+		"- **S1: PASS** — `go vet ./...`, exit 0\n- **S2: PASS** — `go test ./internal/gates/`, exit 0\n",
+		archiveOpts{spec: true})
+
+	result := CheckPremerge(root, "verify-all-pass", tierOpt(TierFull))
+	if !result.OK {
+		t.Fatalf("plan-verified full change = %+v, want OK", result)
+	}
+}
+
+func TestVerificationAcceptsCriterionLabelsForCompat(t *testing.T) {
+	root := planEvidenceArchive(t, "verify-criterion-labels", TierStandard, 2,
+		"- **Criterion 1: PASS** — covered\n- **Criterion 2: N/A** — prosa\n", archiveOpts{spec: true})
+
+	result := CheckPremerge(root, "verify-criterion-labels", tierOpt(TierStandard))
+	if !result.OK {
+		t.Fatalf("Criterion N rows = %+v, want OK for compatibility", result)
+	}
+}
+
+func TestVerificationRowForUndeclaredSpecBlocks(t *testing.T) {
+	root := planEvidenceArchive(t, "verify-undeclared", TierStandard, 2,
+		"- **S1: PASS** — covered\n- **S2: PASS** — covered\n- **S9: PASS** — stale row\n",
+		archiveOpts{spec: true})
+
+	result := CheckPremerge(root, "verify-undeclared", tierOpt(TierStandard))
+	if result.OK {
+		t.Fatal("a row for an undeclared spec must block")
+	}
+	assertBlockerContains(t, result, "S9", "S1-S2")
 }

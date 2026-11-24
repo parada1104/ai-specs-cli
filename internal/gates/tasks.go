@@ -48,13 +48,16 @@ type Plan struct {
 	Tasks        []PlanTask
 	Log          []PlanLogEntry
 	Verification []PlanVerification
+	// HasVerification reports a `## Verification` section at all, so an empty
+	// or unparseable one is a coverage failure rather than a silent fallback.
+	HasVerification bool
 }
 
 var (
 	planSectionRe  = regexp.MustCompile(`^[ ]{0,3}##[ \t]+(\S.*?)[ \t]*$`)
 	planSpecRe     = regexp.MustCompile(`^- \*\*(S\d+)\.\*\* +(\S.*)$`)
 	planLogRe      = regexp.MustCompile(`^- \*\*(L\d+)\*\* +— +(\S.*)$`)
-	planVerifyRe   = regexp.MustCompile(`^- \*\*(S\d+): +(PASS|FAIL|N/A)\*\* *(?:— *(.*))?$`)
+	planVerifyRe   = regexp.MustCompile(`^- \*\*(S\d+|Criterion \d+): +(PASS|FAIL|N/A)\*\* *(?:— *(.*))?$`)
 	planTaskIDRe   = regexp.MustCompile(`^T\d+$`)
 	planTableSepRe = regexp.MustCompile(`^:?-+:?$`)
 )
@@ -102,6 +105,7 @@ func ParsePlan(text string) (Plan, []string) {
 	}
 
 	if verifyLines, ok := planSectionLines(sections, "verification"); ok {
+		plan.HasVerification = true
 		plan.Verification, blockers = parsePlanVerification(verifyLines, blockers)
 	}
 
@@ -307,7 +311,8 @@ func parsePlanLog(lines []string, blockers []string) ([]PlanLogEntry, []string) 
 	return entries, blockers
 }
 
-// parsePlanVerification reads the verdict rows; an N/A verdict needs a reason.
+// parsePlanVerification reads the verdict rows; `S1` and the legacy `Criterion 1`
+// label are both accepted, and an N/A verdict needs a reason.
 func parsePlanVerification(lines []string, blockers []string) ([]PlanVerification, []string) {
 	var rows []PlanVerification
 	for _, line := range lines {

@@ -90,9 +90,9 @@ deeper chain.
 
 | Tier | When to use | Planning chain (private) | Minimum artifacts before build |
 |---|---|---|---|
-| **Full** | New capability, architecture or cross-cutting refactor, breaking change, ambiguous scope, or user cannot point to concrete files | explore → proposal → spec → design → tasks | `tasks.md` plus `proposal.md` or `design.md`, and at least one spec delta under `specs/` |
-| **Standard** | Scoped feature or multi-file fix in a known area; intent is clear but needs written requirements | conditional explore → proposal → spec → tasks | `proposal.md`, `tasks.md`, and at least one spec delta under `specs/`; explore when criteria below fire |
-| **Light** | Small bugfix, single-file tweak, typo, or user names exact file(s) and expected edit | proposal → tasks | `proposal.md` and `tasks.md` |
+| **Full** | New capability, architecture or cross-cutting refactor, breaking change, ambiguous scope, or user cannot point to concrete files | explore → proposal → spec → design → tasks | `tasks.md` plan (`## Specs`, `## Tasks`, `## Verification`) and at least one spec delta under `specs/` |
+| **Standard** | Scoped feature or multi-file fix in a known area; intent is clear but needs written requirements | conditional explore → proposal → spec → tasks | `tasks.md` plan and at least one spec delta under `specs/`; explore when criteria below fire |
+| **Light** | Small bugfix, single-file tweak, typo, or user names exact file(s) and expected edit | proposal → tasks | `tasks.md` plan |
 
 ### Standard and Full explore criteria
 
@@ -306,10 +306,13 @@ Do **not** run `gh pr create`, `glab mr create`, or equivalent until:
    `odd` mode (Section 4.1) that folder is not required: the gate is satisfied by
    `odd/tasks/<change>.md` and, when the change carries a delta, by
    `odd/changes/<change>/`.
-2. Tier minimum files from Section 2 are present and **committed**.
+2. The plan from Section 4.2 is present and **committed**, plus, from Standard
+   up, at least one delta under `specs/`. `proposal.md`, `design.md` and
+   `verify-report.md` are still accepted and honoured when present; they are not
+   required.
 3. Implementation and verification for that slug are complete (or the user
    explicitly accepts opening a draft-only PR for review of planning — still
-   requires the tier minimum files).
+   requires the plan, and the delta from Standard up).
 
 If the gate fails, stop with a plain-language blocker: complete planning for
 the classified depth, commit the files, then retry PR creation.
@@ -317,10 +320,26 @@ the classified depth, commit the files, then retry PR creation.
 ### 7.3 Pre-merge archive gate (hard stop)
 
 Archive-tail MUST run on the **review branch** before merge — never defer until
-after the merge lands on the base branch. Standard and Full changes require a
-conforming `verify-report.md` before this step; Light verification is advisory.
+after the merge lands on the base branch. Standard and Full changes require
+conforming verification evidence before this step; Light verification is
+advisory.
 
-The canonical evidence block in `verify-report.md` is:
+The evidence artifact is the plan's `## Verification` section (Section 4.2): one
+row per `S#` declared under `## Specs`, in the same file.
+
+```markdown
+## Verification
+- **S1: PASS** — `go test ./internal/gates/...`, exit 0, commit `604a441`, 2026-08-07
+- **S2: N/A** — the CLI cannot judge this requirement, and the reason is why
+```
+
+Standard requires one row — `PASS`, `FAIL` or `N/A` — for every declared `S#`;
+`N/A` must carry its reason. Any `FAIL` blocks. Full requires that same
+coverage, no `FAIL`, and at least one `PASS` row. `ready_for_archive` is not part
+of the plan artifact: coverage replaces it there.
+
+`verify-report.md` remains **accepted as the legacy evidence artifact**, graded
+exactly as before: a dedicated report whose canonical block is
 
 ```markdown
 ## Verify evidence
@@ -336,18 +355,19 @@ The canonical evidence block in `verify-report.md` is:
 - Criterion 2: PASS — concise evidence for the second criterion
 ```
 
-Standard requires the dedicated report with a non-failing verdict, command,
-exit `0`, date, and 7–40 character commit SHA. Full additionally requires
-strict `PASS` and `ready_for_archive: true`, plus exactly one `Criterion N: PASS`
-mapping row for every top-level bullet under `## Success Criteria` in the
-authoritative source: `proposal.md` when present, otherwise `design.md`.
-Missing or empty criteria in an existing `proposal.md` block Full; the guardian
-does not fall back to `design.md`. Duplicate `## Success Criteria` headings in
-the authoritative source are also rejected. Criterion numbers are 1-based and
-contiguous; duplicate mapping rows, missing numbers, unknown numbers, and
-non-PASS mapping statuses block Full. The guardian enforces this deterministic
-mapping at both gates. Light may warn when evidence is absent but MUST NOT block
-solely for it.
+On that legacy source, Standard requires the dedicated report with a non-failing
+verdict, command, exit `0`, date, and 7–40 character commit SHA. Full
+additionally requires strict `PASS` and `ready_for_archive: true`, plus exactly
+one `Criterion N: PASS` mapping row for every top-level bullet under
+`## Success Criteria` in the authoritative source: `proposal.md` when present,
+otherwise `design.md`. Missing or empty criteria in an existing `proposal.md`
+block Full; the guardian does not fall back to `design.md`. Duplicate
+`## Success Criteria` headings in the authoritative source are also rejected.
+Criterion numbers are 1-based and contiguous; duplicate mapping rows, missing
+numbers, unknown numbers, and non-PASS mapping statuses block Full. `S1` and
+`Criterion 1` are interchangeable labels, so an old mapping row keeps satisfying
+a plan requirement. The guardian enforces this deterministic mapping at both
+gates. Light may warn when evidence is absent but MUST NOT block solely for it.
 
 Enforce the evidence gate twice: before archive-tail and again in the guardian
 before merge. There is no bypass flag. Labels may use `Status`/`Overall`,
@@ -429,12 +449,14 @@ Hard blockers (do **not** merge):
    `openspec/changes/archive/YYYY-MM-DD-<slug>/`; the exact undated
    `openspec/changes/archive/<slug>/` form is accepted only as a legacy
    fallback when no dated candidate exists.
-3. Archived folder lacks the tier minimum files (Light: `proposal.md` +
-   `tasks.md`; Standard: `proposal.md` + `tasks.md` + `specs/**/*.md`; Full:
-   `tasks.md` + `proposal.md` or `design.md` + `specs/**/*.md`).
-4. Standard lacks a conforming dedicated `verify-report.md`.
-5. Full lacks a conforming dedicated `verify-report.md` with strict `PASS` and
-   `ready_for_archive: true`.
+3. Archived folder lacks the tier minimum files (every tier: `tasks.md`
+   parsing as the plan; Standard and Full: also `specs/**/*.md`).
+   `proposal.md`, `design.md` and `verify-report.md` are accepted and honoured
+   when present, but they are not required.
+4. Standard verification is incomplete: a declared `S#` has no row in
+   `## Verification`, or a row is `FAIL`.
+5. Full verification is incomplete: same as Standard, and at least one row
+   must be `PASS`.
 6. A Standard or Full delta under `specs/<domain>/spec.md` is not promoted into
    `openspec/specs/<domain>/spec.md`, or cannot be composed (collision, missing
    `MODIFIED` target, unsupported `RENAMED`, destructive `REMOVED` without

@@ -74,32 +74,19 @@ func hasSpecDelta(folder string) bool {
 	return found
 }
 
-// checkMinimums applies the per-tier artifact minima.
+// checkMinimums applies the per-tier artifact minima (P6): the plan always, a
+// delta from standard up. proposal.md, design.md and verify-report.md are still
+// accepted and honoured when present; they are simply not required.
 func checkMinimums(folder, tier, location string) []string {
 	var blockers []string
 	if !isFile(filepath.Join(folder, "tasks.md")) {
 		blockers = append(blockers, location+"/tasks.md is required for all tiers")
 	}
-	hasProposal := isFile(filepath.Join(folder, "proposal.md"))
-	switch tier {
-	case TierLight:
-		if !hasProposal {
-			blockers = append(blockers, location+"/proposal.md is required for tier light")
-		}
-	case TierStandard:
-		if !hasProposal {
-			blockers = append(blockers, location+"/proposal.md is required for tier standard")
-		}
-		if !hasSpecDelta(folder) {
-			blockers = append(blockers, location+"/specs/ must contain at least one *.md for tier standard")
-		}
-	default:
-		if !hasProposal && !isFile(filepath.Join(folder, "design.md")) {
-			blockers = append(blockers, location+"/proposal.md or design.md is required for tier full")
-		}
-		if !hasSpecDelta(folder) {
-			blockers = append(blockers, location+"/specs/ must contain at least one *.md for tier full")
-		}
+	if tier == TierLight {
+		return blockers
+	}
+	if !hasSpecDelta(folder) {
+		blockers = append(blockers, location+"/specs/ must contain at least one *.md for tier "+tier)
 	}
 	return blockers
 }

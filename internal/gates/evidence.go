@@ -123,10 +123,15 @@ func validDate(value string) bool {
 }
 
 // checkVerifyEvidence returns the staged verify blockers; Light is always
-// advisory.
+// advisory. Evidence is read from the plan's `## Verification` when the plan has
+// that section, otherwise from the legacy verify-report.md.
 func checkVerifyEvidence(changeDir, tier string) []string {
 	if tier == TierLight {
 		return nil
+	}
+	plan, _ := ParsePlan(readText(filepath.Join(changeDir, "tasks.md")))
+	if plan.HasVerification {
+		return checkPlanVerification(changeDir, plan, tier)
 	}
 	report := filepath.Join(changeDir, "verify-report.md")
 	if !isFile(report) {
@@ -165,6 +170,50 @@ func checkVerifyEvidence(changeDir, tier string) []string {
 	}
 	if tier == TierFull {
 		blockers = append(blockers, checkFullCriteriaMapping(changeDir, text)...)
+	}
+	return blockers
+}
+
+// checkPlanVerification grades the plan's `## Verification` rows: coverage of
+// every declared requirement, no FAIL verdict, and at least one PASS at full.
+// `ready_for_archive: true` belongs to the legacy verify-report.md source only,
+// because coverage replaces it here.
+func checkPlanVerification(folder string, plan Plan, tier string) []string {
+	declared, issue := parseRequirements(folder)
+	if len(declared.ids) == 0 {
+		return []string{issue}
+	}
+	var blockers []string
+	covered := make([]bool, len(declared.ids))
+	passes := 0
+	for _, row := range plan.Verification {
+		number, err := requirementNumber(row.ID)
+		if err != nil || number < 1 || number > len(declared.ids) {
+			blockers = append(blockers, "verification has a row for "+row.ID+
+				" but the declared requirements are "+declared.rangeLabel()+
+				": remove the row or declare "+row.ID)
+			continue
+		}
+		covered[number-1] = true
+		switch row.Verdict {
+		case "FAIL":
+			id := declared.ids[number-1]
+			blockers = append(blockers, `verification for `+id+` is FAIL: fix it or record "- **`+
+				id+`: N/A** — <why>"`)
+		case "PASS":
+			passes++
+		}
+	}
+	for index, ok := range covered {
+		if ok {
+			continue
+		}
+		id := declared.ids[index]
+		blockers = append(blockers, `verification is missing a row for `+id+`: add "- **`+
+			id+`: PASS** — <evidence>"`)
+	}
+	if tier == TierFull && passes == 0 {
+		blockers = append(blockers, "full tier needs at least one PASS row in verification")
 	}
 	return blockers
 }
