@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -109,9 +110,45 @@ func HasDeltaDir(folder string) bool {
 	return found
 }
 
-// HasDelta is HasDeltaDir over the change folder of the mode.
+// archiveEntryRe is the dated archive folder shape the archive resolver accepts.
+var archiveEntryRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}-(.+)$`)
+
+// HasDelta reports whether the change carries a delta, active or archived: an
+// archived change whose delta moved into <archive>/<date>-<change>/specs/ still
+// carries it, so a legitimate promoted change is never read as delta-less.
 func HasDelta(root, mode, change string) bool {
-	return HasDeltaDir(ChangeFolder(root, mode, change))
+	if HasDeltaDir(ChangeFolder(root, mode, change)) {
+		return true
+	}
+	entry := ArchiveEntry(root, mode, change)
+	// Real directories only, so a symlinked archive never supplies a delta.
+	if info, err := os.Lstat(entry); entry == "" || err != nil || !info.IsDir() {
+		return false
+	}
+	return HasDeltaDir(entry)
+}
+
+// ArchiveEntry is the archive entry of one change, matched exactly as the
+// archive resolver matches it: the undated folder named <change>, or a folder
+// named <YYYY-MM-DD>-<change>. It reports the path whenever an entry with that
+// name exists, whatever its type, so a caller can tell "no archive at all" from
+// "an archive the resolver will grade". "" when none exists.
+func ArchiveEntry(root, mode, change string) string {
+	base := ArchiveBase(root, mode)
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == change {
+			return filepath.Join(base, name)
+		}
+		if match := archiveEntryRe.FindStringSubmatch(name); match != nil && match[1] == change {
+			return filepath.Join(base, name)
+		}
+	}
+	return ""
 }
 
 // ErrNoChange and ErrAmbiguousChange classify the two ladder refusals.

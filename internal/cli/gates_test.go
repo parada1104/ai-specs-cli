@@ -107,6 +107,25 @@ func TestGatesPremergeRefusesAnInvalidChangeName(t *testing.T) {
 	}
 }
 
+// --base is the ref the objective refutations diff against; CI passes the pull
+// request's base sha. Without a resolvable diff it simply refutes nothing.
+func TestGatesPremergeAcceptsABase(t *testing.T) {
+	root := gatesRepo(t)
+	for _, args := range [][]string{
+		{"gates", "premerge", "nothing", "--root", root, "--base", "deadbeef"},
+		{"gates", "premerge", "nothing", "--root", root, "--base=deadbeef"},
+	} {
+		code, stdout, stderr := runGatesCLI(t, args...)
+		if code != 0 || stdout != "premerge-guardian: OK (none)\n" || stderr != "" {
+			t.Fatalf("%q = (%d, %q, %q); want the none verdict", args, code, stdout, stderr)
+		}
+	}
+	code, stdout, stderr := runGatesCLI(t, "gates", "premerge", "nothing", "--root", root, "--base")
+	if code != 2 || stdout != "" || !strings.Contains(stderr, "ERROR: --base requires a value") {
+		t.Fatalf("bare --base = (%d, %q, %q); want the usage error", code, stdout, stderr)
+	}
+}
+
 func TestGatesPremergeOKPrintsTheTier(t *testing.T) {
 	root := gatesRepo(t)
 	gatesConformingArchive(t, root, "ok-change")
@@ -248,9 +267,13 @@ func TestGatesPremergeArgumentErrors(t *testing.T) {
 	}
 }
 
+// A rejected input writes nothing: the guardian is read-only, so a blocked
+// verdict leaves the archive tree untouched.
 func TestGatesPremergeRejectedInputWritesNothing(t *testing.T) {
 	root := gatesRepo(t)
-	code, _, _ := runGatesCLI(t, "gates", "premerge", "slug", "--root", filepath.Join(root, "absent-root"))
+	gatesWrite(t, filepath.Join(root, "openspec", "changes", "slug", "tasks.md"),
+		"Depth: light\n\n"+gatesPlanBody)
+	code, _, _ := runGatesCLI(t, "gates", "premerge", "slug", "--root", root)
 	if code != 2 && code != 1 {
 		t.Fatalf("exit = %d, want a refusal", code)
 	}
