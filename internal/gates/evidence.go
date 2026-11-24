@@ -136,7 +136,7 @@ func checkVerifyEvidence(changeDir, tier string) []string {
 	}
 	plan, _ := ParsePlan(readText(filepath.Join(changeDir, "tasks.md")))
 	if plan.HasVerification {
-		return checkPlanVerification(changeDir, plan, tier)
+		return checkPlanVerification(filepath.Join(changeDir, "tasks.md"), tier)
 	}
 	report := filepath.Join(changeDir, "verify-report.md")
 	if !isFile(report) {
@@ -184,8 +184,9 @@ func checkVerifyEvidence(changeDir, tier string) []string {
 // backticked command per graded row with no prose around or inside it, no
 // recorded failing run, and at least one PASS at full. An `N/A` row carries its
 // reason and is exempt from the command requirement (C').
-func checkPlanVerification(folder string, plan Plan, tier string) []string {
-	declared, issue := parseRequirements(folder)
+func checkPlanVerification(planPath, tier string) []string {
+	plan, _ := ParsePlan(readText(planPath))
+	declared, issue := parseRequirementsFor(filepath.Dir(planPath), readText(planPath))
 	if len(declared.ids) == 0 {
 		return []string{issue}
 	}

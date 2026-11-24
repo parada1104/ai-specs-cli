@@ -306,6 +306,65 @@ func TestChangesArchiveRefusesASymlinkedArchiveDestination(t *testing.T) {
 	}
 }
 
+// A symlink at the change path is not the change directory: os.Stat would call
+// it active and os.Rename would move the link instead of the change (C1).
+func TestChangesArchiveRefusesASymlinkedSource(t *testing.T) {
+	root := changesOddRepo(t)
+	link := changesOddChange(t, root, "thing")
+	if report := specs.PromoteChangeForMode(root, "thing", planbuild.ModeOdd, false); len(report.Blockers) != 0 {
+		t.Fatalf("promote Blockers = %q", report.Blockers)
+	}
+	real := filepath.Join(root, "odd", "changes", "thing-real")
+	if err := os.Rename(link, real); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	code, stdout, stderr := runChangesCLI(t,
+		"changes", "archive", "thing", "--root", root, "--date", "2026-01-02")
+
+	if code != 1 || stdout != "" {
+		t.Fatalf("exit = %d, stdout = %q; want 1/empty", code, stdout)
+	}
+	if !strings.Contains(stderr, "is a symlink, not a change directory") {
+		t.Errorf("stderr = %q, want the symlinked-source refusal", stderr)
+	}
+	if _, err := os.Lstat(link); err != nil {
+		t.Errorf("the link was moved on a refusal: %v", err)
+	}
+	if _, err := os.Stat(real); err != nil {
+		t.Errorf("the real directory was moved on a refusal: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "odd", "changes", "archive")); !os.IsNotExist(err) {
+		t.Errorf("archive tree was created on a refusal: %v", err)
+	}
+}
+
+// An explicitly empty --date is a usage error, never "omitted": only a
+// genuinely absent flag means today (C2).
+func TestChangesArchiveRefusesAnEmptyDate(t *testing.T) {
+	root := t.TempDir()
+	src := changesOpenSpecChange(t, root, "thing")
+
+	code, stdout, stderr := runChangesCLI(t,
+		"changes", "archive", "thing", "--root", root, "--date=")
+
+	if code != 2 || stdout != "" {
+		t.Fatalf("exit = %d, stdout = %q; want 2/empty", code, stdout)
+	}
+	if !strings.Contains(stderr, "--date requires a non-empty value") {
+		t.Errorf("stderr = %q, want the empty --date usage error", stderr)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Errorf("folder moved on an empty --date: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "openspec", "changes", "archive")); !os.IsNotExist(err) {
+		t.Errorf("archive tree was created on a usage error: %v", err)
+	}
+}
+
 // An empty positional or an explicitly empty --change= is a usage error, never
 // "omitted": only a genuinely absent argument means absent (F2).
 func TestChangesArchiveRefusesAnEmptyChangeArgument(t *testing.T) {

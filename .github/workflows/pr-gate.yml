@@ -2,10 +2,22 @@
 # three: the CLI verb, the skill that obeys it, and this workflow that runs
 # the verb on every pull request even when no agent is watching.
 #
+# The evaluator is trusted, the candidate is data (C4): the binary is built from
+# the pull request's base revision in trusted/, and the head revision is checked
+# out separately in candidate/. The run grades candidate/ with the trusted
+# binary, so a pull request that edits the guardian cannot vouch for itself.
+#
+# Bootstrap exception: on the first pull request that introduces this workflow,
+# the trusted base revision predates the --change flag. If the trusted binary
+# exits 2 it reported a usage error — it is older than this contract, not that
+# the candidate is bad — so the step prints a notice and a ::warning:: and
+# passes. Any other non-zero exit stays a failure.
+#
 # Being a *required* status check is a repository setting, not a file in this
 # repo: the owner applies it once with `gh api` against
 # `repos/<owner>/<repo>/branches/development/protection/required_status_checks`
-# (see catalog/recipes/plan-build-flow/README.md for the exact command).
+# (see catalog/recipes/plan-build-flow/README.md for the exact command). The
+# published check context is this job's name, `pr-gate`.
 #
 # This grades committed state only, so the archive commit must be pushed for
 # the check to pass.
@@ -19,21 +31,39 @@ permissions:
   contents: read
 
 jobs:
-  premerge:
+  pr-gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          # The change ladder pairs a branch with a change folder, so the full
-          # history and the merge base have to be present.
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: trusted/go.mod
       - run: go build -o dist/ai-specs ./cmd/ai-specs
-      # actions/checkout leaves HEAD detached on pull_request, so the gate
-      # cannot derive the change from the branch: the explicit change is
-      # mandatory here.
-      - run: |
-          ./dist/ai-specs gates premerge --root . \
+        working-directory: trusted
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          fetch-depth: 0
+      # actions/checkout leaves HEAD detached, so the gate cannot derive the
+      # change from the branch: the explicit change is mandatory here.
+      - name: Grade the candidate with the trusted evaluator
+        run: |
+          set +e
+          trusted/dist/ai-specs gates premerge \
+            --root "$GITHUB_WORKSPACE/candidate" \
             --change "${GITHUB_HEAD_REF}"
+          status=$?
+          set -e
+          if [ "$status" -eq 2 ]; then
+            echo "The trusted evaluator predates the --change contract"
+            echo "(exit 2: usage error)."
+            notice="Bootstrap: the base evaluator predates --change"
+            echo "::warning::$notice; skipping the grade for this PR."
+            exit 0
+          fi
+          exit "$status"

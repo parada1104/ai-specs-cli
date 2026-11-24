@@ -93,6 +93,7 @@ func runChangesArchive(args []string, stdout, stderr io.Writer) int {
 	changeFlag := false
 	root := ""
 	date := ""
+	dateSet := false
 	usageError := func(message string) int {
 		fmt.Fprintln(stderr, message)
 		fmt.Fprintln(stderr, "Run 'ai-specs changes archive --help' for usage.")
@@ -117,9 +118,11 @@ func runChangesArchive(args []string, stdout, stderr io.Writer) int {
 			if i+1 >= len(args) {
 				return usageError("ERROR: --date requires a value")
 			}
+			dateSet = true
 			i++
 			date = args[i]
 		case strings.HasPrefix(arg, "--date="):
+			dateSet = true
 			date = strings.TrimPrefix(arg, "--date=")
 		case arg == "--change":
 			if i+1 >= len(args) {
@@ -152,6 +155,11 @@ func runChangesArchive(args []string, stdout, stderr io.Writer) int {
 
 	if root == "" {
 		return usageError("ERROR: missing required option: --root")
+	}
+	// A supplied empty date is a usage error, never "omitted" (C2): defaulting
+	// it would archive to today instead of rejecting the value.
+	if dateSet && date == "" {
+		return usageError("ERROR: --date requires a non-empty value")
 	}
 	if date == "" {
 		date = time.Now().UTC().Format("2006-01-02")
@@ -190,6 +198,13 @@ func runChangesArchive(args []string, stdout, stderr io.Writer) int {
 	}
 
 	src := planbuild.ChangeFolder(root, mode, change)
+	// A symlink at the change path is not the change: os.Stat would call it
+	// active and os.Rename would move the link (C1).
+	if info, linkErr := os.Lstat(src); linkErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		fmt.Fprintf(stderr, "changes archive: refusing to archive %s: %s is a symlink, not a change directory; "+
+			"replace it with the real directory and retry\n", change, repoRelative(root, src))
+		return 1
+	}
 	isActive := false
 	if info, statErr := os.Stat(src); statErr == nil && info.IsDir() {
 		isActive = true

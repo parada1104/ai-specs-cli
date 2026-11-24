@@ -581,7 +581,8 @@ The third is `.github/workflows/pr-gate.yml`: on every pull request against
 `development` it builds the CLI and runs
 
 ```bash
-./dist/ai-specs gates premerge --root . --change "$GITHUB_HEAD_REF"
+trusted/dist/ai-specs gates premerge \
+  --root "$GITHUB_WORKSPACE/candidate" --change "$GITHUB_HEAD_REF"
 ```
 
 `actions/checkout` leaves `HEAD` detached on `pull_request`, so the gate cannot

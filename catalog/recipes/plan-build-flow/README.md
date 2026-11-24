@@ -222,7 +222,8 @@ On every pull request against `development` that workflow builds the binary and
 runs
 
 ```bash
-./dist/ai-specs gates premerge --root . --change "$GITHUB_HEAD_REF"
+trusted/dist/ai-specs gates premerge \
+  --root "$GITHUB_WORKSPACE/candidate" --change "$GITHUB_HEAD_REF"
 ```
 
 `actions/checkout` leaves `HEAD` detached on `pull_request`, so the change

@@ -36,7 +36,13 @@ func (c criteria) rangeLabel() string {
 // `## Specs` when it declares at least one `S#`, otherwise the legacy
 // `## Success Criteria` of proposal.md, otherwise of design.md.
 func parseRequirements(folder string) (criteria, string) {
-	plan, _ := ParsePlan(readText(filepath.Join(folder, "tasks.md")))
+	return parseRequirementsFor(folder, readText(filepath.Join(folder, "tasks.md")))
+}
+
+// parseRequirementsFor resolves the same source chain from a plan that does not
+// live inside the folder, as the ODD plan at odd/tasks/<change>.md does (C3).
+func parseRequirementsFor(folder, planText string) (criteria, string) {
+	plan, _ := ParsePlan(planText)
 	if len(plan.Specs) > 0 {
 		ids := make([]string, len(plan.Specs))
 		for index, spec := range plan.Specs {

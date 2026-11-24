@@ -189,6 +189,20 @@ func TestCheckPremergeOddGradesTheConfigForADeclaredTier(t *testing.T) {
 	}
 }
 
+// A declared-tier plan reaches the verification grader: a row with the matching
+// runner and a recorded non-zero exit blocks (C3).
+func TestCheckPremergeOddGradesTheVerificationRows(t *testing.T) {
+	root := oddDeclaredTierRepo(t)
+	plan := strings.Replace(readText(filepath.Join(root, "odd", "tasks", "thing.md")),
+		"exit 0", "exit 1", 1)
+	writeFile(t, filepath.Join(root, "odd", "tasks", "thing.md"), plan)
+	writeFile(t, filepath.Join(root, "odd", "config.yaml"),
+		"schema: spec-driven\ntesting:\n  runner: go test ./internal/...\n")
+	oddWriteArchive(t, root, "thing")
+
+	wantBlocked(t, CheckPremergeOdd(root, "thing"), "records a failing run (exit 1)")
+}
+
 // The declared-tier archive is required: a deleted or never-created archive
 // blocks, because archiving always leaves a dated folder holding the plan (F3).
 func TestCheckPremergeOddRequiresTheArchiveOfADeclaredTierPlan(t *testing.T) {

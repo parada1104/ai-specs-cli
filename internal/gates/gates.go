@@ -226,6 +226,11 @@ func CheckPremergeOdd(repoRoot, change string) Result {
 	if declared, ok := declaredTier(readText(plan)); ok {
 		blockers = append(blockers, archiveBlockers...)
 		blockers = append(blockers, checkProjectConfig(repoRoot, planbuild.ModeOdd, plan, declared)...)
+		// The plan lives at odd/tasks/<change>.md, so it is graded by the same
+		// plan-verification grader the OpenSpec path uses (C3).
+		if declared != TierLight {
+			blockers = append(blockers, checkPlanVerification(plan, declared)...)
+		}
 	}
 	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: TierOdd, ArchivePath: plan}
 }
