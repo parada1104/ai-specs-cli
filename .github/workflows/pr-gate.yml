@@ -2,7 +2,7 @@
 # three: the CLI verb, the skill that obeys it, and this workflow that runs
 # the verb on every pull request even when no agent is watching.
 #
-# Grades the pull request's head tree with a base-branch evaluator; candidate/ is data, never executed.
+# Grades the PR head tree with a base-branch evaluator; candidate/ is data.
 #
 # Being a *required* status check is a repository setting, not a file in this
 # repo: the owner applies it once with `gh api` against

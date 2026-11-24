@@ -561,12 +561,11 @@ promoted blocks after archiving with the same "is not promoted into
 odd/specs/..." wording — and the active `odd/changes/<change>/` folder must be
 gone. A folder that is still active blocks with `ai-specs changes archive`,
 which is the mandatory archive step before merge. Every odd change pays that one
-uniform contract, with no `Depth:` exemption: once archived, the dated folder
-must exist and hold the plan, the delta, or the `archived.md` marker. `odd` mode has no
-OpenSpec archive and no tier minimum. Because
-`odd/tasks/<change>.md` survives the archive, the branch still pairs the change
-after archiving; in `openspec` pass the slug or `--change`, since the plan moved
-into the archive with the change folder.
+uniform contract, with no `Depth:` exemption: the dated folder must exist and
+hold the plan, the delta, or the `archived.md` marker. Because
+`odd/tasks/<change>.md` survives it, the branch still pairs the change after
+archiving; in `openspec` pass the slug or `--change`, since the plan moved with
+the change folder.
 
 Tracker item closure (`ai-specs tracker-card-gate --root <root> --checkpoint
 archive-close`) is a separate Tracker-domain checkpoint: it is not this OpenSpec
