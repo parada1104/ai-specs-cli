@@ -103,19 +103,20 @@ func splitYAMLKey(line string) (key, value string, ok bool) {
 }
 
 // containedRegularFile is planbuild's plan predicate shape applied to any path: a
-// regular file whose real path stays inside root.
+// regular file whose real path stays inside root, resolved through the same
+// helper so a relative root is graded like an absolute one.
 func containedRegularFile(root, path string) bool {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		return false
 	}
-	real, err := filepath.EvalSymlinks(path)
+	real, err := planbuild.RealPath(path)
 	if err != nil {
 		return false
 	}
-	base, err := filepath.EvalSymlinks(root)
+	base, err := planbuild.RealPath(root)
 	if err != nil {
-		base = root
+		return false
 	}
 	return real == base || strings.HasPrefix(real, base+string(filepath.Separator))
 }

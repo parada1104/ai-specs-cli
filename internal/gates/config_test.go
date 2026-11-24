@@ -48,6 +48,17 @@ func writeProjectConfig(t *testing.T, root, body string) {
 	writeFile(t, planbuild.ConfigPath(root, planbuild.ModeOpenspec), body)
 }
 
+// A relative root is graded exactly like the absolute one (R4): the config
+// containment resolves both through planbuild's helper.
+func TestReadProjectConfigAcceptsARelativeRoot(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root, projectConfig)
+	t.Chdir(root)
+	if _, err := ReadProjectConfig(".", planbuild.ModeOpenspec); err != nil {
+		t.Fatalf("ReadProjectConfig(\".\") = %v, want no error", err)
+	}
+}
+
 func TestReadProjectConfigReadsTheConsumedKeys(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root, projectConfig)

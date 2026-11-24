@@ -267,6 +267,26 @@ func TestPlanIsValidForMode(t *testing.T) {
 	}
 }
 
+// A relative root grades exactly like the absolute one (R4): the containment
+// predicate resolves both through the same helper.
+func TestPlanIsValidAcceptsARelativeRoot(t *testing.T) {
+	root := t.TempDir()
+	plan := PlanPath(root, "thing")
+	if err := os.MkdirAll(filepath.Dir(plan), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plan, []byte("# plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	if !PlanIsValid(".", "thing") {
+		t.Fatal("PlanIsValid(\".\") = false, want the same verdict as the absolute root")
+	}
+	if PlanIsValid(filepath.Join("..", filepath.Base(root)), "absent") {
+		t.Error("an absent plan is valid")
+	}
+}
+
 // After archiving, an odd change still pairs from the branch because its plan
 // survives at odd/tasks/<change>.md while the delta folder is gone.
 func TestResolveChangePairsAnArchivedOddChange(t *testing.T) {

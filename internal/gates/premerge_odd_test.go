@@ -190,7 +190,7 @@ func TestCheckPremergeOddGradesTheConfigForADeclaredTier(t *testing.T) {
 }
 
 // The declared-tier archive is required: a deleted or never-created archive
-// blocks, because archiving always leaves a dated folder (F3).
+// blocks, because archiving always leaves a dated folder holding the plan (F3).
 func TestCheckPremergeOddRequiresTheArchiveOfADeclaredTierPlan(t *testing.T) {
 	root := oddDeclaredTierRepo(t)
 	if err := os.WriteFile(filepath.Join(root, "odd", "config.yaml"),
@@ -223,13 +223,42 @@ func oddDeclaredTierRepo(t *testing.T) string {
 	return root
 }
 
-// oddWriteArchive creates the dated archive folder the declared tier requires.
+// oddWriteArchive creates the dated archive folder the declared tier requires,
+// holding a copy of the plan exactly as `changes archive` does for a delta-less
+// change: an empty folder proves nothing (R2).
 func oddWriteArchive(t *testing.T, root, change string) {
 	t.Helper()
 	archive := filepath.Join(root, "odd", "changes", "archive", "2026-01-02-"+change)
-	if err := os.MkdirAll(archive, 0o755); err != nil {
+	mkdirAll(t, archive)
+	writeFile(t, filepath.Join(archive, "tasks.md"),
+		readText(filepath.Join(root, "odd", "tasks", change+".md")))
+}
+
+// An empty archive folder never satisfies the requirement, dated or not: it holds
+// nothing of the change (R2).
+func TestCheckPremergeOddRejectsAnEmptyArchive(t *testing.T) {
+	root := oddDeclaredTierRepo(t)
+	writeFile(t, filepath.Join(root, "odd", "config.yaml"),
+		"schema: spec-driven\ntesting:\n  runner: go test ./internal/...\n")
+	mkdirAll(t, filepath.Join(root, "odd", "changes", "archive", "2026-01-02-thing"))
+
+	wantBlocked(t, CheckPremergeOdd(root, "thing"), "is empty: an archive must hold")
+}
+
+// After archiving, the archived delta is the only remaining source: an unpromoted
+// delta in the archive blocks with the parity wording (R3).
+func TestCheckPremergeOddBlocksAnArchivedUnpromotedDelta(t *testing.T) {
+	root := oddRepo(t)
+	folder := filepath.Join(root, "odd", "changes", "thing")
+	writeFile(t, filepath.Join(folder, "specs", "capability", "spec.md"), oddDelta)
+	archive := filepath.Join(root, "odd", "changes", "archive", "2026-01-02-thing")
+	mkdirAll(t, filepath.Dir(archive))
+	if err := os.Rename(folder, archive); err != nil {
 		t.Fatal(err)
 	}
+
+	wantBlocked(t, CheckPremergeOdd(root, "thing"),
+		"specs/capability/spec.md is not promoted into odd/specs/capability/spec.md")
 }
 
 // A plan without a Depth: line is legacy: no config duty, so existing ODD

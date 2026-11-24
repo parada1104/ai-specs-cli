@@ -188,16 +188,24 @@ func runGatesPremerge(args []string, stdout, stderr io.Writer) int {
 		return choiceError("--stage", stage, "pre-merge", "pre-archive")
 	}
 
+	mode := planbuild.ResolveRepo(root)
+	// In odd mode a positional slug is accepted and ignored: the change comes from
+	// the branch unless an override named one.
+	if stage == "pre-merge" && mode == planbuild.ModeOdd && source == "positional" {
+		change, _ = planbuild.ChangeFromBranch(planbuild.Branch(root))
+	}
+	// The graded change becomes a path inside the planning tree, so a name that is
+	// not a single segment is a usage error, never a folder to grade (R5).
+	if change != "" && !planbuild.ValidChangeName(change) {
+		return usageError(fmt.Sprintf(
+			"ERROR: invalid change name: %s (expected a single path segment)", change))
+	}
+
 	var result gates.Result
 	switch {
 	case stage == "pre-archive":
 		result = gates.CheckPrearchive(root, change, tier)
-	case planbuild.ResolveRepo(root) == planbuild.ModeOdd:
-		// ODD discovers the change from the branch and never requires an archive;
-		// a positional slug stays accepted and ignored, --change overrides it.
-		if source == "positional" {
-			change, _ = planbuild.ChangeFromBranch(planbuild.Branch(root))
-		}
+	case mode == planbuild.ModeOdd:
 		result = gates.CheckPremergeOdd(root, change)
 	default:
 		result = gates.CheckPremerge(root, change, tier)

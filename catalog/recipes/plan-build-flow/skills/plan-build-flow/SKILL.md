@@ -254,6 +254,11 @@ CLI ignores.
 - **L1** — <the human's original request, verbatim>
 ```
 
+`## Log` with `L1` is required from Standard up and optional for Light (the
+tier matrix of Section 4). A plan that declares `Depth: standard` or
+`Depth: full` and carries no `## Log` blocks with
+``archive/<folder>/tasks.md: `## Log` section is missing``.
+
 Migration: an in-flight change written before this release must be rewritten
 into the plan shape before it can be archived.
 
@@ -335,6 +340,10 @@ where it is, so "archived" always means a dated folder exists. `--change`
 accepts a branch-shaped value — CI passes `GITHUB_HEAD_REF` — and keeps its last
 path segment, the same normalization the branch pairing applies. An empty
 `<slug>` or an explicitly empty `--change=` is a usage error, never "omitted".
+A change name that is not a single path segment (`..`, `../../../offtree`,
+`a/b`) is a usage error too: the guardian exits `2` with
+`ERROR: invalid change name: <name> (expected a single path segment)` and never
+grades a folder outside the change tree.
 
 The evidence artifact is the plan's `## Verification` section (Section 4.2): one
 row per `S#` declared under `## Specs`, in the same file.
@@ -346,13 +355,16 @@ row per `S#` declared under `## Specs`, in the same file.
 ```
 
 Standard requires one row — `PASS`, `FAIL` or `N/A` — for every declared `S#`;
-`N/A` must carry its reason. Every row must also name the command it ran inside
-backticks, because a verdict without a command records no run: a row like
+`N/A` must carry its reason. Every `PASS` row must also record exactly one
+command in backticks, with no prose before it and no bare second backticked
+value beside it, because a verdict without a command records no run: a row like
 `- **S1: PASS** — nothing executed` blocks with
 `verification for S1 must name the command it ran in backticks: record "- **S1: PASS** — `go test ./...`"`.
-Any `FAIL` blocks. Full requires that same coverage, no `FAIL`, and at least one
-`PASS` row. `ready_for_archive` is not part of the plan artifact: coverage
-replaces it there.
+A row that records `exit 1`, `exit 2` or `failed` blocks as a failing run, and
+two rows for the same `S#` block naming the id. An `N/A` row is exempt from the
+command requirement because its reason replaces the run. Any `FAIL` blocks.
+Full requires that same coverage, no `FAIL`, and at least one `PASS` row.
+`ready_for_archive` is not part of the plan artifact: coverage replaces it there.
 
 `verify-report.md` remains **accepted as the legacy evidence artifact**, graded
 exactly as before: a dedicated report whose canonical block is
@@ -505,9 +517,11 @@ Hard blockers (do **not** merge):
 2. No exact valid archive candidate exists at
    `openspec/changes/archive/YYYY-MM-DD-<slug>/`; the exact undated
    `openspec/changes/archive/<slug>/` form is accepted only as a legacy
-   fallback when no dated candidate exists.
+   fallback when no dated candidate exists, is graded by the same plan grammar,
+   and must hold the plan or the delta like any other archive.
 3. Archived folder lacks the tier minimum files (every tier: `tasks.md`
-   parsing as the plan; Standard and Full: also `specs/**/*.md`).
+   parsing as the plan; Standard and Full: also `specs/**/*.md` and a
+   `## Log` section with `L1`).
    `proposal.md`, `design.md` and `verify-report.md` are accepted and honoured
    when present, but they are not required.
 4. Standard verification is incomplete: a declared `S#` has no row in
@@ -529,18 +543,27 @@ Hard blockers (do **not** merge):
 The promotion check is tier-scoped: Light changes and changes with no `specs/`
 deltas are never blocked by it.
 
-The plan grammar is graded on dated archives. An undated legacy
-`archive/<slug>/` folder predates this contract, so its `tasks.md` is not read
-as a plan; every other rule above still applies to it.
+The plan grammar is graded on **every** archive, whatever its folder is called:
+the folder name never decides which rules apply, so an undated `archive/<slug>/`
+is graded exactly like a dated one. An archive also has to prove it holds
+something of the change — its delta (`specs/**/*.md`) or a copy of its plan
+(`tasks.md`); an empty folder, dated or not, blocks with
+`archive candidate <path> is empty: an archive must hold the change's plan (tasks.md) or its delta (specs/**/*.md)`.
+An archive that predates this contract and still has a free-form `tasks.md`
+must be re-worded into the plan shape if anyone needs to re-run the guardian on
+it; historical archives are otherwise never rewritten.
 
 In `odd` mode the guardian grades the ODD tree instead (Section 4.1): the paired
 plan at `odd/tasks/<change>.md` must be a regular file of the repository, every
-`odd/changes/<change>/specs/` delta must be promoted into `odd/specs/`, and the
-active `odd/changes/<change>/` folder must be gone. A folder that is still
-active blocks with `ai-specs changes archive`, which is the mandatory archive
-step before merge. Once archived, the dated folder must exist for a plan that
-declares `Depth:` — a delta-less change archives a copy of its plan — while a
-legacy plan with no `Depth:` line keeps the narrower contract. `odd` mode has no
+`odd/changes/<change>/specs/` delta must be promoted into `odd/specs/` — read
+from the archived folder once the change is archived, so a delta that is not
+promoted blocks after archiving with the same "is not promoted into
+odd/specs/..." wording — and the active `odd/changes/<change>/` folder must be
+gone. A folder that is still active blocks with `ai-specs changes archive`,
+which is the mandatory archive step before merge. Once archived, the dated
+folder must exist for a plan that declares `Depth:` and it must hold something
+of the change — a delta-less change archives a copy of its plan — while a legacy
+plan with no `Depth:` line keeps the narrower contract. `odd` mode has no
 OpenSpec archive and no tier minimum. Because
 `odd/tasks/<change>.md` survives the archive, the branch still pairs the change
 after archiving; in `openspec` pass the slug or `--change`, since the plan moved

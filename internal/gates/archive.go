@@ -16,7 +16,10 @@ var datedArchiveRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})-(.+)$`)
 // fallback, under the given planning tree ("openspec" or "odd"). Symlinked roots
 // and candidates are rejected outright: is_dir() follows symlinks, so a dated
 // archive symlink to content outside the planning tree could otherwise have its
-// external files satisfy artifact/verification gates.
+// external files satisfy artifact/verification gates. A candidate only satisfies
+// the requirement when it holds something of the change — its delta
+// (specs/**/*.md) or a copy of its plan (tasks.md): an empty folder proves
+// nothing, dated or not.
 func resolveArchive(archiveRoot, slug, tree string) (string, []string) {
 	missing := fmt.Sprintf("missing archive at %s/changes/archive/%s/ or a valid dated "+
 		"archive named YYYY-MM-DD-%s/", tree, slug, slug)
@@ -115,12 +118,29 @@ func resolveArchive(archiveRoot, slug, tree string) (string, []string) {
 		return "", blockers
 	}
 	if len(dated) == 1 {
-		return dated[0], nil
+		return archiveWithContent(dated[0])
 	}
 	if legacyIsDir {
-		return legacy, nil
+		return archiveWithContent(legacy)
 	}
 	return "", []string{missing}
+}
+
+// archiveWithContent accepts one archive candidate only when it holds something
+// of the change it claims to archive.
+func archiveWithContent(candidate string) (string, []string) {
+	if archiveHoldsChange(candidate) {
+		return candidate, nil
+	}
+	return "", []string{fmt.Sprintf(
+		"archive candidate %s is empty: an archive must hold the change's plan (tasks.md) or "+
+			"its delta (specs/**/*.md)", candidate)}
+}
+
+// archiveHoldsChange reports whether an archive folder holds something of the
+// change: its delta (specs/**/*.md) or a copy of its plan (tasks.md).
+func archiveHoldsChange(folder string) bool {
+	return isFile(filepath.Join(folder, "tasks.md")) || hasSpecDelta(folder)
 }
 
 // validArchiveDate is the exact YYYY-MM-DD form plus the calendar date.

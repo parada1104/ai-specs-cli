@@ -180,6 +180,9 @@ func TestLightMinimumRequiresOnlyThePlan(t *testing.T) {
 	folder := filepath.Join(root, "openspec", "changes", "archive", "light-no-plan")
 	mkdirAll(t, folder)
 	writeFile(t, filepath.Join(folder, "proposal.md"), "# proposal\n")
+	// The archive holds a delta, so the folder itself proves the change existed
+	// and the blocker below is the tier minimum, not the empty archive (R2).
+	writeFile(t, filepath.Join(folder, "specs", "cap", "spec.md"), "# cap\n")
 
 	result := CheckPremerge(root, "light-no-plan", tierOpt("light"))
 	if result.OK {
@@ -251,10 +254,11 @@ func TestPrearchiveChecksActiveFolderWithoutActiveBlocker(t *testing.T) {
 }
 
 // planFixtureBody is a minimal valid plan for the fixtures that only exercise
-// another rule.
+// another rule. The `## Log` entry keeps it valid from standard up (P6).
 const planFixtureBody = "## Specs\n\n- **S1.** Fixture requirement\n\n## Tasks\n\n" +
 	"| ID | Spec | Tarea | Ruta | Commit |\n| --- | --- | --- | --- | --- |\n" +
-	"| T1 | S1 | Fixture task | inline | pendiente |\n"
+	"| T1 | S1 | Fixture task | inline | pendiente |\n\n" +
+	"## Log\n\n- **L1** — fixture request\n"
 
 // planOrFixture completes a fixture's tasks text with a conforming plan, so a
 // test about another rule does not have to spell the grammar out.
@@ -285,29 +289,62 @@ func TestInspectFolderBlocksAFreeFormTasksFile(t *testing.T) {
 	}
 }
 
-// A legacy undated archive predates the plan contract, so it is not graded by
-// the plan grammar; a dated archive is (F5). Nothing else is weakened: the
-// artifact minima and the legacy verify-report source still apply.
-func TestLegacyUndatedArchiveIsNotGradedByThePlanGrammar(t *testing.T) {
+// Every archive is graded by the plan grammar, whatever its folder name: the
+// undated form is not an exemption (R1).
+func TestEveryArchiveIsGradedByThePlanGrammar(t *testing.T) {
+	for _, name := range []string{"2026-01-02-undated-free-form", "undated-free-form"} {
+		t.Run(name, func(t *testing.T) {
+			root := newRepo(t)
+			folder := archiveWith(t, root, "undated-free-form", "Depth: standard\n", archiveOpts{
+				spec: true, report: repoString(standardReport), archiveName: name,
+			})
+			writeFile(t, filepath.Join(folder, "tasks.md"), "Depth: standard\n- [x] una tarea suelta\n")
+
+			result := CheckPremerge(root, "undated-free-form", tierOpt("standard"))
+			if result.OK {
+				t.Fatal("a free-form tasks.md must block whatever the archive folder is called")
+			}
+			assertBlockerContains(t, result, "archive/"+name+"/tasks.md: `## Specs` section is missing",
+				"archive/"+name+"/tasks.md: `## Tasks` section is missing")
+		})
+	}
+}
+
+// A conforming plan in the undated form still passes: the grammar is what is
+// graded, not the folder name.
+func TestUndatedArchiveWithAConformingPlanPasses(t *testing.T) {
 	root := newRepo(t)
-	legacy := archiveWith(t, root, "legacy-free-form", "Depth: standard\n", archiveOpts{
+	archiveWith(t, root, "undated-conforming", "Depth: standard\n\n"+planFixtureBody, archiveOpts{
 		spec: true, report: repoString(standardReport),
 	})
-	writeFile(t, filepath.Join(legacy, "tasks.md"), "Depth: standard\n- [x] una tarea suelta\n")
+	if result := CheckPremerge(root, "undated-conforming", tierOpt("standard")); !result.OK {
+		t.Fatalf("undated conforming archive = %+v, want OK", result)
+	}
+}
 
-	if result := CheckPremerge(root, "legacy-free-form", tierOpt("standard")); !result.OK {
-		t.Fatalf("legacy undated archive = %+v, want OK without plan-grammar blockers", result)
+// planWithoutLog is a conforming plan shape with no `## Log` section.
+const planWithoutLog = "## Specs\n\n- **S1.** Fixture requirement\n\n## Tasks\n\n" +
+	"| ID | Spec | Tarea | Ruta | Commit |\n| --- | --- | --- | --- | --- |\n" +
+	"| T1 | S1 | Fixture task | inline | pendiente |\n"
+
+// Standard and Full require `## Log` with L1; Light keeps it optional (R7/P6).
+func TestStandardAndFullRequireTheLogSection(t *testing.T) {
+	for _, tier := range []string{TierStandard, TierFull} {
+		t.Run(tier, func(t *testing.T) {
+			root := newRepo(t)
+			archiveWith(t, root, "log-"+tier, "Depth: "+tier+"\n\n"+planWithoutLog, archiveOpts{
+				spec: true, report: repoString(standardReport),
+			})
+			result := CheckPremerge(root, "log-"+tier, tierOpt(tier))
+			assertBlockerContains(t, result, "`## Log` section is missing")
+		})
 	}
 
-	dated := archiveWith(t, root, "dated-free-form", "Depth: standard\n", archiveOpts{
-		spec: true, report: repoString(standardReport), archiveName: "2026-01-02-dated-free-form",
-	})
-	writeFile(t, filepath.Join(dated, "tasks.md"), "Depth: standard\n- [x] una tarea suelta\n")
-	result := CheckPremerge(root, "dated-free-form", tierOpt("standard"))
-	if result.OK {
-		t.Fatal("a dated archive with a free-form tasks.md must block")
+	root := newRepo(t)
+	archiveWith(t, root, "log-light", "Depth: light\n\n"+planWithoutLog, archiveOpts{})
+	if result := CheckPremerge(root, "log-light", tierOpt(TierLight)); !result.OK {
+		t.Fatalf("light plan without Log = %+v, want OK", result)
 	}
-	assertBlockerContains(t, result, "archive/2026-01-02-dated-free-form/tasks.md: `## Specs` section is missing")
 }
 
 func TestStandardMinimumNeedsThePlanAndOneDelta(t *testing.T) {
@@ -397,9 +434,8 @@ func TestCheckPremergeOddPassesAChangeThatNeverHadADelta(t *testing.T) {
 	}
 }
 
-// Once the promoted delta is archived, the active folder is gone and the
-// guardian passes: the archive condition is absence of the active folder, not a
-// second parity read of the archive.
+// Once the promoted delta is archived, the active folder is gone and the guardian
+// passes: the archive is read for parity, and it is already promoted (R3).
 func TestCheckPremergeOddPassesAnArchivedPromotedDelta(t *testing.T) {
 	root := oddRepo(t)
 	folder := oddPromotedDelta(t, root, "thing")

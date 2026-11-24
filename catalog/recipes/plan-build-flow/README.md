@@ -125,6 +125,11 @@ Every `## Verification` row of a Standard or Full change must also name the
 command it ran in backticks: a verdict without a command records no run, so
 `- **S1: PASS** — nothing executed` blocks with `verification for S1 must name
 the command it ran in backticks: record "- **S1: PASS** — `go test ./...`"`.
+The row must record exactly one command with no prose before it and no bare
+second backticked value; a row recording `exit 1`, `exit 2` or `failed` blocks as
+a failing run; an `N/A` row with a reason is exempt; and two rows for the same
+`S#` block naming the id. A plan that declares `Depth: standard` or
+`Depth: full` also requires `## Log` with `L1`; Light keeps it optional.
 
 Standard and Full changes require both. A change with no verification rows —
 Light, or a plan without `## Verification` — is exempt from both: that is the
@@ -142,10 +147,12 @@ openspec/config.yaml: verification never runs the configured testing.runner
 
 ## PR and merge gates
 
-- **No PR** until the change folder contains its tier minimum files committed:
-  Light requires `proposal.md` + `tasks.md`; Standard requires those plus a
-  spec delta; Full requires `tasks.md`, `proposal.md` or `design.md`, and a
-  spec delta.
+- **No PR** until the change's plan parses: `openspec/changes/<slug>/tasks.md`
+  with `## Specs` and `## Tasks`, plus `## Log` with `L1` from Standard up (Light
+  keeps it optional) and a spec delta for Standard and Full. `proposal.md`,
+  `design.md` and `verify-report.md` are still accepted, but they are no longer
+  required. Every archive is graded by that grammar whatever its folder is
+  called, and it must hold the plan or the delta: an empty folder blocks.
 - **Verify before archive:** Standard requires a dedicated `verify-report.md`
   with command, exit `0`, a valid calendar date, commit SHA, and a non-failing
   verdict. Full additionally requires strict `PASS`, `ready_for_archive: true`,
@@ -175,7 +182,9 @@ openspec/config.yaml: verification never runs the configured testing.runner
   base branch. OpenSpec's canonical destination is
   `openspec/changes/archive/YYYY-MM-DD-<slug>/` with a valid ISO calendar date.
   The exact undated `archive/<slug>/` directory remains a legacy fallback only
-  when no dated candidate exists. Multiple dated candidates, dated-plus-undated
+  when no dated candidate exists; it is graded by the same plan grammar as a
+  dated archive, and it must hold the plan or the delta like any other archive
+  (an empty folder blocks). Multiple dated candidates, dated-plus-undated
   candidates, invalid dates, and near-match names fail closed with named
   blockers.
 - **Archive with the verb:** `ai-specs changes archive [<change>] --root
@@ -190,7 +199,10 @@ openspec/config.yaml: verification never runs the configured testing.runner
   created holding a copy of the plan and the original plan stays where it is, so
   the odd guardian can require that archive. `--change` keeps the last path
   segment of a branch-shaped value, so CI passes `GITHUB_HEAD_REF` unchanged;
-  an empty `<change>` or `--change=` is a usage error, never "omitted".
+  an empty `<change>` or `--change=` is a usage error, never "omitted", and so
+  is a name that is not a single path segment (`..`, `../../../offtree`, `a/b`):
+  the guardian exits `2` with `ERROR: invalid change name: <name> (expected a
+  single path segment)` instead of grading a folder outside the change tree.
 - **Tracker `archive-close` is not this archive.** Tracker item closure is a
   separate Tracker-domain checkpoint
   (`ai-specs tracker-card-gate --root <root>

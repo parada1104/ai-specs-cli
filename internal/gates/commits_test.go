@@ -50,19 +50,13 @@ func planWithCommit(commit string) string {
 		"| T1 | S1 | Fixture task | inline | " + commit + " |\n"
 }
 
-// rawArchive writes an archived change with exactly the given tasks text.
-// rawArchiveAt writes one exact archive folder name, so a test can choose a
-// dated archive (graded as a plan) or the undated legacy fallback.
-func rawArchiveAt(t *testing.T, root, archiveName, tasks string) {
-	t.Helper()
-	folder := filepath.Join(root, "openspec", "changes", "archive", archiveName)
-	mkdirAll(t, folder)
-	writeFile(t, filepath.Join(folder, "tasks.md"), tasks)
-}
-
+// rawArchive writes an archived change with exactly the given tasks text, under
+// the exact undated folder the report names.
 func rawArchive(t *testing.T, root, slug, tasks string) {
 	t.Helper()
-	rawArchiveAt(t, root, slug, tasks)
+	folder := filepath.Join(root, "openspec", "changes", "archive", slug)
+	mkdirAll(t, folder)
+	writeFile(t, filepath.Join(folder, "tasks.md"), tasks)
 }
 
 func TestCommitCellThatIsAnAncestorDoesNotBlock(t *testing.T) {
@@ -106,12 +100,11 @@ func TestPendingCommitCellsDoNotBlock(t *testing.T) {
 	}
 }
 
-// A tasks.md without task rows is graded as a plan, never for commits. The
-// fixture is a dated archive: a legacy undated archive is not read as a plan
-// (F5).
+// A tasks.md without task rows is graded as a plan, never for commits — whatever
+// its archive folder is called (R1).
 func TestTasksWithoutPlanRowsIsNotGradedForCommits(t *testing.T) {
 	root, _ := commitsRepo(t)
-	rawArchiveAt(t, root, "2026-01-02-legacy-no-rows", "Depth: light\n- [x] una tarea suelta\n")
+	rawArchive(t, root, "legacy-no-rows", "Depth: light\n- [x] una tarea suelta\n")
 
 	result := CheckPremerge(root, "legacy-no-rows", tierOpt(TierLight))
 	if result.OK {

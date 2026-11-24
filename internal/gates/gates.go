@@ -103,9 +103,15 @@ func checkMinimums(folder, tier, location string) []string {
 }
 
 // checkPlan requires the ODD-shaped plan (plan-build-openspec-odd-align P1) for
-// every tier: the change folder's tasks.md must parse with no blockers.
-func checkPlan(folder, location string) []string {
-	_, blockers := ParsePlan(readText(filepath.Join(folder, "tasks.md")))
+// every tier: every archive is graded by the grammar, whatever its folder name,
+// and a `## Log` with L1 is required from standard up (P6). Light keeps it
+// optional.
+func checkPlan(folder, location, tier string) []string {
+	plan, blockers := ParsePlan(readText(filepath.Join(folder, "tasks.md")))
+	if tier != TierLight && !plan.HasLog {
+		blockers = append(blockers, "`## Log` section is missing: add `- **L1** — <the human "+
+			"request>` because tier "+tier+" requires it")
+	}
 	located := make([]string, 0, len(blockers))
 	for _, blocker := range blockers {
 		located = append(located, location+"/tasks.md: "+blocker)
@@ -113,16 +119,13 @@ func checkPlan(folder, location string) []string {
 	return located
 }
 
-// inspectFolder runs the whole gate over one change folder. gradePlan is false
-// only for a legacy undated archive, which predates the plan contract.
-func inspectFolder(folder string, tier *string, location, repoRoot string, gradePlan bool) Result {
+// inspectFolder runs the whole gate over one change folder.
+func inspectFolder(folder string, tier *string, location, repoRoot string) Result {
 	var blockers []string
 	tasksText := readText(filepath.Join(folder, "tasks.md"))
 	resolved := resolveTier(tasksText, tier, &blockers)
 	blockers = append(blockers, checkMinimums(folder, resolved, location)...)
-	if gradePlan {
-		blockers = append(blockers, checkPlan(folder, location)...)
-	}
+	blockers = append(blockers, checkPlan(folder, location, resolved)...)
 	blockers = append(blockers, checkTaskCommits(folder, repoRoot, location)...)
 	blockers = append(blockers, checkVerifyEvidence(folder, resolved)...)
 	blockers = append(blockers, checkProjectConfig(repoRoot, planbuild.ModeOpenspec, filepath.Join(folder, "tasks.md"), resolved)...)
@@ -142,7 +145,7 @@ func CheckPrearchive(repoRoot, slug string, tier *string) Result {
 			ArchivePath: active,
 		}
 	}
-	return inspectFolder(active, tier, "changes/"+slug, repoRoot, true)
+	return inspectFolder(active, tier, "changes/"+slug, repoRoot)
 }
 
 // CheckPremerge inspects the archived artifacts and staged evidence before
@@ -163,11 +166,9 @@ func CheckPremerge(repoRoot, slug string, tier *string) Result {
 		return Result{Blockers: blockers, Tier: rawTier(tier)}
 	}
 
-	// A legacy undated archive (archive/<slug>) predates the plan contract, so it
-	// is not graded by the plan grammar; a dated archive is. Nothing else is
-	// weakened for it.
-	gradePlan := datedArchiveRe.MatchString(filepath.Base(archive))
-	result := inspectFolder(archive, tier, "archive/"+filepath.Base(archive), repoRoot, gradePlan)
+	// Every archive is graded the same way: the folder name never decides which
+	// rules apply, so an undated archive cannot bypass the plan grammar.
+	result := inspectFolder(archive, tier, "archive/"+filepath.Base(archive), repoRoot)
 	result.Blockers = append(blockers, result.Blockers...)
 	result.OK = len(result.Blockers) == 0
 	result.ArchivePath = archive
@@ -180,13 +181,14 @@ const TierOdd = "odd"
 
 // CheckPremergeOdd validates an ODD change before merge: the branch-paired plan
 // must be a regular file of the repository, every delta under
-// odd/changes/<change>/specs/ must already be promoted into odd/specs/, and the
-// active delta folder must be archived (plan-build-openspec-odd-align I5/P4).
-// A change that never carried a delta folder is not required to be archived:
-// there is nothing to archive, so the paired plan alone passes. There is no
-// OpenSpec archive and no tier artifact minimum. An empty change means the
-// branch could not be paired. The mode is resolved by the caller, which is the
-// same resolver the pre-tool-use gate uses.
+// odd/changes/<change>/specs/ must already be promoted into odd/specs/ — read from
+// the archived folder once the change is archived — and the active delta folder
+// must be archived (plan-build-openspec-odd-align I5/P4). A change that never
+// carried a delta folder is not required to be archived: there is nothing to
+// archive, so the paired plan alone passes. There is no OpenSpec archive and no
+// tier artifact minimum. An empty change means the branch could not be paired.
+// The mode is resolved by the caller, which is the same resolver the pre-tool-use
+// gate uses.
 func CheckPremergeOdd(repoRoot, change string) Result {
 	change = planbuild.NormalizeChange(change)
 	if change == "" {
@@ -207,26 +209,36 @@ func CheckPremergeOdd(repoRoot, change string) Result {
 			"active change folder still present at odd/changes/%s/ — run `ai-specs changes archive` "+
 				"on the review branch before merge", change))
 	}
-	if specs.SourceContained(folder, changesBase) {
-		blockers = append(blockers, specs.CheckFolderParityForMode(repoRoot, folder, planbuild.ModeOdd)...)
-	} else {
-		blockers = append(blockers, fmt.Sprintf(
-			"refusing to read the change folder %s: it is reached through a symlinked odd change tree, "+
-				"so the OpenSpec tree would become the parity source", folder))
+	// Every delta the change carried must be promoted, whether it is still active
+	// or already archived: after archiving, the archived folder is the only
+	// remaining source of that delta (R3).
+	blockers = append(blockers, oddParityBlockers(repoRoot, changesBase, folder)...)
+	archive, archiveBlockers := resolveArchive(planbuild.ArchiveBase(repoRoot, planbuild.ModeOdd),
+		change, "odd")
+	if archive != "" {
+		blockers = append(blockers, oddParityBlockers(repoRoot, changesBase, archive)...)
 	}
-	// A plan that declares its tier is graded like an OpenSpec change: the
-	// project config must exist and its runner must be the one that ran, and the
-	// change must be archived. Archiving always leaves a dated folder, even for a
-	// delta-less change (F3). A plan with no Depth: line is legacy and keeps the
-	// #589 contract (plan, archive and parity only), so existing ODD repositories
-	// do not retro-block.
+	// A plan that declares its tier is graded like an OpenSpec change: the project
+	// config must exist and its runner must be the one that ran, and the change
+	// must be archived with something of the change in it. A plan with no Depth:
+	// line is legacy and keeps the #589 contract (plan, parity and no archive
+	// duty), so existing ODD repositories do not retro-block.
 	if declared, ok := declaredTier(readText(plan)); ok {
-		_, archiveBlockers := resolveArchive(planbuild.ArchiveBase(repoRoot, planbuild.ModeOdd),
-			change, "odd")
 		blockers = append(blockers, archiveBlockers...)
 		blockers = append(blockers, checkProjectConfig(repoRoot, planbuild.ModeOdd, plan, declared)...)
 	}
 	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: TierOdd, ArchivePath: plan}
+}
+
+// oddParityBlockers is the promotion parity of one odd change folder, refused when
+// the folder is reached through a symlinked change tree.
+func oddParityBlockers(repoRoot, changesBase, folder string) []string {
+	if !specs.SourceContained(folder, changesBase) {
+		return []string{fmt.Sprintf(
+			"refusing to read the change folder %s: it is reached through a symlinked odd change tree, "+
+				"so the OpenSpec tree would become the parity source", folder)}
+	}
+	return specs.CheckFolderParityForMode(repoRoot, folder, planbuild.ModeOdd)
 }
 
 // rawTier is the unresolved option value the short-circuit verdicts report.

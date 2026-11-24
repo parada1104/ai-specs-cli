@@ -191,13 +191,24 @@ func PlanIsValidForMode(repoRoot, mode, change string) bool {
 	if err != nil || !info.Mode().IsRegular() {
 		return false
 	}
-	real, err := filepath.EvalSymlinks(plan)
+	real, err := RealPath(plan)
 	if err != nil {
 		return false
 	}
-	root, err := filepath.EvalSymlinks(repoRoot)
+	root, err := RealPath(repoRoot)
 	if err != nil {
-		root = repoRoot
+		return false
 	}
 	return real == root || strings.HasPrefix(real, root+string(filepath.Separator))
+}
+
+// RealPath resolves one path to its absolute real form. Every containment
+// predicate compares through this helper, so a relative root (`--root .`) grades
+// exactly like the absolute one.
+func RealPath(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(absolute)
 }

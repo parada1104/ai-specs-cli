@@ -13,7 +13,9 @@ const legacyReport = "## Verify evidence\n- Verdict: PASS\n- Command: ./tests/va
 
 // legacyArchive builds an archived change in the pre-plan shape: its tasks.md
 // carries no `## Specs`, so the requirement source falls back to proposal.md and
-// the evidence source to verify-report.md.
+// the evidence source to verify-report.md. Every archive is graded by the plan
+// grammar, so this shape always carries the grammar blockers too; these tests
+// assert the criteria rules on top of them.
 func legacyArchive(t *testing.T, root, slug, tier, proposal, report string) string {
 	t.Helper()
 	folder := filepath.Join(root, "openspec", "changes", "archive", slug)
@@ -180,4 +182,7 @@ func TestLegacyArchiveKeepsCriterionGradingAndReadyForArchive(t *testing.T) {
 
 	complete := CheckPremerge(root, "legacy-full", tierOpt(TierFull))
 	assertBlockerLacks(t, complete, "ready_for_archive", "mapping", "success criteria")
+	// The pre-plan shape keeps I2's plan requirement: no folder name exempts it
+	// from the grammar (R1).
+	assertBlockerContains(t, complete, "`## Specs` section is missing")
 }

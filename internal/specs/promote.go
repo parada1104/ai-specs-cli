@@ -231,7 +231,11 @@ func modeStep(mode string) string {
 // directories: a symlinked odd/ or odd/changes/ would feed the gate or the
 // composer from the other planning tree.
 func SourceContained(folder, changesBase string) bool {
-	return !isSymlink(filepath.Dir(changesBase)) && PathContained(changesBase, folder)
+	base, err := filepath.Abs(changesBase)
+	if err != nil {
+		return false
+	}
+	return !isSymlink(filepath.Dir(base)) && PathContained(changesBase, folder)
 }
 
 // PathContained is the one containment predicate: the real path of path stays
@@ -239,11 +243,21 @@ func SourceContained(folder, changesBase string) bool {
 // SourceContained's predicate generalized to a destination that does not exist
 // yet, so the archive write and the parity read agree on what "contained" means.
 func PathContained(root, path string) bool {
-	rel, err := filepath.Rel(root, path)
+	// Absolute first: a relative root must grade exactly like the absolute one,
+	// independently of the process working directory.
+	base, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	target, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(base, target)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return false
 	}
-	current := root
+	current := base
 	if isSymlink(current) {
 		return false
 	}

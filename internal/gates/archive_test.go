@@ -6,6 +6,22 @@ import (
 	"testing"
 )
 
+// The archive folder name never decides the grammar, but the folder must hold
+// something of the change: an empty one proves nothing (R2).
+func TestEmptyArchiveFolderDoesNotSatisfyTheRequirement(t *testing.T) {
+	for _, name := range []string{"2026-01-02-empty-change", "empty-change"} {
+		t.Run(name, func(t *testing.T) {
+			root := newRepo(t)
+			mkdirAll(t, filepath.Join(root, "openspec", "changes", "archive", name))
+			result := CheckPremerge(root, "empty-change", tierOpt("light"))
+			if result.OK {
+				t.Fatal("an empty archive folder must not satisfy the requirement")
+			}
+			assertBlockerContains(t, result, "is empty: an archive must hold the change's plan (tasks.md) or its delta")
+		})
+	}
+}
+
 func TestPassesWhenArchivedWithCanonicalDatedName(t *testing.T) {
 	root := newRepo(t)
 	slug := "dated-change"

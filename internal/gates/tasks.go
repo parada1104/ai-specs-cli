@@ -51,6 +51,9 @@ type Plan struct {
 	// HasVerification reports a `## Verification` section at all, so an empty
 	// or unparseable one is a coverage failure rather than a silent fallback.
 	HasVerification bool
+	// HasLog reports a `## Log` section at all: the tier matrix requires one from
+	// standard up, and Light keeps it optional.
+	HasLog bool
 }
 
 var (
@@ -101,6 +104,7 @@ func ParsePlan(text string) (Plan, []string) {
 	}
 
 	if logLines, ok := planSectionLines(sections, "log"); ok {
+		plan.HasLog = true
 		plan.Log, blockers = parsePlanLog(logLines, blockers)
 	}
 

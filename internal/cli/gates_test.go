@@ -18,10 +18,12 @@ const gatesStandardReport = "## Verify evidence\n- Verdict: PASS\n- Command: ./t
 	"- Exit: 0\n- Date: 2026-08-07\n- Commit: 1234567\n"
 
 // gatesPlanBody is the conforming plan every conforming fixture carries; the
-// grammar itself is covered by internal/gates.
+// grammar itself is covered by internal/gates. `## Log` is present because
+// standard/full require it (R7).
 const gatesPlanBody = "## Specs\n\n- **S1.** Fixture requirement\n\n## Tasks\n\n" +
 	"| ID | Spec | Tarea | Ruta | Commit |\n| --- | --- | --- | --- | --- |\n" +
-	"| T1 | S1 | Fixture task | inline | pending |\n"
+	"| T1 | S1 | Fixture task | inline | pending |\n\n" +
+	"## Log\n\n- **L1** — fixture request\n"
 
 // gatesConfig is a valid project config: `go` is on PATH, so a fixture that
 // records a command keeps the freshness rules quiet.
@@ -66,6 +68,49 @@ func runGatesCLI(t *testing.T, args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
 	code := Run(args, t.TempDir(), nil, &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
+}
+
+// A relative root grades exactly like the absolute one (R4): CI ships `--root .`.
+func TestGatesPremergeRelativeRootAgreesWithAbsolute(t *testing.T) {
+	root := gatesRepo(t)
+	gatesConformingArchive(t, root, "ok-change")
+
+	absoluteCode, absoluteOut, absoluteErr := runGatesCLI(t,
+		"gates", "premerge", "ok-change", "--root", root)
+	t.Chdir(root)
+	relativeCode, relativeOut, relativeErr := runGatesCLI(t,
+		"gates", "premerge", "ok-change", "--root", ".")
+
+	if relativeCode != absoluteCode || relativeOut != absoluteOut || relativeErr != absoluteErr {
+		t.Fatalf("--root . = (%d, %q, %q), --root %s = (%d, %q, %q); want the same verdict",
+			relativeCode, relativeOut, relativeErr, root, absoluteCode, absoluteOut, absoluteErr)
+	}
+	if relativeCode != 0 {
+		t.Fatalf("exit = %d, stderr = %q; want 0", relativeCode, relativeErr)
+	}
+}
+
+// The graded change becomes a path inside the planning tree, so a name that is
+// not a single segment is a usage error, never a folder outside the change tree
+// (R5).
+func TestGatesPremergeRefusesAnInvalidChangeName(t *testing.T) {
+	root := gatesRepo(t)
+	// Without the refusal, ../../../offtree resolves to a real graded folder.
+	gatesWrite(t, filepath.Join(root, "offtree", "tasks.md"), "Depth: light\n\n"+gatesPlanBody)
+
+	for _, args := range [][]string{
+		{"gates", "premerge", "--change", "../../../offtree", "--root", root},
+		{"gates", "premerge", "..", "--root", root},
+	} {
+		code, stdout, stderr := runGatesCLI(t, args...)
+		if code != 2 || stdout != "" {
+			t.Fatalf("%q = (%d, %q); want 2/empty", args, code, stdout)
+		}
+		if !strings.Contains(stderr, "ERROR: invalid change name:") ||
+			!strings.Contains(stderr, "(expected a single path segment)") {
+			t.Fatalf("%q stderr = %q; want the invalid-name usage error", args, stderr)
+		}
+	}
 }
 
 func TestGatesPremergeOKPrintsTheTier(t *testing.T) {

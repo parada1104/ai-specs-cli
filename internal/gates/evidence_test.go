@@ -211,6 +211,8 @@ func TestLightIsAdvisoryAboutEvidence(t *testing.T) {
 // verificationPlan builds a valid plan whose `## Verification` rows are given,
 // so the evidence chain (plan section first, verify-report.md second) can be
 // asserted through the public premerge entry point.
+// verificationPlan is a standard/full plan whose `## Verification` holds the
+// given rows; `## Log` is present because those tiers require it (P6).
 func verificationPlan(specs int, rows string) string {
 	specLines := ""
 	for number := 1; number <= specs; number++ {
@@ -219,7 +221,7 @@ func verificationPlan(specs int, rows string) string {
 	return "## Specs\n\n" + specLines + "\n## Tasks\n\n" +
 		"| ID | Spec | Tarea | Ruta | Commit |\n| --- | --- | --- | --- | --- |\n" +
 		"| T1 | S1 | Fixture task | inline | pendiente |\n\n" +
-		"## Verification\n\n" + rows
+		"## Verification\n\n" + rows + "\n## Log\n\n- **L1** — fixture request\n"
 }
 
 // planEvidenceArchive archives a change whose evidence lives in the plan.
@@ -288,31 +290,80 @@ func TestVerificationAcceptsCriterionLabelsForCompat(t *testing.T) {
 	}
 }
 
-// A verdict without a backticked command is prose, not evidence: every row must
-// name the command it ran, which closes the "PASS — nothing executed" bypass
-// (F4).
+// A verdict without a backticked command is prose, not evidence: every graded
+// row must name exactly one command, which closes the "PASS — nothing executed"
+// bypass (F4, R6).
 func TestVerificationRowWithoutABacktickedCommandBlocks(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		row  string
-		id   string
-	}{
-		{"pass", "- **S1: PASS** — nothing executed\n", "S1"},
-		{"n/a", "- **S1: N/A** — the CLI cannot judge this requirement\n", "S1"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			root := planEvidenceArchive(t, "verify-no-command", TierStandard, 1, tc.row,
-				archiveOpts{spec: true})
+	root := planEvidenceArchive(t, "verify-no-command", TierStandard, 1,
+		"- **S1: PASS** — nothing executed\n", archiveOpts{spec: true})
 
-			result := CheckPremerge(root, "verify-no-command", tierOpt(TierStandard))
+	result := CheckPremerge(root, "verify-no-command", tierOpt(TierStandard))
+	if result.OK {
+		t.Fatal("a row without a backticked command must block")
+	}
+	assertBlockerContains(t, result, "verification for S1"+
+		` must name the command it ran in backticks: record "- **S1: PASS** — `+"`go test ./...`\"")
+}
+
+// Prose around the command, a blank span, a bare second backticked value and a
+// recorded non-zero exit are all refused (R6).
+func TestMalformedVerificationCommandsBlock(t *testing.T) {
+	cases := map[string]string{
+		"prose before":    "nothing executed (`see notes`)",
+		"blank span":      "` `",
+		"bare second":     "`go test ./not-a-package`, `no-such-executable`",
+		"non-zero exit":   "`go test ./...`, exit 1",
+		"non-zero status": "`go test ./...`, exit status: 2",
+		"failed word":     "`go test ./...`, failed",
+	}
+	for name, evidence := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := planEvidenceArchive(t, "verify-malformed", TierStandard, 1,
+				"- **S1: PASS** — "+evidence+"\n", archiveOpts{spec: true})
+
+			result := CheckPremerge(root, "verify-malformed", tierOpt(TierStandard))
 			if result.OK {
-				t.Fatal("a row without a backticked command must block")
+				t.Fatalf("evidence %q must block", evidence)
 			}
-			assertBlockerContains(t, result, "verification for "+tc.id+
-				` must name the command it ran in backticks: record "- **`+tc.id+
-				`: PASS** — `+"`go test ./...`\"")
+			assertBlockerContains(t, result, "verification for S1")
 		})
 	}
+}
+
+// A conforming row with trailing notes after the command still passes: notes are
+// allowed, a second command is not (R6).
+func TestVerificationRowWithTrailingNotesPasses(t *testing.T) {
+	root := planEvidenceArchive(t, "verify-notes", TierStandard, 1,
+		"- **S1: PASS** — `go test ./...`, exit 0, commit abc1234, 2026-01-01\n",
+		archiveOpts{spec: true})
+
+	if result := CheckPremerge(root, "verify-notes", tierOpt(TierStandard)); !result.OK {
+		t.Fatalf("row with trailing notes = %+v, want OK", result)
+	}
+}
+
+// An N/A row carries its reason and records no run, so it is exempt from the
+// command requirement (C', R6).
+func TestVerificationRowNAWithAReasonPasses(t *testing.T) {
+	root := planEvidenceArchive(t, "verify-na", TierStandard, 1,
+		"- **S1: N/A** — manual review, no runnable command\n", archiveOpts{spec: true})
+
+	if result := CheckPremerge(root, "verify-na", tierOpt(TierStandard)); !result.OK {
+		t.Fatalf("N/A row with a reason = %+v, want OK", result)
+	}
+}
+
+// Two rows for the same requirement block, naming the id (R6).
+func TestDuplicateVerificationRowsBlockByName(t *testing.T) {
+	root := planEvidenceArchive(t, "verify-duplicate", TierStandard, 1,
+		"- **S1: PASS** — `go test ./...`, exit 0\n- **S1: PASS** — `go test ./...`, exit 0\n",
+		archiveOpts{spec: true})
+
+	result := CheckPremerge(root, "verify-duplicate", tierOpt(TierStandard))
+	if result.OK {
+		t.Fatal("duplicate rows for one requirement must block")
+	}
+	assertBlockerContains(t, result, "verification has more than one row for S1")
 }
 
 func TestVerificationRowForUndeclaredSpecBlocks(t *testing.T) {
