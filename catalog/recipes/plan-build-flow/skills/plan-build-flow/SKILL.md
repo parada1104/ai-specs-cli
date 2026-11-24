@@ -230,6 +230,33 @@ Applies only when the repository resolves to `odd` mode: `[recipes.plan-build-fl
 - The mode selects the plan tree and never waives the plan requirement: `openspec` mode still needs its change folder, and `odd` mode needs the paired ODD plan.
 - In `odd` mode the pre-merge guardian reads the branch pairing, validates the paired plan and the delta parity against `odd/specs/`, and applies no archive step and no tier minimum.
 
+### 4.2 The plan file (`openspec` mode, normative)
+
+The plan of a change is one file, `openspec/changes/<slug>/tasks.md`, and the CLI
+parses it. Its sections, in this order, are `## Specs`, `## Tasks`, `## Design`
+(optional), `## Verification`, and `## Log` last. `S#` quotes the human request
+verbatim — it never restates `proposal.md` — and every `## Tasks` row links the
+`S#` it implements. `proposal.md`, `design.md` and `verify-report.md` may still
+be written, but the plan is what the CLI reads. Any other section is prose the
+CLI ignores.
+
+```text
+# <change>                            (2-3 header lines: what, delta, card)
+## Specs
+- **S1.** <requirement, one line> — *"<verbatim quote from the human>"*
+## Tasks
+| ID | Spec | Tarea | Ruta | Commit |
+| T1 | S1, S2 | <what is done + its tests> | worker | pending |
+## Design                              (full tier only, and only if a decision needs explaining)
+## Verification                        (standard/full: one row per S#)
+- **S1: PASS** — `<command>`, exit 0, commit `<sha>`, `<date>`
+## Log
+- **L1** — <the human's original request, verbatim>
+```
+
+Migration: an in-flight change written before this release must be rewritten
+into the plan shape before it can be archived.
+
 ## 5. Orchestrator degradation policy
 
 - **Orchestrator present** — let it drive phases via sub-agents.
@@ -249,8 +276,10 @@ never proves readiness.
   memory-only.
 
 Readiness is always proven by file-backed artifacts in the canonical
-change-folder tree — `tasks.md`, tier minimum planning files, and
-`verify-report.md`. The resolved store (`openspec|engram|both`) is never
+change-folder tree, and the readiness artifact is the plan: `tasks.md` with its
+`## Specs` and `## Tasks` sections (Section 4.2), plus the tier minimums and the
+verification evidence that tier asks for. `proposal.md` alone is never the
+readiness marker. The resolved store (`openspec|engram|both`) is never
 consulted for readiness and never alters any classifier, PR/archive gate,
 staged verify gate, or pre-merge guardian decision. Engram MAY mirror artifacts
 but never replaces them.
@@ -434,10 +463,14 @@ merged base branch as the archive boundary.
 
 ## 8. Change-slug derivation
 
-- On plan, derive a kebab-case slug from intent.
-- On build, resolve slug from outstanding change folders under
-  `openspec/changes/` (excluding `archive/`).
-- If multiple outstanding plans exist, ask which to build.
+- The change is derived, never guessed: on build it is the last path segment of
+  the current branch (`feat/thing` and `fix/thing` both give `thing`), and
+  `--change` is the only override.
+- Ambiguity is a refusal, not a guess: when the branch pairs with no active
+  change and more than one is active, the CLI stops and names the rule and the
+  candidates instead of picking one.
+- On plan, derive a kebab-case slug from intent and create the folder; that is
+  the one step where the slug is written rather than resolved from the branch.
 
 ## 9. Worktree deference
 

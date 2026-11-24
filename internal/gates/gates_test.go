@@ -54,7 +54,7 @@ func archiveWith(t *testing.T, root, slug, tasks string, opts archiveOpts) strin
 	}
 	folder := filepath.Join(root, "openspec", "changes", "archive", name)
 	mkdirAll(t, folder)
-	writeFile(t, filepath.Join(folder, "tasks.md"), tasks)
+	writeFile(t, filepath.Join(folder, "tasks.md"), planOrFixture(tasks))
 	if opts.proposal {
 		writeFile(t, filepath.Join(folder, "proposal.md"),
 			"# proposal\n\n## Success Criteria\n- [ ] Criterion fixture\n")
@@ -75,7 +75,7 @@ func activeWith(t *testing.T, root, slug, tasks string, opts archiveOpts) string
 	t.Helper()
 	folder := filepath.Join(root, "openspec", "changes", slug)
 	mkdirAll(t, folder)
-	writeFile(t, filepath.Join(folder, "tasks.md"), tasks)
+	writeFile(t, filepath.Join(folder, "tasks.md"), planOrFixture(tasks))
 	if opts.proposal {
 		writeFile(t, filepath.Join(folder, "proposal.md"), "# proposal\n")
 	}
@@ -233,6 +233,60 @@ func TestPrearchiveChecksActiveFolderWithoutActiveBlocker(t *testing.T) {
 	writeFile(t, filepath.Join(folder, "verify-report.md"), standardReport)
 	if result := CheckPrearchive(root, slug, tierOpt("standard")); !result.OK {
 		t.Fatalf("conforming pre-archive = %+v, want OK", result)
+	}
+}
+
+// planFixtureBody is a minimal valid plan for the fixtures that only exercise
+// another rule.
+const planFixtureBody = "## Specs\n\n- **S1.** Fixture requirement\n\n## Tasks\n\n" +
+	"| ID | Spec | Tarea | Ruta | Commit |\n| --- | --- | --- | --- | --- |\n" +
+	"| T1 | S1 | Fixture task | inline | pendiente |\n"
+
+// planOrFixture completes a fixture's tasks text with a conforming plan, so a
+// test about another rule does not have to spell the grammar out.
+func planOrFixture(tasks string) string {
+	if strings.Contains(tasks, "## Specs") {
+		return tasks
+	}
+	return tasks + "\n" + planFixtureBody
+}
+
+func TestInspectFolderBlocksAFreeFormTasksFile(t *testing.T) {
+	root := newRepo(t)
+	folder := archiveWith(t, root, "free-form", "Depth: standard\n\n"+planFixtureBody, archiveOpts{
+		proposal: true, spec: true, report: repoString(standardReport),
+	})
+	writeFile(t, filepath.Join(folder, "tasks.md"), "Depth: standard\n- [x] una tarea suelta\n")
+	result := CheckPremerge(root, "free-form", tierOpt("standard"))
+	if result.OK {
+		t.Fatal("a free-form tasks.md must block for every tier")
+	}
+	assertBlockerContains(t, result, "archive/free-form/tasks.md: `## Specs` section is missing",
+		"archive/free-form/tasks.md: `## Tasks` section is missing")
+
+	writeFile(t, filepath.Join(folder, "tasks.md"), "Depth: standard\n\n"+planFixtureBody)
+	if result := CheckPremerge(root, "free-form", tierOpt("standard")); !result.OK {
+		t.Fatalf("conforming plan = %+v, want OK", result)
+	}
+}
+
+func TestInspectFolderStillRequiresProposalForLightAndStandard(t *testing.T) {
+	for _, tier := range []string{TierLight, TierStandard} {
+		t.Run(tier, func(t *testing.T) {
+			root := newRepo(t)
+			slug := "plan-only-" + tier
+			opts := archiveOpts{}
+			if tier == TierStandard {
+				opts.spec = true
+				opts.report = repoString(standardReport)
+			}
+			archiveWith(t, root, slug, "Depth: "+tier+"\n\n"+planFixtureBody, opts)
+			result := CheckPremerge(root, slug, tierOpt(tier))
+			if result.OK {
+				t.Fatalf("tier %s without proposal.md must still block", tier)
+			}
+			assertBlockerContains(t, result, "/proposal.md is required for tier "+tier)
+		})
 	}
 }
 

@@ -38,7 +38,7 @@ func parityActive(t *testing.T, root, slug, delta, tier string, evidence *string
 	t.Helper()
 	folder := filepath.Join(root, "openspec", "changes", slug)
 	mkdirAll(t, folder)
-	writeFile(t, filepath.Join(folder, "tasks.md"), "Depth: "+tier+"\n")
+	writeFile(t, filepath.Join(folder, "tasks.md"), planOrFixture("Depth: "+tier+"\n"))
 	writeFile(t, filepath.Join(folder, "proposal.md"), "# proposal\n")
 	writeFile(t, filepath.Join(folder, "specs", "capability", "spec.md"), delta)
 	if evidence != nil {
@@ -181,7 +181,7 @@ func TestLightChangeWithoutSpecsIsUnaffected(t *testing.T) {
 	root := parityRepo(t)
 	folder := filepath.Join(root, "openspec", "changes", "light-change")
 	mkdirAll(t, folder)
-	writeFile(t, filepath.Join(folder, "tasks.md"), "Depth: light\n")
+	writeFile(t, filepath.Join(folder, "tasks.md"), planOrFixture("Depth: light\n"))
 	writeFile(t, filepath.Join(folder, "proposal.md"), "# proposal\n")
 
 	if result := CheckPrearchive(root, "light-change", tierOpt("light")); !result.OK {

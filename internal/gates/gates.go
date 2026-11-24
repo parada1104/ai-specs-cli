@@ -104,12 +104,24 @@ func checkMinimums(folder, tier, location string) []string {
 	return blockers
 }
 
+// checkPlan requires the ODD-shaped plan (plan-build-openspec-odd-align P1) for
+// every tier: the change folder's tasks.md must parse with no blockers.
+func checkPlan(folder, location string) []string {
+	_, blockers := ParsePlan(readText(filepath.Join(folder, "tasks.md")))
+	located := make([]string, 0, len(blockers))
+	for _, blocker := range blockers {
+		located = append(located, location+"/tasks.md: "+blocker)
+	}
+	return located
+}
+
 // inspectFolder runs the whole gate over one change folder.
 func inspectFolder(folder string, tier *string, location, repoRoot string) Result {
 	var blockers []string
 	tasksText := readText(filepath.Join(folder, "tasks.md"))
 	resolved := resolveTier(tasksText, tier, &blockers)
 	blockers = append(blockers, checkMinimums(folder, resolved, location)...)
+	blockers = append(blockers, checkPlan(folder, location)...)
 	blockers = append(blockers, checkVerifyEvidence(folder, resolved)...)
 	blockers = append(blockers, promotionBlockers(repoRoot, folder, resolved, location)...)
 	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: resolved, ArchivePath: folder}

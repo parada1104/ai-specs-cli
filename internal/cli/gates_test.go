@@ -17,6 +17,12 @@ import (
 const gatesStandardReport = "## Verify evidence\n- Verdict: PASS\n- Command: ./tests/run.sh\n" +
 	"- Exit: 0\n- Date: 2026-08-07\n- Commit: 1234567\n"
 
+// gatesPlanBody is the conforming plan every conforming fixture carries; the
+// grammar itself is covered by internal/gates.
+const gatesPlanBody = "## Specs\n\n- **S1.** Fixture requirement\n\n## Tasks\n\n" +
+	"| ID | Spec | Tarea | Ruta | Commit |\n| --- | --- | --- | --- | --- |\n" +
+	"| T1 | S1 | Fixture task | inline | pending |\n"
+
 func gatesRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -40,7 +46,7 @@ func gatesWrite(t *testing.T, path, content string) {
 func gatesConformingArchive(t *testing.T, root, slug string) string {
 	t.Helper()
 	folder := filepath.Join(root, "openspec", "changes", "archive", slug)
-	gatesWrite(t, filepath.Join(folder, "tasks.md"), "Depth: standard\n")
+	gatesWrite(t, filepath.Join(folder, "tasks.md"), "Depth: standard\n\n"+gatesPlanBody)
 	gatesWrite(t, filepath.Join(folder, "proposal.md"), "# proposal\n")
 	gatesWrite(t, filepath.Join(folder, "specs", "cap", "spec.md"), "# cap\n")
 	gatesWrite(t, filepath.Join(folder, "verify-report.md"), gatesStandardReport)
@@ -99,7 +105,7 @@ func TestGatesPremergeBlockedPrintsTheBlockerList(t *testing.T) {
 func TestGatesPremergePreArchiveStageChecksTheActiveFolder(t *testing.T) {
 	root := gatesRepo(t)
 	active := filepath.Join(root, "openspec", "changes", "active-change")
-	gatesWrite(t, filepath.Join(active, "tasks.md"), "Depth: light\n")
+	gatesWrite(t, filepath.Join(active, "tasks.md"), "Depth: light\n\n"+gatesPlanBody)
 	gatesWrite(t, filepath.Join(active, "proposal.md"), "# proposal\n")
 
 	code, stdout, stderr := runGatesCLI(t, "gates", "premerge", "active-change", "--root", root,
@@ -109,7 +115,7 @@ func TestGatesPremergePreArchiveStageChecksTheActiveFolder(t *testing.T) {
 	}
 
 	gatesWrite(t, filepath.Join(root, "openspec", "changes", "active-change", "tasks.md"),
-		"Depth: standard\n")
+		"Depth: standard\n\n"+gatesPlanBody)
 	code, stdout, stderr = runGatesCLI(t, "gates", "premerge", "active-change", "--root", root,
 		"--stage", "pre-archive")
 	if code != 1 || stdout != "" {
@@ -123,7 +129,7 @@ func TestGatesPremergePreArchiveStageChecksTheActiveFolder(t *testing.T) {
 func TestGatesPremergeExplicitTierOverridesTheDepthLine(t *testing.T) {
 	root := gatesRepo(t)
 	folder := filepath.Join(root, "openspec", "changes", "archive", "full-change")
-	gatesWrite(t, filepath.Join(folder, "tasks.md"), "Depth: light\n")
+	gatesWrite(t, filepath.Join(folder, "tasks.md"), "Depth: light\n\n"+gatesPlanBody)
 	gatesWrite(t, filepath.Join(folder, "proposal.md"), "# proposal\n")
 	gatesWrite(t, filepath.Join(folder, "specs", "cap", "spec.md"), "# cap\n")
 	gatesWrite(t, filepath.Join(folder, "verify-report.md"), gatesStandardReport)
