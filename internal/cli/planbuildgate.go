@@ -11,9 +11,13 @@ package cli
 //
 // One mode: a pre-tool-use event on stdin. A production path write (the
 // PLAN_BUILD_GATE_PATHS scope, default src/lib/catalog) is graded at the
-// `work-start` ledger checkpoint first, then refused until an active change
-// folder (openspec/changes/<slug>/tasks.md) exists under the nearest repository
+// `work-start` ledger checkpoint first, then refused until the plan of the
+// repository's execution mode exists. In `openspec` mode that is an active
+// change folder (openspec/changes/<slug>/tasks.md) under the nearest repository
 // root, or — for a proven submodule topology — under the central planning root.
+// In `odd` mode it is the paired plan odd/tasks/<change>.md at the repository
+// root, and the planning tree is odd/ instead of openspec/changes/. The mode
+// selects the plan tree and never waives the plan requirement (S10).
 //
 // Exit codes: 0 allows the write, 2 refuses it. Malformed, unrelated or
 // unprovable input fails open, except the topology proof, which fails closed
@@ -35,6 +39,7 @@ import (
 	"strings"
 
 	"ai-specs.dev/ai-specs/internal/hook"
+	"ai-specs.dev/ai-specs/internal/planbuild"
 	"ai-specs.dev/worktree-gate/runner"
 	shared "ai-specs.dev/worktree-gate/shared"
 )
@@ -55,9 +60,18 @@ const (
 const planBuildGateUsage = `Usage: ai-specs plan-build-gate
 
 Pre-tool-use hook: read one hook event (JSON) on stdin and refuse a production
-path write until an active change folder (openspec/changes/<slug>/tasks.md)
-exists. Planning artifacts under openspec/changes/ are always writable, and the
-agent's own .claude config is never graded.
+path write until the plan of the repository's execution mode exists. In
+"openspec" mode the plan is an active change folder
+(openspec/changes/<slug>/tasks.md). In "odd" mode the plan is the paired file
+odd/tasks/<change>.md, where <change> is the last segment of the current branch
+name (feat/thing and fix/thing both pair with odd/tasks/thing.md). Planning
+artifacts under openspec/changes/ and, in "odd" mode, under odd/ are always
+writable, and the agent's own .claude config is never graded.
+
+The mode is read from [recipes.plan-build-flow.config] mode in
+ai-specs/ai-specs.toml: "auto" (default), "odd" or "openspec". "auto" resolves
+"odd" when the Gentle AI state directory <git-common-dir>/gentle-ai/ exists, and
+"openspec" otherwise. An explicit mode wins over the inference.
 
 Options:
   --help, -h          Show this help
@@ -76,6 +90,20 @@ const planBuildGateNearestRefusal = "%s: refusing to %s '%s' — no active chang
 	"(openspec/changes/<slug>/tasks.md) found. Classify the change and write the plan " +
 	"first, then implement. Writing planning artifacts under openspec/changes/ is never " +
 	"blocked.\n"
+
+// planBuildGateOddPlanRefusal is the odd-mode refusal for a missing or
+// non-regular paired plan.
+const planBuildGateOddPlanRefusal = "%s: refusing to %s '%s' — ODD mode is active but the ODD plan " +
+	"'odd/tasks/%s.md' is missing, is not a regular file, or resolves outside the repository " +
+	"for branch '%s'. Write the plan first, or declare mode = \"openspec\" in " +
+	"ai-specs/ai-specs.toml to use the OpenSpec flow. Writing planning artifacts under odd/ is " +
+	"never blocked.\n"
+
+// planBuildGateOddBranchRefusal is the odd-mode refusal for an unresolvable branch.
+const planBuildGateOddBranchRefusal = "%s: refusing to %s '%s' — ODD mode is active but the current " +
+	"branch cannot be resolved (detached HEAD), so no ODD plan can be paired. Write the plan at " +
+	"'odd/tasks/<change>.md' on the change branch, or declare mode = \"openspec\" in " +
+	"ai-specs/ai-specs.toml to use the OpenSpec flow.\n"
 
 // planBuildGateCentralRefusal is the shell host's central-root refusal.
 const planBuildGateCentralRefusal = "%s: refusing to %s '%s' — no active change folder " +
@@ -122,12 +150,18 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 		return 0
 	}
 	rel := planBuildGateRel(repoRoot, abs)
+	// The execution mode is resolved once and selects the plan tree; it never
+	// waives the plan requirement.
+	mode := planbuild.Resolve(repoRoot, planBuildGateCommonDir(target.Probe))
 	// Gitignored agent configuration is machine setup, never a production change.
 	if planBuildGateAgentConfig(rel) {
 		return 0
 	}
 	// Artifact writes are unconditional at the nearest repository root.
 	if planBuildGateUnder(filepath.Join(repoRoot, "openspec", "changes"), abs) {
+		return 0
+	}
+	if mode == planbuild.ModeOdd && planBuildGateUnder(filepath.Join(repoRoot, "odd"), abs) {
 		return 0
 	}
 	if !planBuildGateProduction(rel) {
@@ -142,6 +176,11 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 	if !planBuildGateGradeLedger(repoRoot, stderr) {
 		return 2
 	}
+	if mode == planbuild.ModeOdd {
+		// The plan is per repository root in odd mode, so the submodule topology
+		// proof does not apply.
+		return planBuildGateOddPlan(repoRoot, target.Probe, tool, rel, stderr)
+	}
 	if planBuildGateHasPlan(repoRoot) {
 		return 0
 	}
@@ -153,6 +192,28 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 		return 2
 	}
 	fmt.Fprintf(stderr, planBuildGateNearestRefusal, planBuildGateName, tool, rel)
+	return 2
+}
+
+// planBuildGateCommonDir resolves git's common directory against the probe
+// directory, through the one helper the promoter shares.
+func planBuildGateCommonDir(probeDir string) string {
+	return planbuild.CommonDir(probeDir)
+}
+
+// planBuildGateOddPlan grades the odd-mode plan: the paired plan of the current
+// branch, a regular file at odd/tasks/<change>.md.
+func planBuildGateOddPlan(repoRoot, probeDir, tool, rel string, stderr io.Writer) int {
+	branch := planbuild.Branch(probeDir)
+	change, ok := planbuild.ChangeFromBranch(branch)
+	if !ok {
+		fmt.Fprintf(stderr, planBuildGateOddBranchRefusal, planBuildGateName, tool, rel)
+		return 2
+	}
+	if planbuild.PlanIsValid(repoRoot, change) {
+		return 0
+	}
+	fmt.Fprintf(stderr, planBuildGateOddPlanRefusal, planBuildGateName, tool, rel, change, branch)
 	return 2
 }
 

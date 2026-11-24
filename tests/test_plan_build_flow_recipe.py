@@ -23,6 +23,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _blackbox import cache_project_dir, invoke, isolated_home  # noqa: E402
@@ -88,6 +89,25 @@ def _without_delivery_contracts_section(raw: str) -> str:
     return stripped
 
 
+def _skill_section(heading: str, level: int = 3) -> str:
+    """One SKILL.md section body, whitespace-normalized, up to the next heading."""
+    skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text()
+    marker = "#" * level
+    pattern = rf"(?ms)^{marker} {re.escape(heading)}\n(.*?)(?=^#{{1,{level}}} |\Z)"
+    match = re.search(pattern, skill)
+    assert match, f"missing skill section {marker} {heading}"
+    return " ".join(match.group(1).split())
+
+
+# The mixin is always combined with unittest.TestCase by its only user, so the
+# type checker needs that base while the runtime keeps plain object (no MRO or
+# collection change).
+if TYPE_CHECKING:
+    _FixtureBase = unittest.TestCase
+else:
+    _FixtureBase = object
+
+
 def _recipe_surface_text(recipe_dir: Path) -> str:
     recipe = _without_store_config_table((recipe_dir / "recipe.toml").read_text())
     readme = _without_delivery_contracts_section((recipe_dir / "README.md").read_text())
@@ -95,7 +115,7 @@ def _recipe_surface_text(recipe_dir: Path) -> str:
     return "\n".join((recipe, readme, skill)).lower()
 
 
-class _CliFixtureMixin:
+class _CliFixtureMixin(_FixtureBase):
     """One shared isolated cli_home and temp project per test command sequence."""
 
     def setUp(self):
@@ -392,6 +412,31 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("{config.artifact_store_default}", rules[5])
         self.assertEqual(rules[5].count("{config.artifact_store_default}"), 1)
 
+    def test_skill_7_1_names_the_odd_plan_exception(self):
+        """S3: §7.1 states that in odd mode the paired plan replaces the folder."""
+        section = _skill_section("7.1 Change folder required")
+        self.assertIn("Exception — `odd` mode (Section 4.1)", section)
+        self.assertIn("`odd/tasks/<change>.md`", section)
+
+    def test_skill_4_1_names_odd_layout_and_mode_key(self):
+        """S1, S4, S6: §4.1 names the mode key and the odd artifact layout."""
+        section = _skill_section("4.1 Companion mode (ODD owns the change)", level=2)
+        for marker in (
+            "[recipes.plan-build-flow.config] mode",
+            "`odd/tasks/<change>.md`",
+            "`odd/changes/",
+            "`odd/specs/",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, section)
+
+    def test_skill_7_2_pr_gate_accepts_the_odd_plan(self):
+        """S3, S6: §7.2 item 1 is satisfied by the odd plan, plus the delta."""
+        section = _skill_section("7.2 PR creation gate (hard stop)")
+        self.assertIn("In `odd` mode (Section 4.1)", section)
+        self.assertIn("`odd/tasks/<change>.md`", section)
+        self.assertIn("`odd/changes/<change>/`", section)
+
     def test_skill_has_ambient_auto_invoke(self):
         skill = CATALOG / RECIPE_ID / "skills" / "plan-build-flow" / "SKILL.md"
         text = skill.read_text()
@@ -419,10 +464,13 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         gate = (CATALOG / RECIPE_ID / "hooks" / "plan-build-gate.sh").read_text().lower()
         self.assertNotIn(removed_root, gate)
         self.assertNotIn("forecast", gate)
-        external_terms = ("gentle-" + "ai", "gentle-" + "pi")
         catalog_section = (ROOT / "docs" / "recipes-catalog.md").read_text().lower()
-        for term in external_terms:
-            self.assertNotIn(term, surface)
+        # The ODD mode signal names the state directory itself; every other
+        # external-product mention stays forbidden on the recipe surface.
+        allowed = surface.replace("<git-common-dir>/gentle-ai/", "")
+        allowed = allowed.replace("gentle ai state directory", "")
+        for term in ("gentle-" + "ai", "gentle-" + "pi"):
+            self.assertNotIn(term, allowed)
             self.assertNotIn(term, catalog_section)
 
     def test_config_help_text_states_persistence_preference(self):
@@ -651,7 +699,11 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         surface = _recipe_surface_text(CATALOG / RECIPE_ID)
         for term in ("gentle-ai", "gentle ai"):
             self.assertNotIn(term, rules.lower())
-            self.assertNotIn(term, surface)
+        # Only the ODD mode state directory may name the external product.
+        allowed = surface.replace("<git-common-dir>/gentle-ai/", "")
+        allowed = allowed.replace("gentle ai state directory", "")
+        for term in ("gentle-ai", "gentle ai"):
+            self.assertNotIn(term, allowed)
 
     def test_skill_orders_promotion_before_archive_and_a_guardian(self):
         """The lifecycle order is verify → promote → pre-archive → archive → merge."""

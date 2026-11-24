@@ -218,6 +218,18 @@ modified while planning. Do not tell the user to "run /plan" or similar —
 respond to natural requests ("necesito implementar…") by classifying and
 planning.
 
+## 4.1 Companion mode (ODD owns the change)
+
+Applies only when the repository resolves to `odd` mode: `[recipes.plan-build-flow.config] mode` in the project manifest, default `auto`, which infers `odd` when the Gentle AI state directory exists at `<git-common-dir>/gentle-ai/`. An installed tool or a leftover `odd/tasks/` file is not evidence. In `openspec` mode, Sections 2-7 apply unchanged.
+
+- ODD owns planning, approval and verification. Do not classify a depth, write a second proposal/design/tasks, or ask for another go-ahead. Tracker and delivery obligations still apply.
+- The change plan is `odd/tasks/<change>.md`, where `<change>` is the last path segment of the branch name (`feat/thing` and `fix/thing` both resolve to `thing`). The plan-before-build gate blocks a production write when that file is missing; writing under `odd/` is never blocked.
+- Write a delta at `odd/changes/<change>/specs/<domain>/spec.md` only when the change adds, modifies or removes an observable product rule, or corrects a documented rule to match verified behavior. Label a documentation correction as such, never as a behavior change. A behavior-preserving change carries no delta and no change folder.
+- Reuse ODD verification as the evidence, then promote with `ai-specs specs promote <slug> --root <root>` before the guardian and merge (Section 7). In `odd` mode it composes `odd/changes/<slug>/specs/<domain>/spec.md` into `odd/specs/<domain>/spec.md`; `openspec/specs/**` is neither read nor written.
+- In companion mode the Section 6 file-backed readiness and the Section 7 change-folder and tier-minimum requirements apply only to a change that carries a delta, and then only to the delta; they never require a second proposal, design or tasks.
+- The mode selects the plan tree and never waives the plan requirement: `openspec` mode still needs its change folder, and `odd` mode needs the paired ODD plan.
+- In `odd` mode the pre-merge guardian reads the branch pairing, validates the paired plan and the delta parity against `odd/specs/`, and applies no archive step and no tier minimum.
+
 ## 5. Orchestrator degradation policy
 
 - **Orchestrator present** — let it drive phases via sub-agents.
@@ -252,11 +264,19 @@ Every non-trivial change MUST have a slug folder at `openspec/changes/<slug>/`
 jumps straight to "implement X", create the folder and run the classified plan
 first.
 
+Exception — `odd` mode (Section 4.1): the plan is `odd/tasks/<change>.md` and no
+`openspec/changes/<slug>/` folder is created. A change that carries a delta keeps
+it at `odd/changes/<change>/specs/<domain>/spec.md`, which serves as the change
+folder for the tail gates.
+
 ### 7.2 PR creation gate (hard stop)
 
 Do **not** run `gh pr create`, `glab mr create`, or equivalent until:
 
-1. The matching `openspec/changes/<slug>/` folder exists on the current branch.
+1. The matching `openspec/changes/<slug>/` folder exists on the current branch. In
+   `odd` mode (Section 4.1) that folder is not required: the gate is satisfied by
+   `odd/tasks/<change>.md` and, when the change carries a delta, by
+   `odd/changes/<change>/`.
 2. Tier minimum files from Section 2 are present and **committed**.
 3. Implementation and verification for that slug are complete (or the user
    explicitly accepts opening a draft-only PR for review of planning — still

@@ -55,6 +55,35 @@ the requested, signal, decided, and decision-source annotation lines. A same-tur
 preference may resolve the conflict without a repeat ask; a deeper decision still
 requires its complete planning chain.
 
+## Execution modes
+
+Plan Build resolves exactly one execution mode per repository from the project
+manifest, keyed `mode` under `[recipes.plan-build-flow.config]`:
+
+```toml
+[recipes.plan-build-flow.config]
+mode = "auto"   # auto | odd | openspec
+```
+
+- **`auto`** (default) infers the mode from the Gentle AI state directory inside
+the Git common directory (`<git-common-dir>/gentle-ai/`): present resolves to
+`odd`, absent to `openspec`. An explicit `odd` or `openspec` wins over the
+inference, and a project where that directory does not exist yet resolves to
+`openspec` while it stays absent. Write `mode` by hand: the recipe schema
+does not declare it yet, so `ai-specs recipe configure` cannot set it.
+- **`odd`** keeps every planning artifact under `odd/`: canonical specs at
+`odd/specs/<domain>/spec.md`, the change plan at `odd/tasks/<change>.md`, and a
+delta at `odd/changes/<change>/specs/<domain>/spec.md` only for a change that
+adds, modifies or removes an observable rule. `<change>` is the branch name's
+last path segment after stripping any prefix, so `feat/thing` and `fix/thing`
+both pair with the plan `odd/tasks/thing.md`. `ai-specs specs promote` composes
+`odd/changes/<slug>/specs/<domain>/spec.md` into
+`odd/specs/<domain>/spec.md`; `openspec/specs/**` is neither read nor written. `ai-specs gates premerge` pairs the change from the branch, checks that
+the plan exists and every `odd/changes/<slug>/specs/` delta was promoted, and requires
+no archive.
+There is no `odd/config.yml`: the mode lives in the project manifest.
+- **`openspec`** is the unchanged OpenSpec-centered flow described below.
+
 ## PR and merge gates
 
 - **No PR** until the change folder contains its tier minimum files committed:

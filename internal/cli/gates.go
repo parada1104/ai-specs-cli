@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"ai-specs.dev/ai-specs/internal/gates"
+	"ai-specs.dev/ai-specs/internal/planbuild"
 )
 
 // gatesUsage is the family's own usage, printed on stdout for --help/-h/help and
@@ -27,6 +28,11 @@ Run 'ai-specs gates premerge --help' for full options.
 `
 
 const gatesPremergeUsage = `Usage: ai-specs gates premerge <slug> --root <planning-root> [--tier light|standard|full] [--stage pre-merge|pre-archive]
+
+In ` + "odd" + ` mode the change comes from the current branch (odd/tasks/<change>.md):
+<slug> is accepted and ignored, the plan and the promotion parity of its deltas
+are validated, and no OpenSpec archive or tier minimum is required. The mode is
+resolved from the project manifest, exactly as the pre-tool-use gate resolves it.
 
 Check the pre-merge archive/artifact gates for one change: tier minimum files,
 staged verification evidence, and (Standard/Full) canonical spec promotion
@@ -138,9 +144,14 @@ func runGatesPremerge(args []string, stdout, stderr io.Writer) int {
 	}
 
 	var result gates.Result
-	if stage == "pre-archive" {
+	switch {
+	case stage == "pre-archive":
 		result = gates.CheckPrearchive(root, slug, tier)
-	} else {
+	case planbuild.ResolveRepo(root) == planbuild.ModeOdd:
+		// ODD discovers the change from the branch and never requires an archive.
+		change, _ := planbuild.ChangeFromBranch(planbuild.Branch(root))
+		result = gates.CheckPremergeOdd(root, change)
+	default:
 		result = gates.CheckPremerge(root, slug, tier)
 	}
 	if result.OK {
