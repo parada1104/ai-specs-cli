@@ -268,6 +268,32 @@ func TestChangesArchiveWritesTheMarkerForADeltaLessChange(t *testing.T) {
 	}
 }
 
+// An active change folder that holds only notes archives to a folder the
+// guardian would reject as empty; the marker keeps it content-provable (C1).
+func TestChangesArchiveWritesTheMarkerForANotesOnlyFolder(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "openspec", "changes", "thing")
+	changesWrite(t, filepath.Join(src, "notes.md"), "# notes\n")
+	dst := filepath.Join(root, "openspec", "changes", "archive", "2026-01-02-thing")
+
+	code, stdout, stderr := runChangesCLI(t,
+		"changes", "archive", "thing", "--root", root, "--date", "2026-01-02")
+
+	if code != 0 || stderr != "" {
+		t.Fatalf("exit = %d, stderr = %q; want 0/empty", code, stderr)
+	}
+	if want := "changes archive: moved " + src + " to " + dst + "\n"; stdout != want {
+		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+	marker, err := os.ReadFile(filepath.Join(dst, "archived.md"))
+	if err != nil {
+		t.Fatalf("archive does not hold the marker: %v", err)
+	}
+	if got, wantMarker := string(marker), "# archived: thing\ndate: 2026-01-02\n"; got != wantMarker {
+		t.Errorf("marker = %q, want %q", got, wantMarker)
+	}
+}
+
 // An archive destination that resolves through a symlink or outside the
 // repository is refused before any move (F1).
 func TestChangesArchiveRefusesASymlinkedArchiveDestination(t *testing.T) {

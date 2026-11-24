@@ -14,6 +14,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -239,7 +240,7 @@ func runChangesArchive(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		marker := "# archived: " + change + "\ndate: " + date + "\n"
-		if err := os.WriteFile(filepath.Join(dst, "archived.md"), []byte(marker), 0o644); err != nil {
+		if err := writeArchiveMarker(dst, marker); err != nil {
 			fmt.Fprintf(stderr, "changes archive: cannot write %s: %s\n",
 				filepath.Join(dst, "archived.md"), err)
 			return 1
@@ -256,8 +257,44 @@ func runChangesArchive(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "changes archive: cannot move %s to %s: %s\n", src, dst, err)
 		return 1
 	}
+	// A folder that held only notes renames into an archive the guardian rejects
+	// as empty (C1): give it the same marker a delta-less change gets.
+	if !archiveHoldsContent(dst) {
+		marker := "# archived: " + change + "\ndate: " + date + "\n"
+		if err := writeArchiveMarker(dst, marker); err != nil {
+			fmt.Fprintf(stderr, "changes archive: cannot write %s: %s\n",
+				filepath.Join(dst, "archived.md"), err)
+			return 1
+		}
+	}
 	fmt.Fprintf(stdout, "changes archive: moved %s to %s\n", src, dst)
 	return 0
+}
+
+// writeArchiveMarker writes the three-line marker a folder without a plan or a
+// delta carries into its archive, so the guardian never grades it as empty.
+func writeArchiveMarker(folder, marker string) error {
+	return os.WriteFile(filepath.Join(folder, "archived.md"), []byte(marker), 0o644)
+}
+
+// archiveHoldsContent mirrors the guardian's emptiness rule: the plan or any
+// spec delta makes the archive content-provable.
+func archiveHoldsContent(folder string) bool {
+	if _, err := os.Stat(filepath.Join(folder, "tasks.md")); err == nil {
+		return true
+	}
+	found := false
+	_ = filepath.WalkDir(filepath.Join(folder, "specs"), func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
+			found = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return found
 }
 
 // repoRelative is the repository-relative path the blockers name.

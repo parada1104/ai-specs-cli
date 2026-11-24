@@ -173,6 +173,10 @@ func commandHead(command string) string {
 func checkConfigFreshness(root, configPath string, cfg ProjectConfig, plan Plan) []string {
 	var blockers, commands []string
 	for _, row := range plan.Verification {
+		// An N/A row records no run, so its evidence cannot credit the runner (C3).
+		if row.Verdict == "N/A" {
+			continue
+		}
 		command, ok := backtickedCommand(row.Evidence)
 		if !ok {
 			continue

@@ -24,6 +24,9 @@ permissions:
 jobs:
   pr-gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,8 +45,42 @@ jobs:
           fetch-depth: 0
       # actions/checkout leaves HEAD detached, so the gate cannot derive the
       # change from the branch: the explicit change is mandatory here.
+      - name: Require delivery artifacts in the pull request
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          ARTIFACT_PATHS: odd/ openspec/changes/
+        run: |
+          touched=$(git -C candidate diff --name-only "$BASE_SHA" HEAD \
+            -- $ARTIFACT_PATHS)
+          if [ -z "$touched" ]; then
+            msg="pr-gate: this pull request does not touch"
+            msg="$msg odd/ or openspec/changes/, so the plan and"
+            msg="$msg archive it grades belong to an earlier change;"
+            msg="$msg open the PR from the change's own branch or"
+            msg="$msg include its delivery artifacts."
+            echo "::error::$msg"
+            exit 1
+          fi
       - name: Grade the candidate with the trusted evaluator
+        id: grade
         run: |
           trusted/dist/ai-specs gates premerge \
             --root "$GITHUB_WORKSPACE/candidate" \
             --change "${GITHUB_HEAD_REF}"
+      # pull_request_target grades the base revision, so this job's own check
+      # lands there. Publish the verdict on the head revision the PR protects.
+      - name: Publish the pr-gate status on the pull request head
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          OUTCOME: ${{ steps.grade.outcome }}
+        run: |
+          case "$OUTCOME" in
+            success) state=success ;;
+            failure) state=failure ;;
+            *) state=error ;;
+          esac
+          gh api -X POST "repos/${{ github.repository }}/statuses/$HEAD_SHA" \
+            -f state="$state" -f context=pr-gate \
+            -f description="pr-gate: $OUTCOME"

@@ -237,6 +237,25 @@ func TestVerificationThatNeverRunsTheConfiguredRunnerBlocks(t *testing.T) {
 			"name it in at least one row or update config.yaml")
 }
 
+// An N/A row records no run, so its backticked text cannot earn runner credit (C3).
+func TestVerificationNARowDoesNotEarnRunnerCredit(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go is not on PATH")
+	}
+	root := newRepo(t)
+	writeProjectConfig(t, root, "schema: spec-driven\n\ntesting:\n  runner: go test ./internal/...\n")
+	archiveWith(t, root, "std-na-runner", "Depth: standard\n\n"+verificationPlan(2,
+		"- **S1: PASS** — `go vet ./internal/...`, exit 0\n"+
+			"- **S2: N/A** — `go test ./internal/...` is the runner, not a run\n"), archiveOpts{spec: true})
+
+	result := CheckPremerge(root, "std-na-runner", tierOpt(TierStandard))
+	if result.OK {
+		t.Fatal("an N/A row must not earn runner credit")
+	}
+	assertBlockerContains(t, result,
+		`verification never runs the configured testing.runner "go test ./internal/..."`)
+}
+
 // One matching row is enough: the runner is a declaration, not every row.
 func TestConfiguredRunnerMatchingOneRowPasses(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {

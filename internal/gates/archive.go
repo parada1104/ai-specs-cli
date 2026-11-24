@@ -102,6 +102,14 @@ func resolveArchive(archiveRoot, slug, tree string) (string, []string) {
 	}
 
 	legacyIsDir := isDir(legacy)
+	// The undated fallback is an openspec compatibility path only: an ODD archive
+	// must be dated (C5).
+	if tree == "odd" && legacyIsDir {
+		blockers = append(blockers, fmt.Sprintf(
+			"undated archive %s is not acceptable in odd mode: an ODD archive must be dated, "+
+				"rename it to a folder named YYYY-MM-DD-%s", legacy, slug))
+		legacyIsDir = false
+	}
 	if len(dated) > 1 || (len(dated) > 0 && legacyIsDir) {
 		candidates := dated
 		if legacyIsDir {

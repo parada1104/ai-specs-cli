@@ -227,6 +227,17 @@ func oddWriteArchive(t *testing.T, root, change string) {
 		change+"\n2026-01-02\nodd/tasks/"+change+".md\n")
 }
 
+// An undated archive is not an ODD archive: the contract requires the dated form
+// (C5). The blocker names that form instead of silently accepting the fallback.
+func TestCheckPremergeOddRejectsAnUndatedArchive(t *testing.T) {
+	root := oddDeclaredTierRepo(t)
+	archive := filepath.Join(root, "odd", "changes", "archive", "thing")
+	mkdirAll(t, archive)
+	writeFile(t, filepath.Join(archive, "archived.md"), "thing\nodd/tasks/thing.md\n")
+
+	wantBlocked(t, CheckPremergeOdd(root, "thing"), "YYYY-MM-DD-thing")
+}
+
 // An empty archive folder never satisfies the requirement, dated or not: it holds
 // nothing of the change (R2).
 func TestCheckPremergeOddRejectsAnEmptyArchive(t *testing.T) {
