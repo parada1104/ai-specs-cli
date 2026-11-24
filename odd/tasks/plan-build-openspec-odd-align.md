@@ -2,7 +2,8 @@
 
 Acercar el modo `openspec` de Plan Build a ODD: rescatar `specs/` y `config.yaml`, colapsar el resto del change en **un solo archivo de plan** con forma ODD, y hacer el archivado obligatorio pre-merge en ambos modos.
 Revisión 2 (L5): sustituye el alcance de la revisión 1, que mantenía `proposal.md`, `design.md` y `verify-report.md` como artefactos obligatorios. Solo diseño: no se toca código de producción.
-Rama `plan-build-openspec-odd-align` desde `development` `3a4e548`. El archivado obligatorio en `odd` revierte a propósito una decisión de #589 (S10). Card: pendiente al aprobar.
+Rama `plan-build-openspec-odd-align` desde `development` `3a4e548`. El archivado obligatorio en `odd` revierte a propósito una decisión de #589 (S10).
+Card: `6b04e0e37aa95686f307241f` — [65Ijc3h5](https://trello.com/c/65Ijc3h5)
 
 ## Specs
 
@@ -225,6 +226,12 @@ Regla de reparto que se propone dejar escrita: **lo que el CLI puede comprobar s
 | T2 | S1–S7 | Diseño revisión 1: divergencias, P0–P6, mapa CLI/SKILL | inline | `c52120d` |
 | T3 | S9–S14 | Diseño revisión 2: un solo archivo de plan, archivado en ambos modos, `config.yaml`, ceremonia por tier, capas de aseguramiento | inline | pendiente |
 | T4 | S3 | Commit de la revisión 2 | inline | pendiente |
+| T5 | S6, S7 | I1/P0: `Change`, `PlanPath`, `ConfigPath`, `ArchivePath`, `--change`, gate y premerge con el resolvedor único, tests de emparejamiento y ambigüedad | inline | pendiente |
+| T6 | S4, S5, S12 | I2/P1+P6: parser `tasks.md` con golden, matriz de mínimos por tier, SKILL §4/§6/§8 | worker | pendiente |
+| T7 | S14 | I3/P2: `criteria`/`evidence` con fuente `## Specs`/`## Verification` y compatibilidad `Criterion N` | inline | pendiente |
+| T8 | S5, S6 | I4/P3: prosa de commits por tarea y check de ancestro del sha en premerge | inline | pendiente |
+| T9 | S10 | I5/P4: verbo `changes archive`, archivado obligatorio en `odd`, premerge de ambos modos | inline | pendiente |
+| T10 | S11, S13 | I6/P5+P7: validación de `config.yaml` con bucle de frescura, `pr-gate.yml`, SKILL §7.3/§7.4, README | inline | pendiente |
 
 ## Implementación propuesta (change siguiente, no esta vuelta)
 
@@ -257,3 +264,6 @@ Seis unidades de trabajo en este orden; cada una deja el suite en verde y admite
 - **L6** — Robert aprueba A–D de la revisión 1: escalera de emparejamiento de P0, `S#` verbatim con cita del delta, check de sha solo en la rama de review, y un solo change (no dos).
 - **L7** — Aclaración de Robert sobre «el config.yml»: es `openspec/config.yaml` (schema, context, strict_tdd, testing), y su frase completa es *«specs + un solo archivo… y creo que el config.yaml [y] el archive en ambos casos debe ser obligatorio pre merge»*. Pide integrarlo: se rescata como configuración del proyecto, hay que proponer su papel en ambos modos y si el premerge exige que exista y sea válido, y hay que resolver que el actual está obsoleto (describe Bash/Python y `./tests/run.sh` mientras el CLI es Go). Resuelto en P5 y en S11.
 - **L8** — Evidencia de la revisión 2, verificada antes de escribir: no existe ningún workflow en `pull_request` (`.github/workflows/release-binaries.yml:14` es solo por tag, y ya construye y testea Go), `openspec/config.yaml` solo lo lee el tracker (`checks_tracker.go:52`) y ningún validador lo mira, `.github/` no tiene ruleset ni CODEOWNERS, y `actions/checkout` en `pull_request` deja HEAD detached, lo que invalida un premerge de `odd` derivado solo de la rama. De ahí el `--change` en P0 y el obstáculo declarado en P7.
+- **L9** — A'–D' resueltas por Cody como decisiones técnicas, sobre el diseño v2 ya aprobado por Robert: **A'** `odd/config.yaml`, enmendando `README.md:84` y el proposal de #589, porque Robert pidió `config.yaml` obligatorio en ambos modos; **B'** `odd/tasks/<c>.md` se queda como registro permanente; **C'** se permite `S#: N/A — <razón>`; **D'** `--change` es override general y el veredicto imprime el valor derivado.
+- **L10** — Autorización de implementación: I1–I6 en orden, un commit por unidad, tests por regla y la revisión nativa que corresponda. Permisos vigentes: commits, push de la rama, PR contra `development` y card de Trello con su sección Tracker. El merge no. En I6 el workflow `pr-gate.yml` sí va; marcarlo como required check en la protección de `development` **no**, porque es configuración del repositorio y la decide Robert: queda documentado en el README y en el PR. Smoke con el binario en repos temporales en ambos modos (archive, premerge, frescura de config).
+- **L11** — El MCP de Trello no está conectado a esta sesión (verificado: ninguna herramienta `mcp__trello__*` en el inventario). La card `6b04e0e37aa95686f307241f` se creó con la API REST usando `TRELLO_API_KEY`/`TRELLO_TOKEN` del entorno, en la lista *In Progress* del tablero `69ec097f13e2d38ecd89a557`. No es un fallo de disponibilidad del tracker: el tracker estaba disponible por API.
