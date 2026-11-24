@@ -10,7 +10,6 @@ package gates
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -162,7 +161,7 @@ func CheckPremerge(repoRoot, slug string, tier *string) Result {
 			"active change folder still present at openspec/changes/%s/ — "+
 				"run archive-tail on the review branch before merge", slug))
 	}
-	archive, archiveBlockers := resolveArchive(filepath.Join(changes, "archive"), slug, "openspec")
+	archive, _, archiveBlockers := resolveArchive(filepath.Join(changes, "archive"), slug, "openspec")
 	blockers = append(blockers, archiveBlockers...)
 	if archive == "" {
 		return Result{Blockers: blockers, Tier: rawTier(tier)}
@@ -184,10 +183,13 @@ const TierOdd = "odd"
 // CheckPremergeOdd validates an ODD change before merge: the branch-paired plan
 // must be a regular file of the repository, every delta under
 // odd/changes/<change>/specs/ must already be promoted into odd/specs/ — read from
-// the archived folder once the change is archived — and the change must be gone
-// from the active tree behind a dated, content-provable archive
-// (plan-build-openspec-odd-align I5/P4). The contract is uniform: a plan with no
-// Depth: line pays the same archive duty, and there is no tier artifact minimum.
+// the archived folder once the change is archived — and a change that still
+// carries its folder must be gone from the active tree behind a dated,
+// content-provable archive (plan-build-openspec-odd-align I5/P4, S21).
+// S20 allows a change whose only artifact is a delta, and S21 makes the archive a
+// duty only of a change that carries a folder: a plan-only change owes nothing
+// there because the plan stays in odd/tasks/ as the permanent record, and a
+// change with no artifact at all is `none` and passes.
 // An empty change means the branch could not be paired.
 // The mode is resolved by the caller, which is the same resolver the pre-tool-use
 // gate uses.
@@ -197,31 +199,39 @@ func CheckPremergeOdd(repoRoot, change string) Result {
 		return Result{Blockers: []string{"ODD mode is active but the current branch cannot be " +
 			"resolved (detached HEAD), so no change can be paired"}, Tier: TierOdd}
 	}
-	plan := planbuild.PlanPath(repoRoot, change)
-	var blockers []string
-	if !planbuild.PlanIsValid(repoRoot, change) {
-		blockers = append(blockers, fmt.Sprintf(
-			"ODD plan 'odd/tasks/%s.md' is missing, is not a regular file, or resolves outside the "+
-				"repository for the current branch", change))
-	}
 	changesBase := planbuild.ChangesBase(repoRoot, planbuild.ModeOdd)
 	folder := filepath.Join(changesBase, change)
-	if info, err := os.Stat(folder); err == nil && info.IsDir() {
+	active := isDir(folder)
+	validPlan := planbuild.PlanIsValid(repoRoot, change)
+
+	var blockers []string
+	if active {
 		blockers = append(blockers, fmt.Sprintf(
 			"active change folder still present at odd/changes/%s/ — run `ai-specs changes archive` "+
 				"on the review branch before merge", change))
+		blockers = append(blockers, oddParityBlockers(repoRoot, changesBase, folder)...)
 	}
-	// Every delta the change carried must be promoted, whether it is still active
-	// or already archived: after archiving, the archived folder is the only
-	// remaining source of that delta (R3).
-	blockers = append(blockers, oddParityBlockers(repoRoot, changesBase, folder)...)
-	archive, archiveBlockers := resolveArchive(planbuild.ArchiveBase(repoRoot, planbuild.ModeOdd),
+	archive, present, archiveBlockers := resolveArchive(planbuild.ArchiveBase(repoRoot, planbuild.ModeOdd),
 		change, "odd")
-	blockers = append(blockers, archiveBlockers...)
+	// An existing archive is still graded, so an empty archive cannot pass as
+	// "no archive owed".
+	if active || present {
+		blockers = append(blockers, archiveBlockers...)
+	}
+	// After archiving, the archived folder is the only remaining source of the
+	// delta, so its parity is checked there too (R3).
 	if archive != "" {
 		blockers = append(blockers, oddParityBlockers(repoRoot, changesBase, archive)...)
 	}
-	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: TierOdd, ArchivePath: plan}
+	tier := TierNone
+	if active || present || validPlan {
+		tier = TierOdd
+	}
+	archivePath := archive
+	if archivePath == "" && validPlan {
+		archivePath = planbuild.PlanPath(repoRoot, change)
+	}
+	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: tier, ArchivePath: archivePath}
 }
 
 // oddParityBlockers is the promotion parity of one odd change folder, refused when
