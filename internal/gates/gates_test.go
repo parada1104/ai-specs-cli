@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/ai-specs/internal/planbuild"
+	"ai-specs.dev/ai-specs/internal/specs"
 )
 
 // tierOpt mirrors the CLI's optional --tier: nil means "infer from tasks.md".
@@ -314,4 +317,64 @@ func TestFullMinimumNeedsThePlanAndOneDelta(t *testing.T) {
 		t.Fatalf("full plan plus delta = %+v, want OK", result)
 	}
 	assertBlockerLacks(t, result, "proposal.md", "design.md")
+}
+
+// --- ODD archive condition (plan-build-openspec-odd-align I5/P4, S10) ---
+
+// oddPromotedDelta writes and promotes a delta under the change folder.
+func oddPromotedDelta(t *testing.T, root, change string) string {
+	t.Helper()
+	folder := filepath.Join(root, "odd", "changes", change)
+	dir := filepath.Join(folder, "specs", "capability")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "spec.md"), []byte(oddDelta), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if report := specs.PromoteChangeForMode(root, change, planbuild.ModeOdd, false); len(report.Blockers) != 0 {
+		t.Fatalf("promote Blockers = %q", report.Blockers)
+	}
+	return folder
+}
+
+// An active delta folder blocks even when its delta is promoted: it must be
+// archived before merge, and the blocker names the verb that does it.
+func TestCheckPremergeOddBlocksAnActiveDeltaFolder(t *testing.T) {
+	root := oddRepo(t)
+	oddPromotedDelta(t, root, "thing")
+
+	got := CheckPremergeOdd(root, "thing")
+	wantBlocked(t, got, "ai-specs changes archive")
+	wantBlocked(t, got, "before merge")
+}
+
+// A change that never had a delta folder is not required to be archived: there
+// is nothing to archive, so the guardian passes with the paired plan alone.
+func TestCheckPremergeOddPassesAChangeThatNeverHadADelta(t *testing.T) {
+	root := oddRepo(t)
+	got := CheckPremergeOdd(root, "thing")
+	if !got.OK || len(got.Blockers) != 0 {
+		t.Fatalf("Result = %+v, want OK for a change with no delta folder", got)
+	}
+}
+
+// Once the promoted delta is archived, the active folder is gone and the
+// guardian passes: the archive condition is absence of the active folder, not a
+// second parity read of the archive.
+func TestCheckPremergeOddPassesAnArchivedPromotedDelta(t *testing.T) {
+	root := oddRepo(t)
+	folder := oddPromotedDelta(t, root, "thing")
+	archive := filepath.Join(root, "odd", "changes", "archive", "2026-01-02-thing")
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(folder, archive); err != nil {
+		t.Fatal(err)
+	}
+
+	got := CheckPremergeOdd(root, "thing")
+	if !got.OK || len(got.Blockers) != 0 {
+		t.Fatalf("Result = %+v, want OK after archiving a promoted delta", got)
+	}
 }

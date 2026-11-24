@@ -228,7 +228,7 @@ Applies only when the repository resolves to `odd` mode: `[recipes.plan-build-fl
 - Reuse ODD verification as the evidence, then promote with `ai-specs specs promote <slug> --root <root>` before the guardian and merge (Section 7). In `odd` mode it composes `odd/changes/<slug>/specs/<domain>/spec.md` into `odd/specs/<domain>/spec.md`; `openspec/specs/**` is neither read nor written.
 - In companion mode the Section 6 file-backed readiness and the Section 7 change-folder and tier-minimum requirements apply only to a change that carries a delta, and then only to the delta; they never require a second proposal, design or tasks.
 - The mode selects the plan tree and never waives the plan requirement: `openspec` mode still needs its change folder, and `odd` mode needs the paired ODD plan.
-- In `odd` mode the pre-merge guardian reads the branch pairing, validates the paired plan and the delta parity against `odd/specs/`, and applies no archive step and no tier minimum.
+- In `odd` mode the pre-merge guardian reads the branch pairing, validates the paired plan and the delta parity against `odd/specs/`, and requires the delta folder to be archived with no active folder left; it applies no tier minimum. A change that never carried `odd/changes/<change>/` has nothing to archive and passes with its plan alone. Archiving is mechanical and mandatory before merge: `ai-specs changes archive <change> --root <planning-root>` moves only `odd/changes/<change>/` to `odd/changes/archive/YYYY-MM-DD-<change>/`; the plan stays at `odd/tasks/<change>.md` because it belongs to the feature, not to the change.
 
 ### 4.2 The plan file (`openspec` mode, normative)
 
@@ -323,6 +323,14 @@ Archive-tail MUST run on the **review branch** before merge — never defer unti
 after the merge lands on the base branch. Standard and Full changes require
 conforming verification evidence before this step; Light verification is
 advisory.
+
+The archive move itself is mechanical and mandatory before merge, in both modes:
+`ai-specs changes archive [<slug>] --root <planning-root>` (optional
+`--date YYYY-MM-DD`, default today in UTC). It refuses while a delta is
+unpromoted, refuses when a dated archive for the change already exists, and
+never deletes anything. A change with no delta folder has nothing to archive and
+is a no-op with exit 0, matching the guardian rule that such a change is not
+required to be archived.
 
 The evidence artifact is the plan's `## Verification` section (Section 4.2): one
 row per `S#` declared under `## Specs`, in the same file.
@@ -419,9 +427,13 @@ reports missing or failed evidence, or an unpromoted or unresolved delta. Light
 remains advisory. This is the pre-archive check; the pre-merge guardian below
 remains required after archive.
 
-6. After the pre-archive gate passes, run archive-tail — move
-   `openspec/changes/<slug>/` → `openspec/changes/archive/YYYY-MM-DD-<slug>/`,
-   using a valid ISO calendar date, then commit and push to the review branch.
+6. After the pre-archive gate passes, run archive-tail with the verb:
+   `ai-specs changes archive <slug> --root <planning-root>` moves
+   `openspec/changes/<slug>/` (plan included) →
+   `openspec/changes/archive/YYYY-MM-DD-<slug>/`, defaulting to today in UTC and
+   validating `--date`. In `odd` mode only `odd/changes/<slug>/` moves and
+   `odd/tasks/<slug>.md` stays as the feature record. Then commit and push to
+   the review branch.
    The exact undated `openspec/changes/archive/<slug>/` form remains readable
    only as a legacy fallback for historical archives; new archives use the
    dated provider form. The guardian fails closed when multiple dated
@@ -474,6 +486,17 @@ Hard blockers (do **not** merge):
 
 The promotion check is tier-scoped: Light changes and changes with no `specs/`
 deltas are never blocked by it.
+
+In `odd` mode the guardian grades the ODD tree instead (Section 4.1): the paired
+plan at `odd/tasks/<change>.md` must be a regular file of the repository, every
+`odd/changes/<change>/specs/` delta must be promoted into `odd/specs/`, and the
+active `odd/changes/<change>/` folder must be gone. A folder that is still
+active blocks with `ai-specs changes archive`, which is the mandatory archive
+step before merge. A change that never carried a delta folder is not required to
+be archived. `odd` mode has no OpenSpec archive and no tier minimum. Because
+`odd/tasks/<change>.md` survives the archive, the branch still pairs the change
+after archiving; in `openspec` pass the slug or `--change`, since the plan moved
+into the archive with the change folder.
 
 Tracker item closure (`ai-specs tracker-card-gate --root <root> --checkpoint
 archive-close`) is a separate Tracker-domain checkpoint: it is not this OpenSpec

@@ -114,15 +114,32 @@ func ActiveChanges(root, mode string) []string {
 	return names
 }
 
+// ValidChangeName reports whether change is usable as one path segment. Every
+// caller that turns a change name into a path uses this predicate, so an
+// override like "../../etc" can never become a directory outside the tree.
+func ValidChangeName(change string) bool {
+	if change == "" || change == "." || change == ".." {
+		return false
+	}
+	return !strings.ContainsAny(change, "/\\\x00")
+}
+
 // ResolveChange is the one change ladder: an explicit override wins, then a
-// branch that pairs an existing change folder, then the only active change;
-// anything else refuses instead of guessing which change is being built.
+// branch that pairs an existing change folder or its surviving plan, then the
+// only active change; anything else refuses instead of guessing which change is
+// being built.
 func ResolveChange(root, mode, branch, override string) (string, error) {
 	if override != "" {
 		return override, nil
 	}
 	if name, ok := ChangeFromBranch(branch); ok {
 		if info, err := os.Stat(ChangeFolder(root, mode, name)); err == nil && info.IsDir() {
+			return name, nil
+		}
+		// An archived odd change keeps its plan at odd/tasks/<name>.md, so the
+		// branch still pairs after archiving; in openspec the plan moved into
+		// the archive with the folder and the slug (or --change) is required.
+		if PlanIsValidForMode(root, mode, name) {
 			return name, nil
 		}
 	}

@@ -79,8 +79,8 @@ last path segment after stripping any prefix, so `feat/thing` and `fix/thing`
 both pair with the plan `odd/tasks/thing.md`. `ai-specs specs promote` composes
 `odd/changes/<slug>/specs/<domain>/spec.md` into
 `odd/specs/<domain>/spec.md`; `openspec/specs/**` is neither read nor written. `ai-specs gates premerge` pairs the change from the branch, checks that
-the plan exists and every `odd/changes/<slug>/specs/` delta was promoted, and requires
-no archive.
+the plan exists and every `odd/changes/<slug>/specs/` delta was promoted, and
+requires the delta folder to be archived before merge.
 There is no `odd/config.yml`: the mode lives in the project manifest.
 - **`openspec`** is the unchanged OpenSpec-centered flow described below.
 
@@ -122,6 +122,15 @@ There is no `odd/config.yml`: the mode lives in the project manifest.
   when no dated candidate exists. Multiple dated candidates, dated-plus-undated
   candidates, invalid dates, and near-match names fail closed with named
   blockers.
+- **Archive with the verb:** `ai-specs changes archive [<change>] --root
+  <planning-root> [--date YYYY-MM-DD]` is the mechanical archive step in both
+  modes. It resolves the change with the same ladder as the guardian, refuses
+  while a delta is unpromoted, refuses to create a second archive for a change,
+  and moves with one `os.Rename` (never deletes). In `openspec` the plan lives
+  inside the change folder and moves with it; in `odd` only
+  `odd/changes/<change>/` moves and `odd/tasks/<change>.md` stays as the feature
+  record. A change with no delta folder has nothing to archive, so the verb
+  exits 0 and the odd guardian passes.
 - **Tracker `archive-close` is not this archive.** Tracker item closure is a
   separate Tracker-domain checkpoint
   (`ai-specs tracker-card-gate --root <root>

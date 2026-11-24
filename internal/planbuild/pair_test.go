@@ -251,3 +251,40 @@ func TestPlanIsValidForMode(t *testing.T) {
 		t.Error("an absent plan is valid")
 	}
 }
+
+// After archiving, an odd change still pairs from the branch because its plan
+// survives at odd/tasks/<change>.md while the delta folder is gone.
+func TestResolveChangePairsAnArchivedOddChange(t *testing.T) {
+	root := t.TempDir()
+	plan := TasksPath(root, ModeOdd, "x")
+	if err := os.MkdirAll(filepath.Dir(plan), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plan, []byte("# plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(ChangeFolder(root, ModeOdd, "x")); !os.IsNotExist(err) {
+		t.Fatalf("delta folder exists: %v", err)
+	}
+	got, err := ResolveChange(root, ModeOdd, "feat/x", "")
+	if err != nil || got != "x" {
+		t.Errorf("ResolveChange(odd, feat/x) = (%q, %v), want (x, nil)", got, err)
+	}
+}
+
+// In openspec the plan moved into the archive with the change folder, so the
+// branch no longer pairs and the ladder refuses; a slug or --change is required.
+func TestResolveChangeDoesNotPairAnArchivedOpenSpecChange(t *testing.T) {
+	root := t.TempDir()
+	archived := filepath.Join(ArchiveBase(root, ModeOpenspec), "2026-01-02-x", "tasks.md")
+	if err := os.MkdirAll(filepath.Dir(archived), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archived, []byte("# plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ResolveChange(root, ModeOpenspec, "feat/x", "")
+	if !errors.Is(err, ErrNoChange) {
+		t.Fatalf("error = %v, want ErrNoChange", err)
+	}
+}

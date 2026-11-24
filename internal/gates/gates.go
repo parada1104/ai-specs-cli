@@ -158,12 +158,14 @@ func CheckPremerge(repoRoot, slug string, tier *string) Result {
 const TierOdd = "odd"
 
 // CheckPremergeOdd validates an ODD change before merge: the branch-paired plan
-// must be a regular file of the repository, and every delta under
-// odd/changes/<change>/specs/ must already be promoted into odd/specs/. There is
-// no OpenSpec archive and no tier artifact minimum; a change with no delta
-// passes with its plan alone. An empty change means the branch could not be
-// paired. The mode is resolved by the caller, which is the same resolver the
-// pre-tool-use gate uses.
+// must be a regular file of the repository, every delta under
+// odd/changes/<change>/specs/ must already be promoted into odd/specs/, and the
+// active delta folder must be archived (plan-build-openspec-odd-align I5/P4).
+// A change that never carried a delta folder is not required to be archived:
+// there is nothing to archive, so the paired plan alone passes. There is no
+// OpenSpec archive and no tier artifact minimum. An empty change means the
+// branch could not be paired. The mode is resolved by the caller, which is the
+// same resolver the pre-tool-use gate uses.
 func CheckPremergeOdd(repoRoot, change string) Result {
 	if change == "" {
 		return Result{Blockers: []string{"ODD mode is active but the current branch cannot be " +
@@ -178,6 +180,11 @@ func CheckPremergeOdd(repoRoot, change string) Result {
 	}
 	changesBase := planbuild.ChangesBase(repoRoot, planbuild.ModeOdd)
 	folder := filepath.Join(changesBase, change)
+	if info, err := os.Stat(folder); err == nil && info.IsDir() {
+		blockers = append(blockers, fmt.Sprintf(
+			"active change folder still present at odd/changes/%s/ — run `ai-specs changes archive` "+
+				"on the review branch before merge", change))
+	}
 	if specs.SourceContained(folder, changesBase) {
 		blockers = append(blockers, specs.CheckFolderParityForMode(repoRoot, folder, planbuild.ModeOdd)...)
 	} else {

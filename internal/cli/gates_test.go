@@ -235,20 +235,38 @@ func TestGatesPremergeChangeFlagPrintsTheDerivedChange(t *testing.T) {
 }
 
 // Without a positional slug the change comes from the branch ladder and the
-// verdict prints what was graded.
+// guardian grades that change instead of failing on a missing argument. The
+// active delta folder it finds is now a pre-merge blocker (the archive must run
+// first); once archived, the positional form passes.
 func TestGatesPremergeResolvesTheChangeWithoutASlug(t *testing.T) {
 	root := gatesGitRepo(t, "feat/ok-change")
 	planBuildWriteMode(t, root, "odd")
 	planBuildWriteOddPlan(t, root, "ok-change")
-	if err := os.MkdirAll(filepath.Join(root, "odd", "changes", "ok-change"), 0o755); err != nil {
+	active := filepath.Join(root, "odd", "changes", "ok-change")
+	if err := os.MkdirAll(active, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	code, stdout, stderr := runGatesCLI(t, "gates", "premerge", "--root", root)
-	if code != 0 || stderr != "" {
-		t.Fatalf("exit = %d, stderr = %q; want 0/empty", code, stderr)
+	if code != 1 || stdout != "" {
+		t.Fatalf("exit = %d, stdout = %q; want 1/empty", code, stdout)
 	}
-	if stdout != "premerge-guardian: OK (odd, change ok-change)\n" {
-		t.Errorf("stdout = %q, want the derived change in the verdict", stdout)
+	if !strings.Contains(stderr, "run `ai-specs changes archive`") {
+		t.Fatalf("stderr = %q, want the archive blocker for the branch-resolved change", stderr)
+	}
+
+	archive := filepath.Join(root, "odd", "changes", "archive", "2026-01-02-ok-change")
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(active, archive); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr = runGatesCLI(t, "gates", "premerge", "ok-change", "--root", root)
+	if code != 0 || stderr != "" {
+		t.Fatalf("archived: exit = %d, stderr = %q; want 0/empty", code, stderr)
+	}
+	if stdout != "premerge-guardian: OK (odd)\n" {
+		t.Errorf("stdout = %q, want the OK verdict", stdout)
 	}
 }

@@ -109,9 +109,19 @@ func TestCheckPremergeOddPassesAPromotedDelta(t *testing.T) {
 	if report := specs.PromoteChangeForMode(root, "thing", planbuild.ModeOdd, false); len(report.Blockers) != 0 {
 		t.Fatalf("promote Blockers = %q", report.Blockers)
 	}
+	// Archiving is mandatory before merge: move the promoted delta folder out of
+	// the active tree, then the guardian passes. The plan stays at
+	// odd/tasks/thing.md (plan-build-openspec-odd-align I5/P4).
+	archive := filepath.Join(root, "odd", "changes", "archive", "2026-01-02-thing")
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(root, "odd", "changes", "thing"), archive); err != nil {
+		t.Fatal(err)
+	}
 	got := CheckPremergeOdd(root, "thing")
 	if !got.OK || len(got.Blockers) != 0 {
-		t.Fatalf("Result = %+v, want OK after promotion", got)
+		t.Fatalf("Result = %+v, want OK after promotion and archiving", got)
 	}
 	if got.ArchivePath == "" || got.Tier != TierOdd {
 		t.Fatalf("ArchivePath = %q, Tier = %q, want the plan and %q", got.ArchivePath, got.Tier, TierOdd)
