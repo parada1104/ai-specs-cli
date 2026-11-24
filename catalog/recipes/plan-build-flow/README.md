@@ -194,8 +194,8 @@ openspec/config.yaml: verification never runs the configured testing.runner
   plan lives inside the change folder and moves with it; in `odd` only
   `odd/changes/<change>/` moves and `odd/tasks/<change>.md` stays as the feature
   record. A change with no delta folder is still archived: the dated folder is
-  created holding a three-line `archived.md` marker instead of a copy of the plan,
-  and `--change` keeps the last path
+  created holding a three-line `archived.md` marker instead of the plan copy, and
+  `--change` keeps the last path
   segment of a branch-shaped value, so CI passes `GITHUB_HEAD_REF` unchanged;
   an empty `<change>` or `--change=` is a usage error, never "omitted", and so
   is a name that is not a single path segment (`..`, `../../../offtree`, `a/b`):
@@ -226,8 +226,8 @@ trusted/dist/ai-specs gates premerge \
 
 `actions/checkout` leaves `HEAD` detached on `pull_request_target`, so the change
 ladder cannot pair a branch with a change folder and the explicit `--change` is
-mandatory; the evaluator comes from the base branch and `candidate/` is data. A
-branch-shaped value needs no preprocessing: `--change feat/alpha`
+mandatory; the evaluator comes from the base branch and `candidate/` is data.
+`--change feat/alpha`
 keeps its last path segment (`alpha`) through the same helper the branch pairing
 uses, so `GITHUB_HEAD_REF` can be passed as is. The workflow grades committed
 state only: push the archive commit or the check cannot pass.
