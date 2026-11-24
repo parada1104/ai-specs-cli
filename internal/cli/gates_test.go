@@ -193,3 +193,55 @@ func TestGatesPremergeRejectedInputWritesNothing(t *testing.T) {
 		t.Fatalf("archive entries = %v (%v), want none written", entries, err)
 	}
 }
+
+// gatesGitRepo is a repository on the given branch, so the change ladder can
+// pair a branch with a change folder.
+func gatesGitRepo(t *testing.T, branch string) string {
+	t.Helper()
+	root := t.TempDir()
+	gitTest(t, root, "init", "-b", branch)
+	gitTest(t, root, "config", "user.email", "test@example.invalid")
+	gitTest(t, root, "config", "user.name", "test")
+	gitTest(t, root, "commit", "--allow-empty", "-m", "initial")
+	return root
+}
+
+// A positional slug keeps the legacy verdict byte for byte; --change instead
+// prints the derived change.
+func TestGatesPremergeChangeFlagPrintsTheDerivedChange(t *testing.T) {
+	root := gatesGitRepo(t, "feat/other")
+	gatesConformingArchive(t, root, "ok-change")
+
+	code, stdout, stderr := runGatesCLI(t, "gates", "premerge", "ok-change", "--root", root)
+	if code != 0 || stdout != "premerge-guardian: OK (standard)\n" || stderr != "" {
+		t.Fatalf("positional = (%d, %q, %q), want the legacy OK line", code, stdout, stderr)
+	}
+	for _, args := range [][]string{
+		{"gates", "premerge", "--change", "ok-change", "--root", root},
+		{"gates", "premerge", "--change=ok-change", "--root", root},
+	} {
+		code, stdout, stderr = runGatesCLI(t, args...)
+		if code != 0 || stdout != "premerge-guardian: OK (standard, change ok-change)\n" || stderr != "" {
+			t.Fatalf("%q = (%d, %q, %q), want the derived change in the verdict", args, code, stdout, stderr)
+		}
+	}
+}
+
+// Without a positional slug the change comes from the branch ladder and the
+// verdict prints what was graded.
+func TestGatesPremergeResolvesTheChangeWithoutASlug(t *testing.T) {
+	root := gatesGitRepo(t, "feat/ok-change")
+	planBuildWriteMode(t, root, "odd")
+	planBuildWriteOddPlan(t, root, "ok-change")
+	if err := os.MkdirAll(filepath.Join(root, "odd", "changes", "ok-change"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runGatesCLI(t, "gates", "premerge", "--root", root)
+	if code != 0 || stderr != "" {
+		t.Fatalf("exit = %d, stderr = %q; want 0/empty", code, stderr)
+	}
+	if stdout != "premerge-guardian: OK (odd, change ok-change)\n" {
+		t.Errorf("stdout = %q, want the derived change in the verdict", stdout)
+	}
+}

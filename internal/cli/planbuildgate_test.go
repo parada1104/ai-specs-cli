@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/ai-specs/internal/planbuild"
 )
 
 // runPlanBuildGate drives the verb as the renderers wire it: no arguments, one
@@ -68,6 +70,19 @@ func planBuildWritePlan(t *testing.T, root, slug string) {
 	}
 }
 
+// planBuildResolverRefusal renders the refusal the resolver error produces for
+// this repository and target. The exact resolver wording is pinned by the
+// planbuild tests; here it proves which refusal the gate chose.
+func planBuildResolverRefusal(t *testing.T, repo, tool, rel string) string {
+	t.Helper()
+	repo = sharedRealPath(repo)
+	_, err := planbuild.ResolveChange(repo, planbuild.ModeOpenspec, planbuild.Branch(repo), "")
+	if err == nil {
+		t.Fatalf("ResolveChange(%s) = nil error, want a refusal", repo)
+	}
+	return "plan-build-gate: refusing to " + tool + " '" + rel + "' — " + err.Error() + "\n"
+}
+
 // An unclassifiable event, a non-production target, the agent's own config, the
 // planning tree and a path outside the repository all fail open in silence.
 func TestPlanBuildGateIgnoresUnrelatedTargets(t *testing.T) {
@@ -107,7 +122,7 @@ func TestPlanBuildGateRefusesProductionWriteWithoutPlan(t *testing.T) {
 			tool = "edit"
 		}
 		input := planBuildGateEvent(repo, tc.tool, tc.target)
-		want := planBuildNearestRefusal(tool, tc.rel)
+		want := planBuildResolverRefusal(t, repo, tool, tc.rel)
 		if code, stdout, stderr := runPlanBuildGateCLI(t, repo, input); code != 2 || stdout != "" || stderr != want {
 			t.Fatalf("%s = (%d, %q, %q), want (2, %q, %q)", tc.target, code, stdout, stderr, "", want)
 		}
@@ -123,35 +138,42 @@ func TestPlanBuildGateAllowsWithActivePlan(t *testing.T) {
 	}
 }
 
-// R3-001: only a usable plan file counts. A directory named tasks.md — or a
-// dangling symlink — is a glob match but not a plan, so a production write it
+// R3-001: the paired plan must be a usable regular file. A directory named
+// tasks.md — or a dangling symlink — is not a plan, so a production write it
 // would otherwise allow stays refused. A symlink to a real plan does count.
 func TestPlanBuildGatePlanMustBeAFile(t *testing.T) {
 	repo := sharedRealPath(newGateFixture(t))
+	planBuildBranch(t, repo, "feat/dir-plan")
 	if err := os.MkdirAll(filepath.Join(repo, "openspec", "changes", "dir-plan", "tasks.md"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	dangling := filepath.Join(repo, "openspec", "changes", "dangling-plan", "tasks.md")
-	if err := os.MkdirAll(filepath.Dir(dangling), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(repo, "gone.md"), dangling); err != nil {
 		t.Fatal(err)
 	}
 	want := planBuildNearestRefusal("Write", "src/x.go")
 	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/x.go")); code != 2 || stdout != "" || stderr != want {
-		t.Fatalf("non-file plans = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+		t.Fatalf("directory plan = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
 	}
-	// The dangling link resolves to a real plan: the gate follows symlinks.
-	planBuildWritePlan(t, repo, "real-plan")
-	if err := os.Remove(dangling); err != nil {
+
+	linkRepo := sharedRealPath(newGateFixture(t))
+	planBuildBranch(t, linkRepo, "feat/link-plan")
+	link := filepath.Join(linkRepo, "openspec", "changes", "link-plan", "tasks.md")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(repo, "openspec", "changes", "real-plan", "tasks.md"), dangling); err != nil {
-		t.Fatal(err)
-	}
-	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/x.go")); code != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("plan via symlink = (%d, %q, %q), want silence", code, stdout, stderr)
+	for _, target := range []string{
+		filepath.Join(linkRepo, "gone.md"),
+		filepath.Join(linkRepo, "openspec", "changes", "link-plan", "real.md"),
+	} {
+		if target != filepath.Join(linkRepo, "gone.md") {
+			if err := os.WriteFile(target, []byte("# plan\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_ = os.Remove(link)
+		if err := os.Symlink(target, link); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if code, stdout, stderr := runPlanBuildGateCLI(t, linkRepo, planBuildGateEvent(linkRepo, "Write", "src/x.go")); code != 2 || stdout != "" || stderr != want {
+			t.Fatalf("plan via symlink %s = (%d, %q, %q), want (2, %q, %q)", target, code, stdout, stderr, "", want)
+		}
 	}
 }
 
@@ -163,12 +185,12 @@ func TestPlanBuildGateHonorsProductionPaths(t *testing.T) {
 	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "lib/x.go")); code != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("lib outside scope = (%d, %q, %q), want silence", code, stdout, stderr)
 	}
-	want := planBuildNearestRefusal("Write", "src/x.go")
+	want := planBuildResolverRefusal(t, repo, "Write", "src/x.go")
 	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/x.go")); code != 2 || stdout != "" || stderr != want {
 		t.Fatalf("src in scope = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
 	}
 	t.Setenv("PLAN_BUILD_GATE_PATHS", "   ")
-	want = planBuildNearestRefusal("Write", "lib/x.go")
+	want = planBuildResolverRefusal(t, repo, "Write", "lib/x.go")
 	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "lib/x.go")); code != 2 || stdout != "" || stderr != want {
 		t.Fatalf("blank scope = (%d, %q), want (2, %q)", code, stderr, want)
 	}
@@ -205,7 +227,7 @@ func TestPlanBuildGateLedgerBlockComesFirst(t *testing.T) {
 func TestPlanBuildGateLedgerWarnStaysSilent(t *testing.T) {
 	repo, common, branch := trackerGateFixtureRepo(t)
 	bindTrackerLedger(t, common, branch, false)
-	want := planBuildNearestRefusal("Write", "src/x.go")
+	want := planBuildResolverRefusal(t, repo, "Write", "src/x.go")
 	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/x.go")); code != 2 || stdout != "" || stderr != want {
 		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
 	}
@@ -216,7 +238,7 @@ func TestPlanBuildGateLedgerAllowKeepsArtifactRule(t *testing.T) {
 	repo, common, branch := trackerGateFixtureRepo(t)
 	bindTrackerLedger(t, common, branch, true)
 	t.Setenv("TRACKER_LEDGER_MODE", "always")
-	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/x.go")); code != 2 || stdout != "" || stderr != planBuildNearestRefusal("Write", "src/x.go") {
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/x.go")); code != 2 || stdout != "" || stderr != planBuildResolverRefusal(t, repo, "Write", "src/x.go") {
 		t.Fatalf("gate = (%d, %q, %q), want the artifact refusal only", code, stdout, stderr)
 	}
 	planBuildWritePlan(t, repo, "some-change")
@@ -271,7 +293,7 @@ func TestPlanBuildGateCentralPlanningRoot(t *testing.T) {
 // refusal instead of guessing.
 func TestPlanBuildGateUnprovenTopologyFallsBack(t *testing.T) {
 	central, repo := nestedRepo(t)
-	want := planBuildNearestRefusal("Write", "src/x.go")
+	want := planBuildResolverRefusal(t, repo, "Write", "src/x.go")
 	for _, tc := range []struct {
 		name    string
 		payload string
@@ -578,12 +600,12 @@ func TestPlanBuildGateOddModeDetachedHeadBlocks(t *testing.T) {
 	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
 }
 
-// A declared openspec mode is byte-identical to the pre-change gate: the
-// nearest-root refusal without a change folder, silence with one.
-func TestPlanBuildGateDeclaredOpenspecIsUnchanged(t *testing.T) {
+// A declared openspec mode resolves the change through the ladder: the
+// no-change refusal without a change folder, silence with one.
+func TestPlanBuildGateDeclaredOpenspecResolvesTheChange(t *testing.T) {
 	repo := sharedRealPath(newGateFixture(t))
 	planBuildWriteMode(t, repo, "openspec")
-	want := planBuildNearestRefusal("Write", "src/app.go")
+	want := planBuildResolverRefusal(t, repo, "Write", "src/app.go")
 	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
 		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
 	}
@@ -616,9 +638,60 @@ func TestPlanBuildGateAutoInfersOddFromStateDir(t *testing.T) {
 func TestPlanBuildGateAutoWithoutStateDirStaysOpenspec(t *testing.T) {
 	repo := sharedRealPath(newGateFixture(t))
 	planBuildWriteMode(t, repo, "auto")
-	want := planBuildNearestRefusal("Write", "src/app.go")
+	want := planBuildResolverRefusal(t, repo, "Write", "src/app.go")
 	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
 		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+	}
+	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
+}
+
+// --- OpenSpec change resolver (plan-build-openspec-odd-align P0) -----------
+
+// planBuildWriteOpenspecPlan writes one active OpenSpec change plan.
+func planBuildWriteOpenspecPlan(t *testing.T, root, change string) {
+	t.Helper()
+	path := filepath.Join(root, "openspec", "changes", change, "tasks.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Two active changes with a branch that pairs neither is ambiguous and is
+// refused naming both candidates; checking out one paired branch allows it even
+// though the other change is still active.
+func TestPlanBuildGateOpenspecAmbiguityRefusesAndPairingAllows(t *testing.T) {
+	repo := sharedRealPath(newGateFixture(t))
+	planBuildWriteOpenspecPlan(t, repo, "alpha")
+	planBuildWriteOpenspecPlan(t, repo, "beta")
+	want := planBuildResolverRefusal(t, repo, "Write", "src/app.go")
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
+		t.Fatalf("ambiguous gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+	}
+	for _, name := range []string{"alpha", "beta", "--change"} {
+		if !strings.Contains(want, name) {
+			t.Errorf("ambiguity refusal %q does not name %q", want, name)
+		}
+	}
+	planBuildBranch(t, repo, "feat/alpha")
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("paired gate = (%d, %q, %q), want silence", code, stdout, stderr)
+	}
+}
+
+// A paired change folder whose tasks.md is missing is refused, so the folder
+// alone never satisfies the gate.
+func TestPlanBuildGateOpenspecPairedFolderNeedsAPlan(t *testing.T) {
+	repo := sharedRealPath(newGateFixture(t))
+	planBuildBranch(t, repo, "feat/alpha")
+	if err := os.MkdirAll(filepath.Join(repo, "openspec", "changes", "alpha"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := planBuildNearestRefusal("Write", "src/app.go")
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
+		t.Fatalf("folder without a plan = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
 	}
 	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
 }

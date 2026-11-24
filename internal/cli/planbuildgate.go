@@ -12,9 +12,11 @@ package cli
 // One mode: a pre-tool-use event on stdin. A production path write (the
 // PLAN_BUILD_GATE_PATHS scope, default src/lib/catalog) is graded at the
 // `work-start` ledger checkpoint first, then refused until the plan of the
-// repository's execution mode exists. In `openspec` mode that is an active
-// change folder (openspec/changes/<slug>/tasks.md) under the nearest repository
-// root, or — for a proven submodule topology — under the central planning root.
+// repository's execution mode exists. In `openspec` mode that is the tasks.md
+// of the change the branch pairs (openspec/changes/<change>/tasks.md) under the
+// nearest repository root, or the only active change when the branch pairs
+// none; ambiguity refuses instead of accepting any tasks.md. For a proven
+// submodule topology the central planning root keeps its own plan scan.
 // In `odd` mode it is the paired plan odd/tasks/<change>.md at the repository
 // root, and the planning tree is odd/ instead of openspec/changes/. The mode
 // selects the plan tree and never waives the plan requirement (S10).
@@ -31,6 +33,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -61,8 +64,9 @@ const planBuildGateUsage = `Usage: ai-specs plan-build-gate
 
 Pre-tool-use hook: read one hook event (JSON) on stdin and refuse a production
 path write until the plan of the repository's execution mode exists. In
-"openspec" mode the plan is an active change folder
-(openspec/changes/<slug>/tasks.md). In "odd" mode the plan is the paired file
+"openspec" mode the plan is the paired change's
+openspec/changes/<change>/tasks.md: the branch's last segment pairs a change
+folder, or the only active change is used. In "odd" mode the plan is the paired file
 odd/tasks/<change>.md, where <change> is the last segment of the current branch
 name (feat/thing and fix/thing both pair with odd/tasks/thing.md). Planning
 artifacts under openspec/changes/ and, in "odd" mode, under odd/ are always
@@ -110,6 +114,15 @@ const planBuildGateCentralRefusal = "%s: refusing to %s '%s' — no active chang
 	"found under central planning root '%s/openspec/changes/' for submodule '%s'. " +
 	"Classify the change and write the central plan first; writes under that planning " +
 	"tree are allowed.\n"
+
+// planBuildGateAmbiguousRefusal refuses when the change tree holds two or more
+// active changes and the branch pairs none; the resolver error names every
+// candidate and the --change remedy.
+const planBuildGateAmbiguousRefusal = "%s: refusing to %s '%s' — %s\n"
+
+// planBuildGateNoChangeRefusal refuses when no active change exists and the
+// branch names none; the resolver error names the plan path to write.
+const planBuildGateNoChangeRefusal = "%s: refusing to %s '%s' — %s\n"
 
 // runPlanBuildGate grades one pre-tool-use event from stdin.
 func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -181,17 +194,28 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 		// proof does not apply.
 		return planBuildGateOddPlan(repoRoot, target.Probe, tool, rel, stderr)
 	}
-	if planBuildGateHasPlan(repoRoot) {
+	change, err := planbuild.ResolveChange(repoRoot, planbuild.ModeOpenspec, planbuild.Branch(target.Probe), "")
+	if err == nil && planbuild.PlanIsValidForMode(repoRoot, planbuild.ModeOpenspec, change) {
 		return 0
 	}
 	if central, sub, proven := planBuildGateCentralProof(repoRoot, target.Probe); proven {
+		// The strict resolver applies to the nearest root on purpose: the central
+		// root's branch is not the submodule's, so only the proven topology proof
+		// selects the central plan tree.
 		if planBuildGateHasPlan(central) {
 			return 0
 		}
 		fmt.Fprintf(stderr, planBuildGateCentralRefusal, planBuildGateName, tool, rel, central, sub)
 		return 2
 	}
-	fmt.Fprintf(stderr, planBuildGateNearestRefusal, planBuildGateName, tool, rel)
+	switch {
+	case errors.Is(err, planbuild.ErrAmbiguousChange):
+		fmt.Fprintf(stderr, planBuildGateAmbiguousRefusal, planBuildGateName, tool, rel, err)
+	case errors.Is(err, planbuild.ErrNoChange):
+		fmt.Fprintf(stderr, planBuildGateNoChangeRefusal, planBuildGateName, tool, rel, err)
+	default:
+		fmt.Fprintf(stderr, planBuildGateNearestRefusal, planBuildGateName, tool, rel)
+	}
 	return 2
 }
 
@@ -274,11 +298,13 @@ func planBuildGateProduction(rel string) bool {
 }
 
 // planBuildGateHasPlan reports whether root holds an active change folder: a
-// change directory whose tasks.md resolves to a regular file. A match alone is
-// not enough — a directory or a dangling symlink named tasks.md would let a
-// production write through with no readable plan (R3-001); os.Stat follows
-// symlinks. The changes directory is read literally, never as a glob pattern,
-// so a repository path containing '[', '*' or '?' cannot wedge the gate.
+// change directory whose tasks.md resolves to a regular file. It serves the
+// central planning root only: the nearest root resolves its change through the
+// branch ladder. A match alone is not enough — a directory or a dangling
+// symlink named tasks.md would let a production write through with no readable
+// plan (R3-001); os.Stat follows symlinks. The changes directory is read
+// literally, never as a glob pattern, so a repository path containing '[', '*' or
+// '?' cannot wedge the gate.
 func planBuildGateHasPlan(root string) bool {
 	changes, err := os.ReadDir(filepath.Join(root, "openspec", "changes"))
 	if err != nil {
