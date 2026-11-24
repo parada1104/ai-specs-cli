@@ -10,7 +10,6 @@ package gates
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -97,23 +96,10 @@ func tierExit(derived string) string {
 	}
 }
 
-// hasSpecDelta reports whether the change folder carries any *.md delta.
+// hasSpecDelta reports whether the change folder carries any *.md delta, through
+// the one predicate the gate shares.
 func hasSpecDelta(folder string) bool {
-	specsDir := filepath.Join(folder, "specs")
-	if info, err := os.Stat(specsDir); err != nil || !info.IsDir() {
-		return false
-	}
-	found := false
-	_ = filepath.WalkDir(specsDir, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || found {
-			return nil
-		}
-		if strings.HasSuffix(entry.Name(), ".md") {
-			found = true
-		}
-		return nil
-	})
-	return found
+	return planbuild.HasDeltaDir(folder)
 }
 
 // checkPlan requires the ODD-shaped plan (P1) from light up: every archive is
