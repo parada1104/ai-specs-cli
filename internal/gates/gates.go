@@ -40,6 +40,17 @@ func inferTier(tasksText string) string {
 	return TierStandard
 }
 
+// declaredTier reports the tier the plan declares on its Depth: line, and
+// whether it declares one at all. It exists so a legacy plan without the line
+// keeps the narrower contract instead of inheriting the standard default.
+func declaredTier(tasksText string) (string, bool) {
+	match := depthRe.FindStringSubmatch(tasksText)
+	if match == nil {
+		return "", false
+	}
+	return strings.ToLower(match[1]), true
+}
+
 // resolveTier applies an explicit --tier when given, blocking an unknown value
 // and then falling back to the inference.
 func resolveTier(tasksText string, tier *string, blockers *[]string) string {
@@ -111,6 +122,7 @@ func inspectFolder(folder string, tier *string, location, repoRoot string) Resul
 	blockers = append(blockers, checkPlan(folder, location)...)
 	blockers = append(blockers, checkTaskCommits(folder, repoRoot, location)...)
 	blockers = append(blockers, checkVerifyEvidence(folder, resolved)...)
+	blockers = append(blockers, checkProjectConfig(repoRoot, planbuild.ModeOpenspec, filepath.Join(folder, "tasks.md"), resolved)...)
 	blockers = append(blockers, promotionBlockers(repoRoot, folder, resolved, location)...)
 	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: resolved, ArchivePath: folder}
 }
@@ -191,6 +203,13 @@ func CheckPremergeOdd(repoRoot, change string) Result {
 		blockers = append(blockers, fmt.Sprintf(
 			"refusing to read the change folder %s: it is reached through a symlinked odd change tree, "+
 				"so the OpenSpec tree would become the parity source", folder))
+	}
+	// A plan that declares its tier is graded like an OpenSpec change: the
+	// project config must exist and its runner must be the one that ran. A plan
+	// with no Depth: line is legacy and keeps the #589 contract (plan, archive
+	// and parity only), so existing ODD repositories do not retro-block.
+	if declared, ok := declaredTier(readText(plan)); ok {
+		blockers = append(blockers, checkProjectConfig(repoRoot, planbuild.ModeOdd, plan, declared)...)
 	}
 	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: TierOdd, ArchivePath: plan}
 }

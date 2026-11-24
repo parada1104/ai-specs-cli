@@ -1,0 +1,39 @@
+# Third assurance layer (plan-build-openspec-odd-align S13/P7). The gate has
+# three: the CLI verb, the skill that obeys it, and this workflow that runs
+# the verb on every pull request even when no agent is watching.
+#
+# Being a *required* status check is a repository setting, not a file in this
+# repo: the owner applies it once with `gh api` against
+# `repos/<owner>/<repo>/branches/development/protection/required_status_checks`
+# (see catalog/recipes/plan-build-flow/README.md for the exact command).
+#
+# This grades committed state only, so the archive commit must be pushed for
+# the check to pass.
+name: pr-gate
+
+on:
+  pull_request:
+    branches: [development]
+
+permissions:
+  contents: read
+
+jobs:
+  premerge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The change ladder pairs a branch with a change folder, so the full
+          # history and the merge base have to be present.
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build -o dist/ai-specs ./cmd/ai-specs
+      # actions/checkout leaves HEAD detached on pull_request, so the gate
+      # cannot derive the change from the branch: the explicit change is
+      # mandatory here.
+      - run: |
+          ./dist/ai-specs gates premerge --root . \
+            --change "${GITHUB_HEAD_REF}"

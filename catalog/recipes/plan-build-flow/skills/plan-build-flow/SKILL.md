@@ -439,12 +439,40 @@ remains required after archive.
    dated provider form. The guardian fails closed when multiple dated
    candidates, dated-plus-undated candidates, invalid dates, or near-match
    names are present.
-7. Run the pre-merge guardian; merge only after explicit user approval.
+7. Run the pre-merge guardian; merge only after you have asked the user whether
+   it is time to go and they explicitly approved.
 
 The commit check has two declared limits. It holds only on the review branch,
 because a squash-merge rewrites the shas and the guardian never runs on the base
 branch. And the CLI grades the recorded sha, never whether a slice was a
 reasonable size: the granularity stays in prose, and only the record is graded.
+
+#### Project config (`openspec/config.yaml`, `odd/config.yaml`)
+
+Standard and Full changes also require the project config before merge. The
+path follows the mode (`internal/planbuild.ConfigPath`): `openspec/config.yaml`
+in `openspec`, `odd/config.yaml` in `odd`. The CLI validates only what it
+consumes: the file must be a regular file whose real path stays inside the
+repository, `schema:` must be non-empty, `testing.runner:` must declare the
+command that runs the project tests, and `strict_tdd:`, when present, must be
+`true` or `false`. `context`, `rules.*` and `ai_specs_guidance` are opaque prose
+for the agent: nothing validates them, because a strict schema would repeat the
+frozen schema oracle trap that already blocked declaring `[config.mode]`.
+
+That config is kept honest by a freshness loop over this change's own
+`## Verification` rows:
+
+- every backticked command that starts a row's evidence must resolve here — a
+  relative or absolute path must exist on disk, a bare word must be on `PATH`;
+- the `testing.runner` declared in the config must match the first word of at
+  least one row.
+
+A change with no rows, or with no backticked command in any row, is exempt: that
+is the Light ceremony reduction, not a loophole. Consequence: a change that
+migrates the runner (say `./tests/run.sh` to `go test ./internal/...`) must
+update `config.yaml` in the same change, or the guardian blocks with
+`verification never runs the configured testing.runner "…": name it in at least
+one row or update config.yaml`.
 
 ### 7.4 Pre-merge merge guardian (hard stop)
 
@@ -483,6 +511,12 @@ Hard blockers (do **not** merge):
    `MODIFIED` target, unsupported `RENAMED`, destructive `REMOVED` without
    explicit approval). Run the promoter first; the guardian only validates and
    never writes canonical specs or tracker state.
+7. Standard or Full: the project config (`openspec/config.yaml`, or
+   `odd/config.yaml` in odd mode) is missing or is not a regular file of the
+   repository, `schema:` or `testing.runner:` is empty, `strict_tdd:` is not
+   `true`/`false`, a verification row names a command that does not resolve, or
+   no row runs the configured `testing.runner`. The blockers name the offending
+   command and the config path.
 
 The promotion check is tier-scoped: Light changes and changes with no `specs/`
 deltas are never blocked by it.
@@ -502,6 +536,23 @@ Tracker item closure (`ai-specs tracker-card-gate --root <root> --checkpoint
 archive-close`) is a separate Tracker-domain checkpoint: it is not this OpenSpec
 archive, it never moves the change folder, and this guardian never grades or
 writes tracker state.
+
+### 7.5 The layer above the agent: pull-request CI
+
+The guardian has three assurance layers, and the agent is only the second one.
+The third is `.github/workflows/pr-gate.yml`: on every pull request against
+`development` it builds the CLI and runs
+
+```bash
+./dist/ai-specs gates premerge --root . --change "$GITHUB_HEAD_REF"
+```
+
+`actions/checkout` leaves `HEAD` detached on `pull_request`, so the gate cannot
+derive the change from the branch and the explicit `--change` is mandatory.
+Making that job a **required** status check is a repository setting, not a file
+in this repo — see `catalog/recipes/plan-build-flow/README.md` for the exact
+`gh api` command the owner runs once. The workflow grades committed state only,
+so the archive commit must be pushed for the check to pass.
 
 ### In-flight plans and stale PRs
 

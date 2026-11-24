@@ -23,12 +23,20 @@ const gatesPlanBody = "## Specs\n\n- **S1.** Fixture requirement\n\n## Tasks\n\n
 	"| ID | Spec | Tarea | Ruta | Commit |\n| --- | --- | --- | --- | --- |\n" +
 	"| T1 | S1 | Fixture task | inline | pending |\n"
 
+// gatesConfig is a valid project config: `go` is on PATH, so a fixture that
+// records a command keeps the freshness rules quiet.
+const gatesConfig = "schema: spec-driven\n\nstrict_tdd: true\n\ntesting:\n  runner: go test ./internal/...\n"
+
+// gatesRepo is an empty planning tree. It carries a valid project config, since
+// the CLI requires one from Standard up; a test about the config rules removes
+// that duty by using its own root.
 func gatesRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "openspec", "changes", "archive"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	gatesWrite(t, filepath.Join(root, "openspec", "config.yaml"), gatesConfig)
 	return root
 }
 
@@ -210,6 +218,7 @@ func gatesGitRepo(t *testing.T, branch string) string {
 	gitTest(t, root, "config", "user.email", "test@example.invalid")
 	gitTest(t, root, "config", "user.name", "test")
 	gitTest(t, root, "commit", "--allow-empty", "-m", "initial")
+	gatesWrite(t, filepath.Join(root, "openspec", "config.yaml"), gatesConfig)
 	return root
 }
 

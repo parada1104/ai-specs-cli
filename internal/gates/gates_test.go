@@ -13,10 +13,22 @@ import (
 // tierOpt mirrors the CLI's optional --tier: nil means "infer from tasks.md".
 func tierOpt(name string) *string { return &name }
 
-func newRepo(t *testing.T) string {
+// fixtureConfig is a valid project config: `go` is on PATH and matches the
+// fixture verification rows, so a test about another rule stays about that rule.
+const fixtureConfig = "schema: spec-driven\n\nstrict_tdd: true\n\ntesting:\n  runner: go test ./internal/...\n"
+
+// newBareRepo is newRepo without the project config, for the config rules.
+func newBareRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	mkdirAll(t, filepath.Join(root, "openspec", "changes", "archive"))
+	return root
+}
+
+func newRepo(t *testing.T) string {
+	t.Helper()
+	root := newBareRepo(t)
+	writeFile(t, filepath.Join(root, "openspec", "config.yaml"), fixtureConfig)
 	return root
 }
 

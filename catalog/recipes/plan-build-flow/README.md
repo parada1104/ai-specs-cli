@@ -81,8 +81,59 @@ both pair with the plan `odd/tasks/thing.md`. `ai-specs specs promote` composes
 `odd/specs/<domain>/spec.md`; `openspec/specs/**` is neither read nor written. `ai-specs gates premerge` pairs the change from the branch, checks that
 the plan exists and every `odd/changes/<slug>/specs/` delta was promoted, and
 requires the delta folder to be archived before merge.
-There is no `odd/config.yml`: the mode lives in the project manifest.
+There is no `odd/config.yml` recipe manifest: the mode lives in the project
+manifest. The project config is a separate file, `odd/config.yaml` — the same
+shape and the same rules as `openspec/config.yaml`, described below.
 - **`openspec`** is the unchanged OpenSpec-centered flow described below.
+
+## Project config (`config.yaml`)
+
+`config.yaml` configures the **project**, not the change. It survives in both
+modes and is resolved per mode, never guessed: `openspec/config.yaml` in
+`openspec`, `odd/config.yaml` in `odd` (`.yml` is not read).
+
+The CLI validates only the keys it consumes, line by line, with no YAML
+library:
+
+- the file must exist and be a regular file whose real path stays inside the
+  repository (a symlink pointing outside blocks);
+- `schema:` must be non-empty;
+- a `testing:` block must declare a non-empty `runner:` — the command that runs
+  the project tests;
+- `strict_tdd:`, when present, must be `true` or `false`; omitting it is fine.
+
+Everything else — `context`, `rules.*`, `ai_specs_guidance` — is **opaque
+prose** for the agent, and nothing validates it. A strict schema would repeat
+the frozen schema oracle trap that already blocked declaring `[config.mode]` in
+#589, so the file stays a superset the CLI reads selectively. The `tracking:`
+block is read by the Tracker domain (`internal/doctor`, the ledger witness) and
+must be kept intact.
+
+### Freshness loop
+
+The cause of a stale `config.yaml` is that nothing read it while grading. Now
+it is graded, indirectly but deterministically, through the change's own
+`## Verification` rows:
+
+1. every backticked command that starts a row's evidence must resolve here — a
+   `./`- or `/`-prefixed path must exist and be a regular file, a bare word must
+   be found on `PATH`;
+2. the `testing.runner` declared in the config must match the first word of at
+   least one row.
+
+Standard and Full changes require both. A change with no verification rows —
+Light, or a plan without `## Verification` — is exempt from both: that is the
+proportional-ceremony rule (S12), not a bypass. A change that migrates the test
+runner cannot pass the gate without updating `config.yaml` in the same change,
+so obsolescence fails the gate instead of staying silent. Blockers name the
+offending command and the config path, for example:
+
+```text
+openspec/config.yaml: verification for S1 names command "./nope.sh" which does
+not exist: run the configured tests and record the real command
+openspec/config.yaml: verification never runs the configured testing.runner
+"./tests/run.sh": name it in at least one row or update config.yaml
+```
 
 ## PR and merge gates
 
@@ -137,6 +188,38 @@ There is no `odd/config.yml`: the mode lives in the project manifest.
   --checkpoint archive-close [slug]`). It
   never moves the change folder, never infers closure from OpenSpec archive
   state, and writes nothing. Plan Build's artifact guardian is tracker-free.
+- **Project config freshness:** a Standard or Full change requires a valid
+  `config.yaml` (see above), every command it records in `## Verification` must
+  resolve, and its `testing.runner` must appear in at least one row.
+
+## Third assurance layer: pull-request CI
+
+The merge decision is the human's, and the assurance is layered so a merge
+cannot happen by hand without the archive: the CLI verb is layer one, the skill
+that obeys it is layer two, and `.github/workflows/pr-gate.yml` is layer three.
+On every pull request against `development` that workflow builds the binary and
+runs
+
+```bash
+./dist/ai-specs gates premerge --root . --change "$GITHUB_HEAD_REF"
+```
+
+`actions/checkout` leaves `HEAD` detached on `pull_request`, so the change
+ladder cannot pair a branch with a change folder and the explicit `--change` is
+mandatory. The workflow grades committed state only: push the archive commit or
+the check cannot pass.
+
+Making that job a **required** status check is a repository branch-protection
+setting, not a file in this repo. The owner applies it once:
+
+```bash
+gh api --method PUT \
+  repos/<owner>/<repo>/branches/development/protection/required_status_checks \
+  -H "Accept: application/vnd.github+json" \
+  --input - <<'JSON'
+{"strict": true, "contexts": ["pr-gate"]}
+JSON
+```
 
 Plans already in flight when this contract ships add missing `proposal.md` or
 verify evidence before their PR/archive; no replan or restart is needed.

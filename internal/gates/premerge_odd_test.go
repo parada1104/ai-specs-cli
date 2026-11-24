@@ -164,3 +164,43 @@ func TestCheckPremergeOddRefusesASymlinkedChangeTree(t *testing.T) {
 	}
 	wantBlocked(t, CheckPremergeOdd(root, "thing"), "symlinked odd change tree")
 }
+
+// A plan that declares its tier is graded like an OpenSpec change: the project
+// config must exist and the runner it declares must be the one that ran. A plan
+// with no Depth: line keeps the narrower #589 contract.
+func TestCheckPremergeOddGradesTheConfigForADeclaredTier(t *testing.T) {
+	root := oddRepo(t)
+	plan := "# plan\n\nDepth: standard\n\n## Specs\n- **S1.** x — *\"x\"*\n\n" +
+		"## Tasks\n| ID | Spec | Tarea | Ruta | Commit |\n| --- | --- | --- | --- | --- |\n" +
+		"| T1 | S1 | x | inline | pendiente |\n\n" +
+		"## Verification\n- **S1: PASS** — `go test ./internal/...`, exit 0\n\n" +
+		"## Log\n- **L1** — x\n"
+	if err := os.WriteFile(filepath.Join(root, "odd", "tasks", "thing.md"), []byte(plan), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	wantBlocked(t, CheckPremergeOdd(root, "thing"), "config.yaml")
+
+	if err := os.WriteFile(filepath.Join(root, "odd", "config.yaml"),
+		[]byte("schema: spec-driven\ntesting:\n  runner: go vet ./internal/...\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wantBlocked(t, CheckPremergeOdd(root, "thing"), "never runs the configured testing.runner")
+
+	if err := os.WriteFile(filepath.Join(root, "odd", "config.yaml"),
+		[]byte("schema: spec-driven\ntesting:\n  runner: go test ./internal/...\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := CheckPremergeOdd(root, "thing"); !got.OK {
+		t.Fatalf("Result = %+v, want OK with a matching runner", got)
+	}
+}
+
+// A plan without a Depth: line is legacy: no config duty, so existing ODD
+// repositories do not retro-block.
+func TestCheckPremergeOddLeavesALegacyPlanWithoutADepthLine(t *testing.T) {
+	root := oddRepo(t)
+	if got := CheckPremergeOdd(root, "thing"); !got.OK {
+		t.Fatalf("Result = %+v, want OK for a legacy plan with no Depth: line", got)
+	}
+}
