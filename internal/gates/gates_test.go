@@ -271,7 +271,8 @@ func TestUnknownTierBlocksAndKeepsTheDerivedTier(t *testing.T) {
 	if result.Tier != TierLight {
 		t.Fatalf("tier = %q, want the derived light", result.Tier)
 	}
-	assertBlockerContains(t, result, "unknown tier 'deep' (expected none|light|standard)")
+	assertBlockerContains(t, result, "unknown tier 'deep': the tier is derived from the artifacts of the change",
+		"the only declarations that can match are none, light and standard", "drop the value or declare one of them")
 }
 
 func TestPrearchiveChecksActiveFolderWithoutActiveBlocker(t *testing.T) {
