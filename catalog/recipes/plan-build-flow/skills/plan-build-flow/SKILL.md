@@ -378,7 +378,11 @@ required for Full at both stages.
 Sequence on the review branch:
 
 1. Implement and verify.
-2. Commit and push implementation **and** planning files.
+2. Commit and push, one commit per `## Tasks` row. When a row exceeds roughly
+   400 authored changed lines, split it into one commit per work unit of that
+   size instead. Every commit is a Conventional Commit, and tests and docs land
+   in the same commit as the behavior they cover. Write each commit's sha into
+   the `Commit` cell of its row.
 3. Open a PR (artifact gate satisfied).
 4. Promote canonical specs. Compose every delta under
    `openspec/changes/<slug>/specs/<domain>/spec.md` into
@@ -424,6 +428,11 @@ remains required after archive.
    candidates, dated-plus-undated candidates, invalid dates, or near-match
    names are present.
 7. Run the pre-merge guardian; merge only after explicit user approval.
+
+The commit check has two declared limits. It holds only on the review branch,
+because a squash-merge rewrites the shas and the guardian never runs on the base
+branch. And the CLI grades the recorded sha, never whether a slice was a
+reasonable size: the granularity stays in prose, and only the record is graded.
 
 ### 7.4 Pre-merge merge guardian (hard stop)
 

@@ -109,6 +109,7 @@ func inspectFolder(folder string, tier *string, location, repoRoot string) Resul
 	resolved := resolveTier(tasksText, tier, &blockers)
 	blockers = append(blockers, checkMinimums(folder, resolved, location)...)
 	blockers = append(blockers, checkPlan(folder, location)...)
+	blockers = append(blockers, checkTaskCommits(folder, repoRoot, location)...)
 	blockers = append(blockers, checkVerifyEvidence(folder, resolved)...)
 	blockers = append(blockers, promotionBlockers(repoRoot, folder, resolved, location)...)
 	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: resolved, ArchivePath: folder}
