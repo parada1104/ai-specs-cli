@@ -22,6 +22,17 @@ Card: `6b04e0e37aa95686f307241f` — [65Ijc3h5](https://trello.com/c/65Ijc3h5)
 - **S13.** El merge lo decide el humano: *«el agente pregunta si es momento de ir»*. El agente no mergea por iniciativa propia; el aseguramiento va en capas para que tampoco se pueda mergear a mano sin archivado.
 - **S14.** El delta y el plan son el contrato de entrega: nada de lo que se retire de obligatorio puede dejar una regla sin comprobación determinista en el CLI.
 
+- **S15.** El tier se deriva de los artefactos, no se declara: sin plan = `none` (equivale a *small*), plan = `light`, plan + delta = `standard`. `full` se retira del todo, también en Go.
+- **S16.** `none` pasa salvo refutación objetiva: **R-a**, toca specs canónicas sin delta.
+- **S17.** **R-b**: toca rutas de alto riesgo declaradas por proyecto en `ai-specs.toml`; cada proyecto mantiene su lista. En `openspec` R-b exige plan `light`; en `odd` exige un trailer `Risk` con evidencia.
+- **S18.** Hook en modo `odd`: se quita la exigencia de plan y solo se protege `odd/specs/**`. Es el bug que Robert recalca: en `odd`, un cambio *small* quedaba bloqueado.
+- **S19.** Hook en modo `openspec`: acepta una declaración local, `ai-specs changes start --none`.
+- **S20.** Un delta sin plan está permitido.
+- **S21.** En `odd` el archivado se exige solo cuando hay carpeta de change.
+- **S22.** Los bloqueos nuevos siguen el estilo del gate actual: nombran la regla, lo que falta y las salidas posibles. Nunca un «no encuentro el plan» seco.
+- **S23.** Limpieza técnica: el SKILL se alinea con el Task Size de ODD (sin señales de tamaño, la heurística de 400 líneas no obliga a dividir, revisión con `assess` por commit `--committed-only`); el README y `SKILL.md:231` se alinean con el código.
+- **S24.** `config.yaml` queda opcional e ignorado por el premerge en `openspec` (decidido antes), y el trabajo aparcado en `stash@{0}` se integra como base.
+
 ## Divergencias actuales entre ODD y el modo `openspec`
 
 | Práctica ODD | Cómo estaba antes de esta revisión | Dónde |
@@ -233,6 +244,15 @@ Regla de reparto que se propone dejar escrita: **lo que el CLI puede comprobar s
 | T9 | S10 | I5/P4: verbo `changes archive`, archivado obligatorio en `odd`, premerge de ambos modos | inline | `ca374e7` |
 | T10 | S11, S13 | I6/P5+P7: validación de `config.yaml` con bucle de frescura, `pr-gate.yml`, SKILL §7.3/§7.4, README | inline | `85acb2c` |
 
+| T11 | S24 | Integrar `stash@{0}` (config opcional, `full` fuera de Go) como base y dejar la matriz en verde | worker | pendiente |
+| T12 | S15 | Derivar el tier de los artefactos en el gate y en el premerge (`none`/`light`/`standard`) | worker | pendiente |
+| T13 | S16, S17 | Refutaciones objetivas R-a y R-b, con `ai-specs.toml` como lista del proyecto y respuesta distinta por modo | worker | pendiente |
+| T14 | S19 | `ai-specs changes start --none` y su aceptación en el hook de `openspec` | worker | pendiente |
+| T15 | S18 | Hook de `odd`: quitar la exigencia de plan, proteger solo `odd/specs/**` | worker | pendiente |
+| T16 | S20, S21 | Delta sin plan permitido; archivado en `odd` solo cuando hay carpeta de change | worker | pendiente |
+| T17 | S22 | Pasar los bloqueos nuevos al estilo del gate: regla, lo que falta y salidas | worker | pendiente |
+| T18 | S23 | Alinear SKILL (Task Size de ODD), README y `SKILL.md:231` con el código | inline | pendiente |
+| T19 | — | Cierre: suite completa, smoke en ambos modos y revisión por commit con `assess --committed-only` | inline | pendiente |
 ## Implementación propuesta (change siguiente, no esta vuelta)
 
 Seis unidades de trabajo en este orden; cada una deja el suite en verde y admite revisión sola.
@@ -296,4 +316,17 @@ Seis unidades de trabajo en este orden; cada una deja el suite en verde y admite
   - **Decisión de Robert**: no abrir otro linaje ahora. El árbol va a cambiar con las decisiones de tiers que está tomando tras estudiar ODD, así que revisar este árbol sería gastar en algo que no se entrega. El linaje se deja como está y, al retomar, la revisión irá **por commit con `assess --committed-only`**, como pide ODD.
 - **L22** — Tiers en pausa. Robert está estudiando ODD antes de decidir la forma de «sin ceremonia». El trabajo que un worker alcanzó a producir para `config.yaml` opcional y retirada de Full quedó **sin commitear en `stash@{0}`** y no forma parte del candidato: el árbol se devolvió al candidato revisado. No se implementa nada de tiers hasta nuevo aviso.
 - **Estado entregado al pausar**: HEAD `82101c05`, árbol `27132b6d`, working tree limpio, rama pusheada, PR [#590](https://github.com/parada1104/ai-specs-cli/pull/590) abierto y **sin mergear**; `go test ./...` en verde; `./tests/run.sh` en su baseline conocido de 28/35 en macOS. Merge pendiente de reanudar la revisión y de la marca de required check, que es del dueño.
+- **L23** — Robert aprueba las recomendaciones del estudio de ODD, verbatim: *«ok vamos con las recomendaciones y no olvidemos tener en cuenta los tipos de bloqueos parecido al gate que establecimos y en odd small iba a bloquear un cambio»*. Decisiones aprobadas, que pasan a S15–S24:
+  - el tier **se deriva de los artefactos**, no se declara: sin plan = `none` (equivale a *small*), plan = `light`, plan + delta = `standard`; **`full` se retira del todo, también en Go**;
+  - `none` pasa salvo **refutación objetiva**: **R-a** toca specs canónicas sin delta; **R-b** toca rutas de alto riesgo declaradas en `ai-specs.toml`, lista que mantiene cada proyecto — en `openspec` R-b exige plan `light`, en `odd` exige un **trailer `Risk` con evidencia**;
+  - **hook en `odd`**: se quita la exigencia de plan y solo se protege `odd/specs/**`. Ese es el bug que recalca: en `odd`, un cambio *small* bloqueaba una escritura;
+  - **hook en `openspec`**: acepta una declaración local, `ai-specs changes start --none`;
+  - **delta sin plan permitido**;
+  - en `odd`, el archivado se exige **solo cuando hay carpeta de change**;
+  - los bloqueos nuevos siguen el **estilo del gate**: nombran la regla, lo que falta y las salidas posibles; nunca un «no encuentro el plan» seco;
+  - **limpieza técnica**: SKILL alineado con el Task Size de ODD (sin señales de tamaño, la heurística de 400 líneas no obliga a dividir, revisión con `assess` por commit `--committed-only`), README y `SKILL.md:231` alineados con el código;
+  - se integra `stash@{0}` («tiers D1+D2»);
+  - el linaje de revisión aparcado **queda como está**.
+- **L24** — Estudio de ODD versionado en `odd/tasks/plan-build-openspec-odd-align.study.md` (239 líneas, copiado verbatim desde el scratchpad de Robert). Es la referencia normativa de S15–S23 y cita `file:line` del árbol `82101c05`.
+- **L25** — Handoff: esta implementación **no se hace en esta sesión** (contexto al 44 %). La continuidad queda en el plan (S15–S24, T11–T19), en el estudio versionado y en Engram. La revisión nativa del próximo árbol irá **por commit con `assess --committed-only`**, y no se abre otro linaje sobre el candidato actual. Orden de trabajo sugerido por dependencia: T11 primero (es la base del stash), T12 después (cambia la matriz), luego T15 y T16 (el hook de `odd`, que es el bug de Robert), y T13/T14/T17/T18 cuando la matriz ya esté estable.
 
