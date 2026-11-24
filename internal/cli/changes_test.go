@@ -257,7 +257,7 @@ func TestChangesArchiveWritesTheMarkerForADeltaLessChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("archive folder does not hold the marker: %v", err)
 	}
-	if got, wantMarker := string(marker), "# archived: thing\n2026-01-02\nodd/tasks/thing.md\n"; got != wantMarker {
+	if got, wantMarker := string(marker), "# archived: thing\ndate: 2026-01-02\n"; got != wantMarker {
 		t.Errorf("marker = %q, want %q", got, wantMarker)
 	}
 	if _, err := os.Stat(filepath.Join(dst, "tasks.md")); !os.IsNotExist(err) {

@@ -238,7 +238,7 @@ func runChangesArchive(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "changes archive: cannot create %s: %s\n", dst, err)
 			return 1
 		}
-		marker := "# archived: " + change + "\n" + date + "\n" + repoRelative(root, plan) + "\n"
+		marker := "# archived: " + change + "\ndate: " + date + "\n"
 		if err := os.WriteFile(filepath.Join(dst, "archived.md"), []byte(marker), 0o644); err != nil {
 			fmt.Fprintf(stderr, "changes archive: cannot write %s: %s\n",
 				filepath.Join(dst, "archived.md"), err)
