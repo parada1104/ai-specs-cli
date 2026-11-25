@@ -239,15 +239,24 @@ func changeRelative(mode, change, rel string) []string {
 		return nil
 	}
 	parts := strings.Split(strings.TrimPrefix(rel, base), "/")
-	if parts[0] == "archive" {
+	archived := parts[0] == "archive"
+	if archived {
 		parts = parts[1:]
 	}
 	if len(parts) < 2 {
 		return nil
 	}
-	dated := datedArchiveRe.FindStringSubmatch(parts[0])
-	if parts[0] != change && (dated == nil || dated[2] != change) {
-		return nil
+	if parts[0] != change {
+		// A date-prefixed name is the archive convention only: beneath archive/ it
+		// pairs with the change by suffix, while anywhere else it names a different
+		// change and must never answer for this one (R1-001).
+		if !archived {
+			return nil
+		}
+		dated := datedArchiveRe.FindStringSubmatch(parts[0])
+		if dated == nil || dated[2] != change {
+			return nil
+		}
 	}
 	return parts[1:]
 }

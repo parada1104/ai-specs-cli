@@ -386,6 +386,21 @@ func TestRefuteRaBlocksADeltaRenamedToANonMarkdownFile(t *testing.T) {
 	}
 }
 
+// A date-prefixed name is the archive convention only: an active folder called
+// 2026-01-01-thing names a different change and its plan must not answer for
+// `thing` (R1-001 of the slice-6 review).
+func TestRefuteRbIgnoresADatedActiveFolder(t *testing.T) {
+	root, _ := refuteRepo(t, "go.mod")
+	commitPath(t, root, "openspec/changes/2026-01-01-thing/tasks.md", "chore: add another change's plan")
+	base := strings.TrimSpace(gitOutput(t, root, "rev-parse", "HEAD"))
+	commitPath(t, root, "go.mod", "build: bump a module")
+
+	blockers := refutations(root, planbuild.ModeOpenspec, "thing", &base)
+	if !strings.HasPrefix(joinedBlockers(blockers), "R-b:") {
+		t.Fatalf("refutations = %q, want R-b over a dated active folder", blockers)
+	}
+}
+
 // A plan from an earlier change never answers R-b: only a plan this diff adds or
 // modifies is evidence, or every archived change would answer for every later one.
 func TestRefuteRbIgnoresAPlanFromAnEarlierChange(t *testing.T) {
