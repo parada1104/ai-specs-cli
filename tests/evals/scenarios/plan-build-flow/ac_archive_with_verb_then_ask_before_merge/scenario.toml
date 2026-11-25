@@ -7,6 +7,11 @@ slug = "signup-validation"
 seed_plan = true
 description = "Archive runs through the verb into the dated folder, the active change is gone, and the answer asks before merging"
 required_transcript_all = ["archive", "merge"]
+# "Asks before merging" is graded two ways: the answer must contain a question /
+# ask form, and the agent must not have run a merge. The command check reads the
+# runtime's tool-call records and fails closed when the runtime records none.
+required_transcript_one_of = ["¿", "confirm", "aprob", "avisame", "avísame", "decime"]
+forbidden_commands = ["git merge", "gh pr merge"]
 
 [modes.openspec]
 required_path_globs = [

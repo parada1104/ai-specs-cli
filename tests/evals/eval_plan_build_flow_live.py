@@ -17,7 +17,6 @@ from tests.evals.lib.harness import (  # noqa: E402
     SUPPORTED_RUNTIMES,
     api_key_present,
     assert_scenario_outputs,
-    detect_runtime,
     git_paths_changed,
     glob_exists,
     init_git_repo,
@@ -115,10 +114,6 @@ def _n_of_m(passed: int, trials: int) -> int:
     return trials if trials == 1 else max(2, (trials * 2) // 3)
 
 
-@unittest.skipUnless(
-    live_enabled() and bool(_selected_runtimes()),
-    "Set EVALS_LIVE=1 with a supported runtime on PATH to run live evals",
-)
 def _write_evidence(
     name: str,
     runtime: str,
@@ -174,6 +169,10 @@ def _write_evidence(
     (out / name_part).write_text("\n".join(lines), encoding="utf-8")
 
 
+@unittest.skipUnless(
+    live_enabled() and bool(_selected_runtimes()),
+    "Set EVALS_LIVE=1 with a supported runtime on PATH to run live evals",
+)
 class PlanBuildFlowLiveEvals(unittest.TestCase):
     def _run_scenario(self, name: str, runtime: str, fixture_mode: str):
         scenario_dir = SCENARIOS / name
@@ -198,6 +197,14 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
                 extra_recipes=manifest_extra,
                 mode=fixture_mode,
             )
+        # The mode under test has to be the mode the fixture actually declares;
+        # a typo here would silently measure the other tree.
+        declared = (root / "ai-specs" / "ai-specs.toml").read_text()
+        self.assertIn(
+            f'mode = "{fixture_mode}"',
+            declared,
+            f"{label}: the fixture did not declare mode {fixture_mode!r}",
+        )
         if meta.get("sync_before_prompt"):
             sync = subprocess.run(
                 [str(REPO_ROOT / "bin" / "ai-specs"), "sync", str(root)],

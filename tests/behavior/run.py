@@ -59,8 +59,23 @@ def diff(name: str, expected: dict, actual: dict) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    known_flags = {"--update"}
+    unknown_flags = [a for a in argv if a.startswith("-") and a not in known_flags]
+    if unknown_flags:
+        print(f"behavior goldens: unknown option(s) {unknown_flags}", file=sys.stderr)
+        return 2
     update = "--update" in argv
     selected = [a for a in argv if not a.startswith("-")]
+    known = {name for name, _, _ in CASES}
+    unknown = [name for name in selected if name not in known]
+    if unknown:
+        # A misspelled case used to run nothing and exit 0, so a green result
+        # could mean the requested golden was never measured.
+        print(
+            f"behavior goldens: unknown case(s) {unknown}; known: {sorted(known)}",
+            file=sys.stderr,
+        )
+        return 2
     if cli() == LEGACY_CLI:
         print("behavior goldens: the Go binary is unavailable; nothing was measured", file=sys.stderr)
         return 2
