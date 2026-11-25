@@ -74,6 +74,15 @@ enabled = true
 [recipes.vault-canonical-store.config]
 vault_scope = "nnodes/proyectos/ai-specs"
 
+# The Plan Build execution mode is declared, not inferred. `auto` probes the
+# machine-local <git-common-dir>/gentle-ai/ directory, which exists in a
+# developer checkout but never in a fresh clone, so CI would resolve the
+# OpenSpec flow and grade the wrong tree. This repo plans and delivers with ODD.
+# plan-build-flow stays undeclared as a recipe (this repository develops the
+# recipe rather than consuming it); only its config carries the mode.
+[recipes.plan-build-flow.config]
+mode = "odd"
+
 # -----------------------------------------------------------------------------
 # Vendored skill dependencies — each [[deps]] entry is cloned by
 # `ai-specs sync` into ai-specs/skills/<id>/ (gitignored).

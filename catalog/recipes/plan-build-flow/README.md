@@ -79,17 +79,78 @@ last path segment after stripping any prefix, so `feat/thing` and `fix/thing`
 both pair with the plan `odd/tasks/thing.md`. `ai-specs specs promote` composes
 `odd/changes/<slug>/specs/<domain>/spec.md` into
 `odd/specs/<domain>/spec.md`; `openspec/specs/**` is neither read nor written. `ai-specs gates premerge` pairs the change from the branch, checks that
-the plan exists and every `odd/changes/<slug>/specs/` delta was promoted, and requires
-no archive.
+the plan exists and every `odd/changes/<slug>/specs/` delta was promoted, and
+requires the delta folder to be archived before merge.
 There is no `odd/config.yml`: the mode lives in the project manifest.
 - **`openspec`** is the unchanged OpenSpec-centered flow described below.
 
+## Project config (`config.yaml`)
+
+`config.yaml` configures the **project**, not the change. It is an `openspec`
+artefact only, at `openspec/config.yaml` (`odd` mode has no config file, and
+`.yml` is not read).
+
+The CLI validates only the keys it consumes, line by line, with no YAML
+library:
+
+- the file must exist and be a regular file whose real path stays inside the
+  repository (a symlink pointing outside blocks);
+- `schema:` must be non-empty;
+- a `testing:` block must declare a non-empty `runner:` — the command that runs
+  the project tests;
+- `strict_tdd:`, when present, must be `true` or `false`; omitting it is fine.
+
+Everything else — `context`, `rules.*`, `ai_specs_guidance` — is **opaque
+prose** for the agent, and nothing validates it. A strict schema would repeat
+the frozen schema oracle trap that already blocked declaring `[config.mode]` in
+#589, so the file stays a superset the CLI reads selectively. The `tracking:`
+block is read by the Tracker domain (`internal/doctor`, the ledger witness) and
+must be kept intact.
+
+### Freshness loop
+
+The cause of a stale `config.yaml` is that nothing read it while grading. Now
+it is graded, indirectly but deterministically, through the change's own
+`## Verification` rows:
+
+1. every backticked command that starts a row's evidence must resolve here — a
+   `./`- or `/`-prefixed path must exist and be a regular file, a bare word must
+   be found on `PATH`;
+2. the `testing.runner` declared in the config must match the first word of at
+   least one row.
+
+Every `## Verification` row of a Standard or Full change must also name the
+command it ran in backticks: a verdict without a command records no run, so
+`- **S1: PASS** — nothing executed` blocks with `verification for S1 must name
+the command it ran in backticks: record "- **S1: PASS** — `go test ./...`"`.
+The row must record exactly one command with no prose before it and no bare
+second backticked value; a row recording `exit 1`, `exit 2` or `failed` blocks as
+a failing run; an `N/A` row with a reason is exempt; and two rows for the same
+`S#` block naming the id. A plan that declares `Depth: standard` or
+`Depth: full` also requires `## Log` with `L1`; Light keeps it optional.
+
+Standard and Full changes require both. A change with no verification rows —
+Light, or a plan without `## Verification` — is exempt from both: that is the
+proportional-ceremony rule (S12), not a bypass. A change that migrates the test
+runner cannot pass the gate without updating `config.yaml` in the same change,
+so obsolescence fails the gate instead of staying silent. Blockers name the
+offending command and the config path, for example:
+
+```text
+openspec/config.yaml: verification for S1 names command "./nope.sh" which does
+not exist: run the configured tests and record the real command
+openspec/config.yaml: verification never runs the configured testing.runner
+"./tests/run.sh": name it in at least one row or update config.yaml
+```
+
 ## PR and merge gates
 
-- **No PR** until the change folder contains its tier minimum files committed:
-  Light requires `proposal.md` + `tasks.md`; Standard requires those plus a
-  spec delta; Full requires `tasks.md`, `proposal.md` or `design.md`, and a
-  spec delta.
+- **No PR** until the change's plan parses: `openspec/changes/<slug>/tasks.md`
+  with `## Specs` and `## Tasks`, plus `## Log` with `L1` from Standard up (Light
+  keeps it optional) and a spec delta for Standard and Full. `proposal.md`,
+  `design.md` and `verify-report.md` are still accepted, but they are no longer
+  required. Every archive is graded by that grammar whatever its folder is
+  called, and it must hold the plan or the delta: an empty folder blocks.
 - **Verify before archive:** Standard requires a dedicated `verify-report.md`
   with command, exit `0`, a valid calendar date, commit SHA, and a non-failing
   verdict. Full additionally requires strict `PASS`, `ready_for_archive: true`,
@@ -119,15 +180,69 @@ There is no `odd/config.yml`: the mode lives in the project manifest.
   base branch. OpenSpec's canonical destination is
   `openspec/changes/archive/YYYY-MM-DD-<slug>/` with a valid ISO calendar date.
   The exact undated `archive/<slug>/` directory remains a legacy fallback only
-  when no dated candidate exists. Multiple dated candidates, dated-plus-undated
+  when no dated candidate exists; it is graded by the same plan grammar as a
+  dated archive, and it must hold the plan or the delta like any other archive
+  (an empty folder blocks). Multiple dated candidates, dated-plus-undated
   candidates, invalid dates, and near-match names fail closed with named
   blockers.
+- **Archive with the verb:** `ai-specs changes archive [<change>] --root
+  <planning-root> [--date YYYY-MM-DD]` is the mechanical archive step in both
+  modes. It resolves the change with the same ladder as the guardian, refuses
+  while a delta is unpromoted, refuses to create a second archive for a change,
+  refuses a destination that resolves through a symlink or outside the
+  repository, and moves with one `os.Rename` (never deletes). In `openspec` the
+  plan lives inside the change folder and moves with it; in `odd` only
+  `odd/changes/<change>/` moves and `odd/tasks/<change>.md` stays as the feature
+  record. A change with no delta folder is still archived: the dated folder is
+  created holding a three-line `archived.md` marker instead of the plan copy, and
+  `--change` keeps the last path
+  segment of a branch-shaped value, so CI passes `GITHUB_HEAD_REF` unchanged;
+  an empty `<change>` or `--change=` is a usage error, never "omitted", and so
+  is a name that is not a single path segment (`..`, `../../../offtree`, `a/b`):
+  the guardian exits `2` with `ERROR: invalid change name: <name> (expected a
+  single path segment)` instead of grading a folder outside the change tree.
 - **Tracker `archive-close` is not this archive.** Tracker item closure is a
   separate Tracker-domain checkpoint
   (`ai-specs tracker-card-gate --root <root>
   --checkpoint archive-close [slug]`). It
   never moves the change folder, never infers closure from OpenSpec archive
   state, and writes nothing. Plan Build's artifact guardian is tracker-free.
+- **Project config freshness:** a Standard or Full change requires a valid
+  `config.yaml` (see above), every command it records in `## Verification` must
+  resolve, and its `testing.runner` must appear in at least one row.
+
+## Third assurance layer: pull-request CI
+
+The merge decision is the human's, and the assurance is layered so a merge
+cannot happen by hand without the archive: the CLI verb is layer one, the skill
+that obeys it is layer two, and `.github/workflows/pr-gate.yml` is layer three.
+On every pull request against `development` that workflow builds the binary and
+runs
+
+```bash
+trusted/dist/ai-specs gates premerge \
+  --root "$GITHUB_WORKSPACE/candidate" --change "$GITHUB_HEAD_REF"
+```
+
+`actions/checkout` leaves `HEAD` detached on `pull_request_target`, so the change
+ladder cannot pair a branch with a change folder and the explicit `--change` is
+mandatory; the evaluator comes from the base branch and `candidate/` is data.
+`--change feat/alpha`
+keeps its last path segment (`alpha`) through the same helper the branch pairing
+uses, so `GITHUB_HEAD_REF` can be passed as is. The workflow grades committed
+state only: push the archive commit or the check cannot pass.
+
+Making that job a **required** status check is a repository branch-protection
+setting, not a file in this repo. The owner applies it once:
+
+```bash
+gh api --method PUT \
+  repos/<owner>/<repo>/branches/development/protection/required_status_checks \
+  -H "Accept: application/vnd.github+json" \
+  --input - <<'JSON'
+{"strict": true, "contexts": ["pr-gate"]}
+JSON
+```
 
 Plans already in flight when this contract ships add missing `proposal.md` or
 verify evidence before their PR/archive; no replan or restart is needed.

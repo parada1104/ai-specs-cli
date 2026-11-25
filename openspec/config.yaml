@@ -1,48 +1,30 @@
 schema: spec-driven
 
 context: |
-  Tech stack: Bash CLI entrypoints with Python 3.11+ helpers and unittest-based tests.
-  Architecture: bin/ai-specs dispatches to lib/*.sh and lib/_internal/*.py; templates and bundled assets generate agent outputs.
-  Testing: ./tests/run.sh runs unittest discovery; ./tests/validate.sh adds py_compile and bash -n checks.
-  Style: Generated agent files are derived artifacts; AGENTS.md is auto-generated and ai-specs/ai-specs.toml is the source of truth.
+  Tech stack: Go CLI (module ai-specs.dev/ai-specs). cmd/ai-specs is the
+  entrypoint; internal/* holds the verbs, the gate guardian and the sync engine.
+  Architecture: one Go binary. internal/gates is the read-only pre-merge
+  guardian, internal/planbuild owns change/plan/config resolution, and
+  catalog/ carries the recipes, skills and templates that sync materializes
+  into a project.
+  Testing: go test ./internal/... is the focused loop; ./tests/validate.sh is
+  the full validation entrypoint.
+  Parity baseline: ./tests/run.sh still runs the legacy Python/Bash suite, where
+  known parity failures remain. A failure there is a baseline note, not a
+  regression of the Go suite.
+  Style: generated agent files are derived artifacts; AGENTS.md is
+  auto-generated and ai-specs/ai-specs.toml is the source of truth.
 
 strict_tdd: true
 
 testing:
   detected: 2026-04-24
-  test_runner:
-    available: true
-    framework: unittest
-    command: ./tests/run.sh
-  layers:
-    unit:
-      available: true
-      tool: unittest
-    integration:
-      available: false
-      tool: ""
-    e2e:
-      available: false
-      tool: ""
-  coverage:
-    available: false
-    command: ""
-  quality:
-    linter:
-      available: false
-      command: ""
-    type_checker:
-      available: false
-      command: ""
-    formatter:
-      available: false
-      command: ""
-  validation:
-    command: ./tests/validate.sh
-    notes:
-      - python3 -m py_compile lib/_internal/*.py tests/*.py
-      - bash -n lib/*.sh bin/ai-specs tests/*.sh
-      - ./tests/run.sh
+  runner: go test ./internal/...
+  focused: >
+    go test ./internal/gates/... ./internal/planbuild/... ./internal/cli/...
+    -count=1
+  validation: ./tests/validate.sh
+  parity_baseline: ./tests/run.sh
 
 rules:
   proposal:
@@ -62,10 +44,12 @@ rules:
   apply:
     - Follow existing code patterns and conventions
     - Load relevant coding skills for the project stack
-    - Use ./tests/run.sh for focused test feedback during implementation
+    - Use go test ./internal/<package> -count=1 for focused test feedback during
+      implementation
     - Record RED/GREEN evidence when strict TDD applies
     - Update README when the change touches CLI commands, manifest schema, or user-facing docs
-    - Prefer git commits grouped by tasks.md phase; avoid a single end-of-branch squash unless recovering history
+    - Prefer git commits grouped by plan task; avoid a single end-of-branch
+      squash unless recovering history
   verify:
     - Run ./tests/validate.sh before final verification
     - Compare implementation against every spec scenario
@@ -74,10 +58,10 @@ rules:
 ai_specs_guidance:
   apply:
     tdd: true
-    test_command: ./tests/run.sh
+    test_command: go test ./internal/...
   verify:
     test_command: ./tests/validate.sh
-    build_command: ""
+    build_command: go build ./cmd/ai-specs
     coverage_threshold: 0
   archive:
     - Warn before merging destructive deltas (large removals)

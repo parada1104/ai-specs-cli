@@ -53,6 +53,8 @@ const (
 	routeRecipeInitVerb                     // native: `recipe init`, port of lib/recipe-init.sh (GO-20 U7-2)
 	routeSpecs                              // native: the `specs` family remainder — usage/help/unknown (GO-20 U2e U-A)
 	routeSpecsPromote                       // native: `specs promote`, port of lib/_internal/spec_promotion.py (GO-20 U2e U-A)
+	routeChanges                            // native: the `changes` family remainder — usage/help/unknown (I5/P4)
+	routeChangesArchive                     // native: `changes archive`, the mechanical pre-merge archive (I5/P4)
 	routeGates                              // native: the `gates` family remainder — usage/help/unknown (GO-20 U2e U-B)
 	routeGatesPremerge                      // native: `gates premerge`, port of lib/_internal/premerge_guardian.py (GO-20 U2e U-B)
 	routeTracker                            // native: the `tracker` family remainder — usage/help/unknown (GO-20 U2e U-C)
@@ -195,6 +197,16 @@ func Route(args []string) route {
 			return route{kind: routeSpecsPromote}
 		}
 		return route{kind: routeSpecs}
+	}
+	// `changes archive` (I5/P4) is the family's only verb; the root dispatcher
+	// has no `archive` of its own, and every remaining arm of the family (bare
+	// `changes`, `--help|-h|help`, unknown subcommands) resolves to the native
+	// family remainder.
+	if args[0] == "changes" {
+		if len(args) > 1 && args[1] == "archive" {
+			return route{kind: routeChangesArchive}
+		}
+		return route{kind: routeChanges}
 	}
 	// `gates premerge` (GO-20 U2e U-B) is the family's only verb; the root
 	// dispatcher has no `premerge` of its own, and every remaining arm of the
@@ -379,6 +391,12 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 	case routeSpecsPromote:
 		// args[0]=specs, args[1]=promote: the verb's own grammar sees args[2:].
 		return runSpecsPromote(args[2:], stdout, stderr)
+	case routeChanges:
+		// args[0]=changes: the family remainder sees the subcommand slot.
+		return runChangesDispatch(args[1:], stdout, stderr)
+	case routeChangesArchive:
+		// args[0]=changes, args[1]=archive: the verb's own grammar sees args[2:].
+		return runChangesArchive(args[2:], stdout, stderr)
 	case routeGates:
 		// args[0]=gates: the family remainder sees the subcommand slot.
 		return runGatesDispatch(args[1:], stdout, stderr)

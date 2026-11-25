@@ -2,7 +2,7 @@ package gates
 
 // ODD pre-merge gate (plan-build-odd-companion, open decision B): the mode is
 // resolved by the caller, the change comes from the branch pairing, and the
-// verdict is the paired plan plus the promotion parity of its deltas. No
+// verdict is the paired plan, its archive and the parity of its deltas. No
 // OpenSpec archive and no tier minimum apply.
 
 import (
@@ -74,12 +74,15 @@ func TestCheckPremergeOddBlocksOnDetachedHead(t *testing.T) {
 	}
 }
 
-// A change with no delta passes with its plan: no archive, no tier minimum.
-func TestCheckPremergeOddPassesATaskOnlyChange(t *testing.T) {
+// A change with no delta still needs its dated archive, with no Depth: line too.
+func TestCheckPremergeOddRequiresTheArchiveOfATaskOnlyChange(t *testing.T) {
 	root := oddRepo(t)
+	wantBlocked(t, CheckPremergeOdd(root, "thing"),
+		"missing archive at odd/changes/archive/thing/ or a valid dated archive named YYYY-MM-DD-thing/")
+	oddWriteArchive(t, root, "thing")
 	got := CheckPremergeOdd(root, "thing")
 	if !got.OK || len(got.Blockers) != 0 {
-		t.Fatalf("Result = %+v, want OK with no blocker", got)
+		t.Fatalf("Result = %+v, want OK with no blocker once archived", got)
 	}
 }
 
@@ -109,9 +112,19 @@ func TestCheckPremergeOddPassesAPromotedDelta(t *testing.T) {
 	if report := specs.PromoteChangeForMode(root, "thing", planbuild.ModeOdd, false); len(report.Blockers) != 0 {
 		t.Fatalf("promote Blockers = %q", report.Blockers)
 	}
+	// Archiving is mandatory before merge: move the promoted delta folder out of
+	// the active tree, then the guardian passes. The plan stays at
+	// odd/tasks/thing.md (plan-build-openspec-odd-align I5/P4).
+	archive := filepath.Join(root, "odd", "changes", "archive", "2026-01-02-thing")
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(root, "odd", "changes", "thing"), archive); err != nil {
+		t.Fatal(err)
+	}
 	got := CheckPremergeOdd(root, "thing")
 	if !got.OK || len(got.Blockers) != 0 {
-		t.Fatalf("Result = %+v, want OK after promotion", got)
+		t.Fatalf("Result = %+v, want OK after promotion and archiving", got)
 	}
 	if got.ArchivePath == "" || got.Tier != TierOdd {
 		t.Fatalf("ArchivePath = %q, Tier = %q, want the plan and %q", got.ArchivePath, got.Tier, TierOdd)
@@ -153,4 +166,99 @@ func TestCheckPremergeOddRefusesASymlinkedChangeTree(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	wantBlocked(t, CheckPremergeOdd(root, "thing"), "symlinked odd change tree")
+}
+
+// blocks. Every plan pays the same contract, whatever its `Depth:` line says.
+func TestCheckPremergeOddIgnoresAnOddConfig(t *testing.T) {
+	root := oddDeclaredTierRepo(t)
+	oddWriteArchive(t, root, "thing")
+
+	if got := CheckPremergeOdd(root, "thing"); !got.OK {
+		t.Fatalf("Result = %+v, want OK without a config.yaml", got)
+	}
+
+	// An odd config that would block if it were read at all, naming a runner no
+	// row runs, is dead weight: odd has no config.yaml.
+	if err := os.WriteFile(filepath.Join(root, "odd", "config.yaml"),
+		[]byte("schema: \ntesting:\n  runner: go vet ./internal/...\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := CheckPremergeOdd(root, "thing"); !got.OK {
+		t.Fatalf("Result = %+v, want OK with an odd config.yaml ignored", got)
+	}
+}
+
+// The odd path grades no verification rows: a non-zero exit is not a blocker.
+func TestCheckPremergeOddDoesNotGradeTheVerificationRows(t *testing.T) {
+	root := oddDeclaredTierRepo(t)
+	plan := strings.Replace(readText(filepath.Join(root, "odd", "tasks", "thing.md")),
+		"exit 0", "exit 1", 1)
+	writeFile(t, filepath.Join(root, "odd", "tasks", "thing.md"), plan)
+	oddWriteArchive(t, root, "thing")
+
+	if got := CheckPremergeOdd(root, "thing"); !got.OK {
+		t.Fatalf("Result = %+v, want OK: the odd contract grades no verification rows", got)
+	}
+}
+
+// oddDeclaredTierRepo is oddRepo with a valid plan declaring Depth: standard
+// and the verification row that names the configured runner.
+func oddDeclaredTierRepo(t *testing.T) string {
+	t.Helper()
+	root := oddRepo(t)
+	plan := "# plan\n\nDepth: standard\n\n## Specs\n- **S1.** x — *\"x\"*\n\n" +
+		"## Tasks\n| ID | Spec | Tarea | Ruta | Commit |\n| --- | --- | --- | --- | --- |\n" +
+		"| T1 | S1 | x | inline | pendiente |\n\n" +
+		"## Verification\n- **S1: PASS** — `go test ./internal/...`, exit 0\n\n" +
+		"## Log\n- **L1** — x\n"
+	if err := os.WriteFile(filepath.Join(root, "odd", "tasks", "thing.md"), []byte(plan), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// oddWriteArchive creates the dated archive folder the contract requires, holding
+// the archived.md marker `changes archive` writes for a delta-less change.
+func oddWriteArchive(t *testing.T, root, change string) {
+	t.Helper()
+	archive := filepath.Join(root, "odd", "changes", "archive", "2026-01-02-"+change)
+	mkdirAll(t, archive)
+	writeFile(t, filepath.Join(archive, "archived.md"),
+		change+"\n2026-01-02\nodd/tasks/"+change+".md\n")
+}
+
+// An undated archive is not an ODD archive: the contract requires the dated form
+// (C5). The blocker names that form instead of silently accepting the fallback.
+func TestCheckPremergeOddRejectsAnUndatedArchive(t *testing.T) {
+	root := oddDeclaredTierRepo(t)
+	archive := filepath.Join(root, "odd", "changes", "archive", "thing")
+	mkdirAll(t, archive)
+	writeFile(t, filepath.Join(archive, "archived.md"), "thing\nodd/tasks/thing.md\n")
+
+	wantBlocked(t, CheckPremergeOdd(root, "thing"), "YYYY-MM-DD-thing")
+}
+
+// An empty archive folder never satisfies the requirement, dated or not: it holds
+// nothing of the change (R2).
+func TestCheckPremergeOddRejectsAnEmptyArchive(t *testing.T) {
+	root := oddDeclaredTierRepo(t)
+	mkdirAll(t, filepath.Join(root, "odd", "changes", "archive", "2026-01-02-thing"))
+
+	wantBlocked(t, CheckPremergeOdd(root, "thing"), "is empty: an archive must hold")
+}
+
+// After archiving, the archived delta is the only remaining source: an unpromoted
+// delta in the archive blocks with the parity wording (R3).
+func TestCheckPremergeOddBlocksAnArchivedUnpromotedDelta(t *testing.T) {
+	root := oddRepo(t)
+	folder := filepath.Join(root, "odd", "changes", "thing")
+	writeFile(t, filepath.Join(folder, "specs", "capability", "spec.md"), oddDelta)
+	archive := filepath.Join(root, "odd", "changes", "archive", "2026-01-02-thing")
+	mkdirAll(t, filepath.Dir(archive))
+	if err := os.Rename(folder, archive); err != nil {
+		t.Fatal(err)
+	}
+
+	wantBlocked(t, CheckPremergeOdd(root, "thing"),
+		"specs/capability/spec.md is not promoted into odd/specs/capability/spec.md")
 }

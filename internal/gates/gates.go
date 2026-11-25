@@ -74,34 +74,38 @@ func hasSpecDelta(folder string) bool {
 	return found
 }
 
-// checkMinimums applies the per-tier artifact minima.
+// checkMinimums applies the per-tier artifact minima (P6): the plan always, a
+// delta from standard up. proposal.md, design.md and verify-report.md are still
+// accepted and honoured when present; they are simply not required.
 func checkMinimums(folder, tier, location string) []string {
 	var blockers []string
 	if !isFile(filepath.Join(folder, "tasks.md")) {
 		blockers = append(blockers, location+"/tasks.md is required for all tiers")
 	}
-	hasProposal := isFile(filepath.Join(folder, "proposal.md"))
-	switch tier {
-	case TierLight:
-		if !hasProposal {
-			blockers = append(blockers, location+"/proposal.md is required for tier light")
-		}
-	case TierStandard:
-		if !hasProposal {
-			blockers = append(blockers, location+"/proposal.md is required for tier standard")
-		}
-		if !hasSpecDelta(folder) {
-			blockers = append(blockers, location+"/specs/ must contain at least one *.md for tier standard")
-		}
-	default:
-		if !hasProposal && !isFile(filepath.Join(folder, "design.md")) {
-			blockers = append(blockers, location+"/proposal.md or design.md is required for tier full")
-		}
-		if !hasSpecDelta(folder) {
-			blockers = append(blockers, location+"/specs/ must contain at least one *.md for tier full")
-		}
+	if tier == TierLight {
+		return blockers
+	}
+	if !hasSpecDelta(folder) {
+		blockers = append(blockers, location+"/specs/ must contain at least one *.md for tier "+tier)
 	}
 	return blockers
+}
+
+// checkPlan requires the ODD-shaped plan (plan-build-openspec-odd-align P1) for
+// every tier: every archive is graded by the grammar, whatever its folder name,
+// and a `## Log` with L1 is required from standard up (P6). Light keeps it
+// optional.
+func checkPlan(folder, location, tier string) []string {
+	plan, blockers := ParsePlan(readText(filepath.Join(folder, "tasks.md")))
+	if tier != TierLight && !plan.HasLog {
+		blockers = append(blockers, "`## Log` section is missing: add `- **L1** — <the human "+
+			"request>` because tier "+tier+" requires it")
+	}
+	located := make([]string, 0, len(blockers))
+	for _, blocker := range blockers {
+		located = append(located, location+"/tasks.md: "+blocker)
+	}
+	return located
 }
 
 // inspectFolder runs the whole gate over one change folder.
@@ -110,7 +114,10 @@ func inspectFolder(folder string, tier *string, location, repoRoot string) Resul
 	tasksText := readText(filepath.Join(folder, "tasks.md"))
 	resolved := resolveTier(tasksText, tier, &blockers)
 	blockers = append(blockers, checkMinimums(folder, resolved, location)...)
+	blockers = append(blockers, checkPlan(folder, location, resolved)...)
+	blockers = append(blockers, checkTaskCommits(folder, repoRoot, location)...)
 	blockers = append(blockers, checkVerifyEvidence(folder, resolved)...)
+	blockers = append(blockers, checkProjectConfig(repoRoot, filepath.Join(folder, "tasks.md"), resolved)...)
 	blockers = append(blockers, promotionBlockers(repoRoot, folder, resolved, location)...)
 	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: resolved, ArchivePath: folder}
 }
@@ -118,6 +125,7 @@ func inspectFolder(folder string, tier *string, location, repoRoot string) Resul
 // CheckPrearchive inspects the active openspec/changes/<slug>/ before
 // archive-tail.
 func CheckPrearchive(repoRoot, slug string, tier *string) Result {
+	slug = planbuild.NormalizeChange(slug)
 	active := filepath.Join(repoRoot, "openspec", "changes", slug)
 	if !isDir(active) {
 		return Result{
@@ -130,8 +138,9 @@ func CheckPrearchive(repoRoot, slug string, tier *string) Result {
 }
 
 // CheckPremerge inspects the archived artifacts and staged evidence before
-// merge.
+// merge. A branch-shaped slug (CI passes GITHUB_HEAD_REF) keeps its last segment.
 func CheckPremerge(repoRoot, slug string, tier *string) Result {
+	slug = planbuild.NormalizeChange(slug)
 	changes := filepath.Join(repoRoot, "openspec", "changes")
 	active := filepath.Join(changes, slug)
 	var blockers []string
@@ -140,12 +149,14 @@ func CheckPremerge(repoRoot, slug string, tier *string) Result {
 			"active change folder still present at openspec/changes/%s/ — "+
 				"run archive-tail on the review branch before merge", slug))
 	}
-	archive, archiveBlockers := resolveArchive(filepath.Join(changes, "archive"), slug)
+	archive, archiveBlockers := resolveArchive(filepath.Join(changes, "archive"), slug, "openspec")
 	blockers = append(blockers, archiveBlockers...)
 	if archive == "" {
 		return Result{Blockers: blockers, Tier: rawTier(tier)}
 	}
 
+	// Every archive is graded the same way: the folder name never decides which
+	// rules apply, so an undated archive cannot bypass the plan grammar.
 	result := inspectFolder(archive, tier, "archive/"+filepath.Base(archive), repoRoot)
 	result.Blockers = append(blockers, result.Blockers...)
 	result.OK = len(result.Blockers) == 0
@@ -158,13 +169,17 @@ func CheckPremerge(repoRoot, slug string, tier *string) Result {
 const TierOdd = "odd"
 
 // CheckPremergeOdd validates an ODD change before merge: the branch-paired plan
-// must be a regular file of the repository, and every delta under
-// odd/changes/<change>/specs/ must already be promoted into odd/specs/. There is
-// no OpenSpec archive and no tier artifact minimum; a change with no delta
-// passes with its plan alone. An empty change means the branch could not be
-// paired. The mode is resolved by the caller, which is the same resolver the
-// pre-tool-use gate uses.
+// must be a regular file of the repository, every delta under
+// odd/changes/<change>/specs/ must already be promoted into odd/specs/ — read from
+// the archived folder once the change is archived — and the change must be gone
+// from the active tree behind a dated, content-provable archive
+// (plan-build-openspec-odd-align I5/P4). The contract is uniform: a plan with no
+// Depth: line pays the same archive duty, and there is no tier artifact minimum.
+// An empty change means the branch could not be paired.
+// The mode is resolved by the caller, which is the same resolver the pre-tool-use
+// gate uses.
 func CheckPremergeOdd(repoRoot, change string) Result {
+	change = planbuild.NormalizeChange(change)
 	if change == "" {
 		return Result{Blockers: []string{"ODD mode is active but the current branch cannot be " +
 			"resolved (detached HEAD), so no change can be paired"}, Tier: TierOdd}
@@ -178,14 +193,33 @@ func CheckPremergeOdd(repoRoot, change string) Result {
 	}
 	changesBase := planbuild.ChangesBase(repoRoot, planbuild.ModeOdd)
 	folder := filepath.Join(changesBase, change)
-	if specs.SourceContained(folder, changesBase) {
-		blockers = append(blockers, specs.CheckFolderParityForMode(repoRoot, folder, planbuild.ModeOdd)...)
-	} else {
+	if info, err := os.Stat(folder); err == nil && info.IsDir() {
 		blockers = append(blockers, fmt.Sprintf(
-			"refusing to read the change folder %s: it is reached through a symlinked odd change tree, "+
-				"so the OpenSpec tree would become the parity source", folder))
+			"active change folder still present at odd/changes/%s/ — run `ai-specs changes archive` "+
+				"on the review branch before merge", change))
+	}
+	// Every delta the change carried must be promoted, whether it is still active
+	// or already archived: after archiving, the archived folder is the only
+	// remaining source of that delta (R3).
+	blockers = append(blockers, oddParityBlockers(repoRoot, changesBase, folder)...)
+	archive, archiveBlockers := resolveArchive(planbuild.ArchiveBase(repoRoot, planbuild.ModeOdd),
+		change, "odd")
+	blockers = append(blockers, archiveBlockers...)
+	if archive != "" {
+		blockers = append(blockers, oddParityBlockers(repoRoot, changesBase, archive)...)
 	}
 	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: TierOdd, ArchivePath: plan}
+}
+
+// oddParityBlockers is the promotion parity of one odd change folder, refused when
+// the folder is reached through a symlinked change tree.
+func oddParityBlockers(repoRoot, changesBase, folder string) []string {
+	if !specs.SourceContained(folder, changesBase) {
+		return []string{fmt.Sprintf(
+			"refusing to read the change folder %s: it is reached through a symlinked odd change tree, "+
+				"so the OpenSpec tree would become the parity source", folder)}
+	}
+	return specs.CheckFolderParityForMode(repoRoot, folder, planbuild.ModeOdd)
 }
 
 // rawTier is the unresolved option value the short-circuit verdicts report.
