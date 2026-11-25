@@ -306,6 +306,14 @@ func TestHasDeltaDir(t *testing.T) {
 	if HasDeltaDir(filepath.Join(root, "empty")) {
 		t.Error("a specs/ tree with no .md file carries a delta")
 	}
+	// A directory named like a delta proves nothing: without this the guard
+	// accepts a change folder that carries no Markdown file at all (R1-001).
+	if err := os.MkdirAll(filepath.Join(root, "named", "specs", "cap", "spec.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if HasDeltaDir(filepath.Join(root, "named")) {
+		t.Error("a directory named *.md carries a delta")
+	}
 	delta := filepath.Join(root, "present", "specs", "cap", "spec.md")
 	if err := os.MkdirAll(filepath.Dir(delta), 0o755); err != nil {
 		t.Fatal(err)

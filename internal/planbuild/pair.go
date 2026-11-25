@@ -101,7 +101,7 @@ func HasDeltaDir(folder string) bool {
 		if err != nil || found {
 			return nil
 		}
-		if strings.HasSuffix(entry.Name(), ".md") {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
 			found = true
 		}
 		return nil
