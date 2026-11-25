@@ -6,6 +6,7 @@ that must pass and one violating fixture that must fail.
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -16,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from tests.evals.lib.harness import (  # noqa: E402
+    CLAUDE_ALLOWED_COMMANDS,
+    allow_cli_commands,
     assert_absent_path_globs,
     assert_active_change_gone,
     assert_commit_trailer,
@@ -215,6 +218,47 @@ class TranscriptIsNotSoftTests(_Fixture):
     def test_fails_without_required_content_too(self):
         with self.assertRaises(AssertionError):
             assert_transcript("plain answer", all_of=["archive"])
+
+
+class ClaudeAllowListTests(_Fixture):
+    """The one permission the eval fixture grants, pinned.
+
+    The agent under test may run `ai-specs` because the skill tells it to. The
+    allow-list is written into the sandbox's own settings file only, and it is
+    deliberately one command family rather than a blanket wildcard.
+    """
+
+    def test_allows_exactly_one_command_family(self) -> None:
+        self.assertEqual(("Bash(ai-specs:*)",), CLAUDE_ALLOWED_COMMANDS)
+
+    def test_never_widens_to_a_blanket_allow(self) -> None:
+        for forbidden in ("Bash", "Bash(*)", "*", "Bash(ai-specs)", "Bash(rm:*)"):
+            self.assertNotIn(forbidden, CLAUDE_ALLOWED_COMMANDS)
+
+    def test_writes_the_allow_list_without_clobbering_hooks(self) -> None:
+        settings = self.root / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps({"hooks": {"PreToolUse": []}}), encoding="utf-8")
+        allow_cli_commands(self.root)
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        self.assertEqual(["Bash(ai-specs:*)"], data["permissions"]["allow"])
+        self.assertEqual({"PreToolUse": []}, data["hooks"])
+
+    def test_is_idempotent(self) -> None:
+        allow_cli_commands(self.root)
+        allow_cli_commands(self.root)
+        settings = self.root / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        self.assertEqual(["Bash(ai-specs:*)"], data["permissions"]["allow"])
+
+    def test_does_not_touch_anything_outside_the_sandbox(self) -> None:
+        allow_cli_commands(self.root)
+        written = {
+            p.relative_to(self.root)
+            for p in self.root.rglob("*")
+            if p.is_file()
+        }
+        self.assertEqual({Path(".claude/settings.json")}, written)
 
 
 if __name__ == "__main__":

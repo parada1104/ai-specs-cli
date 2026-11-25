@@ -175,6 +175,30 @@ def runtime_to_agent(runtime: str) -> str:
     return RUNTIME_TO_AGENT.get(runtime, runtime)
 
 
+# The one command family the agent under test may run. Deliberately not a
+# blanket wildcard: the skill only needs `ai-specs <verb>`.
+CLAUDE_ALLOWED_COMMANDS = ("Bash(ai-specs:*)",)
+
+
+def allow_cli_commands(project_root: Path) -> None:
+    """Let the agent under test run `ai-specs` and nothing else.
+
+    The skill tells the agent to run `changes start --none`, `specs promote` and
+    `changes archive`. A headless session cannot approve them interactively, so
+    without this the case measures the sandbox instead of the skill. This writes
+    the allow-list into THIS sandbox's `.claude/settings.json` only -- never the
+    repo's, never the user's -- and names exactly one command family.
+    """
+    settings = project_root / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    data = json.loads(settings.read_text()) if settings.is_file() else {}
+    allow = data.setdefault("permissions", {}).setdefault("allow", [])
+    for command in CLAUDE_ALLOWED_COMMANDS:
+        if command not in allow:
+            allow.append(command)
+    settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
 def wire_runtime_hooks(project_root: Path, runtime: str) -> None:
     """Wire enabled recipes' `[[provides.hooks]]` into the runtime's native
     channel (e.g. `.claude/settings.json` PreToolUse) by re-syncing with ONLY

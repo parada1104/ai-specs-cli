@@ -15,6 +15,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from tests.evals.lib.harness import (  # noqa: E402
     NO_FILE_WRITE_HOOK_RUNTIMES,
     SUPPORTED_RUNTIMES,
+    allow_cli_commands,
     api_key_present,
     assert_scenario_outputs,
     git_paths_changed,
@@ -221,6 +222,10 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
         # the scenario exercises the gate hook end-to-end, not just the advisory
         # skill/brief layer.
         wire_runtime_hooks(root, runtime)
+        # The fixture's own settings file: the skill needs `ai-specs <verb>` and a
+        # headless session cannot approve it. Nothing wider, and never the repo's
+        # or the user's settings.
+        allow_cli_commands(root)
         init_git_repo(root)
         subprocess.run(["git", "add", "-A"], cwd=root, check=True)
         subprocess.run(["git", "commit", "-qm", "baseline"], cwd=root, check=True)
