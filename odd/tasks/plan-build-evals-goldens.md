@@ -45,6 +45,34 @@ Branch `chore/plan-build-evals-goldens`, from `development ea35a329`. Mode: `odd
 | T5 | S6 | worker (docs/scenarios only) | specs `plan-build-flow` + `recipe-evals`, live scenario prep | `docs(specs): move plan-build and recipe-evals to the artifact-derived contract` |
 | T5b | S6 | parent | run the updated live `plan-build-flow` scenarios on `claude` | `test(evals): refresh the live plan-build scenarios` |
 | T6 | S7 | parent | native review per commit, push, PR | — |
+| T7 | S8 | worker | Runner primitives + mode-aware archive assert + non-soft transcript | `test(evals): grow the golden runner's assertion vocabulary` |
+| T8 | S9 | worker | Fixture: new-contract `AGENTS.md`, plan grammar seed, no declared tiers, both modes | `test(evals): seed both modes with the artifact-derived contract` |
+| T9 | S10 | parent | Retire 3 scenarios, adjust ac3/ac4/ac5/ac7, write the 9 P0 | `test(evals): ship the nine P0 plan-build goldens` |
+| T10 | S11 | parent | Dry run green, then live on `claude` in both modes | — |
+| T11 | S12 | parent | The 4 P1 cases and the P2 case, live, same PR | `test(evals): add the P1 and P2 plan-build goldens` |
+
+## Specs (P0 phase)
+
+- **S8** — The runner grows four assertion primitives (`required_absent_path_globs`,
+  `required_git_config`, `forbidden_commands`, `required_commit_trailer`),
+  `assert_active_change_gone` becomes mode-aware, and the transcript assertions stop
+  being skipped when `required_content` is present. With tests for the runner itself.
+- **S9** — The fixture seeds no stale contract: the seeded `AGENTS.md` drops
+  "Classify change depth (full/standard/light)", `seed_authorized_plan` writes the
+  `## Specs` / `## Tasks` / `## Log` grammar, the declared `tier =` fields go, and a
+  project can be seeded in either mode.
+- **S10** — Scenarios: retire `ac_depth_conflict_ask`, `ac_depth_conflict_same_turn` and
+  `ac8`; adjust `ac3`, `ac4`, `ac5` (with `changes archive`) and `ac7` (becomes the
+  `none` case); write the 9 P0 cases.
+- **S11** — Dry run green, then run the 9 P0 live on `claude` in both modes where they
+  apply. Report per case: pass or fail, what the agent did, approximate cost. A failure
+  caused by the agent is a finding about the SKILL, reported and never fixed by
+  loosening the eval. One `EVALS_TRIALS` retry only when the cause looks like noise.
+- **S12** — After the P0 pass, the 4 P1 cases (`ac_delta_only_for_observable_rule`,
+  `ac_archive_marker_without_folder`, `ac_high_risk_path_odd`,
+  `ac_specs_write_without_delta`) and the P2 case (`ac_brief_reports_the_mode`) land in the
+  same PR and are run live too. All 14 approved cases ship together; ordering stays P0
+  first because the P1/P2 assertions build on the same primitives.
 
 ## Golden case inventory (current, `tests/evals/scenarios/plan-build-flow`)
 
@@ -161,6 +189,16 @@ needs network beyond the model call.
   touching high-risk paths, and `odd` vs `openspec`. Delivered as the two sections above:
   **8 current cases** (1 still valid, 4 to adjust, 3 obsolete) and **14 proposed cases**
   with 4 assertion primitives the runner must grow first.
+- **L10** — "Cody: aclaración de Robert: su «vamos a ello» aprobaba la propuesta completa.
+  Mantén el orden (P0 primero, live), pero después sigue en el mismo PR con los 4 P1
+  (ac_delta_only_for_observable_rule, ac_archive_marker_without_folder,
+  ac_high_risk_path_odd, ac_specs_write_without_delta) y el P2
+  (ac_brief_reports_the_mode), también live. Los 14 están aprobados." Added as S12 / T11.
+- **L9** — "Cody: Robert aprobó: «ok vamos a ello». Vamos con los 9 P0 primero, que fue
+  la recomendación. Los P1 y P2 van después." Order: runner primitives with tests, then
+  fixture, then scenarios, then dry run, then LIVE on `claude` in both modes. "Commits por
+  unidad, revisión nativa por commit, push y PR contra development; el merge no. El commit
+  5f6add54 del harness del CLI va en el PR como capa extra, salvo que te estorbe."
 - **L8** — Scope state after L6: T1 landed as `5f6add54`, never pushed. T2 was launched to a
   worker and cancelled on L6; T3, T4, T5 and T5b never started, so **U2-U5 are untouched**.
   The live scenarios and the specs still describe the retired contract. `sync` already materializes the

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
@@ -548,6 +549,261 @@ def init_git_repo(project_root: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=project_root, check=True)
     subprocess.run(["git", "config", "user.email", "eval@ai-specs.local"], cwd=project_root, check=True)
     subprocess.run(["git", "config", "user.name", "eval"], cwd=project_root, check=True)
+
+
+# --- Assertion primitives -------------------------------------------------
+# Each one raises AssertionError with the scenario label, so the live module
+# and the unit tests observe the same messages. Pure tree/git inspection: no
+# agent, no network.
+
+# Active change folder per artifact mode: `assert_active_change_gone` accepts
+# True (today's openspec behavior) or the mode string.
+ACTIVE_CHANGE_TREES = {"openspec": ("openspec", "changes"), "odd": ("odd", "changes")}
+
+
+def glob_exists(root: Path, pattern: str) -> bool:
+    return any(root.glob(pattern))
+
+
+def path_matches_any(path: str, patterns: list[str]) -> bool:
+    return any(fnmatch.fnmatch(path, pat) for pat in patterns)
+
+
+def current_branch(root: Path) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return proc.stdout.strip()
+
+
+def assert_forbidden_path_globs(changed: list[str], patterns: list[str], *, label: str = "scenario") -> None:
+    for path in changed:
+        if path_matches_any(path, patterns):
+            raise AssertionError(f"{label}: forbidden path modified: {path}")
+
+
+def assert_required_path_globs(
+    root: Path, patterns: list[str], changed: list[str], *, label: str = "scenario"
+) -> None:
+    for required in patterns:
+        if not glob_exists(root, required):
+            raise AssertionError(f"{label}: missing {required}; changed={changed}")
+
+
+def assert_required_any_path_globs(
+    root: Path, groups: list[list[str]], changed: list[str], *, label: str = "scenario"
+) -> None:
+    for group in groups:
+        if not any(glob_exists(root, pat) for pat in group):
+            raise AssertionError(f"{label}: expected any of {group}; changed={changed}")
+
+
+def assert_required_changed_globs(
+    root: Path, changed: list[str], patterns: list[str], *, label: str = "scenario"
+) -> None:
+    for pattern in patterns:
+        if not (
+            any(path_matches_any(path, [pattern]) for path in changed)
+            or glob_exists(root, pattern)
+        ):
+            raise AssertionError(
+                f"{label}: expected change matching {pattern}; changed={changed}"
+            )
+
+
+def assert_absent_path_globs(root: Path, patterns: list[str], *, label: str = "scenario") -> None:
+    """Negative half of `required_path_globs`: no matching path may exist."""
+    for pattern in patterns:
+        hits = sorted(str(p.relative_to(root)) for p in root.glob(pattern))
+        if hits:
+            raise AssertionError(
+                f"{label}: expected no path matching {pattern}; found {hits}"
+            )
+
+
+def assert_required_content(root: Path, rules: list[dict[str, Any]], *, label: str = "scenario") -> None:
+    for rule in rules:
+        path = root / rule["path"]
+        if not path.is_file():
+            raise AssertionError(f"{label}: missing {rule['path']}")
+        text = path.read_text(encoding="utf-8", errors="replace").lower()
+        needles = [str(n).lower() for n in rule.get("contains_any", [])]
+        if not any(n in text for n in needles):
+            raise AssertionError(f"{label}: {rule['path']} missing any of {needles}")
+
+
+def assert_forbidden_content(root: Path, rules: list[dict[str, Any]], *, label: str = "scenario") -> None:
+    for rule in rules:
+        path = root / rule["path"]
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace").lower()
+        for needle in rule.get("contains_any", []):
+            if str(needle).lower() in text:
+                raise AssertionError(
+                    f"{label}: {rule['path']} must not contain {needle!r}"
+                )
+
+
+def assert_transcript(
+    transcript: str,
+    *,
+    all_of: list[str] | None = None,
+    one_of: list[str] | None = None,
+    any_of: list[str] | None = None,
+    label: str = "scenario",
+) -> None:
+    """Transcript assertions are always enforced; a case that does not want
+    them simply omits the key. They used to be skipped whenever
+    `required_content` was present, which made "asked before merging"
+    ungradable."""
+    text = transcript.lower()
+    for needle in [str(n).lower() for n in all_of or []]:
+        if needle not in text:
+            raise AssertionError(f"{label}: transcript missing required {needle!r}")
+    needles = [str(n).lower() for n in one_of or []]
+    if needles and not any(needle in text for needle in needles):
+        raise AssertionError(f"{label}: transcript missing any of {needles!r}")
+    for needle in [str(n).lower() for n in any_of or []]:
+        if needle not in text:
+            raise AssertionError(f"{label}: transcript missing required {needle!r}")
+
+
+def assert_no_forbidden_commands(
+    transcript: str, commands: list[str], *, label: str = "scenario"
+) -> None:
+    """No forbidden command may appear in the transcript (case-insensitive)."""
+    text = transcript.lower()
+    for command in commands:
+        if str(command).lower() in text:
+            raise AssertionError(
+                f"{label}: transcript contains forbidden command {command!r}"
+            )
+
+
+def git_config_get(root: Path, key: str) -> str | None:
+    proc = subprocess.run(
+        ["git", "-C", str(root), "config", "--get", key],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip()
+
+
+def assert_git_config(
+    root: Path,
+    expected: dict[str, Any],
+    *,
+    branch: str | None = None,
+    label: str = "scenario",
+) -> None:
+    """Read each key with `git config --get`; `<branch>` is substituted with
+    the fixture's actual branch name. Missing key or different value fails."""
+    if not expected:
+        return
+    name = branch or current_branch(root)
+    for raw_key, want in expected.items():
+        key = str(raw_key).replace("<branch>", name)
+        got = git_config_get(root, key)
+        if got != str(want):
+            raise AssertionError(
+                f"{label}: git config {key} expected {str(want)!r}, got {got!r}"
+            )
+
+
+TRAILER_ITEM_RANGE = (1, 6)
+
+
+def assert_commit_trailer(root: Path, trailer: str, *, label: str = "scenario") -> None:
+    """At least one commit body carries `<trailer> N (<reason>)`, N in 1..6.
+
+    The range is every commit reachable from HEAD (the fixture records no base
+    ref), read through `git log --format=%B`."""
+    prefix = str(trailer).strip()
+    lo, hi = TRAILER_ITEM_RANGE
+    pattern = re.compile(
+        rf"(?im)^[ \t]*{re.escape(prefix)}[ \t]+([{lo}-{hi}])[ \t]+\(.+\)[ \t]*$"
+    )
+    proc = subprocess.run(
+        ["git", "-C", str(root), "log", "--format=%B"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    if not pattern.search(proc.stdout):
+        raise AssertionError(
+            f"{label}: no commit carries {prefix!r} item {lo}-{hi} with a reason"
+        )
+
+
+def active_change_dir(root: Path, slug: str, mode: Any = True) -> Path:
+    """`<mode tree>/changes/<slug>`: True keeps the openspec behavior."""
+    name = "openspec" if mode is True else str(mode)
+    tree = ACTIVE_CHANGE_TREES.get(name)
+    if tree is None:
+        raise ValueError(
+            f"unknown assert_active_change_gone mode {mode!r}: expected true, 'openspec' or 'odd'"
+        )
+    return root.joinpath(*tree) / slug
+
+
+def assert_active_change_gone(
+    root: Path, slug: str, mode: Any = True, *, label: str = "scenario"
+) -> None:
+    active = active_change_dir(root, slug, mode)
+    if active.exists():
+        raise AssertionError(
+            f"{label}: active change folder still present at {active}"
+        )
+
+
+def assert_scenario_outputs(
+    root: Path,
+    meta: dict[str, Any],
+    result: dict[str, Any],
+    changed: list[str],
+    *,
+    label: str = "scenario",
+) -> None:
+    """Run every `scenario.toml` assertion key in one place, so the live module
+    and the primitive tests observe the same contract."""
+    assert_forbidden_path_globs(changed, meta.get("forbidden_path_globs", []), label=label)
+    assert_required_path_globs(root, meta.get("required_path_globs", []), changed, label=label)
+    assert_required_any_path_globs(
+        root, meta.get("required_any_path_globs", []), changed, label=label
+    )
+    assert_required_changed_globs(
+        root, changed, meta.get("required_changed_globs", []), label=label
+    )
+    assert_absent_path_globs(root, meta.get("required_absent_path_globs", []), label=label)
+    assert_required_content(root, meta.get("required_content", []), label=label)
+    assert_forbidden_content(root, meta.get("forbidden_content", []), label=label)
+    transcript = result.get("result_text") or result.get("stdout") or ""
+    assert_transcript(
+        transcript,
+        all_of=meta.get("required_transcript_all", []),
+        one_of=meta.get("required_transcript_one_of", []),
+        any_of=meta.get("required_transcript_any", []),
+        label=label,
+    )
+    assert_no_forbidden_commands(
+        transcript, meta.get("forbidden_commands", []), label=label
+    )
+    assert_git_config(root, meta.get("required_git_config", {}), label=label)
+    trailer = meta.get("required_commit_trailer")
+    if trailer:
+        assert_commit_trailer(root, str(trailer), label=label)
+    gone = meta.get("assert_active_change_gone")
+    if gone:
+        assert_active_change_gone(
+            root, str(meta.get("slug", "signup-validation")), gone, label=label
+        )
 
 
 # Markers that mean a forbidden phrase appears only as a counter-example /

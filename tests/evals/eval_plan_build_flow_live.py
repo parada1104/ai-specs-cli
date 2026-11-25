@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fnmatch
 import os
 import subprocess
 import sys
@@ -17,8 +16,10 @@ from tests.evals.lib.harness import (  # noqa: E402
     NO_FILE_WRITE_HOOK_RUNTIMES,
     SUPPORTED_RUNTIMES,
     api_key_present,
+    assert_scenario_outputs,
     detect_runtime,
     git_paths_changed,
+    glob_exists,
     init_git_repo,
     live_enabled,
     load_scenario,
@@ -45,13 +46,6 @@ LIVE_SCENARIOS = (
     "ac_depth_conflict_ask",
     "ac_depth_conflict_same_turn",
 )
-
-def _glob_exists(root: Path, pattern: str) -> bool:
-    return any(root.glob(pattern))
-
-
-def _matches_any(path: str, patterns: list[str]) -> bool:
-    return any(fnmatch.fnmatch(path, pat) for pat in patterns)
 
 
 def _selected_runtimes() -> list[str]:
@@ -147,11 +141,11 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
         soft_ok = False
         if result.get("timed_out"):
             required_ok = all(
-                _glob_exists(root, required)
+                glob_exists(root, required)
                 for required in meta.get("required_path_globs", [])
             )
             any_ok = all(
-                any(_glob_exists(root, pat) for pat in group)
+                any(glob_exists(root, pat) for pat in group)
                 for group in meta.get("required_any_path_globs", [])
             )
             soft_ok = (bool(meta.get("required_path_globs")) and required_ok) or (
@@ -171,86 +165,9 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
                     f"changed={changed}"
                 ),
             )
-        forbidden = meta.get("forbidden_path_globs", [])
-        for path in changed:
-            self.assertFalse(
-                _matches_any(path, forbidden),
-                f"{runtime}/{name}: forbidden path modified: {path}",
-            )
-
-        for required in meta.get("required_path_globs", []):
-            self.assertTrue(
-                _glob_exists(root, required),
-                f"{runtime}/{name}: missing {required}; changed={changed}",
-            )
-
-        for group in meta.get("required_any_path_globs", []):
-            self.assertTrue(
-                any(_glob_exists(root, pat) for pat in group),
-                f"{runtime}/{name}: expected any of {group}; changed={changed}",
-            )
-
-        for pattern in meta.get("required_changed_globs", []):
-            self.assertTrue(
-                any(_matches_any(path, [pattern]) for path in changed)
-                or _glob_exists(root, pattern),
-                f"{runtime}/{name}: expected change matching {pattern}; changed={changed}",
-            )
-
-        for rule in meta.get("required_content", []):
-            path = root / rule["path"]
-            self.assertTrue(path.is_file(), f"{runtime}/{name}: missing {rule['path']}")
-            text = path.read_text(encoding="utf-8", errors="replace").lower()
-            needles = [str(n).lower() for n in rule.get("contains_any", [])]
-            self.assertTrue(
-                any(n in text for n in needles),
-                f"{runtime}/{name}: {rule['path']} missing any of {needles}",
-            )
-
-        for rule in meta.get("forbidden_content", []):
-            path = root / rule["path"]
-            if not path.is_file():
-                continue
-            text = path.read_text(encoding="utf-8", errors="replace").lower()
-            for needle in rule.get("contains_any", []):
-                self.assertNotIn(
-                    str(needle).lower(),
-                    text,
-                    f"{runtime}/{name}: {rule['path']} must not contain {needle!r}",
-                )
-
-        transcript = (result.get("result_text") or result.get("stdout") or "").lower()
-        for needle in meta.get("required_transcript_all", []):
-            # Soft: only enforce when no required_content path was written.
-            if meta.get("required_content"):
-                break
-            self.assertIn(
-                str(needle).lower(),
-                transcript,
-                f"{runtime}/{name}: transcript missing required {needle!r}",
-            )
-        one_of = [str(needle).lower() for needle in meta.get("required_transcript_one_of", [])]
-        if one_of and not meta.get("required_content"):
-            self.assertTrue(
-                any(needle in transcript for needle in one_of),
-                f"{runtime}/{name}: transcript missing any of {one_of!r}",
-            )
-        for needle in meta.get("required_transcript_any", []):
-            # Soft: only enforce when no required_content path was written
-            if meta.get("required_content"):
-                break
-            self.assertIn(
-                str(needle).lower(),
-                transcript,
-                f"{runtime}/{name}: transcript missing required {needle!r}",
-            )
-
-        if meta.get("assert_active_change_gone"):
-            active = root / "openspec" / "changes" / slug
-            self.assertFalse(
-                active.exists(),
-                f"{runtime}/{name}: active change folder still present at {active}",
-            )
+        # Every scenario.toml assertion key lives in the harness, so the live
+        # module and the primitive tests share one implementation.
+        assert_scenario_outputs(root, meta, result, changed, label=f"{runtime}/{name}")
 
     def test_ac_depth_conflict_ask(self):
         if "ac_depth_conflict_ask" not in _selected_scenarios():
