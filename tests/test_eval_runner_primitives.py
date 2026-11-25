@@ -317,5 +317,29 @@ class SeededImplementationTests(unittest.TestCase):
         self.assertIn('"email"', SEEDED_IMPLEMENTATION)
 
 
+class ResolvedModeTests(_Fixture):
+    def test_fails_when_the_cli_resolved_the_other_mode(self) -> None:
+        from tests.evals.lib import harness
+
+        real = harness.resolved_mode
+        harness.resolved_mode = lambda _root: "openspec"  # type: ignore[assignment]
+        try:
+            with self.assertRaises(AssertionError) as ctx:
+                harness.assert_resolved_mode(self.root, "odd")
+        finally:
+            harness.resolved_mode = real  # type: ignore[assignment]
+        self.assertIn("resolved mode 'openspec'", str(ctx.exception))
+
+    def test_passes_when_the_resolved_mode_matches(self) -> None:
+        from tests.evals.lib import harness
+
+        real = harness.resolved_mode
+        harness.resolved_mode = lambda _root: "odd"  # type: ignore[assignment]
+        try:
+            harness.assert_resolved_mode(self.root, "odd")
+        finally:
+            harness.resolved_mode = real  # type: ignore[assignment]
+
+
 if __name__ == "__main__":
     unittest.main()

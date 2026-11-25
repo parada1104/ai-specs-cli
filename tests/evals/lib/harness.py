@@ -199,6 +199,44 @@ def allow_cli_commands(project_root: Path) -> None:
     settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+def resolved_mode(project_root: Path) -> str:
+    """The mode the CLI actually resolves, proved by the gate's behaviour.
+
+    No verb prints the mode, and the recipe-config validator ignores the manifest
+    key, so a text assertion proves nothing. In `odd` the gate allows a
+    production write with no plan; in `openspec` it refuses one. The probe must
+    run while the change carries no plan, or both modes would allow it.
+    """
+    probe = project_root / "src" / "mode-probe.py"
+    probe.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(
+        {
+            "tool_name": "Edit",
+            "tool_input": {"file_path": str(probe)},
+            "cwd": str(project_root),
+        }
+    )
+    proc = subprocess.run(
+        [str(install_root() / "dist" / "ai-specs"), "plan-build-gate"],
+        cwd=str(project_root),
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "AI_SPECS_HOME": str(install_root())},
+        input=payload,
+    )
+    return "odd" if proc.returncode == 0 else "openspec"
+
+
+def assert_resolved_mode(project_root: Path, expected: str) -> None:
+    """Fail when the fixture measures a mode the CLI did not resolve."""
+    actual = resolved_mode(project_root)
+    if actual != expected:
+        raise AssertionError(
+            f"the CLI resolved mode {actual!r}, not the requested {expected!r}"
+        )
+
+
 def wire_runtime_hooks(project_root: Path, runtime: str) -> None:
     """Wire enabled recipes' `[[provides.hooks]]` into the runtime's native
     channel (e.g. `.claude/settings.json` PreToolUse) by re-syncing with ONLY

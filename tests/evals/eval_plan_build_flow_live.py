@@ -17,6 +17,7 @@ from tests.evals.lib.harness import (  # noqa: E402
     SUPPORTED_RUNTIMES,
     allow_cli_commands,
     api_key_present,
+    assert_resolved_mode,
     assert_scenario_outputs,
     git_paths_changed,
     glob_exists,
@@ -222,14 +223,8 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
                 extra_recipes=manifest_extra,
                 mode=fixture_mode,
             )
-        # The mode under test has to be the mode the fixture actually declares;
-        # a typo here would silently measure the other tree.
-        declared = (root / "ai-specs" / "ai-specs.toml").read_text()
-        self.assertIn(
-            f'mode = "{fixture_mode}"',
-            declared,
-            f"{label}: the fixture did not declare mode {fixture_mode!r}",
-        )
+        # The mode under test has to be the mode the CLI resolves. The manifest
+        # key alone proves nothing: the recipe-config validator ignores it.
         if meta.get("sync_before_prompt"):
             sync = subprocess.run(
                 [str(REPO_ROOT / "bin" / "ai-specs"), "sync", str(root)],
@@ -256,6 +251,9 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
         # The branch pairs the change, so the derived slug is the fixture slug and
         # `branch.<branch>.*` / the commit range resolve for the assertions.
         seed_fixture_branch(root)
+        # Checked here, before any plan exists: with a plan present both modes
+        # allow the write and the probe would prove nothing.
+        assert_resolved_mode(root, fixture_mode)
         if meta.get("seed_plan"):
             # Seeded after the branch exists and committed on it: a plan written
             # into the baseline is not a branch change, which left the archive
