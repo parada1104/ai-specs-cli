@@ -10,8 +10,6 @@ package gates
 
 import (
 	"fmt"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -32,79 +30,87 @@ type Result struct {
 	ArchivePath string // inspected folder, empty when no archive resolved
 }
 
-// inferTier reads the Depth: line, defaulting to standard.
-func inferTier(tasksText string) string {
-	if match := depthRe.FindStringSubmatch(tasksText); match != nil {
-		return strings.ToLower(match[1])
+// deriveTier reads the artifacts of one change folder (S15): the plan is the
+// artifact that asks for ceremony, and a delta alone is a light change because
+// S20 allows a delta with no plan.
+func deriveTier(folder string) string {
+	hasPlan := isFile(filepath.Join(folder, "tasks.md"))
+	hasDelta := hasSpecDelta(folder)
+	switch {
+	case !hasPlan && !hasDelta:
+		return TierNone
+	case hasPlan && hasDelta:
+		return TierStandard
+	default:
+		return TierLight
 	}
-	return TierStandard
 }
 
-// resolveTier applies an explicit --tier when given, blocking an unknown value,
-// and then falls back to the inference. The removed full tier blocks with a
-// migration message and is graded as standard so no other rule reports on a tier
-// that no longer exists. The declaration is read before the override, so an
-// explicit --tier cannot hide a plan that still says `Depth: full` (R1-001).
-func resolveTier(tasksText string, tier *string, location string, blockers *[]string) string {
-	resolved := inferTier(tasksText)
-	declaredFull := resolved == TierFull
+// declaredTier collects the tier declarations a change may still carry: the
+// plan's Depth: line and the --tier option. Both are coherence assertions now,
+// never the source of the tier.
+func declaredTier(folder string, tier *string) []string {
+	var declared []string
+	if match := depthRe.FindStringSubmatch(readText(filepath.Join(folder, "tasks.md"))); match != nil {
+		declared = append(declared, strings.ToLower(match[1]))
+	}
 	if tier != nil {
-		resolved = strings.ToLower(*tier)
-		if resolved != TierLight && resolved != TierStandard && resolved != TierFull {
+		declared = append(declared, strings.ToLower(*tier))
+	}
+	return declared
+}
+
+// resolveTier derives the tier from the artifacts and blocks every declaration
+// that contradicts them. The removed full tier blocks with its migration message
+// rather than as an unknown value, because that names the way out.
+func resolveTier(folder string, tier *string, location string, blockers *[]string) string {
+	derived := deriveTier(folder)
+	for _, declared := range declaredTier(folder, tier) {
+		switch {
+		case declared == derived:
+		case declared == TierFull:
+			*blockers = append(*blockers, removedTierBlocker(location))
+		case declared != TierNone && declared != TierLight && declared != TierStandard:
 			*blockers = append(*blockers, fmt.Sprintf(
-				"unknown tier '%s' (expected light|standard)", *tier))
-			resolved = inferTier(tasksText)
+				"unknown tier '%s' (expected none|light|standard)", declared))
+		default:
+			*blockers = append(*blockers, fmt.Sprintf(
+				"%s: the tier is derived from the artifacts of the change, and they derive '%s', not "+
+					"the declared '%s' — %s", location, derived, declared, tierExit(derived)))
 		}
 	}
-	if declaredFull || resolved == TierFull {
-		*blockers = append(*blockers, removedTierBlocker(location))
-		resolved = TierStandard
-	}
-	return resolved
+	return derived
 }
 
-// hasSpecDelta reports whether the change folder carries any *.md delta.
+// tierExit names the two ways out of a tier mismatch: complete the artifacts up
+// to the declared tier, or drop the stale declaration.
+func tierExit(derived string) string {
+	switch derived {
+	case TierNone:
+		return "write tasks.md (light) or tasks.md plus a specs/ delta (standard), or drop the declaration"
+	case TierLight:
+		return "add a specs/ delta to reach standard, or drop the declaration"
+	default:
+		return "remove the specs/ delta to reach light, or drop the declaration"
+	}
+}
+
+// hasSpecDelta reports whether the change folder carries any *.md delta, through
+// the one predicate the gate shares.
 func hasSpecDelta(folder string) bool {
-	specsDir := filepath.Join(folder, "specs")
-	if info, err := os.Stat(specsDir); err != nil || !info.IsDir() {
-		return false
-	}
-	found := false
-	_ = filepath.WalkDir(specsDir, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || found {
-			return nil
-		}
-		if strings.HasSuffix(entry.Name(), ".md") {
-			found = true
-		}
-		return nil
-	})
-	return found
+	return planbuild.HasDeltaDir(folder)
 }
 
-// checkMinimums applies the per-tier artifact minima (P6): the plan always, a
-// delta from standard up. proposal.md, design.md and verify-report.md are still
-// accepted and honoured when present; they are simply not required.
-func checkMinimums(folder, tier, location string) []string {
-	var blockers []string
-	if !isFile(filepath.Join(folder, "tasks.md")) {
-		blockers = append(blockers, location+"/tasks.md is required for all tiers")
-	}
-	if tier == TierLight {
-		return blockers
-	}
-	if !hasSpecDelta(folder) {
-		blockers = append(blockers, location+"/specs/ must contain at least one *.md for tier "+tier)
-	}
-	return blockers
-}
-
-// checkPlan requires the ODD-shaped plan (plan-build-openspec-odd-align P1) for
-// every tier: every archive is graded by the grammar, whatever its folder name,
-// and a `## Log` with L1 is required from standard up (P6). Light keeps it
-// optional.
+// checkPlan requires the ODD-shaped plan (P1) from light up: every archive is
+// graded by the grammar, whatever its folder name, and a `## Log` with L1 is
+// required at standard. A change with no plan derives `none` and has nothing to
+// grade here.
 func checkPlan(folder, location, tier string) []string {
-	plan, blockers := ParsePlan(readText(filepath.Join(folder, "tasks.md")))
+	planPath := filepath.Join(folder, "tasks.md")
+	if !isFile(planPath) {
+		return nil
+	}
+	plan, blockers := ParsePlan(readText(planPath))
 	if tier != TierLight && !plan.HasLog {
 		blockers = append(blockers, "`## Log` section is missing: add `- **L1** — <the human "+
 			"request>` because tier "+tier+" requires it")
@@ -119,14 +125,12 @@ func checkPlan(folder, location, tier string) []string {
 // inspectFolder runs the whole gate over one change folder.
 func inspectFolder(folder string, tier *string, location, repoRoot string) Result {
 	var blockers []string
-	tasksText := readText(filepath.Join(folder, "tasks.md"))
-	resolved := resolveTier(tasksText, tier, location, &blockers)
-	blockers = append(blockers, checkMinimums(folder, resolved, location)...)
+	resolved := resolveTier(folder, tier, location, &blockers)
 	blockers = append(blockers, checkPlan(folder, location, resolved)...)
 	blockers = append(blockers, checkTaskCommits(folder, repoRoot, location)...)
 	blockers = append(blockers, checkVerifyEvidence(folder, resolved)...)
 	blockers = append(blockers, checkVerificationCommands(repoRoot, filepath.Join(folder, "tasks.md"), resolved)...)
-	blockers = append(blockers, promotionBlockers(repoRoot, folder, resolved, location)...)
+	blockers = append(blockers, promotionBlockers(repoRoot, folder, location)...)
 	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: resolved, ArchivePath: folder}
 }
 
@@ -157,7 +161,7 @@ func CheckPremerge(repoRoot, slug string, tier *string) Result {
 			"active change folder still present at openspec/changes/%s/ — "+
 				"run archive-tail on the review branch before merge", slug))
 	}
-	archive, archiveBlockers := resolveArchive(filepath.Join(changes, "archive"), slug, "openspec")
+	archive, _, archiveBlockers := resolveArchive(filepath.Join(changes, "archive"), slug, "openspec")
 	blockers = append(blockers, archiveBlockers...)
 	if archive == "" {
 		return Result{Blockers: blockers, Tier: rawTier(tier)}
@@ -179,10 +183,13 @@ const TierOdd = "odd"
 // CheckPremergeOdd validates an ODD change before merge: the branch-paired plan
 // must be a regular file of the repository, every delta under
 // odd/changes/<change>/specs/ must already be promoted into odd/specs/ — read from
-// the archived folder once the change is archived — and the change must be gone
-// from the active tree behind a dated, content-provable archive
-// (plan-build-openspec-odd-align I5/P4). The contract is uniform: a plan with no
-// Depth: line pays the same archive duty, and there is no tier artifact minimum.
+// the archived folder once the change is archived — and a change that still
+// carries its folder must be gone from the active tree behind a dated,
+// content-provable archive (plan-build-openspec-odd-align I5/P4, S21).
+// S20 allows a change whose only artifact is a delta, and S21 makes the archive a
+// duty only of a change that carries a folder: a plan-only change owes nothing
+// there because the plan stays in odd/tasks/ as the permanent record, and a
+// change with no artifact at all is `none` and passes.
 // An empty change means the branch could not be paired.
 // The mode is resolved by the caller, which is the same resolver the pre-tool-use
 // gate uses.
@@ -192,31 +199,39 @@ func CheckPremergeOdd(repoRoot, change string) Result {
 		return Result{Blockers: []string{"ODD mode is active but the current branch cannot be " +
 			"resolved (detached HEAD), so no change can be paired"}, Tier: TierOdd}
 	}
-	plan := planbuild.PlanPath(repoRoot, change)
-	var blockers []string
-	if !planbuild.PlanIsValid(repoRoot, change) {
-		blockers = append(blockers, fmt.Sprintf(
-			"ODD plan 'odd/tasks/%s.md' is missing, is not a regular file, or resolves outside the "+
-				"repository for the current branch", change))
-	}
 	changesBase := planbuild.ChangesBase(repoRoot, planbuild.ModeOdd)
 	folder := filepath.Join(changesBase, change)
-	if info, err := os.Stat(folder); err == nil && info.IsDir() {
+	active := isDir(folder)
+	validPlan := planbuild.PlanIsValid(repoRoot, change)
+
+	var blockers []string
+	if active {
 		blockers = append(blockers, fmt.Sprintf(
 			"active change folder still present at odd/changes/%s/ — run `ai-specs changes archive` "+
 				"on the review branch before merge", change))
+		blockers = append(blockers, oddParityBlockers(repoRoot, changesBase, folder)...)
 	}
-	// Every delta the change carried must be promoted, whether it is still active
-	// or already archived: after archiving, the archived folder is the only
-	// remaining source of that delta (R3).
-	blockers = append(blockers, oddParityBlockers(repoRoot, changesBase, folder)...)
-	archive, archiveBlockers := resolveArchive(planbuild.ArchiveBase(repoRoot, planbuild.ModeOdd),
+	archive, present, archiveBlockers := resolveArchive(planbuild.ArchiveBase(repoRoot, planbuild.ModeOdd),
 		change, "odd")
-	blockers = append(blockers, archiveBlockers...)
+	// An existing archive is still graded, so an empty archive cannot pass as
+	// "no archive owed".
+	if active || present {
+		blockers = append(blockers, archiveBlockers...)
+	}
+	// After archiving, the archived folder is the only remaining source of the
+	// delta, so its parity is checked there too (R3).
 	if archive != "" {
 		blockers = append(blockers, oddParityBlockers(repoRoot, changesBase, archive)...)
 	}
-	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: TierOdd, ArchivePath: plan}
+	tier := TierNone
+	if active || present || validPlan {
+		tier = TierOdd
+	}
+	archivePath := archive
+	if archivePath == "" && validPlan {
+		archivePath = planbuild.PlanPath(repoRoot, change)
+	}
+	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: tier, ArchivePath: archivePath}
 }
 
 // oddParityBlockers is the promotion parity of one odd change folder, refused when

@@ -20,7 +20,11 @@ var datedArchiveRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})-(.+)$`)
 // the requirement when it holds something of the change — its delta
 // (specs/**/*.md) or a copy of its plan (tasks.md): an empty folder proves
 // nothing, dated or not.
-func resolveArchive(archiveRoot, slug, tree string) (string, []string) {
+//
+// The second result reports whether any archive entry for the slug exists at
+// all, even one rejected below: an archive that exists is still graded, so an
+// empty one cannot pass as "no archive owed" (S21).
+func resolveArchive(archiveRoot, slug, tree string) (string, bool, []string) {
 	missing := fmt.Sprintf("missing archive at %s/changes/archive/%s/ or a valid dated "+
 		"archive named YYYY-MM-DD-%s/", tree, slug, slug)
 	var symlinkBlockers []string
@@ -31,9 +35,9 @@ func resolveArchive(archiveRoot, slug, tree string) (string, []string) {
 	}
 	if !isDir(archiveRoot) {
 		if len(symlinkBlockers) > 0 {
-			return "", symlinkBlockers
+			return "", false, symlinkBlockers
 		}
-		return "", []string{missing}
+		return "", false, []string{missing}
 	}
 
 	var dated, invalidDates, nearMatches []string
@@ -46,7 +50,7 @@ func resolveArchive(archiveRoot, slug, tree string) (string, []string) {
 
 	entries, err := os.ReadDir(archiveRoot) // ReadDir sorts by name, like sorted(iterdir())
 	if err != nil {
-		return "", symlinkBlockers
+		return "", false, symlinkBlockers
 	}
 	for _, entry := range entries {
 		name := entry.Name()
@@ -101,6 +105,10 @@ func resolveArchive(archiveRoot, slug, tree string) (string, []string) {
 			candidate, slug))
 	}
 
+	// present counts every candidate for the slug, including the ones the date and
+	// content rules reject: the verdict must still name what is wrong with them.
+	present := len(dated) > 0 || len(invalidDates) > 0 || len(nearMatches) > 0 || isDir(legacy)
+
 	legacyIsDir := isDir(legacy)
 	// The undated fallback is an openspec compatibility path only: an ODD archive
 	// must be dated (C5).
@@ -120,27 +128,27 @@ func resolveArchive(archiveRoot, slug, tree string) (string, []string) {
 	}
 
 	if len(symlinkBlockers) > 0 {
-		return "", append(symlinkBlockers, blockers...)
+		return "", present, append(symlinkBlockers, blockers...)
 	}
 	if len(blockers) > 0 {
-		return "", blockers
+		return "", present, blockers
 	}
 	if len(dated) == 1 {
-		return archiveWithContent(dated[0])
+		return archiveWithContent(dated[0], present)
 	}
 	if legacyIsDir {
-		return archiveWithContent(legacy)
+		return archiveWithContent(legacy, present)
 	}
-	return "", []string{missing}
+	return "", present, []string{missing}
 }
 
 // archiveWithContent accepts one archive candidate only when it holds something
 // of the change it claims to archive.
-func archiveWithContent(candidate string) (string, []string) {
+func archiveWithContent(candidate string, present bool) (string, bool, []string) {
 	if archiveHoldsChange(candidate) {
-		return candidate, nil
+		return candidate, present, nil
 	}
-	return "", []string{fmt.Sprintf(
+	return "", present, []string{fmt.Sprintf(
 		"archive candidate %s is empty: an archive must hold the change's plan (tasks.md) or "+
 			"its delta (specs/**/*.md)", candidate)}
 }

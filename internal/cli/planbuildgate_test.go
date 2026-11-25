@@ -436,6 +436,18 @@ func planBuildWriteOddPlan(t *testing.T, root, change string) {
 	}
 }
 
+// planBuildWriteOddDelta writes one delta under the paired odd change folder.
+func planBuildWriteOddDelta(t *testing.T, root, change string) {
+	t.Helper()
+	path := filepath.Join(root, "odd", "changes", change, "specs", "cap", "spec.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# spec\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // planBuildCommonDir is the repository's git common directory.
 func planBuildCommonDir(t *testing.T, repo string) string {
 	t.Helper()
@@ -446,21 +458,20 @@ func planBuildCommonDir(t *testing.T, repo string) string {
 	return sharedRealPath(common)
 }
 
-// planBuildOddRefusal is the ODD plan refusal, verbatim.
-func planBuildOddRefusal(tool, rel, change, branch string) string {
-	return "plan-build-gate: refusing to " + tool + " '" + rel + "' — ODD mode is active but the ODD plan " +
-		"'odd/tasks/" + change + ".md' is missing, is not a regular file, or resolves outside the " +
-		"repository for branch '" + branch + "'. Write the plan first, or declare mode = \"openspec\" " +
-		"in ai-specs/ai-specs.toml to use the OpenSpec flow. Writing planning artifacts under odd/ " +
-		"is never blocked.\n"
+// planBuildOddSpecsRefusal is the canonical-spec hand-write refusal, verbatim.
+func planBuildOddSpecsRefusal(tool, rel, change string) string {
+	return "plan-build-gate: refusing to " + tool + " '" + rel + "' — ODD mode is active and 'odd/specs/' is " +
+		"written by promotion, not by hand; the change '" + change + "' carries no delta under " +
+		"'odd/changes/" + change + "/specs/'. Write the delta there and run 'ai-specs specs promote', " +
+		"or promote from the change folder that owns the rule. Writing under 'odd/changes/' is never blocked.\n"
 }
 
-// planBuildOddBranchRefusal is the ODD detached-HEAD refusal, verbatim.
-func planBuildOddBranchRefusal(tool, rel string) string {
+// planBuildOddSpecsBranchRefusal is the same rule on a detached HEAD, verbatim.
+func planBuildOddSpecsBranchRefusal(tool, rel string) string {
 	return "plan-build-gate: refusing to " + tool + " '" + rel + "' — ODD mode is active but the current " +
-		"branch cannot be resolved (detached HEAD), so no ODD plan can be paired. Write the plan at " +
-		"'odd/tasks/<change>.md' on the change branch, or declare mode = \"openspec\" in " +
-		"ai-specs/ai-specs.toml to use the OpenSpec flow.\n"
+		"branch cannot be resolved (detached HEAD), so no change can be paired. 'odd/specs/' is written by " +
+		"promotion, not by hand: run the write from the change's branch, or promote the delta instead of " +
+		"editing the canonical tree.\n"
 }
 
 // planBuildAssertAbsent pins that a refused write touched nothing on disk.
@@ -481,53 +492,54 @@ func oddRepo(t *testing.T) (repo, branch string) {
 	return repo, branch
 }
 
-// The paired plan allows the production write.
-func TestPlanBuildGateOddModeAllowsWithPlan(t *testing.T) {
+// S18: odd mode requires no plan — a small ODD change leaves no durable
+// artifact, so a production write passes with no odd/tasks/<change>.md.
+func TestPlanBuildGateOddModeAllowsProductionWriteWithoutPlan(t *testing.T) {
 	repo, _ := oddRepo(t)
-	planBuildWriteOddPlan(t, repo, "odd-change")
-	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 0 || stdout != "" || stderr != "" {
+	for _, target := range []string{"src/app.go", "lib/x.py", "catalog/a/b.ipynb"} {
+		if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", target)); code != 0 || stdout != "" || stderr != "" {
+			t.Fatalf("%s = (%d, %q, %q), want silence", target, code, stdout, stderr)
+		}
+	}
+}
+
+// A hand write to the canonical spec tree is a promotion bypass: it is refused
+// naming the rule, the missing delta and both exits.
+func TestPlanBuildGateOddModeRefusesHandWriteToCanonicalSpecs(t *testing.T) {
+	repo, _ := oddRepo(t)
+	target := "odd/specs/cap/spec.md"
+	want := planBuildOddSpecsRefusal("Write", target, "odd-change")
+	code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", target))
+	if code != 2 || stdout != "" || stderr != want {
+		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+	}
+	for _, name := range []string{"odd/specs", "odd/changes/odd-change/specs/", "ai-specs specs promote"} {
+		if !strings.Contains(stderr, name) {
+			t.Errorf("refusal %q does not name %q", stderr, name)
+		}
+	}
+	planBuildAssertAbsent(t, filepath.Join(repo, filepath.FromSlash(target)))
+}
+
+// With the delta the paired change carries, the canonical tree write passes:
+// promotion would write the same rule.
+func TestPlanBuildGateOddModeAllowsCanonicalSpecsWriteWithDelta(t *testing.T) {
+	repo, _ := oddRepo(t)
+	planBuildWriteOddDelta(t, repo, "odd-change")
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "odd/specs/cap/spec.md")); code != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("gate = (%d, %q, %q), want silence", code, stdout, stderr)
 	}
 }
 
-// A missing plan refuses and names the path and both escapes.
-func TestPlanBuildGateOddModeRefusesWithoutPlan(t *testing.T) {
-	repo, branch := oddRepo(t)
-	want := planBuildOddRefusal("Write", "src/app.go", "odd-change", branch)
-	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
-		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
-	}
-	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
-}
-
-// A directory named like the plan is not a plan.
-func TestPlanBuildGateOddModePlanMustBeRegularFile(t *testing.T) {
-	repo, branch := oddRepo(t)
-	if err := os.MkdirAll(filepath.Join(repo, "odd", "tasks", "odd-change.md"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	want := planBuildOddRefusal("Write", "src/app.go", "odd-change", branch)
-	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
-		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
-	}
-	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
-}
-
-// An OpenSpec tasks.md never satisfies the ODD gate.
-func TestPlanBuildGateOddModeIgnoresOpenspecTasks(t *testing.T) {
-	repo, branch := oddRepo(t)
-	planBuildWritePlan(t, repo, "openspec-change")
-	want := planBuildOddRefusal("Write", "src/app.go", "odd-change", branch)
-	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
-		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
-	}
-	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
-}
-
-// Writing the plan that the gate requires is never blocked.
-func TestPlanBuildGateOddModeAllowsPlanWrites(t *testing.T) {
+// Planning artifacts stay writable: the odd tree and every openspec change.
+func TestPlanBuildGateOddModeAllowsPlanningWrites(t *testing.T) {
 	repo, _ := oddRepo(t)
-	for _, target := range []string{"odd/tasks/odd-change.md", "odd/changes/odd-change/proposal.md"} {
+	for _, target := range []string{
+		"odd/tasks/odd-change.md",
+		"odd/changes/odd-change/proposal.md",
+		"odd/changes/odd-change/specs/cap/spec.md",
+		"openspec/changes/other/tasks.md",
+	} {
 		if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", target)); code != 0 || stdout != "" || stderr != "" {
 			t.Fatalf("%s = (%d, %q, %q), want silence", target, code, stdout, stderr)
 		}
@@ -535,69 +547,35 @@ func TestPlanBuildGateOddModeAllowsPlanWrites(t *testing.T) {
 	planBuildAssertAbsent(t, filepath.Join(repo, "odd", "tasks", "odd-change.md"))
 }
 
-// A symlink at the plan path is not a regular file of the repository: the gate
-// refuses instead of following the link to a file elsewhere.
-func TestPlanBuildGateOddModePlanMustNotBeASymlink(t *testing.T) {
-	repo, branch := oddRepo(t)
-	outside := filepath.Join(t.TempDir(), "elsewhere.md")
-	if err := os.WriteFile(outside, []byte("# plan\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(repo, "odd", "tasks"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outside, filepath.Join(repo, "odd", "tasks", "odd-change.md")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-	want := planBuildOddRefusal("Write", "src/app.go", "odd-change", branch)
-	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
-		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
-	}
-	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
-}
-
 // A branch with no commits yet is still a branch: HEAD is unborn, not detached,
-// so the paired plan resolves and the write is allowed.
+// so the change pairs and the production write passes with no plan.
 func TestPlanBuildGateOddModeAllowsOnAnUnbornBranch(t *testing.T) {
 	repo := t.TempDir()
 	gitTest(t, repo, "init", "-b", "feat/odd-change")
 	planBuildWriteMode(t, repo, "odd")
-	planBuildWriteOddPlan(t, repo, "odd-change")
 	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("gate on an unborn branch = (%d, %q, %q), want silence", code, stdout, stderr)
 	}
 }
 
-// A symlink in a parent component is not containment: odd/tasks pointing outside
-// the repository does not satisfy the paired-plan rule.
-func TestPlanBuildGateOddModeRefusesASymlinkedTasksDir(t *testing.T) {
-	repo, branch := oddRepo(t)
-	outside := t.TempDir()
-	if err := os.WriteFile(filepath.Join(outside, "odd-change.md"), []byte("# plan\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.RemoveAll(filepath.Join(repo, "odd", "tasks")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outside, filepath.Join(repo, "odd", "tasks")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-	want := planBuildOddRefusal("Write", "src/app.go", "odd-change", branch)
-	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
-		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
-	}
-}
-
-// A detached HEAD refuses instead of pairing an arbitrary plan.
-func TestPlanBuildGateOddModeDetachedHeadBlocks(t *testing.T) {
+// A detached HEAD pairs no change, so no delta can back a canonical tree write:
+// it is refused naming the branch exit.
+func TestPlanBuildGateOddModeDetachedHeadRefusesCanonicalSpecsWrite(t *testing.T) {
 	repo, _ := oddRepo(t)
-	planBuildWriteOddPlan(t, repo, "odd-change")
+	planBuildWriteOddDelta(t, repo, "odd-change")
 	gitTest(t, repo, "checkout", "--detach")
-	want := planBuildOddBranchRefusal("Write", "src/app.go")
-	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
+	target := "odd/specs/cap/spec.md"
+	want := planBuildOddSpecsBranchRefusal("Write", target)
+	code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", target))
+	if code != 2 || stdout != "" || stderr != want {
 		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
 	}
-	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
+	for _, name := range []string{"detached HEAD", "change's branch", "promote"} {
+		if !strings.Contains(stderr, name) {
+			t.Errorf("refusal %q does not name %q", stderr, name)
+		}
+	}
+	planBuildAssertAbsent(t, filepath.Join(repo, filepath.FromSlash(target)))
 }
 
 // A declared openspec mode resolves the change through the ladder: the
@@ -616,22 +594,23 @@ func TestPlanBuildGateDeclaredOpenspecResolvesTheChange(t *testing.T) {
 	}
 }
 
-// auto follows the Gentle AI state directory: present behaves as odd.
+// auto follows the Gentle AI state directory: present behaves as odd, so a
+// production write needs no plan and only the canonical spec tree is graded.
 func TestPlanBuildGateAutoInfersOddFromStateDir(t *testing.T) {
-	repo, branch := oddRepo(t)
+	repo, _ := oddRepo(t)
 	planBuildWriteMode(t, repo, "auto")
 	if err := os.MkdirAll(filepath.Join(planBuildCommonDir(t, repo), "gentle-ai"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	want := planBuildOddRefusal("Write", "src/app.go", "odd-change", branch)
-	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || stdout != "" || stderr != want {
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("gate = (%d, %q, %q), want silence", code, stdout, stderr)
+	}
+	target := "odd/specs/cap/spec.md"
+	want := planBuildOddSpecsRefusal("Write", target, "odd-change")
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", target)); code != 2 || stdout != "" || stderr != want {
 		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
 	}
-	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
-	planBuildWriteOddPlan(t, repo, "odd-change")
-	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("gate with a plan = (%d, %q, %q), want silence", code, stdout, stderr)
-	}
+	planBuildAssertAbsent(t, filepath.Join(repo, filepath.FromSlash(target)))
 }
 
 // auto without the state directory stays on the OpenSpec flow.

@@ -164,21 +164,64 @@ func TestLightTierPlanPasses(t *testing.T) {
 	}
 }
 
-func TestLightMinimumRequiresOnlyThePlan(t *testing.T) {
-	root := newRepo(t)
-	folder := filepath.Join(root, "openspec", "changes", "archive", "light-no-plan")
-	mkdirAll(t, folder)
-	writeFile(t, filepath.Join(folder, "proposal.md"), "# proposal\n")
-	// The archive holds a delta, so the folder itself proves the change existed
-	// and the blocker below is the tier minimum, not the empty archive (R2).
-	writeFile(t, filepath.Join(folder, "specs", "cap", "spec.md"), "# cap\n")
-
-	result := CheckPremerge(root, "light-no-plan", tierOpt("light"))
-	if result.OK {
-		t.Fatal("light without tasks.md must block")
+// The tier is derived from the artifacts the change carries, never declared
+// (S15): no plan is an ODD small task, a delta without a plan is allowed (S20)
+// and stays light, and only a plan plus a delta reaches standard.
+func TestTheArtifactsDeriveTheTier(t *testing.T) {
+	withDelta := func(t *testing.T, folder string) {
+		writeFile(t, filepath.Join(folder, "specs", "cap", "spec.md"), "# cap\n")
 	}
-	assertBlockerContains(t, result, "/tasks.md is required for all tiers")
-	assertBlockerLacks(t, result, "proposal.md", "verify")
+	withPlan := func(t *testing.T, folder string) {
+		writeFile(t, filepath.Join(folder, "tasks.md"), planFixtureBody)
+	}
+	cases := []struct {
+		name  string
+		build func(t *testing.T, folder string)
+		want  string
+	}{
+		{"no plan and no delta", func(t *testing.T, folder string) {
+			writeFile(t, filepath.Join(folder, "archived.md"), "# archived\n")
+		}, TierNone},
+		{"delta without a plan", withDelta, TierLight},
+		{"plan without a delta", withPlan, TierLight},
+		{"plan and delta", func(t *testing.T, folder string) {
+			withPlan(t, folder)
+			withDelta(t, folder)
+		}, TierStandard},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := newRepo(t)
+			folder := filepath.Join(root, "openspec", "changes", "archive", "derived")
+			mkdirAll(t, folder)
+			testCase.build(t, folder)
+
+			result := CheckPremerge(root, "derived", nil)
+			if result.Tier != testCase.want {
+				t.Fatalf("derived tier = %q, want %q", result.Tier, testCase.want)
+			}
+			if testCase.want == TierNone && !result.OK {
+				t.Fatalf("an archive with no plan and no delta = %+v, want none to pass", result)
+			}
+		})
+	}
+}
+
+// A tier declaration is a coherence assertion: the Depth line cannot contradict
+// the artifacts, and the blocker names the rule and both exits (S15, S22).
+func TestATierDeclarationThatContradictsTheArtifactsBlocksWithTheExits(t *testing.T) {
+	root := newRepo(t)
+	archiveWith(t, root, "declared-light", "Depth: light\n\n"+planFixtureBody, archiveOpts{spec: true})
+
+	result := CheckPremerge(root, "declared-light", nil)
+	if result.OK {
+		t.Fatal("a Depth line that contradicts the artifacts must block")
+	}
+	if result.Tier != TierStandard {
+		t.Fatalf("tier = %q, want the derived standard", result.Tier)
+	}
+	assertBlockerContains(t, result, "they derive 'standard', not the declared 'light'",
+		"remove the specs/ delta to reach light, or drop the declaration")
 }
 
 // TestFullMinimumBlocksWithoutADelta documents the removed full tier: it now
@@ -196,34 +239,34 @@ func TestFullTierDepthLineBlocksWithTheMigrationMessage(t *testing.T) {
 	assertBlockerLacks(t, result, "for tier full")
 }
 
-func TestInferTierFromTasksDepthLine(t *testing.T) {
+func TestPlanWithoutADeltaDerivesLight(t *testing.T) {
 	root := newRepo(t)
 	archiveWith(t, root, "infer", "Depth: light\n- [x] done\n", archiveOpts{proposal: true})
 	result := CheckPremerge(root, "infer", nil)
-	if !result.OK || result.Tier != "light" {
-		t.Fatalf("inferred result = %+v, want OK light", result)
+	if !result.OK || result.Tier != TierLight {
+		t.Fatalf("derived result = %+v, want OK light", result)
 	}
 }
 
-func TestOmittedTierDefaultsToInferenceNotStandard(t *testing.T) {
+func TestAPlanWithoutADepthLineIsGradedByItsArtifacts(t *testing.T) {
 	root := newRepo(t)
 	archiveWith(t, root, "omit-tier", "Depth: light\n- [x] done\n", archiveOpts{proposal: true})
-	if result := CheckPremerge(root, "omit-tier", nil); !result.OK || result.Tier != "light" {
+	if result := CheckPremerge(root, "omit-tier", nil); !result.OK || result.Tier != TierLight {
 		t.Fatalf("result = %+v, want OK light", result)
 	}
 }
 
-func TestUnknownTierBlocksAndFallsBackToInference(t *testing.T) {
+func TestUnknownTierBlocksAndKeepsTheDerivedTier(t *testing.T) {
 	root := newRepo(t)
 	archiveWith(t, root, "bad-tier", "Depth: light\n", archiveOpts{proposal: true})
 	result := CheckPremerge(root, "bad-tier", tierOpt("Deep"))
 	if result.OK {
 		t.Fatal("an unknown tier must block")
 	}
-	if result.Tier != "light" {
-		t.Fatalf("tier = %q, want the inferred light", result.Tier)
+	if result.Tier != TierLight {
+		t.Fatalf("tier = %q, want the derived light", result.Tier)
 	}
-	assertBlockerContains(t, result, "unknown tier 'Deep' (expected light|standard)")
+	assertBlockerContains(t, result, "unknown tier 'deep' (expected none|light|standard)")
 }
 
 func TestPrearchiveChecksActiveFolderWithoutActiveBlocker(t *testing.T) {
@@ -358,14 +401,6 @@ func TestPrearchiveKeepsTheRawTierWhenTheFolderIsMissing(t *testing.T) {
 	result := CheckPrearchive(newRepo(t), "absent", tierOpt("Standard"))
 	if result.Tier != "Standard" {
 		t.Fatalf("tier = %q, want the raw option value", result.Tier)
-	}
-}
-
-func TestLightMinimumNeedsOnlyThePlan(t *testing.T) {
-	root := newRepo(t)
-	archiveWith(t, root, "light-plan-only", "Depth: light\n", archiveOpts{})
-	if result := CheckPremerge(root, "light-plan-only", tierOpt(TierLight)); !result.OK {
-		t.Fatalf("light plan-only = %+v, want OK", result)
 	}
 }
 

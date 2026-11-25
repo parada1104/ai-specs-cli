@@ -7,6 +7,7 @@ package planbuild
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -85,6 +86,32 @@ func SpecsBase(root, mode string) string {
 		return filepath.Join(root, "odd", "specs")
 	}
 	return filepath.Join(root, "openspec", "specs")
+}
+
+// HasDeltaDir reports whether folder carries a spec delta: a specs/ tree with at
+// least one Markdown file. It is the single "this change carries a delta"
+// predicate, shared by the gate and the premerge tier derivation.
+func HasDeltaDir(folder string) bool {
+	specsDir := filepath.Join(folder, "specs")
+	if info, err := os.Stat(specsDir); err != nil || !info.IsDir() {
+		return false
+	}
+	found := false
+	_ = filepath.WalkDir(specsDir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || found {
+			return nil
+		}
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
+			found = true
+		}
+		return nil
+	})
+	return found
+}
+
+// HasDelta is HasDeltaDir over the change folder of the mode.
+func HasDelta(root, mode, change string) bool {
+	return HasDeltaDir(ChangeFolder(root, mode, change))
 }
 
 // ErrNoChange and ErrAmbiguousChange classify the two ladder refusals.

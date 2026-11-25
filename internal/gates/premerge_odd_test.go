@@ -2,8 +2,9 @@ package gates
 
 // ODD pre-merge gate (plan-build-odd-companion, open decision B): the mode is
 // resolved by the caller, the change comes from the branch pairing, and the
-// verdict is the paired plan, its archive and the parity of its deltas. No
-// OpenSpec archive and no tier minimum apply.
+// verdict is the artifacts the change carries (S15) plus the parity of its
+// deltas. The archive is a duty only of a change that carries a folder (S21), so
+// a plan-only or delta-only change has no OpenSpec-style archive requirement.
 
 import (
 	"os"
@@ -43,17 +44,41 @@ func wantBlocked(t *testing.T, got Result, needle string) {
 	}
 }
 
-// A missing paired plan is a blocker naming the path the branch expects.
-func TestCheckPremergeOddRequiresThePairedPlan(t *testing.T) {
+// A change with no plan, no change folder and nothing archived carries no
+// artifact: it is the neutral `none` verdict and the guardian passes (S20/S21).
+func TestCheckPremergeOddPassesASmallChangeWithNoArtifacts(t *testing.T) {
 	root := oddRepo(t)
 	if err := os.Remove(filepath.Join(root, "odd", "tasks", "thing.md")); err != nil {
 		t.Fatal(err)
 	}
-	wantBlocked(t, CheckPremergeOdd(root, "thing"), "ODD plan 'odd/tasks/thing.md' is missing")
+	got := CheckPremergeOdd(root, "thing")
+	if !got.OK || len(got.Blockers) != 0 {
+		t.Fatalf("Result = %+v, want OK with no blocker", got)
+	}
+	if got.Tier != TierNone {
+		t.Fatalf("Tier = %q, want %q", got.Tier, TierNone)
+	}
+	if got.ArchivePath != "" {
+		t.Fatalf("ArchivePath = %q, want empty", got.ArchivePath)
+	}
 }
 
-// A directory at the plan path is not a plan.
-func TestCheckPremergeOddRejectsADirectoryPlan(t *testing.T) {
+// S21: the plan of an ODD change stays in odd/tasks/ as the permanent record, so
+// a plan-only change owes no archive.
+func TestCheckPremergeOddDoesNotRequireAnArchiveForAPlanOnlyChange(t *testing.T) {
+	root := oddRepo(t)
+	got := CheckPremergeOdd(root, "thing")
+	if !got.OK || len(got.Blockers) != 0 {
+		t.Fatalf("Result = %+v, want OK with no blocker", got)
+	}
+	if got.Tier != TierOdd {
+		t.Fatalf("Tier = %q, want %q", got.Tier, TierOdd)
+	}
+}
+
+// A directory at the plan path is not a plan: with no artifact at all the change
+// is `none`, never a missing-plan blocker.
+func TestCheckPremergeOddTreatsADirectoryPlanAsNoPlan(t *testing.T) {
 	root := oddRepo(t)
 	plan := filepath.Join(root, "odd", "tasks", "thing.md")
 	if err := os.Remove(plan); err != nil {
@@ -62,7 +87,58 @@ func TestCheckPremergeOddRejectsADirectoryPlan(t *testing.T) {
 	if err := os.MkdirAll(plan, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	wantBlocked(t, CheckPremergeOdd(root, "thing"), "is not a regular file")
+	got := CheckPremergeOdd(root, "thing")
+	if !got.OK || len(got.Blockers) != 0 {
+		t.Fatalf("Result = %+v, want OK with no blocker", got)
+	}
+	if got.Tier != TierNone {
+		t.Fatalf("Tier = %q, want %q", got.Tier, TierNone)
+	}
+}
+
+// A change that still carries its folder owes an archive before merge.
+func TestCheckPremergeOddStillBlocksAnActiveFolder(t *testing.T) {
+	root := oddRepo(t)
+	mkdirAll(t, filepath.Join(root, "odd", "changes", "thing"))
+	wantBlocked(t, CheckPremergeOdd(root, "thing"), "run `ai-specs changes archive`")
+}
+
+// S20: a delta is a complete artifact on its own. Once promoted and archived it
+// passes with no odd/tasks/<change>.md at all.
+func TestCheckPremergeOddAllowsADeltaWithoutAPlan(t *testing.T) {
+	root := oddRepo(t)
+	if err := os.Remove(filepath.Join(root, "odd", "tasks", "thing.md")); err != nil {
+		t.Fatal(err)
+	}
+	folder := filepath.Join(root, "odd", "changes", "thing")
+	writeFile(t, filepath.Join(folder, "specs", "capability", "spec.md"), oddDelta)
+	if report := specs.PromoteChangeForMode(root, "thing", planbuild.ModeOdd, false); len(report.Blockers) != 0 {
+		t.Fatalf("promote Blockers = %q", report.Blockers)
+	}
+	archive := filepath.Join(root, "odd", "changes", "archive", "2026-01-02-thing")
+	mkdirAll(t, filepath.Dir(archive))
+	if err := os.Rename(folder, archive); err != nil {
+		t.Fatal(err)
+	}
+
+	got := CheckPremergeOdd(root, "thing")
+	if !got.OK || len(got.Blockers) != 0 {
+		t.Fatalf("Result = %+v, want OK after promotion and archiving", got)
+	}
+	if got.Tier != TierOdd {
+		t.Fatalf("Tier = %q, want %q", got.Tier, TierOdd)
+	}
+}
+
+// The same delta with no plan blocks while it is unpromoted: the plan is
+// optional, the promotion is not.
+func TestCheckPremergeOddBlocksADeltaWithoutAPlanWhenUnpromoted(t *testing.T) {
+	root := oddRepo(t)
+	if err := os.Remove(filepath.Join(root, "odd", "tasks", "thing.md")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, "odd", "changes", "thing", "specs", "capability", "spec.md"), oddDelta)
+	wantBlocked(t, CheckPremergeOdd(root, "thing"), "is not promoted into odd/specs/capability/spec.md")
 }
 
 // An unresolvable branch blocks instead of guessing a change.
@@ -74,15 +150,17 @@ func TestCheckPremergeOddBlocksOnDetachedHead(t *testing.T) {
 	}
 }
 
-// A change with no delta still needs its dated archive, with no Depth: line too.
-func TestCheckPremergeOddRequiresTheArchiveOfATaskOnlyChange(t *testing.T) {
+// A change with no folder but a dated archive is still graded: the archive entry
+// is what the change claims to have delivered.
+func TestCheckPremergeOddGradesAPlanOnlyChangeThatCarriesAnArchive(t *testing.T) {
 	root := oddRepo(t)
-	wantBlocked(t, CheckPremergeOdd(root, "thing"),
-		"missing archive at odd/changes/archive/thing/ or a valid dated archive named YYYY-MM-DD-thing/")
 	oddWriteArchive(t, root, "thing")
 	got := CheckPremergeOdd(root, "thing")
 	if !got.OK || len(got.Blockers) != 0 {
-		t.Fatalf("Result = %+v, want OK with no blocker once archived", got)
+		t.Fatalf("Result = %+v, want OK once archived", got)
+	}
+	if got.Tier != TierOdd {
+		t.Fatalf("Tier = %q, want %q", got.Tier, TierOdd)
 	}
 }
 
@@ -131,9 +209,10 @@ func TestCheckPremergeOddPassesAPromotedDelta(t *testing.T) {
 	}
 }
 
-// A symlinked tasks directory does not satisfy the paired-plan rule: the plan
-// must be a regular file of the repository, as the production gate requires.
-func TestCheckPremergeOddRefusesASymlinkedTasksDir(t *testing.T) {
+// A symlinked tasks directory is not a plan: the plan must be a regular file of
+// the repository. Since S21 no plan is owed, so the verdict is the neutral `none`
+// instead of a blocker; the tree is still never read through the symlink.
+func TestCheckPremergeOddTreatsASymlinkedTasksDirAsNoPlan(t *testing.T) {
 	root := oddRepo(t)
 	outside := t.TempDir()
 	if err := os.WriteFile(filepath.Join(outside, "thing.md"), []byte("# plan\n"), 0o644); err != nil {
@@ -145,7 +224,13 @@ func TestCheckPremergeOddRefusesASymlinkedTasksDir(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "odd", "tasks")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	wantBlocked(t, CheckPremergeOdd(root, "thing"), "resolves outside the repository")
+	got := CheckPremergeOdd(root, "thing")
+	if !got.OK || len(got.Blockers) != 0 {
+		t.Fatalf("Result = %+v, want OK with no blocker", got)
+	}
+	if got.Tier != TierNone {
+		t.Fatalf("Tier = %q, want %q", got.Tier, TierNone)
+	}
 }
 
 // A symlinked odd/changes cannot become the parity source: the OpenSpec tree

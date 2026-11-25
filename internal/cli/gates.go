@@ -22,20 +22,21 @@ import (
 // on stderr after the bare `gates` (same shape as the specs/skills families).
 const gatesUsage = `Usage: ai-specs gates <subcommand> [args]
 Subcommands:
-  premerge <slug> --root <planning-root> [--tier light|standard] [--change <name>]
+  premerge <slug> --root <planning-root> [--tier none|light|standard] [--change <name>]
                              Check the archived artifacts and staged evidence
 Run 'ai-specs gates premerge --help' for full options.
 `
 
-const gatesPremergeUsage = `Usage: ai-specs gates premerge <slug> --root <planning-root> [--tier light|standard] [--stage pre-merge|pre-archive] [--change <name>]
+const gatesPremergeUsage = `Usage: ai-specs gates premerge <slug> --root <planning-root> [--tier none|light|standard] [--stage pre-merge|pre-archive] [--change <name>]
 
 In ` + "odd" + ` mode the change comes from the current branch (odd/tasks/<change>.md):
 <slug> is accepted and ignored, the plan and the promotion parity of its deltas
 are validated, and no OpenSpec archive or tier minimum is required. The mode is
 resolved from the project manifest, exactly as the pre-tool-use gate resolves it.
 
-Check the pre-merge archive/artifact gates for one change: tier minimum files,
-staged verification evidence, and (Standard) canonical spec promotion parity.
+Check the pre-merge archive/artifact gates for one change: the plan grammar,
+staged verification evidence, and canonical spec promotion parity whenever the
+change carries a delta.
 Read-only: nothing is written, and canonical specs are never composed.
 
 Arguments:
@@ -48,10 +49,12 @@ Options:
   --change <name>     Explicit change override, for CI and detached HEAD. A
                       positional <slug> wins over it. Without either, the change
                       is the folder paired by the branch, or the only active one.
-  --tier <tier>       Planning depth: light or standard (default: infer from
-                      the tasks.md Depth: line). The former full tier was
-                      removed: declaring it blocks with a migration message
-                      pointing at standard.
+  --tier <tier>       Coherence assertion, never a choice: the tier is derived
+                      from the artifacts (none without a plan, light with a plan
+                      alone, standard with a plan and a delta) and a value that
+                      contradicts them blocks. The former full tier was removed:
+                      declaring it blocks with a migration message pointing at
+                      standard.
   --stage <stage>     Enforcement stage: pre-merge or pre-archive
                       (default: pre-merge)
   --help, -h          Show this help
@@ -183,8 +186,9 @@ func runGatesPremerge(args []string, stdout, stderr io.Writer) int {
 	if root == "" {
 		return usageError("ERROR: missing required option: --root")
 	}
-	if tier != nil && *tier != gates.TierLight && *tier != gates.TierStandard && *tier != gates.TierFull {
-		return choiceError("--tier", *tier, gates.TierLight, gates.TierStandard)
+	if tier != nil && *tier != gates.TierNone && *tier != gates.TierLight &&
+		*tier != gates.TierStandard && *tier != gates.TierFull {
+		return choiceError("--tier", *tier, gates.TierNone, gates.TierLight, gates.TierStandard)
 	}
 	if stage != "pre-merge" && stage != "pre-archive" {
 		return choiceError("--stage", stage, "pre-merge", "pre-archive")

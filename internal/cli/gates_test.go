@@ -139,10 +139,9 @@ func TestGatesPremergeBlockedPrintsTheBlockerList(t *testing.T) {
 		t.Fatalf("stderr = %q, want the BLOCKED header then indented blockers", stderr)
 	}
 	for _, want := range []string{
-		"  - archive/2026-01-02-bad-change/specs/ must contain at least one *.md for tier standard\n",
+		"  - archive/2026-01-02-bad-change: the tier is derived from the artifacts of the change, and they derive 'light', not the declared 'standard' — add a specs/ delta to reach standard, or drop the declaration\n",
 		"  - archive/2026-01-02-bad-change/tasks.md: `## Specs` section is missing: add the `## Specs` section above `## Tasks`\n",
 		"  - archive/2026-01-02-bad-change/tasks.md: `## Tasks` section is missing: add the `## Tasks` table\n",
-		"  - standard verify evidence requires dedicated verify-report.md\n",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr %q does not contain %q", stderr, want)
@@ -164,6 +163,8 @@ func TestGatesPremergePreArchiveStageChecksTheActiveFolder(t *testing.T) {
 
 	gatesWrite(t, filepath.Join(root, "openspec", "changes", "active-change", "tasks.md"),
 		"Depth: standard\n\n"+gatesPlanBody)
+	// The delta is what derives standard; the declaration alone no longer counts.
+	gatesWrite(t, filepath.Join(active, "specs", "cap", "spec.md"), "# cap\n")
 	code, stdout, stderr = runGatesCLI(t, "gates", "premerge", "active-change", "--root", root,
 		"--stage", "pre-archive")
 	if code != 1 || stdout != "" {
@@ -174,22 +175,33 @@ func TestGatesPremergePreArchiveStageChecksTheActiveFolder(t *testing.T) {
 	}
 }
 
-func TestGatesPremergeExplicitTierOverridesTheDepthLine(t *testing.T) {
+// The tier is derived from the artifacts, so a declared tier is only a
+// coherence assertion: one that contradicts them blocks even without --tier.
+func TestGatesPremergeBlocksOnATierDeclarationThatContradictsTheArtifacts(t *testing.T) {
 	root := gatesRepo(t)
-	folder := filepath.Join(root, "openspec", "changes", "archive", "full-change")
+	folder := filepath.Join(root, "openspec", "changes", "archive", "artifact-change")
 	gatesWrite(t, filepath.Join(folder, "tasks.md"), "Depth: light\n\n"+gatesPlanBody)
 	gatesWrite(t, filepath.Join(folder, "proposal.md"), "# proposal\n")
 	gatesWrite(t, filepath.Join(folder, "specs", "cap", "spec.md"), "# cap\n")
 	gatesWrite(t, filepath.Join(folder, "verify-report.md"), gatesStandardReport)
 
-	code, stdout, _ := runGatesCLI(t, "gates", "premerge", "full-change", "--root", root, "--tier", "standard")
-	if code != 0 || stdout != "premerge-guardian: OK (standard)\n" {
-		t.Fatalf("exit = %d, stdout = %q; want the explicit tier", code, stdout)
+	code, stdout, stderr := runGatesCLI(t, "gates", "premerge", "artifact-change", "--root", root)
+	if code != 1 || stdout != "" {
+		t.Fatalf("exit = %d, stdout = %q; want 1 and empty stdout", code, stdout)
+	}
+	if !strings.Contains(stderr, "they derive 'standard', not the declared 'light'") {
+		t.Fatalf("stderr = %q, want the tier mismatch", stderr)
 	}
 
-	code, stdout, _ = runGatesCLI(t, "gates", "premerge", "full-change", "--root", root, "--tier", "full")
+	code, stdout, _ = runGatesCLI(t, "gates", "premerge", "artifact-change", "--root", root, "--tier", "full")
 	if code != 1 || stdout != "" {
 		t.Fatalf("exit = %d, stdout = %q; want the full tier to block", code, stdout)
+	}
+
+	gatesWrite(t, filepath.Join(folder, "tasks.md"), gatesPlanBody)
+	code, stdout, stderr = runGatesCLI(t, "gates", "premerge", "artifact-change", "--root", root)
+	if code != 0 || stdout != "premerge-guardian: OK (standard)\n" {
+		t.Fatalf("exit = %d, stdout = %q, stderr = %q; want the derived standard", code, stdout, stderr)
 	}
 }
 

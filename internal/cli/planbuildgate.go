@@ -11,15 +11,19 @@ package cli
 //
 // One mode: a pre-tool-use event on stdin. A production path write (the
 // PLAN_BUILD_GATE_PATHS scope, default src/lib/catalog) is graded at the
-// `work-start` ledger checkpoint first, then refused until the plan of the
-// repository's execution mode exists. In `openspec` mode that is the tasks.md
-// of the change the branch pairs (openspec/changes/<change>/tasks.md) under the
-// nearest repository root, or the only active change when the branch pairs
-// none; ambiguity refuses instead of accepting any tasks.md. For a proven
-// submodule topology the central planning root keeps its own plan scan.
-// In `odd` mode it is the paired plan odd/tasks/<change>.md at the repository
-// root, and the planning tree is odd/ instead of openspec/changes/. The mode
-// selects the plan tree and never waives the plan requirement (S10).
+// `work-start` ledger checkpoint first.
+//
+// In `odd` mode no plan is required: only the canonical spec tree odd/specs/ is
+// protected, because promotion is its only writer. A hand write there is
+// refused unless the branch pairs a change that carries a delta under
+// odd/changes/<change>/specs/, which is what promotion promotes. Every other
+// write under odd/, and every write under openspec/changes/, stays allowed.
+//
+// In `openspec` mode the plan is still required: the tasks.md of the change the
+// branch pairs (openspec/changes/<change>/tasks.md) under the nearest repository
+// root, or the only active change when the branch pairs none; ambiguity refuses
+// instead of accepting any tasks.md. For a proven submodule topology the central
+// planning root keeps its own plan scan.
 //
 // Exit codes: 0 allows the write, 2 refuses it. Malformed, unrelated or
 // unprovable input fails open, except the topology proof, which fails closed
@@ -62,15 +66,16 @@ const (
 // planBuildGateUsage is the verb's help text, on stdout for --help/-h.
 const planBuildGateUsage = `Usage: ai-specs plan-build-gate
 
-Pre-tool-use hook: read one hook event (JSON) on stdin and refuse a production
-path write until the plan of the repository's execution mode exists. In
-"openspec" mode the plan is the paired change's
-openspec/changes/<change>/tasks.md: the branch's last segment pairs a change
-folder, or the only active change is used. In "odd" mode the plan is the paired file
-odd/tasks/<change>.md, where <change> is the last segment of the current branch
-name (feat/thing and fix/thing both pair with odd/tasks/thing.md). Planning
-artifacts under openspec/changes/ and, in "odd" mode, under odd/ are always
-writable, and the agent's own .claude config is never graded.
+Pre-tool-use hook: read one hook event (JSON) on stdin and grade the write. In
+"openspec" mode a production path write is refused until the plan of the change
+the branch pairs exists (openspec/changes/<change>/tasks.md): the branch's last
+segment pairs the change folder, or the only active change is used. In "odd"
+mode no plan is required for a production write, because a small ODD change
+leaves no durable artifact. The only protected odd path is the canonical spec
+tree odd/specs/: promotion is its only writer, so a hand write there is refused
+unless the paired change carries a delta under odd/changes/<change>/specs/.
+Planning artifacts under openspec/changes/ and, in "odd" mode, under odd/ are
+always writable, and the agent's own .claude config is never graded.
 
 The mode is read from [recipes.plan-build-flow.config] mode in
 ai-specs/ai-specs.toml: "auto" (default), "odd" or "openspec". "auto" resolves
@@ -95,19 +100,19 @@ const planBuildGateNearestRefusal = "%s: refusing to %s '%s' — no active chang
 	"first, then implement. Writing planning artifacts under openspec/changes/ is never " +
 	"blocked.\n"
 
-// planBuildGateOddPlanRefusal is the odd-mode refusal for a missing or
-// non-regular paired plan.
-const planBuildGateOddPlanRefusal = "%s: refusing to %s '%s' — ODD mode is active but the ODD plan " +
-	"'odd/tasks/%s.md' is missing, is not a regular file, or resolves outside the repository " +
-	"for branch '%s'. Write the plan first, or declare mode = \"openspec\" in " +
-	"ai-specs/ai-specs.toml to use the OpenSpec flow. Writing planning artifacts under odd/ is " +
-	"never blocked.\n"
+// planBuildGateOddSpecsRefusal is the odd-mode refusal for a hand write to the
+// canonical spec tree, on a branch that pairs a change with no delta.
+const planBuildGateOddSpecsRefusal = "%s: refusing to %s '%s' — ODD mode is active and 'odd/specs/' is " +
+	"written by promotion, not by hand; the change '%s' carries no delta under 'odd/changes/%s/specs/'. " +
+	"Write the delta there and run 'ai-specs specs promote', or promote from the change folder that owns " +
+	"the rule. Writing under 'odd/changes/' is never blocked.\n"
 
-// planBuildGateOddBranchRefusal is the odd-mode refusal for an unresolvable branch.
-const planBuildGateOddBranchRefusal = "%s: refusing to %s '%s' — ODD mode is active but the current " +
-	"branch cannot be resolved (detached HEAD), so no ODD plan can be paired. Write the plan at " +
-	"'odd/tasks/<change>.md' on the change branch, or declare mode = \"openspec\" in " +
-	"ai-specs/ai-specs.toml to use the OpenSpec flow.\n"
+// planBuildGateOddSpecsBranchRefusal is the same rule when HEAD is detached, so
+// no change can be paired.
+const planBuildGateOddSpecsBranchRefusal = "%s: refusing to %s '%s' — ODD mode is active but the current " +
+	"branch cannot be resolved (detached HEAD), so no change can be paired. 'odd/specs/' is written by " +
+	"promotion, not by hand: run the write from the change's branch, or promote the delta instead of " +
+	"editing the canonical tree.\n"
 
 // planBuildGateCentralRefusal is the shell host's central-root refusal.
 const planBuildGateCentralRefusal = "%s: refusing to %s '%s' — no active change folder " +
@@ -163,8 +168,7 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 		return 0
 	}
 	rel := planBuildGateRel(repoRoot, abs)
-	// The execution mode is resolved once and selects the plan tree; it never
-	// waives the plan requirement.
+	// The execution mode is resolved once.
 	mode := planbuild.Resolve(repoRoot, planBuildGateCommonDir(target.Probe))
 	// Gitignored agent configuration is machine setup, never a production change.
 	if planBuildGateAgentConfig(rel) {
@@ -173,6 +177,15 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 	// Artifact writes are unconditional at the nearest repository root.
 	if planBuildGateUnder(filepath.Join(repoRoot, "openspec", "changes"), abs) {
 		return 0
+	}
+	// In odd mode the canonical spec tree is the one protected path, checked before
+	// the unconditional odd/ allow because promotion is its only writer.
+	if mode == planbuild.ModeOdd && planBuildGateUnder(planbuild.SpecsBase(repoRoot, planbuild.ModeOdd), abs) {
+		tool := target.Tool
+		if tool == "" {
+			tool = "edit"
+		}
+		return planBuildGateOddSpecs(repoRoot, target.Probe, tool, rel, stderr)
 	}
 	if mode == planbuild.ModeOdd && planBuildGateUnder(filepath.Join(repoRoot, "odd"), abs) {
 		return 0
@@ -190,9 +203,9 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 		return 2
 	}
 	if mode == planbuild.ModeOdd {
-		// The plan is per repository root in odd mode, so the submodule topology
-		// proof does not apply.
-		return planBuildGateOddPlan(repoRoot, target.Probe, tool, rel, stderr)
+		// No plan is required in odd mode: a small ODD change creates none, and the
+		// only protected odd path (odd/specs/) was graded above.
+		return 0
 	}
 	change, err := planbuild.ResolveChange(repoRoot, planbuild.ModeOpenspec, planbuild.Branch(target.Probe), "")
 	if err == nil && planbuild.PlanIsValidForMode(repoRoot, planbuild.ModeOpenspec, change) {
@@ -225,19 +238,19 @@ func planBuildGateCommonDir(probeDir string) string {
 	return planbuild.CommonDir(probeDir)
 }
 
-// planBuildGateOddPlan grades the odd-mode plan: the paired plan of the current
-// branch, a regular file at odd/tasks/<change>.md.
-func planBuildGateOddPlan(repoRoot, probeDir, tool, rel string, stderr io.Writer) int {
-	branch := planbuild.Branch(probeDir)
-	change, ok := planbuild.ChangeFromBranch(branch)
+// planBuildGateOddSpecs grades a write to the canonical odd spec tree: a hand
+// write there is a promotion bypass, so it passes only when the branch pairs a
+// change whose delta promotion would promote.
+func planBuildGateOddSpecs(repoRoot, probeDir, tool, rel string, stderr io.Writer) int {
+	change, ok := planbuild.ChangeFromBranch(planbuild.Branch(probeDir))
 	if !ok {
-		fmt.Fprintf(stderr, planBuildGateOddBranchRefusal, planBuildGateName, tool, rel)
+		fmt.Fprintf(stderr, planBuildGateOddSpecsBranchRefusal, planBuildGateName, tool, rel)
 		return 2
 	}
-	if planbuild.PlanIsValid(repoRoot, change) {
+	if planbuild.HasDelta(repoRoot, planbuild.ModeOdd, change) {
 		return 0
 	}
-	fmt.Fprintf(stderr, planBuildGateOddPlanRefusal, planBuildGateName, tool, rel, change, branch)
+	fmt.Fprintf(stderr, planBuildGateOddSpecsRefusal, planBuildGateName, tool, rel, change, change)
 	return 2
 }
 

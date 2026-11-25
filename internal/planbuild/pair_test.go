@@ -289,6 +289,64 @@ func TestPlanIsValidAcceptsARelativeRoot(t *testing.T) {
 	}
 }
 
+// HasDeltaDir is the single "this folder carries a spec delta" predicate: a
+// specs/ tree with at least one Markdown file, and nothing else counts.
+func TestHasDeltaDir(t *testing.T) {
+	root := t.TempDir()
+	if HasDeltaDir(filepath.Join(root, "absent")) {
+		t.Error("an absent folder carries a delta")
+	}
+	empty := filepath.Join(root, "empty", "specs", "cap")
+	if err := os.MkdirAll(empty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(empty, "notes.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if HasDeltaDir(filepath.Join(root, "empty")) {
+		t.Error("a specs/ tree with no .md file carries a delta")
+	}
+	// A directory named like a delta proves nothing: without this the guard
+	// accepts a change folder that carries no Markdown file at all (R1-001).
+	if err := os.MkdirAll(filepath.Join(root, "named", "specs", "cap", "spec.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if HasDeltaDir(filepath.Join(root, "named")) {
+		t.Error("a directory named *.md carries a delta")
+	}
+	delta := filepath.Join(root, "present", "specs", "cap", "spec.md")
+	if err := os.MkdirAll(filepath.Dir(delta), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(delta, []byte("# spec\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !HasDeltaDir(filepath.Join(root, "present")) {
+		t.Error("a specs/ tree with a .md file carries no delta")
+	}
+}
+
+// HasDelta is HasDeltaDir over the change folder of the mode.
+func TestHasDelta(t *testing.T) {
+	root := t.TempDir()
+	for _, mode := range []string{ModeOdd, ModeOpenspec} {
+		folder := ChangeFolder(root, mode, "thing")
+		if HasDelta(root, mode, "thing") {
+			t.Fatalf("%s: a missing change folder carries a delta", mode)
+		}
+		delta := filepath.Join(folder, "specs", "cap", "spec.md")
+		if err := os.MkdirAll(filepath.Dir(delta), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(delta, []byte("# spec\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if !HasDelta(root, mode, "thing") {
+			t.Fatalf("%s: a change folder with a delta carries none", mode)
+		}
+	}
+}
+
 // After archiving, an odd change still pairs from the branch because its plan
 // survives at odd/tasks/<change>.md while the delta folder is gone.
 func TestResolveChangePairsAnArchivedOddChange(t *testing.T) {
