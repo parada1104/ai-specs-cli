@@ -118,6 +118,61 @@ def _n_of_m(passed: int, trials: int) -> int:
     live_enabled() and bool(_selected_runtimes()),
     "Set EVALS_LIVE=1 with a supported runtime on PATH to run live evals",
 )
+def _write_evidence(
+    name: str,
+    runtime: str,
+    fixture_mode: str,
+    prompt: str,
+    result: dict,
+    changed: list[str],
+    root: Path,
+) -> None:
+    """Keep what the agent actually did, so a verdict can be explained.
+
+    Written on pass and on fail: a failure whose transcript is gone is not a
+    finding about the skill, it is a number. Inert unless EVALS_EVIDENCE_DIR is
+    set.
+    """
+    target = os.environ.get("EVALS_EVIDENCE_DIR")
+    if not target:
+        return
+    out = Path(target)
+    out.mkdir(parents=True, exist_ok=True)
+    lines = [
+        f"scenario: {name}",
+        f"runtime: {runtime}",
+        f"mode: {fixture_mode}",
+        f"model: {result.get('model')}",
+        f"returncode: {result.get('returncode')}",
+        f"timed_out: {result.get('timed_out')}",
+        f"cost: {result.get('cost')}",
+        "",
+        "== prompt ==",
+        prompt,
+        "",
+        "== agent answer ==",
+        str(result.get("result_text") or ""),
+        "",
+        "== changed paths ==",
+        *(changed or ["(none)"]),
+        "",
+        "== tree ==",
+        *(
+            str(p.relative_to(root))
+            for p in sorted(root.rglob("*"))
+            if p.is_file() and ".git/" not in str(p.relative_to(root))
+        ),
+        "",
+        "== stdout tail ==",
+        (result.get("stdout") or "")[-4000:],
+        "",
+        "== stderr ==",
+        (result.get("stderr") or "")[-2000:],
+    ]
+    name_part = f"{runtime}-{fixture_mode}-{name}.txt"
+    (out / name_part).write_text("\n".join(lines), encoding="utf-8")
+
+
 class PlanBuildFlowLiveEvals(unittest.TestCase):
     def _run_scenario(self, name: str, runtime: str, fixture_mode: str):
         scenario_dir = SCENARIOS / name
@@ -187,6 +242,7 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
                 os.environ["EVALS_RUNTIME"] = old
 
         changed = git_paths_changed(root)
+        _write_evidence(name, runtime, fixture_mode, prompt, result, changed, root)
         # If the agent wrote required artifacts then hung (MCP/etc), accept timeout.
         soft_ok = False
         if result.get("timed_out"):

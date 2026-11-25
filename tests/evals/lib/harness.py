@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,7 @@ DEFAULT_MODELS = {
 }
 
 _OPENCODE_FAMILY = frozenset({"opencode", "pi", "omp"})
+_INSTALL_ROOT: Path | None = None
 
 META_PROMPT_RE = re.compile(
     r"(?i)(/plan\b|/build\b|haz un plan|run the /plan|produce planning artifacts only)"
@@ -52,17 +54,47 @@ def _cli() -> Path:
     return _go_cli.cli()
 
 
+def _install_root() -> Path:
+    """A throwaway install root for the fixture's rendered hook commands.
+
+    `sync` pins the hook command to `<AI_SPECS_HOME>/dist/ai-specs`. Pointing
+    AI_SPECS_HOME at the checkout left that path empty, so every rendered hook
+    fell through to whatever `ai-specs` sat on PATH and the gate refused every
+    write for the wrong reason. This mirrors a real install instead.
+    """
+    global _INSTALL_ROOT
+    if _INSTALL_ROOT is None:
+        root = Path(tempfile.mkdtemp(prefix="ai-specs-eval-install-"))
+        dist = root / "dist"
+        dist.mkdir()
+        shutil.copy2(_cli(), dist / "ai-specs")
+        (dist / "ai-specs").chmod(0o755)
+        for name in ("templates", "catalog", "bundled-skills", "bundled-commands"):
+            source = ROOT / name
+            if source.is_dir():
+                shutil.copytree(source, root / name)
+        _INSTALL_ROOT = root
+    return _INSTALL_ROOT
+
+
 def _sync(project_root: Path) -> None:
     """Run the native `sync`: the one authority that materializes recipes, the
     lock, the brief and the gitignore/envrc, and fans out to enabled agents."""
-    env = {**os.environ, "AI_SPECS_HOME": str(ROOT)}
-    subprocess.run(
+    env = {**os.environ, "AI_SPECS_HOME": str(_install_root())}
+    proc = subprocess.run(
         [str(_cli()), "sync", str(project_root)],
-        check=True,
         text=True,
         capture_output=True,
         env=env,
+        check=False,
     )
+    if proc.returncode != 0:
+        # check=True threw away the cause; a failing fixture setup is unreadable
+        # without sync's own stderr.
+        raise AssertionError(
+            f"sync failed ({proc.returncode}) on {project_root}\n"
+            f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+        )
 
 
 def _enabled_agents(project_root: Path) -> list[str]:
@@ -157,6 +189,13 @@ def wire_runtime_hooks(project_root: Path, runtime: str) -> None:
     `Edit|Write|MultiEdit|NotebookEdit` matchers for cursor, which has no
     pre-file-write event.
     """
+    # `setup_runtime_skills` copies a recipe skill into a real `<agent>/skills`
+    # directory, but `sync` owns that path and wants it to be a symlink into
+    # ai-specs/skills — it refuses to replace a non-symlink, which used to abort
+    # every live scenario's fixture setup.
+    for skills in project_root.glob(".*/skills"):
+        if skills.is_dir() and not skills.is_symlink():
+            shutil.rmtree(skills)
     _set_enabled_agents(project_root, [runtime_to_agent(runtime)])
     _sync(project_root)
 
