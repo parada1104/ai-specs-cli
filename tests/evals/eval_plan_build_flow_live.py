@@ -128,6 +128,17 @@ SEEDED_IMPLEMENTATION = (
 )
 
 
+SEEDED_CANONICAL_SPEC = (
+    "# forms\n"
+    "\n"
+    "## Requirements\n"
+    "\n"
+    "### Requirement: Signup accepts an email\n"
+    "\n"
+    "The signup form accepts an email and a password.\n"
+)
+
+
 def _write_evidence(
     name: str,
     runtime: str,
@@ -262,11 +273,25 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
                 ["git", "commit", "-qm", f"plan: authorize {slug}"], cwd=root, check=True
             )
 
+        if meta.get("seed_canonical_spec"):
+            # The canonical-spec case asks the agent to hand-write a rule that
+            # already lives somewhere. Without a canonical spec there is nothing
+            # to write into, and the agent rightly stops.
+            canonical = root / "openspec" / "specs" / "forms" / "spec.md"
+            canonical.parent.mkdir(parents=True, exist_ok=True)
+            canonical.write_text(SEEDED_CANONICAL_SPEC, encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "specs: seed the canonical forms spec"],
+                cwd=root,
+                check=True,
+            )
+
         if meta.get("seed_implementation"):
-            # The archive prompts say the change is ready. A change with a plan and
-            # no code is not ready, and every agent in the P0 pass refused to
-            # archive it for exactly that reason -- a false premise in the eval,
-            # not a defect in the skill.
+            # The archive prompts say the change is ready; a plan with no code is
+            # not, and every agent in the P0 pass refused to archive it for
+            # exactly that reason -- a false premise in the eval, not a defect in
+            # the skill.
             target = root / "src" / "forms" / "signup.py"
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(SEEDED_IMPLEMENTATION, encoding="utf-8")

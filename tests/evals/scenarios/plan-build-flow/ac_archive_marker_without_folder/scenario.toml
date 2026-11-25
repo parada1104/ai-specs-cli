@@ -6,6 +6,9 @@ fixture_mode = "odd"
 slug = "signup-validation"
 seed_plan = true
 seed_plan_delta = false
+# The archive prompt says the work is done; without code the agent refuses, and
+# rightly so. The folder-less premise is kept: no delta folder is seeded.
+seed_implementation = true
 description = "A delta-less odd change archives into a dated folder holding the archived.md marker, and the plan stays where it is"
 required_path_globs = [
   "odd/changes/archive/????-??-??-signup-validation/archived.md",
