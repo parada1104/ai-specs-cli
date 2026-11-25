@@ -136,7 +136,7 @@ func checkVerifyEvidence(changeDir, tier string) []string {
 	}
 	plan, _ := ParsePlan(readText(filepath.Join(changeDir, "tasks.md")))
 	if plan.HasVerification {
-		return checkPlanVerification(filepath.Join(changeDir, "tasks.md"), tier)
+		return checkPlanVerification(filepath.Join(changeDir, "tasks.md"))
 	}
 	report := filepath.Join(changeDir, "verify-report.md")
 	if !isFile(report) {
@@ -150,9 +150,7 @@ func checkVerifyEvidence(changeDir, tier string) []string {
 		blockers = append(blockers, "verify-report.md is missing Verdict/Status/Overall")
 	} else {
 		token := verdictToken(verdict)
-		if tier == TierFull && token != "PASS" {
-			blockers = append(blockers, "verify-report.md Verdict must be strict PASS for tier full")
-		} else if tier == TierStandard && failureVerdicts[token] {
+		if failureVerdicts[token] {
 			blockers = append(blockers, "verify-report.md Verdict must not be FAIL or BLOCKED for tier standard")
 		}
 	}
@@ -170,21 +168,15 @@ func checkVerifyEvidence(changeDir, tier string) []string {
 	if !shaRe.MatchString(strings.Trim(values["commit"], "`")) {
 		blockers = append(blockers, "verify-report.md is missing Commit/SHA/Revision (7-40 hex)")
 	}
-	if tier == TierFull && strings.ToLower(values["ready_for_archive"]) != "true" {
-		blockers = append(blockers, "verify-report.md requires ready_for_archive: true for tier full")
-	}
-	if tier == TierFull {
-		blockers = append(blockers, checkFullCriteriaMapping(changeDir, text)...)
-	}
 	return blockers
 }
 
 // checkPlanVerification grades the plan's `## Verification` rows: coverage of
 // every declared requirement, a single row per requirement, exactly one
-// backticked command per graded row with no prose around or inside it, no
-// recorded failing run, and at least one PASS at full. An `N/A` row carries its
-// reason and is exempt from the command requirement (C').
-func checkPlanVerification(planPath, tier string) []string {
+// backticked command per graded row with no prose around or inside it, and no
+// recorded failing run. An `N/A` row carries its reason and is exempt from the
+// command requirement (C').
+func checkPlanVerification(planPath string) []string {
 	plan, _ := ParsePlan(readText(planPath))
 	declared, issue := parseRequirementsFor(filepath.Dir(planPath), readText(planPath))
 	if len(declared.ids) == 0 {
@@ -193,7 +185,6 @@ func checkPlanVerification(planPath, tier string) []string {
 	var blockers []string
 	covered := make([]bool, len(declared.ids))
 	seen := map[int]bool{}
-	passes := 0
 	for _, row := range plan.Verification {
 		number, err := requirementNumber(row.ID)
 		if err != nil || number < 1 || number > len(declared.ids) {
@@ -227,8 +218,6 @@ func checkPlanVerification(planPath, tier string) []string {
 		case "FAIL":
 			blockers = append(blockers, `verification for `+id+` is FAIL: fix it or record "- **`+
 				id+`: N/A** — <why>"`)
-		case "PASS":
-			passes++
 		}
 	}
 	for index, ok := range covered {
@@ -238,9 +227,6 @@ func checkPlanVerification(planPath, tier string) []string {
 		id := declared.ids[index]
 		blockers = append(blockers, `verification is missing a row for `+id+`: add "- **`+
 			id+`: PASS** — <evidence>"`)
-	}
-	if tier == TierFull && passes == 0 {
-		blockers = append(blockers, "full tier needs at least one PASS row in verification")
 	}
 	return blockers
 }

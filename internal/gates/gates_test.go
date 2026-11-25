@@ -13,22 +13,11 @@ import (
 // tierOpt mirrors the CLI's optional --tier: nil means "infer from tasks.md".
 func tierOpt(name string) *string { return &name }
 
-// fixtureConfig is a valid project config: `go` is on PATH and matches the
-// fixture verification rows, so a test about another rule stays about that rule.
-const fixtureConfig = "schema: spec-driven\n\nstrict_tdd: true\n\ntesting:\n  runner: go test ./internal/...\n"
-
-// newBareRepo is newRepo without the project config, for the config rules.
-func newBareRepo(t *testing.T) string {
+// newRepo is a planning root with the archive tree the guardian reads.
+func newRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	mkdirAll(t, filepath.Join(root, "openspec", "changes", "archive"))
-	return root
-}
-
-func newRepo(t *testing.T) string {
-	t.Helper()
-	root := newBareRepo(t)
-	writeFile(t, filepath.Join(root, "openspec", "config.yaml"), fixtureConfig)
 	return root
 }
 
@@ -192,17 +181,19 @@ func TestLightMinimumRequiresOnlyThePlan(t *testing.T) {
 	assertBlockerLacks(t, result, "proposal.md", "verify")
 }
 
-func TestFullMinimumBlocksWithoutADelta(t *testing.T) {
+// TestFullMinimumBlocksWithoutADelta documents the removed full tier: it now
+// blocks with the migration message instead of a tier minimum.
+func TestFullTierDepthLineBlocksWithTheMigrationMessage(t *testing.T) {
 	root := newRepo(t)
 	archiveWith(t, root, "full-no-delta", "Depth: full\n\n"+verificationPlan(1,
 		"- **S1: PASS** — `go test ./internal/gates/`, exit 0\n"), archiveOpts{})
 
 	result := CheckPremerge(root, "full-no-delta", tierOpt("full"))
 	if result.OK {
-		t.Fatal("full without a delta must block")
+		t.Fatal("the removed full tier must block")
 	}
-	assertBlockerContains(t, result, "/specs/ must contain at least one *.md for tier full")
-	assertBlockerLacks(t, result, "proposal.md", "design.md")
+	assertBlockerContains(t, result, "the full tier was removed")
+	assertBlockerLacks(t, result, "for tier full")
 }
 
 func TestInferTierFromTasksDepthLine(t *testing.T) {
@@ -232,7 +223,7 @@ func TestUnknownTierBlocksAndFallsBackToInference(t *testing.T) {
 	if result.Tier != "light" {
 		t.Fatalf("tier = %q, want the inferred light", result.Tier)
 	}
-	assertBlockerContains(t, result, "unknown tier 'Deep' (expected light|standard|full)")
+	assertBlockerContains(t, result, "unknown tier 'Deep' (expected light|standard)")
 }
 
 func TestPrearchiveChecksActiveFolderWithoutActiveBlocker(t *testing.T) {
@@ -327,20 +318,16 @@ const planWithoutLog = "## Specs\n\n- **S1.** Fixture requirement\n\n## Tasks\n\
 	"| ID | Spec | Tarea | Ruta | Commit |\n| --- | --- | --- | --- | --- |\n" +
 	"| T1 | S1 | Fixture task | inline | pendiente |\n"
 
-// Standard and Full require `## Log` with L1; Light keeps it optional (R7/P6).
-func TestStandardAndFullRequireTheLogSection(t *testing.T) {
-	for _, tier := range []string{TierStandard, TierFull} {
-		t.Run(tier, func(t *testing.T) {
-			root := newRepo(t)
-			archiveWith(t, root, "log-"+tier, "Depth: "+tier+"\n\n"+planWithoutLog, archiveOpts{
-				spec: true, report: repoString(standardReport),
-			})
-			result := CheckPremerge(root, "log-"+tier, tierOpt(tier))
-			assertBlockerContains(t, result, "`## Log` section is missing")
-		})
-	}
-
+// Standard requires `## Log` with L1; Light keeps it optional (R7/P6).
+func TestStandardRequiresTheLogSection(t *testing.T) {
 	root := newRepo(t)
+	archiveWith(t, root, "log-"+TierStandard, "Depth: "+TierStandard+"\n\n"+planWithoutLog, archiveOpts{
+		spec: true, report: repoString(standardReport),
+	})
+	result := CheckPremerge(root, "log-"+TierStandard, tierOpt(TierStandard))
+	assertBlockerContains(t, result, "`## Log` section is missing")
+
+	root = newRepo(t)
 	archiveWith(t, root, "log-light", "Depth: light\n\n"+planWithoutLog, archiveOpts{})
 	if result := CheckPremerge(root, "log-light", tierOpt(TierLight)); !result.OK {
 		t.Fatalf("light plan without Log = %+v, want OK", result)
@@ -380,18 +367,6 @@ func TestLightMinimumNeedsOnlyThePlan(t *testing.T) {
 	if result := CheckPremerge(root, "light-plan-only", tierOpt(TierLight)); !result.OK {
 		t.Fatalf("light plan-only = %+v, want OK", result)
 	}
-}
-
-func TestFullMinimumNeedsThePlanAndOneDelta(t *testing.T) {
-	root := newRepo(t)
-	archiveWith(t, root, "full-plan-delta", "Depth: full\n\n"+verificationPlan(1,
-		"- **S1: PASS** — `go test ./internal/gates/`, exit 0\n"), archiveOpts{spec: true})
-
-	result := CheckPremerge(root, "full-plan-delta", tierOpt(TierFull))
-	if !result.OK {
-		t.Fatalf("full plan plus delta = %+v, want OK", result)
-	}
-	assertBlockerLacks(t, result, "proposal.md", "design.md")
 }
 
 // --- ODD archive condition (plan-build-openspec-odd-align I5/P4, S10) ---
@@ -440,5 +415,30 @@ func TestCheckPremergeOddPassesAnArchivedPromotedDelta(t *testing.T) {
 	got := CheckPremergeOdd(root, "thing")
 	if !got.OK || len(got.Blockers) != 0 {
 		t.Fatalf("Result = %+v, want OK after archiving a promoted delta", got)
+	}
+}
+
+// --- plan-build-openspec-odd-align D2: the full tier is removed ---
+
+// A change declaring the removed full tier blocks with a migration message that
+// points at standard, so nobody is downgraded silently.
+func TestRemovedFullTierBlocksWithAMigrationMessage(t *testing.T) {
+	for name, tier := range map[string]*string{
+		"depth line":    nil,
+		"explicit tier": tierOpt("full"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := newRepo(t)
+			archiveWith(t, root, "std-full", "Depth: full\n\n"+verificationPlan(1,
+				"- **S1: PASS** — `go test ./internal/gates/`, exit 0\n"), archiveOpts{spec: true})
+
+			result := CheckPremerge(root, "std-full", tier)
+			if result.OK {
+				t.Fatal("the removed full tier must block")
+			}
+			assertBlockerContains(t, result,
+				"archive/std-full: the full tier was removed: migrate the change to `Depth: standard` "+
+					"(the plan plus at least one `specs/` delta)")
+		})
 	}
 }

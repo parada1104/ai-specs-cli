@@ -40,17 +40,25 @@ func inferTier(tasksText string) string {
 	return TierStandard
 }
 
-// resolveTier applies an explicit --tier when given, blocking an unknown value
-// and then falling back to the inference.
-func resolveTier(tasksText string, tier *string, blockers *[]string) string {
-	if tier == nil {
-		return inferTier(tasksText)
+// resolveTier applies an explicit --tier when given, blocking an unknown value,
+// and then falls back to the inference. The removed full tier blocks with a
+// migration message and is graded as standard so no other rule reports on a tier
+// that no longer exists. The declaration is read before the override, so an
+// explicit --tier cannot hide a plan that still says `Depth: full` (R1-001).
+func resolveTier(tasksText string, tier *string, location string, blockers *[]string) string {
+	resolved := inferTier(tasksText)
+	declaredFull := resolved == TierFull
+	if tier != nil {
+		resolved = strings.ToLower(*tier)
+		if resolved != TierLight && resolved != TierStandard && resolved != TierFull {
+			*blockers = append(*blockers, fmt.Sprintf(
+				"unknown tier '%s' (expected light|standard)", *tier))
+			resolved = inferTier(tasksText)
+		}
 	}
-	resolved := strings.ToLower(*tier)
-	if resolved != TierLight && resolved != TierStandard && resolved != TierFull {
-		*blockers = append(*blockers, fmt.Sprintf(
-			"unknown tier '%s' (expected light|standard|full)", *tier))
-		return inferTier(tasksText)
+	if declaredFull || resolved == TierFull {
+		*blockers = append(*blockers, removedTierBlocker(location))
+		resolved = TierStandard
 	}
 	return resolved
 }
@@ -112,12 +120,12 @@ func checkPlan(folder, location, tier string) []string {
 func inspectFolder(folder string, tier *string, location, repoRoot string) Result {
 	var blockers []string
 	tasksText := readText(filepath.Join(folder, "tasks.md"))
-	resolved := resolveTier(tasksText, tier, &blockers)
+	resolved := resolveTier(tasksText, tier, location, &blockers)
 	blockers = append(blockers, checkMinimums(folder, resolved, location)...)
 	blockers = append(blockers, checkPlan(folder, location, resolved)...)
 	blockers = append(blockers, checkTaskCommits(folder, repoRoot, location)...)
 	blockers = append(blockers, checkVerifyEvidence(folder, resolved)...)
-	blockers = append(blockers, checkProjectConfig(repoRoot, filepath.Join(folder, "tasks.md"), resolved)...)
+	blockers = append(blockers, checkVerificationCommands(repoRoot, filepath.Join(folder, "tasks.md"), resolved)...)
 	blockers = append(blockers, promotionBlockers(repoRoot, folder, resolved, location)...)
 	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: resolved, ArchivePath: folder}
 }

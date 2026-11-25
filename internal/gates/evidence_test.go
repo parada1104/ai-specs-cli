@@ -167,39 +167,6 @@ func TestStandardRejectsFailureVerdicts(t *testing.T) {
 	}
 }
 
-func TestFullRequiresStrictPassAndReadyForArchive(t *testing.T) {
-	report := "## Verify evidence\n- Verdict: PASS\n- Command: ./tests/validate.sh\n" +
-		"- Exit: 0\n- Date: 2026-08-07\n- Commit: 1234567\n" +
-		"\n## Success-criteria mapping\n- Criterion 1: PASS — covered\n"
-	root := evidenceArchive(t, "full-report", report, "Depth: full\n")
-
-	missingReady := CheckPremerge(root, "full-report", tierOpt("full"))
-	if missingReady.OK {
-		t.Fatal("full without ready_for_archive must block")
-	}
-	assertBlockerContains(t, missingReady, "ready_for_archive")
-
-	writeFile(t, filepath.Join(root, "openspec", "changes", "archive", "full-report", "verify-report.md"),
-		"## Verify evidence\n- Verdict: WARN\n- Command: ./tests/validate.sh\n"+
-			"- Exit: 0\n- Date: 2026-08-07\n- Commit: 1234567\n"+
-			"- ready_for_archive: true\n\n## Success-criteria mapping\n- Criterion 1: PASS — covered\n")
-	failed := CheckPremerge(root, "full-report", tierOpt("full"))
-	if failed.OK {
-		t.Fatal("a non-PASS verdict must block at full")
-	}
-	assertBlockerContains(t, failed, "pass")
-}
-
-func TestFullAcceptsAliasLabelsAndReadyForArchive(t *testing.T) {
-	report := "## Verify evidence\n- Status: PASS\n- Command: ./tests/validate.sh\n" +
-		"- Exit status: 0\n- Date: 2026-08-07\n- SHA: 1234567\n" +
-		"- ready_for_archive: true\n\n## Success-criteria mapping\n- Criterion 1: PASS — covered\n"
-	root := evidenceArchive(t, "full-no-explore", report, "Depth: full\n")
-	if result := CheckPremerge(root, "full-no-explore", tierOpt("full")); !result.OK {
-		t.Fatalf("result = %+v, want OK", result)
-	}
-}
-
 func TestLightIsAdvisoryAboutEvidence(t *testing.T) {
 	root := newRepo(t)
 	archiveWith(t, root, "light-no-report", "Depth: light\n", archiveOpts{proposal: true})
@@ -254,29 +221,6 @@ func TestStandardVerificationFailBlocks(t *testing.T) {
 	}
 	assertBlockerContains(t, result,
 		`verification for S2 is FAIL: fix it or record "- **S2: N/A** — <why>"`)
-}
-
-func TestFullVerificationNeedsAtLeastOnePass(t *testing.T) {
-	root := planEvidenceArchive(t, "verify-all-na", TierFull, 2,
-		"- **S1: N/A** — prosa que el CLI no juzga\n- **S2: N/A** — otra prosa\n", archiveOpts{spec: true})
-
-	result := CheckPremerge(root, "verify-all-na", tierOpt(TierFull))
-	if result.OK {
-		t.Fatal("full with no PASS row must block")
-	}
-	assertBlockerContains(t, result, "full tier needs at least one PASS row in verification")
-	assertBlockerLacks(t, result, "ready_for_archive")
-}
-
-func TestFullVerificationAllPassIsOK(t *testing.T) {
-	root := planEvidenceArchive(t, "verify-all-pass", TierFull, 2,
-		"- **S1: PASS** — `go vet ./...`, exit 0\n- **S2: PASS** — `go test ./internal/gates/`, exit 0\n",
-		archiveOpts{spec: true})
-
-	result := CheckPremerge(root, "verify-all-pass", tierOpt(TierFull))
-	if !result.OK {
-		t.Fatalf("plan-verified full change = %+v, want OK", result)
-	}
 }
 
 func TestVerificationAcceptsCriterionLabelsForCompat(t *testing.T) {
