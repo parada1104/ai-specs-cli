@@ -202,7 +202,7 @@ func isCanonicalSpec(rel string) bool {
 // merely sits in the tree.
 func deltaInDiff(mode, change string, diff []planbuild.DiffEntry) bool {
 	for _, entry := range diff {
-		if !entry.Adds() {
+		if !entry.Adds() || !strings.HasSuffix(entry.Path, ".md") {
 			continue
 		}
 		if rest := changeRelative(mode, change, entry.Path); len(rest) >= 2 && rest[0] == "specs" {

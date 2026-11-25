@@ -364,6 +364,28 @@ func TestRefuteRaBlocksADeltaRenamedOutOfTheTree(t *testing.T) {
 	}
 }
 
+// A file added under specs/ is only a delta when it is Markdown: the rename of a
+// delta to a non-Markdown name must not credit R-a (found by the slice-6 probe).
+func TestRefuteRaBlocksADeltaRenamedToANonMarkdownFile(t *testing.T) {
+	for _, mode := range []string{planbuild.ModeOdd, planbuild.ModeOpenspec} {
+		t.Run(mode, func(t *testing.T) {
+			root, _ := refuteRepo(t)
+			delta := filepath.ToSlash(planbuild.ChangeFolder(root, mode, "thing")[len(root)+1:]) +
+				"/specs/cap/spec.md"
+			spec := filepath.ToSlash(planbuild.SpecsBase(root, mode)[len(root)+1:]) + "/cap/spec.md"
+			commitPath(t, root, delta, "feat: add the delta")
+			base := strings.TrimSpace(gitOutput(t, root, "rev-parse", "HEAD"))
+			gitRun(t, root, "mv", delta, filepath.ToSlash(filepath.Dir(delta))+"/spec.txt")
+			commitPath(t, root, spec, "docs: edit the canonical spec")
+
+			blockers := refutations(root, mode, "thing", &base)
+			if !strings.HasPrefix(joinedBlockers(blockers), "R-a:") {
+				t.Fatalf("refutations = %q, want R-a over a delta renamed to .txt", blockers)
+			}
+		})
+	}
+}
+
 // A plan from an earlier change never answers R-b: only a plan this diff adds or
 // modifies is evidence, or every archived change would answer for every later one.
 func TestRefuteRbIgnoresAPlanFromAnEarlierChange(t *testing.T) {
