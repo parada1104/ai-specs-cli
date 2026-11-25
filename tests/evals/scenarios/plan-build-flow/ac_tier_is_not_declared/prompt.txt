@@ -1,4 +1,5 @@
-Los emails con `+` tienen que aceptarse en el signup: hoy la validación los
-rechaza.
-El change se llama signup-validation. Decime qué tier te da esto — resolvelo vos
-a partir de lo que hay en la rama, no me pidas que lo elija yo.
+El signup de src/forms/signup.py hoy no valida nada. La regla nueva es: el email
+tiene que contener una arroba.
+El change se llama signup-validation. Decime qué tier te da esto —resolvelo vos
+a partir de lo que hay en la rama, no me pidas que lo elija yo— y dejá escritos
+los artifacts que ese tier pide, sin tocar producción.

@@ -54,7 +54,7 @@ def _cli() -> Path:
     return _go_cli.cli()
 
 
-def _install_root() -> Path:
+def install_root() -> Path:
     """A throwaway install root for the fixture's rendered hook commands.
 
     `sync` pins the hook command to `<AI_SPECS_HOME>/dist/ai-specs`. Pointing
@@ -80,7 +80,7 @@ def _install_root() -> Path:
 def _sync(project_root: Path) -> None:
     """Run the native `sync`: the one authority that materializes recipes, the
     lock, the brief and the gitignore/envrc, and fans out to enabled agents."""
-    env = {**os.environ, "AI_SPECS_HOME": str(_install_root())}
+    env = {**os.environ, "AI_SPECS_HOME": str(install_root())}
     proc = subprocess.run(
         [str(_cli()), "sync", str(project_root)],
         text=True,

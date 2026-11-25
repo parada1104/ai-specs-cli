@@ -21,6 +21,7 @@ from tests.evals.lib.harness import (  # noqa: E402
     git_paths_changed,
     glob_exists,
     init_git_repo,
+    install_root,
     live_enabled,
     load_scenario,
     materialize_project,
@@ -213,7 +214,16 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
         # the scenario exercises the gate hook end-to-end, not just the advisory
         # skill/brief layer.
         wire_runtime_hooks(root, runtime)
+        init_git_repo(root)
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-qm", "baseline"], cwd=root, check=True)
+        # The branch pairs the change, so the derived slug is the fixture slug and
+        # `branch.<branch>.*` / the commit range resolve for the assertions.
+        seed_fixture_branch(root)
         if meta.get("seed_plan"):
+            # Seeded after the branch exists and committed on it: a plan written
+            # into the baseline is not a branch change, which left the archive
+            # cases with nothing to archive and made the branch look untouched.
             seed_authorized_plan(
                 root,
                 slug=slug,
@@ -222,20 +232,24 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
                 # delta, `standard` a plan plus its delta.
                 tier="standard" if meta.get("seed_plan_delta", True) else "light",
             )
-
-        init_git_repo(root)
-        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
-        subprocess.run(["git", "commit", "-qm", "baseline"], cwd=root, check=True)
-        # The branch pairs the change, so the derived slug is the fixture slug and
-        # `branch.<branch>.*` / the commit range resolve for the assertions.
-        seed_fixture_branch(root)
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", f"plan: authorize {slug}"], cwd=root, check=True
+            )
 
         prompt = scenario.prompt_path.read_text()
         old = os.environ.get("EVALS_RUNTIME")
+        # The skill tells the agent to run `ai-specs changes start --none`,
+        # `specs promote` and `changes archive`; without the binary on PATH those
+        # instructions are unexecutable and the case measures the PATH, not the
+        # skill.
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = str(install_root() / "dist") + os.pathsep + old_path
         os.environ["EVALS_RUNTIME"] = runtime
         try:
             result = run_prompt(root, prompt, runtime=runtime, mode=scenario.mode)
         finally:
+            os.environ["PATH"] = old_path
             if old is None:
                 os.environ.pop("EVALS_RUNTIME", None)
             else:
