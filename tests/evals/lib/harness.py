@@ -756,6 +756,23 @@ def _walk_tool_inputs(node: Any, out: list[str]) -> None:
             _walk_tool_inputs(value, out)
 
 
+def _has_tool_event(node: Any) -> bool:
+    """True when this payload contains a tool-call record of any shape.
+
+    A final-result object is parseable JSON too, so "parsed a document" is not
+    evidence that the runtime reported its tool calls.
+    """
+    if isinstance(node, dict):
+        for key in ("type", "kind", "role"):
+            value = node.get(key)
+            if isinstance(value, str) and "tool" in value.lower():
+                return True
+        return any(_has_tool_event(value) for value in node.values())
+    if isinstance(node, list):
+        return any(_has_tool_event(value) for value in node)
+    return False
+
+
 def collect_executed_commands(result: dict[str, Any]) -> list[str] | None:
     """The command strings the runtime recorded as tool calls.
 
@@ -773,14 +790,18 @@ def collect_executed_commands(result: dict[str, Any]) -> list[str] | None:
 
     found: list[str] = []
     saw_event = False
+    saw_tool_event = False
     for text in texts:
         try:
             event = json.loads(text)
         except json.JSONDecodeError:
             continue
         saw_event = True
+        saw_tool_event = saw_tool_event or _has_tool_event(event)
         _walk_tool_inputs(event, found)
-    return found if saw_event else None
+    # No tool event means no evidence: fail closed rather than report "no
+    # forbidden command ran" from a payload that never carried tool calls.
+    return found if saw_event and saw_tool_event else None
 
 
 def assert_no_forbidden_commands(

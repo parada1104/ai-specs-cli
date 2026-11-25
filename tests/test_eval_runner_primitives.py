@@ -127,11 +127,27 @@ class ForbiddenCommandsTests(_Fixture):
         self.assertIsNone(collect_executed_commands(result))
 
     def test_reads_the_command_from_the_tool_call_record(self):
-        result = {"json": {"part": {"state": {"input": {"command": "gh pr merge 12"}}}}}
+        result = {
+            "json": {
+                "type": "tool",
+                "part": {"state": {"input": {"command": "gh pr merge 12"}}},
+            }
+        }
         executed = collect_executed_commands(result)
         self.assertEqual(["gh pr merge 12"], executed)
         with self.assertRaises(AssertionError):
             assert_no_forbidden_commands(executed, ["gh pr merge"])
+
+    def test_a_final_result_object_is_not_tool_call_evidence(self):
+        # Parseable JSON is not proof the runtime reported its tool calls; a
+        # prohibited command could hide behind a payload with no events at all.
+        result = {"json": {"result": "all done", "num_turns": 3}, "stdout": ""}
+        self.assertIsNone(collect_executed_commands(result))
+        with self.assertRaises(AssertionError) as ctx:
+            assert_no_forbidden_commands(
+                collect_executed_commands(result), ["git merge"]
+            )
+        self.assertIn("no tool-call evidence", str(ctx.exception))
 
 
 class RequiredCommitTrailerTests(_Fixture):
