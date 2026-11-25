@@ -1,4 +1,4 @@
-"""Live plan-build-flow behavioral evals (AC3–AC7). Requires EVALS_LIVE=1."""
+"""Live plan-build-flow behavioral evals. Requires EVALS_LIVE=1."""
 
 from __future__ import annotations
 
@@ -31,8 +31,10 @@ from tests.evals.lib.harness import (  # noqa: E402
 from tests.evals.lib.project_fixture import (  # noqa: E402
     recipe_version,
     seed_authorized_plan,
+    seed_fixture_branch,
     seed_project_files,
     setup_runtime_skills,
+    write_manifest,
 )
 
 SCENARIOS = REPO_ROOT / "tests" / "evals" / "scenarios" / "plan-build-flow"
@@ -40,12 +42,27 @@ LIVE_SCENARIOS = (
     "ac3_plan_stops_before_apply",
     "ac4_build_after_auth",
     "ac5_archive_before_merge",
-    "ac7_light_gitignore_file_store",
-    "ac8_approval_verb_without_folder",
+    "ac_none_no_ceremony",
+    "ac_light_plan_only",
+    "ac_standard_plan_plus_delta",
+    "ac_tier_is_not_declared",
+    "ac_ceremony_none_openspec",
+    "ac_plan_shape",
+    "ac_delta_only_for_observable_rule",
+    "ac_archive_with_verb_then_ask_before_merge",
+    "ac_archive_marker_without_folder",
+    "ac_high_risk_path_odd",
+    "ac_specs_write_without_delta",
+    "ac_mode_odd_artifacts",
+    "ac_mode_openspec_artifacts",
+    "ac_brief_reports_the_mode",
     "ac_delivery_contract_artifact_store",
-    "ac_depth_conflict_ask",
-    "ac_depth_conflict_same_turn",
 )
+
+# `fixture_mode = "both"` runs the scenario once per artifact mode; the mode is
+# declared in the manifest the fixture seeds, so a case asserts the tree its
+# mode owns. Per-mode assertion overrides live under `[modes.<mode>]`.
+ALL_MODES = ("openspec", "odd")
 
 
 def _selected_runtimes() -> list[str]:
@@ -79,6 +96,20 @@ def _selected_scenarios() -> list[str]:
     return list(LIVE_SCENARIOS)
 
 
+def _fixture_modes(meta: dict) -> tuple[str, ...]:
+    declared = str(meta.get("fixture_mode", "openspec"))
+    if declared == "both":
+        return ALL_MODES
+    return (declared,)
+
+
+def _meta_for_mode(meta: dict, mode: str) -> dict:
+    """Scenario assertions for one artifact mode: `[modes.<mode>]` over the top
+    level, so a case that must assert a different tree per mode stays one case."""
+    overrides = (meta.get("modes") or {}).get(mode) or {}
+    return {**meta, **overrides}
+
+
 def _n_of_m(passed: int, trials: int) -> int:
     return trials if trials == 1 else max(2, (trials * 2) // 3)
 
@@ -88,11 +119,12 @@ def _n_of_m(passed: int, trials: int) -> int:
     "Set EVALS_LIVE=1 with a supported runtime on PATH to run live evals",
 )
 class PlanBuildFlowLiveEvals(unittest.TestCase):
-    def _run_scenario(self, name: str, runtime: str):
+    def _run_scenario(self, name: str, runtime: str, fixture_mode: str):
         scenario_dir = SCENARIOS / name
         scenario = load_scenario(scenario_dir)
         meta = scenario.meta
         slug = str(meta.get("slug", "signup-validation"))
+        label = f"{runtime}/{fixture_mode}/{name}"
 
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -100,6 +132,16 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
         version = recipe_version(REPO_ROOT / "catalog", scenario.recipe_id)
         manifest_extra = str(meta.get("manifest_extra", ""))
         materialize_project(root, scenario.recipe_id, version, extra=manifest_extra)
+        if fixture_mode != "openspec":
+            # materialize_project renders the default mode; the mode under test is
+            # declared in the manifest and re-rendered by the final sync below.
+            write_manifest(
+                root,
+                recipe_id=scenario.recipe_id,
+                version=version,
+                extra_recipes=manifest_extra,
+                mode=fixture_mode,
+            )
         if meta.get("sync_before_prompt"):
             sync = subprocess.run(
                 [str(REPO_ROOT / "bin" / "ai-specs"), "sync", str(root)],
@@ -118,12 +160,20 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
         wire_runtime_hooks(root, runtime)
         if meta.get("seed_plan"):
             seed_authorized_plan(
-                root, slug=slug, tier=str(meta.get("tier", "standard"))
+                root,
+                slug=slug,
+                mode=fixture_mode,
+                # The fixture's only seed knob: `light` seeds a plan with no
+                # delta, `standard` a plan plus its delta.
+                tier="standard" if meta.get("seed_plan_delta", True) else "light",
             )
 
         init_git_repo(root)
         subprocess.run(["git", "add", "-A"], cwd=root, check=True)
         subprocess.run(["git", "commit", "-qm", "baseline"], cwd=root, check=True)
+        # The branch pairs the change, so the derived slug is the fixture slug and
+        # `branch.<branch>.*` / the commit range resolve for the assertions.
+        seed_fixture_branch(root)
 
         prompt = scenario.prompt_path.read_text()
         old = os.environ.get("EVALS_RUNTIME")
@@ -157,7 +207,7 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
                 result["returncode"],
                 0,
                 msg=(
-                    f"{runtime}/{name} failed rc={result.get('returncode')} "
+                    f"{label} failed rc={result.get('returncode')} "
                     f"timed_out={result.get('timed_out')}\n"
                     f"stderr={result.get('stderr')}\n"
                     f"stdout_tail={(result.get('stdout') or '')[-2000:]}\n"
@@ -167,71 +217,51 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
             )
         # Every scenario.toml assertion key lives in the harness, so the live
         # module and the primitive tests share one implementation.
-        assert_scenario_outputs(root, meta, result, changed, label=f"{runtime}/{name}")
-
-    def test_ac_depth_conflict_ask(self):
-        if "ac_depth_conflict_ask" not in _selected_scenarios():
-            self.skipTest("depth conflict ask not selected via EVALS_SCENARIOS")
-        self._run_named("ac_depth_conflict_ask")
-
-    def test_ac_depth_conflict_same_turn(self):
-        if "ac_depth_conflict_same_turn" not in _selected_scenarios():
-            self.skipTest("depth same-turn resolution not selected via EVALS_SCENARIOS")
-        self._run_named("ac_depth_conflict_same_turn")
-
+        assert_scenario_outputs(
+            root, _meta_for_mode(meta, fixture_mode), result, changed, label=label
+        )
 
     def _run_named(self, name: str):
         trials = int(os.environ.get("EVALS_TRIALS", "1"))
         runtimes = _selected_runtimes()
         self.assertTrue(runtimes, "no runtimes selected")
-        requires_hook = bool(load_scenario(SCENARIOS / name).meta.get("requires_hook"))
+        meta = load_scenario(SCENARIOS / name).meta
+        requires_hook = bool(meta.get("requires_hook"))
+        modes = _fixture_modes(meta)
         failures: list[str] = []
         for runtime in runtimes:
             # A gate scenario asserts only where the gate can be enforced; skip
             # runtimes with no pre-file-write hook event (e.g. cursor-agent).
             if requires_hook and runtime in NO_FILE_WRITE_HOOK_RUNTIMES:
                 continue
-            passed = 0
-            last_err: Exception | None = None
-            for _ in range(trials):
-                try:
-                    self._run_scenario(name, runtime)
-                    passed += 1
-                except AssertionError as exc:
-                    last_err = exc
-            needed = _n_of_m(passed, trials)
-            if passed < needed:
-                failures.append(f"{runtime}:{name} {passed}/{trials} — {last_err}")
+            for mode in modes:
+                passed = 0
+                last_err: Exception | None = None
+                for _ in range(trials):
+                    try:
+                        self._run_scenario(name, runtime, mode)
+                        passed += 1
+                    except AssertionError as exc:
+                        last_err = exc
+                needed = _n_of_m(passed, trials)
+                if passed < needed:
+                    failures.append(f"{runtime}:{mode}:{name} {passed}/{trials} — {last_err}")
         self.assertFalse(failures, msg="; ".join(failures))
 
-    def test_ac3_plan_stops_before_apply(self):
-        if "ac3_plan_stops_before_apply" not in _selected_scenarios():
-            self.skipTest("ac3 not selected via EVALS_SCENARIOS")
-        self._run_named("ac3_plan_stops_before_apply")
 
-    def test_ac4_build_after_auth(self):
-        if "ac4_build_after_auth" not in _selected_scenarios():
-            self.skipTest("ac4 not selected via EVALS_SCENARIOS")
-        self._run_named("ac4_build_after_auth")
+def _scenario_test(name: str):
+    def test(self: PlanBuildFlowLiveEvals):
+        if name not in _selected_scenarios():
+            self.skipTest(f"{name} not selected via EVALS_SCENARIOS")
+        self._run_named(name)
 
-    def test_ac5_archive_before_merge(self):
-        if "ac5_archive_before_merge" not in _selected_scenarios():
-            self.skipTest("ac5 not selected via EVALS_SCENARIOS")
-        self._run_named("ac5_archive_before_merge")
+    test.__name__ = f"test_{name}"
+    test.__doc__ = f"Live golden: {name}"
+    return test
 
-    def test_ac7_light_gitignore_file_store(self):
-        if "ac7_light_gitignore_file_store" not in _selected_scenarios():
-            self.skipTest("ac7 not selected via EVALS_SCENARIOS")
-        self._run_named("ac7_light_gitignore_file_store")
 
-    def test_ac8_approval_verb_without_folder(self):
-        if "ac8_approval_verb_without_folder" not in _selected_scenarios():
-            self.skipTest("ac8 not selected via EVALS_SCENARIOS")
-        self._run_named("ac8_approval_verb_without_folder")
-    def test_ac_delivery_contract_artifact_store(self):
-        if "ac_delivery_contract_artifact_store" not in _selected_scenarios():
-            self.skipTest("delivery contract not selected via EVALS_SCENARIOS")
-        self._run_named("ac_delivery_contract_artifact_store")
+for _name in LIVE_SCENARIOS:
+    setattr(PlanBuildFlowLiveEvals, f"test_{_name}", _scenario_test(_name))
 
 
 class PlanBuildDeliveryContractHermetic(unittest.TestCase):

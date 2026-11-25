@@ -1,0 +1,9 @@
+id = "ac_delta_only_for_observable_rule"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "plan"
+fixture_mode = "both"
+slug = "signup-validation"
+description = "Negative case: an internal refactor owes no delta and the answer says no observable rule changes"
+required_absent_path_globs = ["**/changes/*/specs/**"]
+required_transcript_one_of = ["regla", "observable", "no cambia"]

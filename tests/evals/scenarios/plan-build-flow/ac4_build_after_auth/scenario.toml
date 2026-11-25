@@ -3,14 +3,11 @@ recipe_id = "plan-build-flow"
 prompt_file = "prompt.txt"
 mode = "build"
 ac = "AC4"
-tier = "standard"
+fixture_mode = "openspec"
 slug = "signup-validation"
 seed_plan = true
-description = "After authorization, build mode implements signup validation"
-forbidden_path_globs = []
-required_path_globs = []
+description = "After authorization, build mode implements signup validation against the seeded new-grammar plan"
 required_changed_globs = ["src/forms/signup.py"]
-
-[[required_content]]
-path = "src/forms/signup.py"
-contains_any = ["@", "ValueError", "raise", "invalid", "len("]
+required_content = [
+  { path = "src/forms/signup.py", contains_any = ["@", "ValueError", "raise", "invalid", "len("] },
+]

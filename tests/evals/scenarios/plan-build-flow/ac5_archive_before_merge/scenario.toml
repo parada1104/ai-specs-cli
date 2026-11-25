@@ -3,14 +3,12 @@ recipe_id = "plan-build-flow"
 prompt_file = "prompt.txt"
 mode = "build"
 ac = "AC5"
-tier = "standard"
+fixture_mode = "openspec"
 slug = "signup-validation"
 seed_plan = true
-description = "Archive-tail moves change folder before merge; vault/tracker absent is OK"
-forbidden_path_globs = []
-# Bare slug (skill) or dated OpenSpec archive/*/YYYY-MM-DD-slug
+description = "Archive-tail moves the change folder into the dated archive through the verb before merge; vault/tracker absent is OK"
 required_path_globs = [
   "openspec/changes/archive/*signup-validation*/tasks.md",
   "openspec/changes/archive/*signup-validation*/specs/**/*.md",
 ]
-assert_active_change_gone = true
+assert_active_change_gone = "openspec"

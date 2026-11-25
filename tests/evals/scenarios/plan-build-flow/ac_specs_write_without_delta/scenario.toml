@@ -1,0 +1,12 @@
+id = "ac_specs_write_without_delta"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+fixture_mode = "openspec"
+slug = "signup-validation"
+description = "A request to hand-write the canonical spec is answered with the delta plus ai-specs specs promote, and the canonical spec is only written by the promoter"
+required_path_globs = [
+  "openspec/changes/signup-validation/specs/forms/spec.md",
+  "openspec/specs/forms/spec.md",
+]
+required_transcript_one_of = ["specs promote", "spec promote"]

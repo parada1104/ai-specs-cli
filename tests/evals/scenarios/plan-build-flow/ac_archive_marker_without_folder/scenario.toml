@@ -1,0 +1,13 @@
+id = "ac_archive_marker_without_folder"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+fixture_mode = "odd"
+slug = "signup-validation"
+seed_plan = true
+seed_plan_delta = false
+description = "A delta-less odd change archives into a dated folder holding the archived.md marker, and the plan stays where it is"
+required_path_globs = [
+  "odd/changes/archive/????-??-??-signup-validation/archived.md",
+  "odd/tasks/signup-validation.md",
+]

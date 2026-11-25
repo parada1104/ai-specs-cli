@@ -1,0 +1,23 @@
+id = "ac_archive_with_verb_then_ask_before_merge"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+fixture_mode = "both"
+slug = "signup-validation"
+seed_plan = true
+description = "Archive runs through the verb into the dated folder, the active change is gone, and the answer asks before merging"
+required_transcript_all = ["archive", "merge"]
+
+[modes.openspec]
+required_path_globs = [
+  "openspec/changes/archive/*signup-validation*/tasks.md",
+  "openspec/changes/archive/*signup-validation*/specs/**/*.md",
+]
+assert_active_change_gone = "openspec"
+
+[modes.odd]
+required_path_globs = [
+  "odd/changes/archive/*signup-validation*/specs/**/*.md",
+  "odd/tasks/signup-validation.md",
+]
+assert_active_change_gone = "odd"

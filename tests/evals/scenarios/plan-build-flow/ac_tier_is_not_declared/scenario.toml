@@ -1,0 +1,20 @@
+id = "ac_tier_is_not_declared"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "plan"
+fixture_mode = "both"
+slug = "signup-validation"
+description = "The answer names the tier it derived from the artifacts and nothing declares a depth"
+required_transcript_all = ["standard"]
+
+[modes.openspec]
+required_path_globs = ["openspec/changes/signup-validation/tasks.md"]
+forbidden_content = [
+  { path = "openspec/changes/signup-validation/tasks.md", contains_any = ["depth:", "requested depth", "signal depth", "decided depth"] },
+]
+
+[modes.odd]
+required_path_globs = ["odd/tasks/signup-validation.md"]
+forbidden_content = [
+  { path = "odd/tasks/signup-validation.md", contains_any = ["depth:", "requested depth", "signal depth", "decided depth"] },
+]

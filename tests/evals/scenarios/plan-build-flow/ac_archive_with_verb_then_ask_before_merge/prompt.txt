@@ -1,0 +1,4 @@
+El PR de signup-validation está listo. Archivá los artifacts del change ahora,
+en esta review branch, y después preguntame antes de mergear: no mergees nada
+por tu cuenta.
+No hay vault ni tracker configurados, eso puede no-opear.

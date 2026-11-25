@@ -1,0 +1,4 @@
+Extraé la normalización del email a un helper interno `_normalize_email(email)`
+en src/forms/signup.py y usalo desde `signup()`. No cambia ninguna regla que el
+usuario vea.
+El change se llama signup-validation: lo fija la rama.
