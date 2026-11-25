@@ -347,6 +347,32 @@ func TestHasDelta(t *testing.T) {
 	}
 }
 
+// HasDelta sees the archive too: after archiving, the delta of the change moved
+// into <archive>/<date>-<change>/specs/, and the change still carries it.
+func TestHasDeltaSeesAnArchivedDelta(t *testing.T) {
+	for _, mode := range []string{ModeOdd, ModeOpenspec} {
+		for _, folder := range []string{"thing", "2026-01-02-thing"} {
+			t.Run(mode+"/"+folder, func(t *testing.T) {
+				root := t.TempDir()
+				delta := filepath.Join(ArchiveBase(root, mode), folder, "specs", "cap", "spec.md")
+				if err := os.MkdirAll(filepath.Dir(delta), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(delta, []byte("# spec\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if !HasDelta(root, mode, "thing") {
+					t.Fatal("an archived delta is not read as the change's delta")
+				}
+				// A near-miss archive of another change supplies nothing.
+				if HasDelta(root, mode, "thing-extra") {
+					t.Fatal("a near-match archive supplied a delta")
+				}
+			})
+		}
+	}
+}
+
 // After archiving, an odd change still pairs from the branch because its plan
 // survives at odd/tasks/<change>.md while the delta folder is gone.
 func TestResolveChangePairsAnArchivedOddChange(t *testing.T) {

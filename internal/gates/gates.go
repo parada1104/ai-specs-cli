@@ -151,19 +151,37 @@ func CheckPrearchive(repoRoot, slug string, tier *string) Result {
 
 // CheckPremerge inspects the archived artifacts and staged evidence before
 // merge. A branch-shaped slug (CI passes GITHUB_HEAD_REF) keeps its last segment.
-func CheckPremerge(repoRoot, slug string, tier *string) Result {
+// The optional base is the --base override the refutations of a `none` change are
+// graded against. S16: a change with no folder, no archive entry and no plan is a
+// valid `none` declaration, so it passes unless the refutations of its diff block it.
+func CheckPremerge(repoRoot, slug string, tier *string,
+	// Variadic so the call sites that predate --base keep compiling; omitting it
+	// falls back to the resolved base ref, never to "no refutations".
+	base ...*string) Result {
 	slug = planbuild.NormalizeChange(slug)
 	changes := filepath.Join(repoRoot, "openspec", "changes")
 	active := filepath.Join(changes, slug)
+	activePresent := isDir(active)
 	var blockers []string
-	if isDir(active) {
+	if activePresent {
 		blockers = append(blockers, fmt.Sprintf(
 			"active change folder still present at openspec/changes/%s/ — "+
 				"run archive-tail on the review branch before merge", slug))
 	}
-	archive, _, archiveBlockers := resolveArchive(filepath.Join(changes, "archive"), slug, "openspec")
+	archive, present, archiveBlockers := resolveArchive(filepath.Join(changes, "archive"), slug, "openspec")
+	refutations := Refutations(repoRoot, planbuild.ModeOpenspec, slug, baseOption(base))
+	// S16: no folder and no archive entry at all is the valid `none` declaration.
+	// A symlinked entry is still an entry, so the resolver keeps naming it. The
+	// declared depth still has to cohere with the derivation, or an explicit
+	// `--tier standard` would pass silently as none.
+	if !activePresent && !present && planbuild.ArchiveEntry(repoRoot, planbuild.ModeOpenspec, slug) == "" {
+		resolved := resolveTier(active, tier, "changes/"+slug, &blockers)
+		blockers = append(blockers, refutations...)
+		return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: resolved}
+	}
 	blockers = append(blockers, archiveBlockers...)
 	if archive == "" {
+		blockers = append(blockers, refutations...)
 		return Result{Blockers: blockers, Tier: rawTier(tier)}
 	}
 
@@ -171,9 +189,18 @@ func CheckPremerge(repoRoot, slug string, tier *string) Result {
 	// rules apply, so an undated archive cannot bypass the plan grammar.
 	result := inspectFolder(archive, tier, "archive/"+filepath.Base(archive), repoRoot)
 	result.Blockers = append(blockers, result.Blockers...)
+	result.Blockers = append(result.Blockers, refutations...)
 	result.OK = len(result.Blockers) == 0
 	result.ArchivePath = archive
 	return result
+}
+
+// baseOption is the optional --base of the premerge verbs.
+func baseOption(base []*string) *string {
+	if len(base) == 0 {
+		return nil
+	}
+	return base[0]
 }
 
 // TierOdd is the guardian's label in odd mode: there is no Plan Build depth
@@ -193,7 +220,10 @@ const TierOdd = "odd"
 // An empty change means the branch could not be paired.
 // The mode is resolved by the caller, which is the same resolver the pre-tool-use
 // gate uses.
-func CheckPremergeOdd(repoRoot, change string) Result {
+func CheckPremergeOdd(repoRoot, change string,
+	// Variadic so the call sites that predate --base keep compiling; omitting it
+	// falls back to the resolved base ref, never to "no refutations".
+	base ...*string) Result {
 	change = planbuild.NormalizeChange(change)
 	if change == "" {
 		return Result{Blockers: []string{"ODD mode is active but the current branch cannot be " +
@@ -227,6 +257,7 @@ func CheckPremergeOdd(repoRoot, change string) Result {
 	if active || present || validPlan {
 		tier = TierOdd
 	}
+	blockers = append(blockers, Refutations(repoRoot, planbuild.ModeOdd, change, baseOption(base))...)
 	archivePath := archive
 	if archivePath == "" && validPlan {
 		archivePath = planbuild.PlanPath(repoRoot, change)

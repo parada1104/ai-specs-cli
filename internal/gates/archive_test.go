@@ -175,8 +175,12 @@ func TestBlocksWhenArchiveRootIsASymlink(t *testing.T) {
 	assertBlockerContains(t, result, "archive root", "symlink")
 }
 
+// The missing-archive rule is pinned on a change that exists: an active folder
+// with no archive at all still blocks and names both accepted forms. A change
+// with no artifact at all is the `none` declaration of S16 (refute_test.go).
 func TestMissingArchiveNamesBothAcceptedForms(t *testing.T) {
 	root := newRepo(t)
+	activeWith(t, root, "nowhere", "Depth: light\n", archiveOpts{})
 	result := CheckPremerge(root, "nowhere", tierOpt("light"))
 	if result.OK {
 		t.Fatal("expected a missing-archive blocker")

@@ -126,8 +126,13 @@ func TestBlocksWhenActiveChangeFolderExists(t *testing.T) {
 	assertBlockerContains(t, result, "active")
 }
 
+// A change that does exist — its folder is still active — still blocks with the
+// missing-archive message it always had. A change with no artifact at all is the
+// `none` declaration of S16, covered by refute_test.go.
 func TestBlocksWhenArchiveMissing(t *testing.T) {
-	result := CheckPremerge(newRepo(t), "missing-slug", tierOpt("standard"))
+	root := newRepo(t)
+	activeWith(t, root, "missing-slug", "Depth: light\n", archiveOpts{})
+	result := CheckPremerge(root, "missing-slug", tierOpt("standard"))
 	if result.OK {
 		t.Fatal("expected a blocker without an archive")
 	}

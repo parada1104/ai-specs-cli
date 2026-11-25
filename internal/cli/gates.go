@@ -22,12 +22,12 @@ import (
 // on stderr after the bare `gates` (same shape as the specs/skills families).
 const gatesUsage = `Usage: ai-specs gates <subcommand> [args]
 Subcommands:
-  premerge <slug> --root <planning-root> [--tier none|light|standard] [--change <name>]
+  premerge <slug> --root <planning-root> [--tier none|light|standard] [--change <name>] [--base <ref>]
                              Check the archived artifacts and staged evidence
 Run 'ai-specs gates premerge --help' for full options.
 `
 
-const gatesPremergeUsage = `Usage: ai-specs gates premerge <slug> --root <planning-root> [--tier none|light|standard] [--stage pre-merge|pre-archive] [--change <name>]
+const gatesPremergeUsage = `Usage: ai-specs gates premerge <slug> --root <planning-root> [--tier none|light|standard] [--stage pre-merge|pre-archive] [--change <name>] [--base <ref>]
 
 In ` + "odd" + ` mode the change comes from the current branch (odd/tasks/<change>.md):
 <slug> is accepted and ignored, the plan and the promotion parity of its deltas
@@ -49,6 +49,11 @@ Options:
   --change <name>     Explicit change override, for CI and detached HEAD. A
                       positional <slug> wins over it. Without either, the change
                       is the folder paired by the branch, or the only active one.
+  --base <ref>        Ref the branch is diffed against by the objective
+                      refutations (R-a, R-b) of a none change. Default: the
+                      project's [recipes.git-pr-flow.config] base_branch, tried
+                      as origin/<base>, <base>, then main or master. CI passes
+                      the pull request's base sha here.
   --tier <tier>       Coherence assertion, never a choice: the tier is derived
                       from the artifacts (none without a plan, light with a plan
                       alone, standard with a plan and a delta) and a value that
@@ -91,6 +96,7 @@ func runGatesPremerge(args []string, stdout, stderr io.Writer) int {
 	root := ""
 	var tier *string
 	stage := "pre-merge"
+	var baseValue *string
 	usageError := func(message string) int {
 		fmt.Fprintln(stderr, message)
 		fmt.Fprintln(stderr, "Run 'ai-specs gates premerge --help' for usage.")
@@ -143,6 +149,16 @@ func runGatesPremerge(args []string, stdout, stderr io.Writer) int {
 		case strings.HasPrefix(arg, "--change="):
 			changeFlag = true
 			override = strings.TrimPrefix(arg, "--change=")
+		case arg == "--base":
+			if i+1 >= len(args) {
+				return usageError("ERROR: --base requires a value")
+			}
+			i++
+			value := args[i]
+			baseValue = &value
+		case strings.HasPrefix(arg, "--base="):
+			value := strings.TrimPrefix(arg, "--base=")
+			baseValue = &value
 		case strings.HasPrefix(arg, "-"):
 			return usageError("ERROR: unknown flag: " + arg)
 		default:
@@ -212,9 +228,9 @@ func runGatesPremerge(args []string, stdout, stderr io.Writer) int {
 	case stage == "pre-archive":
 		result = gates.CheckPrearchive(root, change, tier)
 	case mode == planbuild.ModeOdd:
-		result = gates.CheckPremergeOdd(root, change)
+		result = gates.CheckPremergeOdd(root, change, baseValue)
 	default:
-		result = gates.CheckPremerge(root, change, tier)
+		result = gates.CheckPremerge(root, change, tier, baseValue)
 	}
 	if result.OK {
 		if source == "positional" {
