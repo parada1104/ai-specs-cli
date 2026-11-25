@@ -94,20 +94,41 @@ func changedRepo(t *testing.T) (root, base string) {
 	return root, base
 }
 
-func TestChangedFilesListsTheChangedPath(t *testing.T) {
+func TestDiffEntriesListsTheChangedPath(t *testing.T) {
 	root, base := changedRepo(t)
-	files, ok := ChangedFiles(root, base)
+	entries, ok := DiffEntries(root, base)
 	if !ok {
-		t.Fatal("ChangedFiles over a real diff = false, want true")
+		t.Fatal("DiffEntries over a real diff = false, want true")
 	}
-	if len(files) != 1 || files[0] != "changed.txt" {
-		t.Fatalf("ChangedFiles = %q, want [changed.txt]", files)
+	if len(entries) != 1 || entries[0].Path != "changed.txt" || entries[0].Status != "A" || !entries[0].Adds() {
+		t.Fatalf("DiffEntries = %+v, want one added changed.txt", entries)
+	}
+}
+
+// The status is what tells contributed evidence from a removal: a deleted path
+// is reported as a deletion and never satisfies Adds.
+func TestDiffEntriesReportsADeletion(t *testing.T) {
+	root, base := changedRepo(t)
+	if err := os.Remove(filepath.Join(root, "changed.txt")); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-q", "-m", "third")
+
+	entries, ok := DiffEntries(root, base)
+	if !ok {
+		t.Fatal("DiffEntries over a deletion = false, want true")
+	}
+	for _, entry := range entries {
+		if entry.Path == "changed.txt" && (entry.Status != "D" || entry.Adds()) {
+			t.Fatalf("DiffEntries = %+v, want changed.txt deleted and not contributing", entries)
+		}
 	}
 }
 
 // No diff means no answer: an unknown base, an option-shaped ref and a root
 // outside any repository are all false, never a partial list.
-func TestChangedFilesReportsNoDiff(t *testing.T) {
+func TestDiffEntriesReportsNoDiff(t *testing.T) {
 	root, _ := changedRepo(t)
 	for _, tc := range []struct{ name, root, base string }{
 		{"unknown base", root, "no-such-base"},
@@ -116,8 +137,8 @@ func TestChangedFilesReportsNoDiff(t *testing.T) {
 		{"outside a repository", t.TempDir(), "HEAD"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if files, ok := ChangedFiles(tc.root, tc.base); ok {
-				t.Fatalf("ChangedFiles = (%q, true), want false", files)
+			if entries, ok := DiffEntries(tc.root, tc.base); ok {
+				t.Fatalf("DiffEntries = (%+v, true), want false", entries)
 			}
 		})
 	}

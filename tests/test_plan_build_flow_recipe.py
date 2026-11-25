@@ -336,21 +336,21 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         self.assertEqual(
             rules[:5],
             [
-                "Classify each substantial change (full planning chain, spec+tasks, or tasks-only) before writing production code; compute the signal depth, compare any explicit requested depth, ask on conflicts, and annotate requested/signal/decided depth in tasks.md before authorization.",
-                "Direct implementation requests without a change folder still require planning at the classified depth; approval verbs do not skip the plan step.",
-                "Do not open a PR until the change folder on the branch contains the tier minimum planning files (Light: proposal.md + tasks.md; Standard: proposal.md + tasks.md + specs/**/*.md; Full: tasks.md plus proposal.md or design.md plus specs/**/*.md), committed.",
+                "Classify each substantial change from the artifacts it carries instead of from a declared or requested depth: no plan is `none` (an ODD small task), a plan alone (a tasks-only change) is `light`, a plan plus a delta is `standard`, and a delta with no plan is allowed; nothing declares a depth, no tier has artifact minima, and `full` does not exist.",
+                "Direct implementation requests without a change folder need no plan when the change stays `none` or carries only a delta; approval verbs never skip the plan a `light` or `standard` change needs.",
+                "Do not open a PR until the change's plan parses (`## Specs` and `## Tasks`, plus `## Log` with `L1` from `standard` up), until the delivery evidence the guardian grades — the plan and the delta — is contributed by the change's own diff, and until that evidence is committed; `proposal.md`, `design.md` and `verify-report.md` are optional and still honoured when present.",
                 "After authorization, implement and validate in the change worktree when isolated worktrees are enabled.",
-                "Before merge on the review branch: run verify evidence (Standard/Full block without a conforming verify-report.md; Light is advisory), then promote canonical specs so every delta under specs/<domain>/spec.md is composed into openspec/specs/<domain>/spec.md (the promoter is the only writer and the guardian only validates), then pass the pre-archive guardian, then archive the change folder at openspec/changes/archive/YYYY-MM-DD-<slug>/ using a valid ISO calendar date, then run the pre-merge guardian again; an unpromoted or unresolved delta blocks Standard/Full, exact undated archive/<slug>/ is legacy fallback only, ambiguity and malformed or near-match candidates block, and archive is never deferred until after merge.",
+                "Before merge on the review branch: run the evidence the plan's `## Verification` records as one row per declared `S#`, graded from `standard` up and advisory for `light` (`verify-report.md` is never required, and `proposal.md` and `design.md` stay optional), then promote canonical specs so every delta under specs/<domain>/spec.md is composed into openspec/specs/<domain>/spec.md (the promoter is the only writer and the guardian only validates), then pass the pre-archive guardian, then archive the change folder at openspec/changes/archive/YYYY-MM-DD-<slug>/ using a valid ISO calendar date, then run the pre-merge guardian again; an unpromoted or unresolved delta blocks a `standard` change, exact undated archive/<slug>/ is legacy fallback only, ambiguity and malformed or near-match candidates block, and archive is never deferred until after merge.",
             ],
         )
         self.assertIn("{config.artifact_store_default}", rules[5])
         self.assertEqual(rules[5].count("{config.artifact_store_default}"), 1)
         self.assertIn("topology", rules[6].lower())
         self.assertIn("superproject", rules[6].lower())
-        self.assertIn("Full planning", rules[7])
-        self.assertIn("inline", rules[7])
-        self.assertIn("malformed", rules[8])
-        self.assertIn("Standard and Light", rules[8])
+        self.assertIn("in odd mode", rules[7])
+        self.assertIn("in openspec mode", rules[7])
+        self.assertIn("gates premerge", rules[8])
+        self.assertIn("coherence assertion", rules[8])
         self.assertIn("session-level preflight", rules[9])
         self.assertIn("artifact-derived plan", rules[10])
 
@@ -406,9 +406,9 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
     def test_brief_describes_adversarial_depth_conflicts(self):
         rules = list(_recipe_toml()["provides"]["brief"]["workflow_rules"])
         combined = "\n".join(rules).lower()
-        self.assertIn("compare any explicit requested depth", combined)
-        self.assertIn("ask on conflicts", combined)
-        self.assertIn("annotate requested/signal/decided depth", combined)
+        self.assertIn("classify each substantial change from the artifacts it carries", combined)
+        self.assertIn("nothing declares a depth", combined)
+        self.assertIn("no tier has artifact minima", combined)
         self.assertIn("{config.artifact_store_default}", rules[5])
         self.assertEqual(rules[5].count("{config.artifact_store_default}"), 1)
 

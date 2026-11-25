@@ -234,11 +234,18 @@ func runGatesPremerge(args []string, stdout, stderr io.Writer) int {
 	var result gates.Result
 	switch {
 	case stage == "pre-archive":
-		result = gates.CheckPrearchive(root, change, tier)
+		result = gates.CheckPrearchive(root, change, tier, baseValue)
 	case mode == planbuild.ModeOdd:
 		result = gates.CheckPremergeOdd(root, change, baseValue)
 	default:
 		result = gates.CheckPremerge(root, change, tier, baseValue)
+	}
+	// A refutation that could not be applied is said out loud, never silently
+	// skipped, and never turned into a blocker: the verdict alone decides the exit.
+	note := func() {
+		for _, text := range result.Notes {
+			fmt.Fprintf(stderr, "premerge-guardian: NOTE: %s\n", text)
+		}
 	}
 	if result.OK {
 		if source == "positional" {
@@ -246,11 +253,13 @@ func runGatesPremerge(args []string, stdout, stderr io.Writer) int {
 		} else {
 			fmt.Fprintf(stdout, "premerge-guardian: OK (%s, change %s)\n", result.Tier, change)
 		}
+		note()
 		return 0
 	}
 	fmt.Fprintln(stderr, "premerge-guardian: BLOCKED")
 	for _, blocker := range result.Blockers {
 		fmt.Fprintf(stderr, "  - %s\n", blocker)
 	}
+	note()
 	return 1
 }
