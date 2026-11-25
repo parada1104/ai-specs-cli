@@ -23,12 +23,13 @@ const (
 	// RecipeID is the recipe whose config carries the mode.
 	RecipeID = "plan-build-flow"
 	// ConfigKey is the manifest key holding the declared mode.
-	ConfigKey = "mode"
+	ConfigKey       = "mode"
+	ManifestRelPath = "ai-specs/ai-specs.toml"
 )
 
 // ManifestPath is the repository-wide project manifest convention.
 func ManifestPath(root string) string {
-	return filepath.Join(root, "ai-specs", "ai-specs.toml")
+	return filepath.Join(root, filepath.FromSlash(ManifestRelPath))
 }
 
 // Decide resolves the pure part of the mode: an explicit odd/openspec wins,

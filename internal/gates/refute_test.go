@@ -75,24 +75,68 @@ func TestRefuteRaBlocksACanonicalSpecChangeWithoutADelta(t *testing.T) {
 	}
 }
 
-// R-a is refuted by a delta wherever it lives: in the active change folder, or
-// only in its archive entry once the change was promoted and archived.
+// R-a is refuted by a delta in the diff: in the active change folder, or in
+// its archive entry once the change was promoted and archived.
 func TestRefuteRaPassesWhenTheChangeCarriesADelta(t *testing.T) {
 	for _, mode := range []string{planbuild.ModeOdd, planbuild.ModeOpenspec} {
 		for _, folder := range []string{"thing", "2026-01-02-thing"} {
 			t.Run(mode+"/"+folder, func(t *testing.T) {
 				root, base := refuteRepo(t)
-				spec := planbuild.SpecsBase(root, mode)[len(root)+1:] + "/cap/spec.md"
-				commitPath(t, root, filepath.ToSlash(spec), "docs: edit the canonical spec")
+				spec := filepath.ToSlash(planbuild.SpecsBase(root, mode)[len(root)+1:]) + "/cap/spec.md"
 
-				deltaFolder := planbuild.ChangeFolder(root, mode, "thing")
+				deltaFolder := filepath.ToSlash(planbuild.ChangeFolder(root, mode, "thing")[len(root)+1:])
 				if folder != "thing" {
-					deltaFolder = filepath.Join(planbuild.ArchiveBase(root, mode), folder)
+					deltaFolder = filepath.ToSlash(planbuild.ArchiveBase(root, mode)[len(root)+1:]) + "/" + folder
 				}
-				writeFile(t, filepath.Join(deltaFolder, "specs", "cap", "spec.md"), "# spec\n")
+				commitPath(t, root, spec, "docs: edit the canonical spec")
+				commitPath(t, root, deltaFolder+"/specs/cap/spec.md", "docs: add the delta")
 
 				if blockers := Refutations(root, mode, "thing", &base); len(blockers) != 0 {
 					t.Fatalf("Refutations = %q, want none for a change that carries a delta", blockers)
+				}
+			})
+		}
+	}
+}
+
+// R-a reads the diff, not the tree: a delta left by an earlier change proves nothing.
+func TestRefuteRaIgnoresADeltaThatIsNotPartOfTheDiff(t *testing.T) {
+	for _, mode := range []string{planbuild.ModeOdd, planbuild.ModeOpenspec} {
+		root, _ := refuteRepo(t)
+		archive := filepath.ToSlash(planbuild.ArchiveBase(root, mode)[len(root)+1:])
+		commitPath(t, root, archive+"/2026-01-02-thing/specs/cap/spec.md", "chore: earlier archive")
+		base := strings.TrimSpace(gitOutput(t, root, "rev-parse", "HEAD"))
+		commitPath(t, root, filepath.ToSlash(planbuild.SpecsBase(root, mode)[len(root)+1:])+"/cap/spec.md", "docs: edit")
+		if blockers := Refutations(root, mode, "thing", &base); len(blockers) == 0 {
+			t.Fatalf("%s: want R-a over a delta that is not in the diff, got %q", mode, blockers)
+		}
+	}
+}
+
+// A raw non-ASCII component and both sides of a rename reach R-a.
+func TestRefuteRaGradesRawAndRenamedPaths(t *testing.T) {
+	for _, mode := range []string{planbuild.ModeOdd, planbuild.ModeOpenspec} {
+		for _, tc := range []struct{ name, spec, move string }{
+			{"non-ascii", "/cap-ñ/spec.md", ""},
+			{"rename", "/cap/spec.md", "moved-spec.md"},
+		} {
+			t.Run(mode+"/"+tc.name, func(t *testing.T) {
+				root, base := refuteRepo(t)
+				spec := filepath.ToSlash(planbuild.SpecsBase(root, mode)[len(root)+1:]) + tc.spec
+				commitPath(t, root, spec, "docs: add the canonical spec")
+				if tc.move != "" {
+					base = strings.TrimSpace(gitOutput(t, root, "rev-parse", "HEAD"))
+					gitRun(t, root, "mv", spec, tc.move)
+					gitRun(t, root, "commit", "-q", "-m", "docs: move the spec out")
+					if files, _ := planbuild.ChangedFiles(root, base); !strings.Contains(
+						strings.Join(files, "\n"), tc.move) {
+						t.Fatalf("ChangedFiles = %q, want both sides of the rename", files)
+					}
+				}
+				blockers := Refutations(root, mode, "thing", &base)
+				if !strings.Contains(joinedBlockers(blockers), "R-a:") ||
+					!strings.Contains(joinedBlockers(blockers), spec) {
+					t.Fatalf("Refutations = %q, want R-a naming %q", blockers, spec)
 				}
 			})
 		}
@@ -124,6 +168,26 @@ func TestRefuteRbRequiresAPlanInOpenspec(t *testing.T) {
 	writeFile(t, filepath.Join(root, "openspec", "changes", "thing", "tasks.md"), "# plan\n")
 	if blockers := Refutations(root, planbuild.ModeOpenspec, "thing", &base); len(blockers) != 0 {
 		t.Fatalf("Refutations = %q, want none once the change carries a plan", blockers)
+	}
+
+	root, base = refuteRepo(t, "go.mod")
+	commitPath(t, root, "go.mod", "build: bump a module")
+	writeFile(t, filepath.Join(root, "openspec", "changes", "archive", "2026-01-02-thing", "tasks.md"), "# plan\n")
+	if blockers := Refutations(root, planbuild.ModeOpenspec, "thing", &base); len(blockers) != 0 {
+		t.Fatalf("Refutations = %q, want none for an archived plan", blockers)
+	}
+}
+
+// R-b reads the high-risk list from the trusted base revision.
+func TestRefuteRbReadsThePolicyFromTheBaseRevision(t *testing.T) {
+	for _, mode := range []string{planbuild.ModeOdd, planbuild.ModeOpenspec} {
+		root, base := refuteRepo(t, "go.mod")
+		writeFile(t, filepath.Join(root, "ai-specs", "ai-specs.toml"), "[recipes.plan-build-flow.config]\n")
+		commitPath(t, root, "go.mod", "build: bump a module and delete the policy")
+		if blockers := Refutations(root, mode, "thing", &base); len(blockers) == 0 ||
+			!strings.HasPrefix(joinedBlockers(blockers), "R-b:") {
+			t.Fatalf("%s: Refutations = %q, want R-b from the base revision's policy", mode, blockers)
+		}
 	}
 }
 
@@ -166,8 +230,15 @@ func TestRefuteRbNeverFiresWithoutADeclaredList(t *testing.T) {
 			}
 		})
 	}
-	if paths := HighRiskPaths(t.TempDir()); len(paths) != 0 {
+	if paths := HighRiskPaths(t.TempDir(), "HEAD"); len(paths) != 0 {
 		t.Fatalf("HighRiskPaths over no manifest = %q, want none", paths)
+	}
+	root, base := refuteRepo(t, "go.mod")
+	if paths := HighRiskPaths(root, ""); len(paths) != 0 {
+		t.Fatalf("HighRiskPaths with no base = %q, want none", paths)
+	}
+	if paths := HighRiskPaths(root, base); len(paths) != 1 || paths[0] != "go.mod" {
+		t.Fatalf("HighRiskPaths at the base = %q, want [go.mod]", paths)
 	}
 }
 
