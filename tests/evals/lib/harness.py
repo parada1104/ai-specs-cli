@@ -426,6 +426,12 @@ def run_claude_prompt(
         model,
         "--permission-mode",
         permission,
+        # `acceptEdits` still stops Bash, and a headless session has nobody to
+        # ask. The grant is the same single family the fixture writes into its
+        # own .claude/settings.json -- the settings file alone is not read by
+        # `-p`, so the rule is repeated where the runtime honours it.
+        "--allowedTools",
+        *CLAUDE_ALLOWED_COMMANDS,
         "--max-turns",
         _max_turns(),
         "--output-format",

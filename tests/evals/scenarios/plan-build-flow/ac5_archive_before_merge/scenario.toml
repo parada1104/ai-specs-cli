@@ -6,6 +6,10 @@ ac = "AC5"
 fixture_mode = "openspec"
 slug = "signup-validation"
 seed_plan = true
+# The prompt says the change is ready; seed code so that premise is true.
+seed_implementation = true
+# The archive verb refuses while a delta is unpromoted.
+seed_promoted_delta = true
 description = "Archive-tail moves the change folder into the dated archive through the verb before merge; vault/tracker absent is OK"
 required_path_globs = [
   "openspec/changes/archive/*signup-validation*/tasks.md",

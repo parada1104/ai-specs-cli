@@ -6,6 +6,7 @@ that must pass and one violating fixture that must fail.
 """
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 import sys
@@ -29,6 +30,7 @@ from tests.evals.lib.harness import (  # noqa: E402
     collect_executed_commands,
     current_branch,
     init_git_repo,
+    run_claude_prompt,
 )
 
 BRANCH = "fixture-branch"
@@ -259,6 +261,44 @@ class ClaudeAllowListTests(_Fixture):
             if p.is_file()
         }
         self.assertEqual({Path(".claude/settings.json")}, written)
+
+    def test_the_runtime_is_invoked_with_that_same_allow_list(self) -> None:
+        # The settings file alone is not honoured by `claude -p`, so the same
+        # single family must reach the command line -- and nothing wider with it.
+        from tests.evals.lib import harness
+
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, *args, **kwargs):
+            captured.append(list(cmd))
+            return {"returncode": 0, "stdout": '{"result": "ok"}', "stderr": "", "cmd": cmd}
+
+        real = harness._run
+        harness._run = fake_run  # type: ignore[assignment]
+        try:
+            run_claude_prompt(self.root, "hola")
+        finally:
+            harness._run = real  # type: ignore[assignment]
+
+        cmd = captured[-1]
+        self.assertIn("--allowedTools", cmd)
+        start = cmd.index("--allowedTools") + 1
+        self.assertEqual(
+            list(CLAUDE_ALLOWED_COMMANDS),
+            cmd[start : start + len(CLAUDE_ALLOWED_COMMANDS)],
+        )
+        self.assertNotIn("--dangerously-skip-permissions", cmd)
+
+
+class SeededImplementationTests(unittest.TestCase):
+    def test_the_seeded_implementation_parses(self) -> None:
+        # A seed that does not compile turns every agent into a bug reporter: the
+        # archive case failed because the agent found a SyntaxError in the fixture.
+        from tests.evals.eval_plan_build_flow_live import SEEDED_IMPLEMENTATION
+
+        ast.parse(SEEDED_IMPLEMENTATION)
+        self.assertIn("ValueError", SEEDED_IMPLEMENTATION)
+        self.assertIn('"email"', SEEDED_IMPLEMENTATION)
 
 
 if __name__ == "__main__":

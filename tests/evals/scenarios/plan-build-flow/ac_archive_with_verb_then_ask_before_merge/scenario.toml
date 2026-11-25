@@ -5,6 +5,8 @@ mode = "build"
 fixture_mode = "both"
 slug = "signup-validation"
 seed_plan = true
+# The prompt says the change is ready; seed code so that premise is true.
+seed_implementation = true
 # Archive is refused while a delta is unpromoted, so the fixture arrives promoted.
 seed_promoted_delta = true
 description = "Archive runs through the verb into the dated folder, the active change is gone, and the answer asks before merging"
