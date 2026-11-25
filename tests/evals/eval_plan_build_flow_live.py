@@ -244,6 +244,30 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
                 ["git", "commit", "-qm", f"plan: authorize {slug}"], cwd=root, check=True
             )
 
+        if meta.get("seed_promoted_delta"):
+            # `changes archive` refuses while a delta is unpromoted, so seed the
+            # change already promoted: the case measures the archive, not the
+            # promotion it never asked for.
+            promote = subprocess.run(
+                [
+                    str(install_root() / "dist" / "ai-specs"),
+                    "specs",
+                    "promote",
+                    slug,
+                    "--root",
+                    str(root),
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+                env={**os.environ, "AI_SPECS_HOME": str(install_root())},
+            )
+            self.assertEqual(promote.returncode, 0, promote.stderr or promote.stdout)
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", f"specs: promote {slug}"], cwd=root, check=True
+            )
+
         prompt = scenario.prompt_path.read_text()
         old = os.environ.get("EVALS_RUNTIME")
         # The skill tells the agent to run `ai-specs changes start --none`,

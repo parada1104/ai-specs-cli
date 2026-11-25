@@ -5,6 +5,8 @@ mode = "build"
 fixture_mode = "both"
 slug = "signup-validation"
 seed_plan = true
+# Archive is refused while a delta is unpromoted, so the fixture arrives promoted.
+seed_promoted_delta = true
 description = "Archive runs through the verb into the dated folder, the active change is gone, and the answer asks before merging"
 required_transcript_all = ["archive", "merge"]
 # "Asks before merging" is graded two ways: the answer must contain a question /
