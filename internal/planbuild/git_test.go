@@ -146,6 +146,8 @@ func TestCommitsWithRiskTrailer(t *testing.T) {
 		{"lowercase risk", "feat: x\n\nrisk: item 6 (installer paths)\n", true},
 		{"bare none", "feat: x\n\nRisk: none\n", false},
 		{"item out of range", "feat: x\n\nRisk: item 7 (no such item)\n", false},
+		{"item without a reason", "feat: x\n\nRisk: item 2\n", false},
+		{"prose after the value", "feat: x\n\nRisk: item 2 (migrations) as documented\n", false},
 		{"no trailer", "feat: x\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -24,15 +24,16 @@ func CommitIsAncestor(root, commit string) bool {
 	return exec.Command("git", "-C", root, "merge-base", "--is-ancestor", commit, "HEAD").Run() == nil
 }
 
-// riskTrailerRe is the ODD evidence trailer (S17): `Risk: item N (reason)` with N
-// in 1..6. A bare `Risk: none` never matches, and the case-insensitivity covers
-// `Risk` alone, not the rest of the line.
-var riskTrailerRe = regexp.MustCompile(`(?m)^(?i:Risk):[ \t]*item[ \t]+[1-6]\b`)
+// riskTrailerRe matches one trailer value of the ODD evidence trailer (S17):
+// `item N (reason)`, N in 1..6, with a non-empty reason. Git's trailer parser has
+// already separated values from prose, so nothing else can match.
+var riskTrailerRe = regexp.MustCompile(`(?i)^item[ \t]+[1-6][ \t]+\(\s*\S[^)]*\)$`)
 
 // ChangedFiles lists the repository-relative paths the branch changes against
-// base: the diff from `git merge-base base HEAD`. The second result is false on
-// any git failure (no base, shallow clone, not a repository), so no caller can
-// mistake a partial answer for a complete one.
+// base: the diff from `git merge-base base HEAD`. `-z --no-renames` keeps every
+// path raw and unquoted and reports both sides of a rename, so no prefix rule is
+// defeated by git's display conventions. The second result is false on any git
+// failure, so no caller can mistake a partial answer for a complete one.
 func ChangedFiles(root, base string) ([]string, bool) {
 	if !validGitRef(base) {
 		return nil, false
@@ -45,30 +46,51 @@ func ChangedFiles(root, base string) ([]string, bool) {
 	if mergeBase == "" {
 		return nil, false
 	}
-	out, err := gitText(root, "diff", "--name-only", mergeBase)
+	out, err := gitText(root, "diff", "--name-only", "-z", "--no-renames", mergeBase)
 	if err != nil {
 		return nil, false
 	}
 	var files []string
-	for _, line := range strings.Split(out, "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			files = append(files, line)
+	for _, entry := range strings.Split(out, "\x00") {
+		// A NUL-split yields raw paths; a path never contains NUL.
+		if entry != "" {
+			files = append(files, entry)
 		}
 	}
 	return files, true
 }
 
 // CommitsWithRiskTrailer reports whether any commit of base..HEAD carries a
-// `Risk: item N (<reason>)` trailer. Any git error is false.
+// `Risk: item N (<reason>)` trailer. Git supplies the values, so only a trailer
+// can satisfy it, never prose. Any git error is false.
 func CommitsWithRiskTrailer(root, base string) bool {
 	if !validGitRef(base) {
 		return false
 	}
-	out, err := gitText(root, "log", "--format=%B", base+"..HEAD")
+	out, err := gitText(root, "log", "--format=%(trailers:key=Risk,valueonly)", base+"..HEAD")
 	if err != nil {
 		return false
 	}
-	return riskTrailerRe.MatchString(out)
+	for _, value := range strings.Split(out, "\n") {
+		if riskTrailerRe.MatchString(strings.TrimRight(value, " \t\r")) {
+			return true
+		}
+	}
+	return false
+}
+
+// FileAt reads one repository-relative path from a revision (`git show
+// <base>:<rel>`), so a policy is graded at the trusted revision, not the
+// candidate. false on any failure or unusable ref.
+func FileAt(root, base, rel string) (string, bool) {
+	if !validGitRef(base) || rel == "" || strings.HasPrefix(rel, "-") {
+		return "", false
+	}
+	out, err := gitText(root, "show", base+":"+rel)
+	if err != nil {
+		return "", false
+	}
+	return out, true
 }
 
 // RefExists reports whether ref resolves to a commit in root. Any git error is

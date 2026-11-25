@@ -22,6 +22,7 @@ Commands:
   specs promote <slug> --root <planning-root>  Compose change delta specs into canonical specs
   gates premerge <slug> --root <planning-root>  Check the pre-merge archive/artifact gates
   changes archive [<change>] --root <planning-root>  Move a change folder into the dated archive
+  changes start --none --root <planning-root>  Declare that this branch needs no plan
   worktree-gate [gate args...]  Run the worktree gate (arguments passed through unchanged)
   worktree-cleanup [--dry-run]  Remove merged worktrees and branches (policy from the last sync)
   mcp vault-fs  Serve the vault filesystem MCP server (used by .mcp.json; reads CANONICAL_VAULT_PATH)

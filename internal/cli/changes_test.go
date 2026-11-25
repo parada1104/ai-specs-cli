@@ -474,6 +474,11 @@ func parityHelpSnapshot(stdout string) string {
 	const gateLine = "  worktree-gate [gate args...]  Run the worktree gate " +
 		"(arguments passed through unchanged)\n"
 	stdout = strings.ReplaceAll(stdout, gateLine, "")
+	// N16 in tests/parity/parity.py: `changes start --none` is a verb the frozen
+	// legacy goldens predate, so the same line is dropped from the Go side.
+	const startLine = "  changes start --none --root <planning-root>  " +
+		"Declare that this branch needs no plan\n"
+	stdout = strings.ReplaceAll(stdout, startLine, "")
 	const hubPrefix = "  hub [path] Interactive status + command menu (also bare "
 	const helpAnchor = "\n  help Show this help"
 	if start := strings.Index(stdout, hubPrefix); start >= 0 {
@@ -580,5 +585,111 @@ func TestChangesArchiveNormalizesABranchShapedChange(t *testing.T) {
 	}
 	if _, err := os.Stat(dst); err != nil {
 		t.Errorf("archive folder missing: %v", err)
+	}
+}
+
+// --- changes start --none (plan-build-openspec-odd-align T14/S19) ----------
+
+// changesStartRepo is a real repository on the change branch.
+func changesStartRepo(t *testing.T, branch string) string {
+	t.Helper()
+	root := t.TempDir()
+	gitTest(t, root, "init", "-b", branch)
+	return root
+}
+
+// changesCeremonyValue reads the local declaration through git, so the test
+// asserts the stored state and not only the confirmation line.
+func changesCeremonyValue(t *testing.T, root, branch string) (string, bool) {
+	t.Helper()
+	out, err := exec.Command("git", "-C", root, "config", "--get", "branch."+branch+".aiSpecsCeremony").Output()
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(string(out)), true
+}
+
+// changesStartConfirmation is the verb's one confirmation line, verbatim.
+func changesStartConfirmation(branch string) string {
+	return "changes start: declared no-plan ceremony for branch '" + branch + "' " +
+		"(git config branch." + branch + ".aiSpecsCeremony none); " +
+		"the declaration is local and never committed\n"
+}
+
+// The declaration lands in the local git config, which is what the hook reads.
+func TestChangesStartDeclaresTheLocalNoPlanCeremony(t *testing.T) {
+	root := changesStartRepo(t, "feat/thing")
+
+	code, stdout, stderr := runChangesCLI(t, "changes", "start", "--none", "--root", root)
+
+	if code != 0 || stderr != "" {
+		t.Fatalf("exit = %d, stderr = %q; want 0/empty", code, stderr)
+	}
+	if want := changesStartConfirmation("feat/thing"); stdout != want {
+		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+	value, found := changesCeremonyValue(t, root, "feat/thing")
+	if !found || value != planbuild.CeremonyNoneValue {
+		t.Errorf("git config branch.feat/thing.aiSpecsCeremony = (%q, %v), want (none, true)", value, found)
+	}
+}
+
+// Running it twice is idempotent and prints the same confirmation.
+func TestChangesStartIsIdempotent(t *testing.T) {
+	root := changesStartRepo(t, "feat/thing")
+	first, firstStdout, firstStderr := runChangesCLI(t, "changes", "start", "--none", "--root", root)
+	second, secondStdout, secondStderr := runChangesCLI(t, "changes", "start", "--none", "--root", root)
+
+	if first != 0 || second != 0 || firstStderr != "" || secondStderr != "" {
+		t.Fatalf("exit = (%d, %d), stderr = (%q, %q); want 0/0 and empty", first, second, firstStderr, secondStderr)
+	}
+	if firstStdout != secondStdout || firstStdout != changesStartConfirmation("feat/thing") {
+		t.Errorf("stdout = (%q, %q), want the same confirmation twice", firstStdout, secondStdout)
+	}
+	if value, found := changesCeremonyValue(t, root, "feat/thing"); !found || value != planbuild.CeremonyNoneValue {
+		t.Errorf("git config value = (%q, %v), want (none, true)", value, found)
+	}
+}
+
+// Without --none the verb names nothing it could declare: it prints its usage,
+// exits 2 and writes no config.
+func TestChangesStartWithoutNoneIsAUsageError(t *testing.T) {
+	root := changesStartRepo(t, "feat/thing")
+
+	code, stdout, stderr := runChangesCLI(t, "changes", "start", "--root", root)
+
+	if code != 2 || stdout != "" {
+		t.Fatalf("exit = %d, stdout = %q; want 2/empty", code, stdout)
+	}
+	if !strings.Contains(stderr, "Usage: ai-specs changes start") {
+		t.Errorf("stderr = %q, want the start usage", stderr)
+	}
+	if value, found := changesCeremonyValue(t, root, "feat/thing"); found {
+		t.Errorf("git config branch.feat/thing.aiSpecsCeremony = %q; want nothing written", value)
+	}
+}
+
+// Outside a Git repository no branch can be resolved: usage error, exit 2, and
+// no silent success.
+func TestChangesStartOutsideARepositoryIsAUsageError(t *testing.T) {
+	root := t.TempDir()
+
+	code, stdout, stderr := runChangesCLI(t, "changes", "start", "--none", "--root", root)
+
+	if code != 2 || stdout != "" {
+		t.Fatalf("exit = %d, stdout = %q; want 2/empty", code, stdout)
+	}
+	if !strings.Contains(stderr, "cannot resolve the current branch") {
+		t.Errorf("stderr = %q, want the branch resolution error", stderr)
+	}
+	if !strings.Contains(stderr, "Run 'ai-specs changes start --help' for usage.") {
+		t.Errorf("stderr = %q, want the usage hint", stderr)
+	}
+}
+
+// The verb is registered as a native route with its own kind.
+func TestChangesStartRouteIsNative(t *testing.T) {
+	if got := Route([]string{"changes", "start"}).kind; got != routeChangesStart {
+		t.Fatalf("route = %v, want routeChangesStart", got)
 	}
 }

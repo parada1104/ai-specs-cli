@@ -22,19 +22,25 @@ import (
 
 	"ai-specs.dev/ai-specs/internal/config"
 	"ai-specs.dev/ai-specs/internal/planbuild"
+	"ai-specs.dev/ai-specs/internal/toml"
 )
 
 // GitPRRecipeID is the recipe whose config declares the project base branch.
 const GitPRRecipeID = "git-pr-flow"
 
 // HighRiskPaths reads the project's explicit high-risk list from
-// [recipes.plan-build-flow.config] high_risk_paths in ai-specs/ai-specs.toml.
-// The key is deliberately NOT declared in the recipe's recipe.toml: that schema
-// is frozen by a test, and the mode is read the same undeclared way. Any other
-// shape than an array of strings yields no list, so a project that declares
-// nothing never gets an R-b refusal.
-func HighRiskPaths(root string) []string {
-	manifest, err := config.LoadManifest(planbuild.ManifestPath(root))
+// [recipes.plan-build-flow.config] high_risk_paths in ai-specs/ai-specs.toml at
+// the trusted base revision the diff is graded against, never the working tree,
+// so a candidate cannot delete a pattern to stop being graded by it. The key is
+// not declared in the recipe's recipe.toml: that schema is frozen by a test, and
+// the mode is read the same undeclared way. Any other shape than an array of
+// strings yields no list, so no declaration means no R-b refusal.
+func HighRiskPaths(root, base string) []string {
+	text, ok := planbuild.FileAt(root, base, planbuild.ManifestRelPath)
+	if !ok {
+		return nil
+	}
+	manifest, err := toml.Parse([]byte(text))
 	if err != nil {
 		return nil
 	}
@@ -109,10 +115,11 @@ func Refutations(repoRoot, mode, change string, base *string) []string {
 	return blockers
 }
 
-// canonicalSpecRefutation is R-a: a changed canonical spec with no delta.
+// canonicalSpecRefutation is R-a: a changed canonical spec with no delta in the
+// same diff, so an archive left by an earlier change proves nothing.
 func canonicalSpecRefutation(repoRoot, mode, change string, changed []string) []string {
 	first, count := firstMatch(changed, isCanonicalSpec)
-	if first == "" || planbuild.HasDelta(repoRoot, mode, change) {
+	if first == "" || deltaInDiff(mode, change, changed) {
 		return nil
 	}
 	delta := repoRelative(repoRoot, filepath.Join(planbuild.ChangeFolder(repoRoot, mode, change), "specs"))
@@ -125,7 +132,7 @@ func canonicalSpecRefutation(repoRoot, mode, change string, changed []string) []
 // highRiskRefutation is R-b: a changed path the project declares as high-risk,
 // answered per mode — a plan in openspec, a Risk trailer in odd.
 func highRiskRefutation(repoRoot, mode, change, base string, changed []string) []string {
-	patterns := HighRiskPaths(repoRoot)
+	patterns := HighRiskPaths(repoRoot, base)
 	if len(patterns) == 0 {
 		return nil
 	}
@@ -151,7 +158,8 @@ func highRiskRefutation(repoRoot, mode, change, base string, changed []string) [
 			"bare `Risk: none` does not satisfy it. Add the trailer to one commit of the range and retry.",
 			base)}
 	}
-	if planbuild.PlanIsValidForMode(repoRoot, planbuild.ModeOpenspec, change) {
+	if planbuild.PlanIsValidForMode(repoRoot, planbuild.ModeOpenspec, change) ||
+		isFile(filepath.Join(planbuild.ArchiveEntry(repoRoot, planbuild.ModeOpenspec, change), "tasks.md")) {
 		return nil
 	}
 	plan := repoRelative(repoRoot, planbuild.TasksPath(repoRoot, planbuild.ModeOpenspec, change))
@@ -164,6 +172,31 @@ func highRiskRefutation(repoRoot, mode, change, base string, changed []string) [
 // of either mode.
 func isCanonicalSpec(rel string) bool {
 	return strings.HasPrefix(rel, "odd/specs/") || strings.HasPrefix(rel, "openspec/specs/")
+}
+
+// deltaInDiff reports whether the diff carries a delta of the change, active or archived.
+func deltaInDiff(mode, change string, changed []string) bool {
+	base := "openspec/changes/"
+	if mode == planbuild.ModeOdd {
+		base = "odd/changes/"
+	}
+	for _, rel := range changed {
+		parts := strings.Split(strings.TrimPrefix(rel, base), "/")
+		if len(parts) < 3 || !strings.HasPrefix(rel, base) {
+			continue
+		}
+		if parts[0] == "archive" {
+			if len(parts) < 4 {
+				continue
+			}
+			parts = parts[1:]
+		}
+		dated := datedArchiveRe.FindStringSubmatch(parts[0])
+		if parts[1] == "specs" && (parts[0] == change || (dated != nil && dated[2] == change)) {
+			return true
+		}
+	}
+	return false
 }
 
 // matchesHighRisk matches one repository-relative path against one declared

@@ -72,7 +72,9 @@ func resolveTier(folder string, tier *string, location string, blockers *[]strin
 			*blockers = append(*blockers, removedTierBlocker(location))
 		case declared != TierNone && declared != TierLight && declared != TierStandard:
 			*blockers = append(*blockers, fmt.Sprintf(
-				"unknown tier '%s' (expected none|light|standard)", declared))
+				"unknown tier '%s': the tier is derived from the artifacts of the change, and the only "+
+					"declarations that can match are none, light and standard — drop the value or declare "+
+					"one of them", declared))
 		default:
 			*blockers = append(*blockers, fmt.Sprintf(
 				"%s: the tier is derived from the artifacts of the change, and they derive '%s', not "+
