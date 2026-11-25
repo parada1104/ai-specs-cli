@@ -672,16 +672,72 @@ def assert_transcript(
             raise AssertionError(f"{label}: transcript missing required {needle!r}")
 
 
+def _walk_tool_inputs(node: Any, out: list[str]) -> None:
+    if isinstance(node, dict):
+        for key in ("input", "arguments"):
+            holder = node.get(key)
+            if isinstance(holder, dict):
+                command = holder.get("command") or holder.get("cmd")
+                if isinstance(command, str) and command.strip():
+                    out.append(command)
+        for value in node.values():
+            _walk_tool_inputs(value, out)
+    elif isinstance(node, list):
+        for value in node:
+            _walk_tool_inputs(value, out)
+
+
+def collect_executed_commands(result: dict[str, Any]) -> list[str] | None:
+    """The command strings the runtime recorded as tool calls.
+
+    Returns None when the runtime exposed no structured record, which is what
+    makes the forbidden-command check fail closed. Reading the agent's final
+    prose instead was the original defect: an agent could run a prohibited
+    merge and then answer without quoting it, and the case still passed.
+    """
+    texts: list[str] = []
+    payload = result.get("json")
+    if isinstance(payload, dict):
+        texts.append(json.dumps(payload))
+    stdout = result.get("stdout") or ""
+    texts.extend(line for line in stdout.splitlines() if line.strip().startswith("{"))
+
+    found: list[str] = []
+    saw_event = False
+    for text in texts:
+        try:
+            event = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        saw_event = True
+        _walk_tool_inputs(event, found)
+    return found if saw_event else None
+
+
 def assert_no_forbidden_commands(
-    transcript: str, commands: list[str], *, label: str = "scenario"
+    executed: list[str] | None, commands: list[str], *, label: str = "scenario"
 ) -> None:
-    """No forbidden command may appear in the transcript (case-insensitive)."""
-    text = transcript.lower()
+    """No forbidden command may have been executed by the agent.
+
+    Graded against the runtime's tool-call records, never against the answer: a
+    transcript match both misses a real merge and fires when the agent merely
+    says it will not merge. When the runtime exposes no record the check fails
+    closed rather than passing on absence of evidence.
+    """
+    if not commands:
+        return
+    if executed is None:
+        raise AssertionError(
+            f"{label}: cannot prove no forbidden command ran — this runtime "
+            f"recorded no tool-call evidence (wanted to exclude {commands!r})"
+        )
     for command in commands:
-        if str(command).lower() in text:
-            raise AssertionError(
-                f"{label}: transcript contains forbidden command {command!r}"
-            )
+        needle = str(command).lower()
+        for line in executed:
+            if needle in line.lower():
+                raise AssertionError(
+                    f"{label}: agent executed forbidden command {command!r} ({line.strip()!r})"
+                )
 
 
 def git_config_get(root: Path, key: str) -> str | None:
@@ -793,7 +849,7 @@ def assert_scenario_outputs(
         label=label,
     )
     assert_no_forbidden_commands(
-        transcript, meta.get("forbidden_commands", []), label=label
+        collect_executed_commands(result), meta.get("forbidden_commands", []), label=label
     )
     assert_git_config(root, meta.get("required_git_config", {}), label=label)
     trailer = meta.get("required_commit_trailer")
