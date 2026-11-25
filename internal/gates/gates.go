@@ -26,8 +26,9 @@ var depthRe = regexp.MustCompile(`(?im)^\s*Depth:\s*(light|standard|full)\s*$`)
 type Result struct {
 	OK          bool
 	Blockers    []string
-	Tier        string // resolved tier; the raw option value when the check short-circuits
-	ArchivePath string // inspected folder, empty when no archive resolved
+	Notes       []string // refutations that could not be applied; never a blocker
+	Tier        string   // resolved tier; the raw option value when the check short-circuits
+	ArchivePath string   // inspected folder, empty when no archive resolved
 }
 
 // deriveTier reads the artifacts of one change folder (S15): the plan is the
@@ -137,8 +138,11 @@ func inspectFolder(folder string, tier *string, location, repoRoot string) Resul
 }
 
 // CheckPrearchive inspects the active openspec/changes/<slug>/ before
-// archive-tail.
-func CheckPrearchive(repoRoot, slug string, tier *string) Result {
+// archive-tail. It grades the same refutations as the pre-merge stage, so a
+// canonical spec edit with no delta cannot pass here either.
+func CheckPrearchive(repoRoot, slug string, tier *string,
+	// Variadic so the call sites that predate --base keep compiling.
+	base ...*string) Result {
 	slug = planbuild.NormalizeChange(slug)
 	active := filepath.Join(repoRoot, "openspec", "changes", slug)
 	if !isDir(active) {
@@ -148,7 +152,12 @@ func CheckPrearchive(repoRoot, slug string, tier *string) Result {
 			ArchivePath: active,
 		}
 	}
-	return inspectFolder(active, tier, "changes/"+slug, repoRoot)
+	refutations, notes := Refutations(repoRoot, planbuild.ModeOpenspec, slug, baseOption(base))
+	result := inspectFolder(active, tier, "changes/"+slug, repoRoot)
+	result.Blockers = append(result.Blockers, refutations...)
+	result.Notes = notes
+	result.OK = len(result.Blockers) == 0
+	return result
 }
 
 // CheckPremerge inspects the archived artifacts and staged evidence before
@@ -171,7 +180,7 @@ func CheckPremerge(repoRoot, slug string, tier *string,
 				"run archive-tail on the review branch before merge", slug))
 	}
 	archive, present, archiveBlockers := resolveArchive(filepath.Join(changes, "archive"), slug, "openspec")
-	refutations := Refutations(repoRoot, planbuild.ModeOpenspec, slug, baseOption(base))
+	refutations, notes := Refutations(repoRoot, planbuild.ModeOpenspec, slug, baseOption(base))
 	// S16: no folder and no archive entry at all is the valid `none` declaration.
 	// A symlinked entry is still an entry, so the resolver keeps naming it. The
 	// declared depth still has to cohere with the derivation, or an explicit
@@ -179,12 +188,12 @@ func CheckPremerge(repoRoot, slug string, tier *string,
 	if !activePresent && !present && planbuild.ArchiveEntry(repoRoot, planbuild.ModeOpenspec, slug) == "" {
 		resolved := resolveTier(active, tier, "changes/"+slug, &blockers)
 		blockers = append(blockers, refutations...)
-		return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: resolved}
+		return Result{OK: len(blockers) == 0, Blockers: blockers, Notes: notes, Tier: resolved}
 	}
 	blockers = append(blockers, archiveBlockers...)
 	if archive == "" {
 		blockers = append(blockers, refutations...)
-		return Result{Blockers: blockers, Tier: rawTier(tier)}
+		return Result{Blockers: blockers, Notes: notes, Tier: rawTier(tier)}
 	}
 
 	// Every archive is graded the same way: the folder name never decides which
@@ -193,6 +202,7 @@ func CheckPremerge(repoRoot, slug string, tier *string,
 	result.Blockers = append(blockers, result.Blockers...)
 	result.Blockers = append(result.Blockers, refutations...)
 	result.OK = len(result.Blockers) == 0
+	result.Notes = notes
 	result.ArchivePath = archive
 	return result
 }
@@ -259,12 +269,13 @@ func CheckPremergeOdd(repoRoot, change string,
 	if active || present || validPlan {
 		tier = TierOdd
 	}
-	blockers = append(blockers, Refutations(repoRoot, planbuild.ModeOdd, change, baseOption(base))...)
+	refutations, notes := Refutations(repoRoot, planbuild.ModeOdd, change, baseOption(base))
+	blockers = append(blockers, refutations...)
 	archivePath := archive
 	if archivePath == "" && validPlan {
 		archivePath = planbuild.PlanPath(repoRoot, change)
 	}
-	return Result{OK: len(blockers) == 0, Blockers: blockers, Tier: tier, ArchivePath: archivePath}
+	return Result{OK: len(blockers) == 0, Blockers: blockers, Notes: notes, Tier: tier, ArchivePath: archivePath}
 }
 
 // oddParityBlockers is the promotion parity of one odd change folder, refused when

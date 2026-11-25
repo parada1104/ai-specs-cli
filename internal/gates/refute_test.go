@@ -48,6 +48,13 @@ func commitPath(t *testing.T, root, rel, message string) {
 
 func joinedBlockers(blockers []string) string { return strings.Join(blockers, "\n") }
 
+// refutations is the blocker-only view the assertion cases read; the notes that
+// name an unapplied refutation have their own test below.
+func refutations(root, mode, change string, base *string) []string {
+	blockers, _ := Refutations(root, mode, change, base)
+	return blockers
+}
+
 // R-a: changing a canonical spec with no delta in the change is a promotion
 // bypass, in both modes.
 func TestRefuteRaBlocksACanonicalSpecChangeWithoutADelta(t *testing.T) {
@@ -57,7 +64,7 @@ func TestRefuteRaBlocksACanonicalSpecChangeWithoutADelta(t *testing.T) {
 			spec := planbuild.SpecsBase(root, mode)[len(root)+1:] + "/cap/spec.md"
 			commitPath(t, root, filepath.ToSlash(spec), "docs: edit the canonical spec")
 
-			blockers := Refutations(root, mode, "thing", &base)
+			blockers := refutations(root, mode, "thing", &base)
 			if !strings.HasPrefix(joinedBlockers(blockers), "R-a:") {
 				t.Fatalf("Refutations = %q, want one R-a blocker", blockers)
 			}
@@ -91,7 +98,7 @@ func TestRefuteRaPassesWhenTheChangeCarriesADelta(t *testing.T) {
 				commitPath(t, root, spec, "docs: edit the canonical spec")
 				commitPath(t, root, deltaFolder+"/specs/cap/spec.md", "docs: add the delta")
 
-				if blockers := Refutations(root, mode, "thing", &base); len(blockers) != 0 {
+				if blockers := refutations(root, mode, "thing", &base); len(blockers) != 0 {
 					t.Fatalf("Refutations = %q, want none for a change that carries a delta", blockers)
 				}
 			})
@@ -107,7 +114,7 @@ func TestRefuteRaIgnoresADeltaThatIsNotPartOfTheDiff(t *testing.T) {
 		commitPath(t, root, archive+"/2026-01-02-thing/specs/cap/spec.md", "chore: earlier archive")
 		base := strings.TrimSpace(gitOutput(t, root, "rev-parse", "HEAD"))
 		commitPath(t, root, filepath.ToSlash(planbuild.SpecsBase(root, mode)[len(root)+1:])+"/cap/spec.md", "docs: edit")
-		if blockers := Refutations(root, mode, "thing", &base); len(blockers) == 0 {
+		if blockers := refutations(root, mode, "thing", &base); len(blockers) == 0 {
 			t.Fatalf("%s: want R-a over a delta that is not in the diff, got %q", mode, blockers)
 		}
 	}
@@ -128,12 +135,17 @@ func TestRefuteRaGradesRawAndRenamedPaths(t *testing.T) {
 					base = strings.TrimSpace(gitOutput(t, root, "rev-parse", "HEAD"))
 					gitRun(t, root, "mv", spec, tc.move)
 					gitRun(t, root, "commit", "-q", "-m", "docs: move the spec out")
-					if files, _ := planbuild.ChangedFiles(root, base); !strings.Contains(
-						strings.Join(files, "\n"), tc.move) {
-						t.Fatalf("ChangedFiles = %q, want both sides of the rename", files)
+					entries, ok := planbuild.DiffEntries(root, base)
+					parted, arrived := false, false
+					for _, entry := range entries {
+						parted = parted || (entry.Path == spec && !entry.Adds())
+						arrived = arrived || (entry.Path == tc.move && entry.Adds())
+					}
+					if !ok || !parted || !arrived {
+						t.Fatalf("DiffEntries = %+v, want the old path deleted and the new one added", entries)
 					}
 				}
-				blockers := Refutations(root, mode, "thing", &base)
+				blockers := refutations(root, mode, "thing", &base)
 				if !strings.Contains(joinedBlockers(blockers), "R-a:") ||
 					!strings.Contains(joinedBlockers(blockers), spec) {
 					t.Fatalf("Refutations = %q, want R-a naming %q", blockers, spec)
@@ -149,7 +161,7 @@ func TestRefuteRbRequiresAPlanInOpenspec(t *testing.T) {
 	root, base := refuteRepo(t, "go.mod")
 	commitPath(t, root, "go.mod", "build: bump a module")
 
-	blockers := Refutations(root, planbuild.ModeOpenspec, "thing", &base)
+	blockers := refutations(root, planbuild.ModeOpenspec, "thing", &base)
 	if len(blockers) != 1 || !strings.HasPrefix(blockers[0], "R-b:") {
 		t.Fatalf("Refutations = %q, want one R-b blocker", blockers)
 	}
@@ -165,15 +177,15 @@ func TestRefuteRbRequiresAPlanInOpenspec(t *testing.T) {
 		}
 	}
 
-	writeFile(t, filepath.Join(root, "openspec", "changes", "thing", "tasks.md"), "# plan\n")
-	if blockers := Refutations(root, planbuild.ModeOpenspec, "thing", &base); len(blockers) != 0 {
+	commitPath(t, root, "openspec/changes/thing/tasks.md", "docs: add the plan")
+	if blockers := refutations(root, planbuild.ModeOpenspec, "thing", &base); len(blockers) != 0 {
 		t.Fatalf("Refutations = %q, want none once the change carries a plan", blockers)
 	}
 
 	root, base = refuteRepo(t, "go.mod")
 	commitPath(t, root, "go.mod", "build: bump a module")
-	writeFile(t, filepath.Join(root, "openspec", "changes", "archive", "2026-01-02-thing", "tasks.md"), "# plan\n")
-	if blockers := Refutations(root, planbuild.ModeOpenspec, "thing", &base); len(blockers) != 0 {
+	commitPath(t, root, "openspec/changes/archive/2026-01-02-thing/tasks.md", "docs: archive the plan")
+	if blockers := refutations(root, planbuild.ModeOpenspec, "thing", &base); len(blockers) != 0 {
 		t.Fatalf("Refutations = %q, want none for an archived plan", blockers)
 	}
 }
@@ -184,7 +196,7 @@ func TestRefuteRbReadsThePolicyFromTheBaseRevision(t *testing.T) {
 		root, base := refuteRepo(t, "go.mod")
 		writeFile(t, filepath.Join(root, "ai-specs", "ai-specs.toml"), "[recipes.plan-build-flow.config]\n")
 		commitPath(t, root, "go.mod", "build: bump a module and delete the policy")
-		if blockers := Refutations(root, mode, "thing", &base); len(blockers) == 0 ||
+		if blockers := refutations(root, mode, "thing", &base); len(blockers) == 0 ||
 			!strings.HasPrefix(joinedBlockers(blockers), "R-b:") {
 			t.Fatalf("%s: Refutations = %q, want R-b from the base revision's policy", mode, blockers)
 		}
@@ -197,7 +209,7 @@ func TestRefuteRbRequiresARiskTrailerInOdd(t *testing.T) {
 	root, base := refuteRepo(t, "go.mod")
 	commitPath(t, root, "go.mod", "build: bump a module\n\nRisk: none\n")
 
-	blockers := Refutations(root, planbuild.ModeOdd, "thing", &base)
+	blockers := refutations(root, planbuild.ModeOdd, "thing", &base)
 	if len(blockers) != 1 || !strings.HasPrefix(blockers[0], "R-b:") {
 		t.Fatalf("Refutations = %q, want one R-b blocker", blockers)
 	}
@@ -213,7 +225,7 @@ func TestRefuteRbRequiresARiskTrailerInOdd(t *testing.T) {
 	}
 
 	gitRun(t, root, "commit", "--allow-empty", "-q", "-m", "build: bump a module\n\nRisk: item 2 (module graph)")
-	if blockers := Refutations(root, planbuild.ModeOdd, "thing", &base); len(blockers) != 0 {
+	if blockers := refutations(root, planbuild.ModeOdd, "thing", &base); len(blockers) != 0 {
 		t.Fatalf("Refutations = %q, want none for a range that carries the trailer", blockers)
 	}
 }
@@ -225,7 +237,7 @@ func TestRefuteRbNeverFiresWithoutADeclaredList(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			root, base := refuteRepo(t)
 			commitPath(t, root, "go.mod", "build: bump a module")
-			if blockers := Refutations(root, mode, "thing", &base); len(blockers) != 0 {
+			if blockers := refutations(root, mode, "thing", &base); len(blockers) != 0 {
 				t.Fatalf("Refutations = %q, want none without a declared list", blockers)
 			}
 		})
@@ -247,11 +259,11 @@ func TestRefuteRbNeverFiresWithoutADeclaredList(t *testing.T) {
 func TestRefuteReturnsNothingWithoutADiff(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module x\n")
-	if blockers := Refutations(root, planbuild.ModeOdd, "thing", nil); len(blockers) != 0 {
+	if blockers := refutations(root, planbuild.ModeOdd, "thing", nil); len(blockers) != 0 {
 		t.Fatalf("Refutations outside a repository = %q, want none", blockers)
 	}
 	base := "no-such-base"
-	if blockers := Refutations(root, planbuild.ModeOpenspec, "thing", &base); len(blockers) != 0 {
+	if blockers := refutations(root, planbuild.ModeOpenspec, "thing", &base); len(blockers) != 0 {
 		t.Fatalf("Refutations over an unknown base = %q, want none", blockers)
 	}
 	if ref := BaseRef(root, nil); ref != "" {
@@ -307,4 +319,115 @@ func TestNonePathBlocksADeclaredTierThatContradictsIt(t *testing.T) {
 	}
 	assertBlockerContains(t, result, "the tier is derived from the artifacts of the change",
 		"write tasks.md (light) or tasks.md plus a specs/ delta (standard)")
+}
+
+// The delta must be contributed by this diff. A deleted delta proves nothing, so
+// editing a canonical spec is still a promotion bypass.
+func TestRefuteRaBlocksADeletedDelta(t *testing.T) {
+	for _, mode := range []string{planbuild.ModeOdd, planbuild.ModeOpenspec} {
+		t.Run(mode, func(t *testing.T) {
+			root, _ := refuteRepo(t)
+			delta := filepath.ToSlash(planbuild.ChangeFolder(root, mode, "thing")[len(root)+1:]) +
+				"/specs/cap/spec.md"
+			spec := filepath.ToSlash(planbuild.SpecsBase(root, mode)[len(root)+1:]) + "/cap/spec.md"
+			commitPath(t, root, delta, "feat: add the delta")
+			base := strings.TrimSpace(gitOutput(t, root, "rev-parse", "HEAD"))
+			gitRun(t, root, "rm", "-q", delta)
+			commitPath(t, root, spec, "docs: edit the canonical spec")
+
+			blockers := refutations(root, mode, "thing", &base)
+			if !strings.HasPrefix(joinedBlockers(blockers), "R-a:") {
+				t.Fatalf("refutations = %q, want R-a over a deleted delta", blockers)
+			}
+		})
+	}
+}
+
+// Renaming the delta out of the change tree is the same bypass as deleting it.
+func TestRefuteRaBlocksADeltaRenamedOutOfTheTree(t *testing.T) {
+	for _, mode := range []string{planbuild.ModeOdd, planbuild.ModeOpenspec} {
+		t.Run(mode, func(t *testing.T) {
+			root, _ := refuteRepo(t)
+			delta := filepath.ToSlash(planbuild.ChangeFolder(root, mode, "thing")[len(root)+1:]) +
+				"/specs/cap/spec.md"
+			spec := filepath.ToSlash(planbuild.SpecsBase(root, mode)[len(root)+1:]) + "/cap/spec.md"
+			commitPath(t, root, delta, "feat: add the delta")
+			base := strings.TrimSpace(gitOutput(t, root, "rev-parse", "HEAD"))
+			gitRun(t, root, "mv", delta, "moved-delta.md")
+			commitPath(t, root, spec, "docs: edit the canonical spec")
+
+			blockers := refutations(root, mode, "thing", &base)
+			if !strings.HasPrefix(joinedBlockers(blockers), "R-a:") {
+				t.Fatalf("refutations = %q, want R-a over a delta renamed away", blockers)
+			}
+		})
+	}
+}
+
+// A plan from an earlier change never answers R-b: only a plan this diff adds or
+// modifies is evidence, or every archived change would answer for every later one.
+func TestRefuteRbIgnoresAPlanFromAnEarlierChange(t *testing.T) {
+	root, _ := refuteRepo(t, "go.mod")
+	commitPath(t, root, "openspec/changes/archive/2020-01-01-thing/tasks.md", "chore: archive an earlier change")
+	base := strings.TrimSpace(gitOutput(t, root, "rev-parse", "HEAD"))
+	commitPath(t, root, "go.mod", "build: bump a module")
+
+	blockers := refutations(root, planbuild.ModeOpenspec, "thing", &base)
+	if len(blockers) != 1 || !strings.HasPrefix(blockers[0], "R-b:") {
+		t.Fatalf("refutations = %q, want R-b over a stale archived plan", blockers)
+	}
+}
+
+// A plan added in this diff is the evidence R-b asks for in openspec.
+func TestRefuteRbPassesForAPlanAddedInThisDiff(t *testing.T) {
+	root, base := refuteRepo(t, "go.mod")
+	commitPath(t, root, "go.mod", "build: bump a module")
+	commitPath(t, root, "openspec/changes/thing/tasks.md", "docs: add the plan")
+
+	if blockers := refutations(root, planbuild.ModeOpenspec, "thing", &base); len(blockers) != 0 {
+		t.Fatalf("refutations = %q, want none for a plan this diff adds", blockers)
+	}
+}
+
+// A refutation that could not be applied is named, never silently skipped, and
+// it is never a blocker: the small change still passes.
+func TestRefuteNotesARefutationItCouldNotApply(t *testing.T) {
+	root, _ := refuteRepo(t)
+	unknown := "no-such-ref"
+	blockers, notes := Refutations(root, planbuild.ModeOpenspec, "thing", &unknown)
+	if len(blockers) != 0 || len(notes) != 1 {
+		t.Fatalf("Refutations = (%q, %q), want no blocker and one note", blockers, notes)
+	}
+	for _, want := range []string{"R-a and R-b were not applied", "--base no-such-ref", "git rev-parse"} {
+		if !strings.Contains(notes[0], want) {
+			t.Errorf("note %q does not contain %q", notes[0], want)
+		}
+	}
+
+	outside := t.TempDir()
+	if _, notes := Refutations(outside, planbuild.ModeOpenspec, "thing", nil); len(notes) != 1 ||
+		!strings.Contains(notes[0], "not a git repository") {
+		t.Fatalf("notes outside a repository = %q, want one note naming the missing repository", notes)
+	}
+
+	if _, notes := Refutations(root, planbuild.ModeOpenspec, "thing", nil); len(notes) != 0 {
+		t.Fatalf("notes over a resolvable base = %q, want none", notes)
+	}
+}
+
+// The pre-archive stage grades the same refutations: a canonical spec edit with
+// no delta is a promotion bypass there too.
+func TestCheckPrearchiveBlocksACanonicalSpecEditWithoutADelta(t *testing.T) {
+	root, base := refuteRepo(t)
+	folder := filepath.Join(root, "openspec", "changes", "thing")
+	writeFile(t, filepath.Join(folder, "tasks.md"), "## Specs\n\n- **S1.** Fixture\n\n## Tasks\n\n"+
+		"| ID | Spec | Tarea | Ruta | Commit |\n| --- | --- | --- | --- | --- |\n"+
+		"| T1 | S1 | Fixture task | inline | pending |\n")
+	commitPath(t, root, "openspec/specs/cap/spec.md", "docs: edit the canonical spec")
+
+	result := CheckPrearchive(root, "thing", nil, &base)
+	if result.OK {
+		t.Fatalf("Result = %+v, want R-a to block the pre-archive stage", result)
+	}
+	assertBlockerContains(t, result, "R-a:")
 }

@@ -29,12 +29,26 @@ func CommitIsAncestor(root, commit string) bool {
 // already separated values from prose, so nothing else can match.
 var riskTrailerRe = regexp.MustCompile(`(?i)^item[ \t]+[1-6][ \t]+\(\s*\S[^)]*\)$`)
 
-// ChangedFiles lists the repository-relative paths the branch changes against
-// base: the diff from `git merge-base base HEAD`. `-z --no-renames` keeps every
-// path raw and unquoted and reports both sides of a rename, so no prefix rule is
-// defeated by git's display conventions. The second result is false on any git
-// failure, so no caller can mistake a partial answer for a complete one.
-func ChangedFiles(root, base string) ([]string, bool) {
+// DiffEntry is one path of the diff and the status git reports for it, so a
+// caller can tell a path this diff contributes from one it removes.
+type DiffEntry struct {
+	Status string // git's status letter: A added, M modified, D deleted, T type change
+	Path   string
+}
+
+// Adds reports whether the diff contributes this path: an added or modified
+// file. A deletion, or a rename away, is never evidence of anything (S16).
+func (entry DiffEntry) Adds() bool {
+	return entry.Status == "A" || entry.Status == "M"
+}
+
+// DiffEntries lists what the branch changes against base, with git's status for
+// each path: the diff from `git merge-base base HEAD`. `-z --no-renames` keeps
+// every path raw and unquoted and reports both sides of a rename as a deletion
+// plus an addition, so no prefix rule is defeated by git's display conventions.
+// The second result is false on any git failure, so no caller can mistake a
+// partial answer for a complete one.
+func DiffEntries(root, base string) ([]DiffEntry, bool) {
 	if !validGitRef(base) {
 		return nil, false
 	}
@@ -46,18 +60,20 @@ func ChangedFiles(root, base string) ([]string, bool) {
 	if mergeBase == "" {
 		return nil, false
 	}
-	out, err := gitText(root, "diff", "--name-only", "-z", "--no-renames", mergeBase)
+	out, err := gitText(root, "diff", "--name-status", "-z", "--no-renames", mergeBase)
 	if err != nil {
 		return nil, false
 	}
-	var files []string
-	for _, entry := range strings.Split(out, "\x00") {
-		// A NUL-split yields raw paths; a path never contains NUL.
-		if entry != "" {
-			files = append(files, entry)
+	// -z prints `<status> NUL <path> NUL` per entry; a path never contains NUL.
+	fields := strings.Split(out, "\x00")
+	var entries []DiffEntry
+	for i := 0; i+1 < len(fields); i += 2 {
+		if fields[i] == "" || fields[i+1] == "" {
+			continue
 		}
+		entries = append(entries, DiffEntry{Status: fields[i][:1], Path: fields[i+1]})
 	}
-	return files, true
+	return entries, true
 }
 
 // CommitsWithRiskTrailer reports whether any commit of base..HEAD carries a

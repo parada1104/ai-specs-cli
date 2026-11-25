@@ -96,30 +96,50 @@ func BaseRef(root string, flag *string) string {
 }
 
 // Refutations returns the R-a and R-b blockers of one change's diff, each
-// prefixed with its rule id and carrying its exits. It returns nil when no diff
-// can be graded: an empty BaseRef or a ChangedFiles failure (no base ref, a
-// shallow clone, no repository) means the guardian cannot refute, and inventing
-// a blocker there would block every legitimate small change.
-func Refutations(repoRoot, mode, change string, base *string) []string {
+// prefixed with its rule id and carrying its exits, plus one note per refutation
+// that could not be applied. A note is never a blocker: with no diff to grade a
+// legitimate small change still passes, but the guardian says which rule it did
+// not evaluate instead of staying silent (S16).
+func Refutations(repoRoot, mode, change string, base *string) (blockers, notes []string) {
+	explicit := base != nil && *base != ""
 	baseRef := BaseRef(repoRoot, base)
 	if baseRef == "" {
-		return nil
+		if explicit {
+			return nil, []string{unresolvedBaseNote(*base)}
+		}
+		return nil, []string{"R-a and R-b were not applied: no base ref resolves in this root (not a git " +
+			"repository, or none of the project's base branch names exists), so there is no diff to grade. " +
+			"Run the guardian from the repository root and fetch the base branch, or pass `--base <ref>` " +
+			"naming a ref that resolves."}
 	}
-	changed, ok := planbuild.ChangedFiles(repoRoot, baseRef)
+	diff, ok := planbuild.DiffEntries(repoRoot, baseRef)
 	if !ok {
-		return nil
+		if explicit {
+			return nil, []string{unresolvedBaseNote(*base)}
+		}
+		return nil, []string{fmt.Sprintf("R-a and R-b were not applied: `git diff` against `%s` produced "+
+			"no usable answer (a shallow clone, or no such history in this root), so there is no diff to "+
+			"grade. Fetch the base branch, or pass `--base <ref>` naming a ref that resolves.", baseRef)}
 	}
-	var blockers []string
-	blockers = append(blockers, canonicalSpecRefutation(repoRoot, mode, change, changed)...)
-	blockers = append(blockers, highRiskRefutation(repoRoot, mode, change, baseRef, changed)...)
-	return blockers
+	blockers = append(blockers, canonicalSpecRefutation(repoRoot, mode, change, diff)...)
+	blockers = append(blockers, highRiskRefutation(repoRoot, mode, change, baseRef, diff)...)
+	return blockers, nil
 }
 
-// canonicalSpecRefutation is R-a: a changed canonical spec with no delta in the
-// same diff, so an archive left by an earlier change proves nothing.
-func canonicalSpecRefutation(repoRoot, mode, change string, changed []string) []string {
-	first, count := firstMatch(changed, isCanonicalSpec)
-	if first == "" || deltaInDiff(mode, change, changed) {
+// unresolvedBaseNote names a base the caller supplied that does not resolve.
+func unresolvedBaseNote(base string) string {
+	return fmt.Sprintf("R-a and R-b were not applied: the explicit `--base %s` does not resolve to a "+
+		"commit in this root, so there is no diff to grade. Pass a ref that exists "+
+		"(`git rev-parse --verify %s`) or omit `--base` to use the project's base branch.", base, base)
+}
+
+// canonicalSpecRefutation is R-a: a changed canonical spec with no delta this
+// diff contributes, so an archive left by an earlier change proves nothing.
+func canonicalSpecRefutation(repoRoot, mode, change string, diff []planbuild.DiffEntry) []string {
+	first, count := firstMatch(diff, func(entry planbuild.DiffEntry) bool {
+		return isCanonicalSpec(entry.Path)
+	})
+	if first == "" || deltaInDiff(mode, change, diff) {
 		return nil
 	}
 	delta := repoRelative(repoRoot, filepath.Join(planbuild.ChangeFolder(repoRoot, mode, change), "specs"))
@@ -130,15 +150,16 @@ func canonicalSpecRefutation(repoRoot, mode, change string, changed []string) []
 }
 
 // highRiskRefutation is R-b: a changed path the project declares as high-risk,
-// answered per mode — a plan in openspec, a Risk trailer in odd.
-func highRiskRefutation(repoRoot, mode, change, base string, changed []string) []string {
+// answered per mode — a plan this diff contributes in openspec, a Risk trailer in
+// odd.
+func highRiskRefutation(repoRoot, mode, change, base string, diff []planbuild.DiffEntry) []string {
 	patterns := HighRiskPaths(repoRoot, base)
 	if len(patterns) == 0 {
 		return nil
 	}
-	first, count := firstMatch(changed, func(rel string) bool {
+	first, count := firstMatch(diff, func(entry planbuild.DiffEntry) bool {
 		for _, pattern := range patterns {
-			if matchesHighRisk(pattern, rel) {
+			if matchesHighRisk(pattern, entry.Path) {
 				return true
 			}
 		}
@@ -158,8 +179,9 @@ func highRiskRefutation(repoRoot, mode, change, base string, changed []string) [
 			"bare `Risk: none` does not satisfy it. Add the trailer to one commit of the range and retry.",
 			base)}
 	}
-	if planbuild.PlanIsValidForMode(repoRoot, planbuild.ModeOpenspec, change) ||
-		isFile(filepath.Join(planbuild.ArchiveEntry(repoRoot, planbuild.ModeOpenspec, change), "tasks.md")) {
+	// A plan from an earlier change never counts: only a plan this diff adds or
+	// modifies is evidence, or a committed archive would answer for every change.
+	if planInDiff(change, diff) {
 		return nil
 	}
 	plan := repoRelative(repoRoot, planbuild.TasksPath(repoRoot, planbuild.ModeOpenspec, change))
@@ -174,29 +196,60 @@ func isCanonicalSpec(rel string) bool {
 	return strings.HasPrefix(rel, "odd/specs/") || strings.HasPrefix(rel, "openspec/specs/")
 }
 
-// deltaInDiff reports whether the diff carries a delta of the change, active or archived.
-func deltaInDiff(mode, change string, changed []string) bool {
-	base := "openspec/changes/"
-	if mode == planbuild.ModeOdd {
-		base = "odd/changes/"
-	}
-	for _, rel := range changed {
-		parts := strings.Split(strings.TrimPrefix(rel, base), "/")
-		if len(parts) < 3 || !strings.HasPrefix(rel, base) {
+// deltaInDiff reports whether the diff contributes a delta of the change: a path
+// under its specs/ folder, active or archived, that this diff adds or modifies.
+// A deleted or renamed-away delta proves nothing, and neither does one that
+// merely sits in the tree.
+func deltaInDiff(mode, change string, diff []planbuild.DiffEntry) bool {
+	for _, entry := range diff {
+		if !entry.Adds() {
 			continue
 		}
-		if parts[0] == "archive" {
-			if len(parts) < 4 {
-				continue
-			}
-			parts = parts[1:]
-		}
-		dated := datedArchiveRe.FindStringSubmatch(parts[0])
-		if parts[1] == "specs" && (parts[0] == change || (dated != nil && dated[2] == change)) {
+		if rest := changeRelative(mode, change, entry.Path); len(rest) >= 2 && rest[0] == "specs" {
 			return true
 		}
 	}
 	return false
+}
+
+// planInDiff reports whether the diff contributes the plan of the change, active
+// or archived. A committed plan of an earlier change never counts (S17).
+func planInDiff(change string, diff []planbuild.DiffEntry) bool {
+	for _, entry := range diff {
+		if !entry.Adds() {
+			continue
+		}
+		if rest := changeRelative(planbuild.ModeOpenspec, change, entry.Path); len(rest) == 1 && rest[0] == "tasks.md" {
+			return true
+		}
+	}
+	return false
+}
+
+// changeRelative splits a diff path of the mode's change tree into the segments
+// after the change folder, accepting the active folder, an archive entry named
+// after the change and a dated archive entry of it. nil when the path belongs to
+// another change.
+func changeRelative(mode, change, rel string) []string {
+	base := "openspec/changes/"
+	if mode == planbuild.ModeOdd {
+		base = "odd/changes/"
+	}
+	if !strings.HasPrefix(rel, base) {
+		return nil
+	}
+	parts := strings.Split(strings.TrimPrefix(rel, base), "/")
+	if parts[0] == "archive" {
+		parts = parts[1:]
+	}
+	if len(parts) < 2 {
+		return nil
+	}
+	dated := datedArchiveRe.FindStringSubmatch(parts[0])
+	if parts[0] != change && (dated == nil || dated[2] != change) {
+		return nil
+	}
+	return parts[1:]
 }
 
 // matchesHighRisk matches one repository-relative path against one declared
@@ -212,14 +265,14 @@ func matchesHighRisk(pattern, rel string) bool {
 }
 
 // firstMatch names the first matching path and how many matched in total.
-func firstMatch(paths []string, match func(string) bool) (string, int) {
+func firstMatch(entries []planbuild.DiffEntry, match func(planbuild.DiffEntry) bool) (string, int) {
 	first, count := "", 0
-	for _, candidate := range paths {
-		if !match(candidate) {
+	for _, entry := range entries {
+		if !match(entry) {
 			continue
 		}
 		if count == 0 {
-			first = candidate
+			first = entry.Path
 		}
 		count++
 	}

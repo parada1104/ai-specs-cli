@@ -107,8 +107,12 @@ func TestGatesPremergeRefusesAnInvalidChangeName(t *testing.T) {
 	}
 }
 
+// gatesNotePrefix is the line the guardian prints for a refutation it could not
+// apply; the verdict and the exit code are unaffected.
+const gatesNotePrefix = "premerge-guardian: NOTE: R-a and R-b were not applied: "
+
 // --base is the ref the objective refutations diff against; CI passes the pull
-// request's base sha. Without a resolvable diff it simply refutes nothing.
+// request's base sha. A base that does not resolve refutes nothing and says so.
 func TestGatesPremergeAcceptsABase(t *testing.T) {
 	root := gatesRepo(t)
 	for _, args := range [][]string{
@@ -116,8 +120,9 @@ func TestGatesPremergeAcceptsABase(t *testing.T) {
 		{"gates", "premerge", "nothing", "--root", root, "--base=deadbeef"},
 	} {
 		code, stdout, stderr := runGatesCLI(t, args...)
-		if code != 0 || stdout != "premerge-guardian: OK (none)\n" || stderr != "" {
-			t.Fatalf("%q = (%d, %q, %q); want the none verdict", args, code, stdout, stderr)
+		if code != 0 || stdout != "premerge-guardian: OK (none)\n" ||
+			!strings.HasPrefix(stderr, gatesNotePrefix) || !strings.Contains(stderr, "`--base deadbeef`") {
+			t.Fatalf("%q = (%d, %q, %q); want the none verdict and the note", args, code, stdout, stderr)
 		}
 	}
 	code, stdout, stderr := runGatesCLI(t, "gates", "premerge", "nothing", "--root", root, "--base")
@@ -137,8 +142,10 @@ func TestGatesPremergeOKPrintsTheTier(t *testing.T) {
 	if stdout != "premerge-guardian: OK (standard)\n" {
 		t.Errorf("stdout = %q, want the OK line with the resolved tier", stdout)
 	}
-	if stderr != "" {
-		t.Errorf("stderr = %q, want empty", stderr)
+	// The temporary root is not a repository, so the diff is ungraded and the
+	// guardian says which refutations it skipped instead of claiming it applied them.
+	if !strings.HasPrefix(stderr, gatesNotePrefix+"no base ref resolves") {
+		t.Errorf("stderr = %q, want the note naming the ungraded diff", stderr)
 	}
 }
 
@@ -304,8 +311,8 @@ func TestGatesPremergeAcceptsABranchShapedChangeOverride(t *testing.T) {
 	code, stdout, stderr := runGatesCLI(t,
 		"gates", "premerge", "--change", "feat/alpha", "--root", root)
 
-	if code != 0 || stderr != "" {
-		t.Fatalf("exit = %d, stderr = %q; want 0/empty", code, stderr)
+	if code != 0 || !strings.HasPrefix(stderr, gatesNotePrefix) {
+		t.Fatalf("exit = %d, stderr = %q; want 0 and the note", code, stderr)
 	}
 	if stdout != "premerge-guardian: OK (standard, change alpha)\n" {
 		t.Errorf("stdout = %q, want the normalized change in the verdict", stdout)
@@ -346,15 +353,17 @@ func TestGatesPremergeChangeFlagPrintsTheDerivedChange(t *testing.T) {
 	gatesConformingArchive(t, root, "ok-change")
 
 	code, stdout, stderr := runGatesCLI(t, "gates", "premerge", "ok-change", "--root", root)
-	if code != 0 || stdout != "premerge-guardian: OK (standard)\n" || stderr != "" {
-		t.Fatalf("positional = (%d, %q, %q), want the legacy OK line", code, stdout, stderr)
+	if code != 0 || stdout != "premerge-guardian: OK (standard)\n" ||
+		!strings.HasPrefix(stderr, gatesNotePrefix) {
+		t.Fatalf("positional = (%d, %q, %q), want the legacy OK line and the note", code, stdout, stderr)
 	}
 	for _, args := range [][]string{
 		{"gates", "premerge", "--change", "ok-change", "--root", root},
 		{"gates", "premerge", "--change=ok-change", "--root", root},
 	} {
 		code, stdout, stderr = runGatesCLI(t, args...)
-		if code != 0 || stdout != "premerge-guardian: OK (standard, change ok-change)\n" || stderr != "" {
+		if code != 0 || stdout != "premerge-guardian: OK (standard, change ok-change)\n" ||
+			!strings.HasPrefix(stderr, gatesNotePrefix) {
 			t.Fatalf("%q = (%d, %q, %q), want the derived change in the verdict", args, code, stdout, stderr)
 		}
 	}
@@ -392,8 +401,8 @@ func TestGatesPremergeResolvesTheChangeWithoutASlug(t *testing.T) {
 	// writes for a delta-less change.
 	gatesWrite(t, filepath.Join(archive, "archived.md"), "ok-change\n2026-01-02\nodd/tasks/ok-change.md\n")
 	code, stdout, stderr = runGatesCLI(t, "gates", "premerge", "ok-change", "--root", root)
-	if code != 0 || stderr != "" {
-		t.Fatalf("archived: exit = %d, stderr = %q; want 0/empty", code, stderr)
+	if code != 0 || !strings.HasPrefix(stderr, gatesNotePrefix) {
+		t.Fatalf("archived: exit = %d, stderr = %q; want 0 and the note", code, stderr)
 	}
 	if stdout != "premerge-guardian: OK (odd)\n" {
 		t.Errorf("stdout = %q, want the OK verdict", stdout)
@@ -448,5 +457,63 @@ func TestGatesPremergeRefusesThePreArchiveStageInOddMode(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "--stage pre-archive is an openspec stage") {
 		t.Fatalf("stderr = %q, want the odd refusal", stderr)
+	}
+}
+
+// A refutation the guardian could not apply is said out loud, and the verdict —
+// with its exit code — is exactly the one it would have been without the note.
+func TestGatesPremergeNotesARefutationItCouldNotApply(t *testing.T) {
+	t.Run("explicit base that does not resolve", func(t *testing.T) {
+		code, stdout, stderr := runGatesCLI(t, "gates", "premerge", "nothing",
+			"--root", gatesRepo(t), "--base", "no-such-ref")
+		if code != 0 || stdout != "premerge-guardian: OK (none)\n" {
+			t.Fatalf("exit = %d, stdout = %q; want the none verdict", code, stdout)
+		}
+		if stderr != gatesNotePrefix+"the explicit `--base no-such-ref` does not resolve to a commit "+
+			"in this root, so there is no diff to grade. Pass a ref that exists "+
+			"(`git rev-parse --verify no-such-ref`) or omit `--base` to use the project's base "+
+			"branch.\n" {
+			t.Fatalf("stderr = %q, want the note naming the unresolved --base", stderr)
+		}
+	})
+
+	t.Run("root that is not a git repository", func(t *testing.T) {
+		code, stdout, stderr := runGatesCLI(t, "gates", "premerge", "nothing", "--root", gatesRepo(t))
+		if code != 0 || stdout != "premerge-guardian: OK (none)\n" {
+			t.Fatalf("exit = %d, stdout = %q; want the none verdict", code, stdout)
+		}
+		if !strings.Contains(stderr, "not a git repository") {
+			t.Fatalf("stderr = %q, want the note naming the missing repository", stderr)
+		}
+	})
+
+	t.Run("note never blocks", func(t *testing.T) {
+		root := gatesRepo(t)
+		gatesConformingArchive(t, root, "ok-change")
+		code, _, stderr := runGatesCLI(t, "gates", "premerge", "ok-change", "--root", root)
+		if code != 0 {
+			t.Fatalf("exit = %d, stderr = %q; a note must not turn into a blocker", code, stderr)
+		}
+	})
+}
+
+// pre-archive is not exempt from the refutations: a canonical spec edit with no
+// delta is the same promotion bypass before the archive as after it.
+func TestGatesPremergePreArchiveGradesTheRefutations(t *testing.T) {
+	root := gatesGitRepo(t, "development")
+	gitTest(t, root, "checkout", "-q", "-b", "feat/active-change")
+	active := filepath.Join(root, "openspec", "changes", "active-change")
+	gatesWrite(t, filepath.Join(active, "tasks.md"), gatesPlanBody)
+	gatesWrite(t, filepath.Join(root, "openspec", "specs", "cap", "spec.md"), "# cap\n")
+	gitTest(t, root, "add", "-A")
+	gitTest(t, root, "commit", "-q", "-m", "docs: edit the canonical spec")
+
+	code, stdout, stderr := runGatesCLI(t, "gates", "premerge", "active-change", "--root", root,
+		"--stage", "pre-archive")
+	if code != 1 || stdout != "" {
+		t.Fatalf("exit = %d, stdout = %q; want 1 and empty stdout", code, stdout)
+	}
+	if !strings.Contains(stderr, "R-a:") || !strings.Contains(stderr, "carries no delta") {
+		t.Fatalf("stderr = %q, want the R-a blocker at pre-archive", stderr)
 	}
 }
