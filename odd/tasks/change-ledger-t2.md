@@ -31,8 +31,7 @@ deltas live in `odd/tasks/change-ledger-v2.md` and `odd/tasks/change-ledger-v2/`
 ## Tasks
 
 - T2 — The write gate infers the tier and refuses only on a proven refutation.
-  route: worker. commit: pending.
-  - scope: `internal/cli/planbuildgate.go` (drop the plan/ceremony requirement in
+  route: worker. commit: pending.  - scope: `internal/cli/planbuildgate.go` (drop the plan/ceremony requirement in
     OpenSpec mode; a worktree with no artifact and no product-path divergence is
     nothing to grade), refutations R1–R5 with R3/R4 scored from the diff,
     `internal/planbuild/ceremony.go` + `changes start --none` become inert with a
@@ -51,11 +50,16 @@ deltas live in `odd/tasks/change-ledger-v2.md` and `odd/tasks/change-ledger-v2/`
 
 | Spec | Evidence |
 | --- | --- |
-| S1 |  |
-| S2 |  |
-| S9 |  |
-| S16 |  |
-| S3 |  |
+| S1 | Branch binary on temp repos: OpenSpec production write with no plan → exit 0, silent; the released baseline `366049b3` build refuses it (exit 2) with the retired "write …/tasks.md and retry / run changes start --none" text. ODD with no plan → 0 on both. `go test ./...` green. |
+| S2 | R1: hand write to `odd/specs/widget/spec.md` without a delta → exit 2 naming R1, the missing delta path and `ai-specs specs promote` (baseline refuses with the old wording). R4: a removed `case "--old-flag":` arm under a product path → exit 2 naming R4 and the exits (baseline 0); the same removal as a prose mention → exit 0, which is the false refusal the native review found. |
+| S9 | Fresh `changes start --none --root .` → exit 0 with one deprecation line and **no** git config write (`git config --get` unset); the baseline build writes `branch.main.aiSpecsCeremony none`. A pre-existing `aiSpecsCeremony = none` → silent, no notice, no behaviour change. |
+| S16 | An ODD repo with `max_diff_lines = 1`, a documentation-only diff and no artifact → exit 0 on both binaries: the diff-based refutations are skipped for nothing-to-grade while R1 still refuses a hand write. Note for T3: the production set is `lib catalog bin src`, so this repository's `internal/` work is not product divergence — the centralised discriminator must own that fact. |
+| S3 | Plan only (`light`), no delta folder — see L2. Commits `a0427330` (plan), `96c7a8ee` (gate), `57c8a5fb` (review correction); pre-merge guardian green on the branch. |
+
+Native review `review-891597c96a64468e` (risk + reliability, tier high by escalation item 3):
+approved after one bounded correction that closed its six severe findings — R2 now grades the
+pending hook target, R4 requires a removed public declaration, the S16 workstream skips the
+diff-based refutations, and `--explain` reports the tier on the allowed canonical-spec path.
 
 ## Log
 
