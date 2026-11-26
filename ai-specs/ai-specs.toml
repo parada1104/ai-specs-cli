@@ -78,8 +78,10 @@ vault_scope = "nnodes/proyectos/ai-specs"
 # machine-local <git-common-dir>/gentle-ai/ directory, which exists in a
 # developer checkout but never in a fresh clone, so CI would resolve the
 # OpenSpec flow and grade the wrong tree. This repo plans and delivers with ODD.
-# plan-build-flow stays undeclared as a recipe (this repository develops the
-# recipe rather than consuming it); only its config carries the mode.
+# plan-build-flow is enabled here too: this repository dogfoods the recipe it
+# develops, so its hook, skill and guardians run against our own changes.
+[recipes.plan-build-flow]
+enabled = true
 [recipes.plan-build-flow.config]
 mode = "odd"
 
