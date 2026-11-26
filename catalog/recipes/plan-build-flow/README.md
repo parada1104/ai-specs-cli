@@ -76,8 +76,9 @@ mode = "auto"   # auto | odd | openspec
 the Git common directory (`<git-common-dir>/gentle-ai/`): present resolves to
 `odd`, absent to `openspec`. An explicit `odd` or `openspec` wins over the
 inference, and a project where that directory does not exist yet resolves to
-`openspec` while it stays absent. Write `mode` by hand: the recipe schema
-does not declare it yet, so `ai-specs recipe configure` cannot set it.
+`openspec` while it stays absent. The schema declares `mode` with
+`auto | odd | openspec`, so `ai-specs recipe configure --set mode=odd` sets it and
+an absent value means `auto`.
 - **`odd`** keeps every planning artifact under `odd/`: canonical specs at
 `odd/specs/<domain>/spec.md`, the change plan at `odd/tasks/<change>.md`, and a
 delta at `odd/changes/<change>/specs/<domain>/spec.md` only for a change that

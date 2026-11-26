@@ -513,6 +513,17 @@
       "help_text": "External-session persistence preference for this project's planning artifacts: openspec, engram, or both. Plan-build readiness is always proven by file-backed artifacts in the canonical change-folder tree.",
       "type": "string",
       "validation": {}
+     },
+     "mode": {
+      "default": null,
+      "enum": [
+       "auto",
+       "odd",
+       "openspec"
+      ],
+      "help_text": "Execution mode of the plan-build flow: auto derives it from the state directory the harness keeps in the Git common directory, odd keeps every planning artifact under odd/, and openspec keeps the OpenSpec change tree. An explicit odd or openspec wins over the derivation, and an absent value means auto.",
+      "type": "string",
+      "validation": {}
      }
     },
     "tables": {}

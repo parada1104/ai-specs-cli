@@ -32,9 +32,10 @@ const GitPRRecipeID = "git-pr-flow"
 // [recipes.plan-build-flow.config] high_risk_paths in ai-specs/ai-specs.toml at
 // the trusted base revision the diff is graded against, never the working tree,
 // so a candidate cannot delete a pattern to stop being graded by it. The key is
-// not declared in the recipe's recipe.toml: that schema is frozen by a test, and
-// the mode is read the same undeclared way. Any other shape than an array of
-// strings yields no list, so no declaration means no R-b refusal.
+// not declared in the recipe's recipe.toml: that schema is frozen by a test and
+// an array of path patterns has no shape the wizard can offer. Any other shape
+// than an array of strings yields no list, so no declaration means no R-b
+// refusal.
 func HighRiskPaths(root, base string) []string {
 	text, ok := planbuild.FileAt(root, base, planbuild.ManifestRelPath)
 	if !ok {

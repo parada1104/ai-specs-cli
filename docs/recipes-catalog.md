@@ -69,7 +69,7 @@ never touches the foundational layer.
 | [`playwright-ui-flow`](#playwright-ui-flow) | Specific | Playwright UI test/smoke discipline + CLI surface | `ui-browser-testing` | — | `ui_test_command`, `ui_smoke_command`, `playwright_config` |
 | [`playwright-mcp`](#playwright-mcp) | Specific | Exploratory browser automation via `@playwright/mcp` (add-on) | — (augments base) | `playwright` | — (override via `[mcp.playwright]`) |
 | [`jinna-mcp-recipe`](#jinna-mcp-recipe) | Specific | Install and configure the local OpenProject provider | — | `jinna` | OpenProject env references |
-| [`plan-build-flow`](#plan-build-flow) | Foundational | Ambient skill-only plan/build workflow (no slash commands) | `plan-build-flow` | — | `artifact_store_default` |
+| [`plan-build-flow`](#plan-build-flow) | Foundational | Ambient skill-only plan/build workflow (no slash commands) | `plan-build-flow` | — | `artifact_store_default`, `mode` |
 | [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup (standalone / monorepo-apps / monorepo-submodules) | `worktree-isolation`, `worktree-cleanup` | — | `worktrees_dir`, `integration_branch`, `auto_remove_merged`, `repo_topology` (deprecated alias of `[project].repo_topology`), `gate_mode`, `gate_scope`, `WORKTREE_GATE_PROTECTED` |
 | [`git-pr-flow`](#git-pr-flow) | Specific | Branch → PR → approval-gated merge (GitHub) | `vcs-pr-flow` | — | `base_branch`, `expected_owner`, `auto_switch_account` |
 | [`gitlab-mr-flow`](#gitlab-mr-flow) | Specific | Branch → MR → approval-gated merge (GitLab) | `vcs-pr-flow` | — | `base_branch`, `expected_owner` |
@@ -280,6 +280,7 @@ artifact guardian is tracker-free.
   | Key | Type | Required | Default | Accepted values | Description |
   |-----|------|----------|---------|-----------------|-------------|
   | `artifact_store_default` | string | no | `openspec` | `openspec`, `engram`, `both` | External-session persistence preference for planning artifacts; may be overridden in the project manifest and is materialized into the brief during sync. Plan-build readiness is always proven by file-backed artifacts, never by the store selection. |
+  | `mode` | string | no | — (absent means `auto`) | `auto`, `odd`, `openspec` | Execution mode of the flow, resolved once per repository: `auto` derives it from the state directory the harness keeps in the Git common directory, `odd` keeps every planning artifact under `odd/`, and `openspec` keeps the OpenSpec change tree. An explicit `odd` or `openspec` wins over the derivation. |
 
   The generated rule is repository-declared guidance. An external session runtime may
   consume it when asked where planning artifacts should live, but runtime session behavior
@@ -297,6 +298,7 @@ version = "1.8.0"
 
 [recipes.plan-build-flow.config]
 artifact_store_default = "both"
+mode = "auto"
 ```
 
 ### Cross-repository planning boundaries

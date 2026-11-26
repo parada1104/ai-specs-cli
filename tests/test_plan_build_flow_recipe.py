@@ -189,12 +189,13 @@ class PlanBuildFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
 
     def test_recipe_declares_exact_store_schema_and_hook_pair(self):
         """`recipe add` validates the schema; the declared config schema is
-        exactly the artifact_store_default field and the only hook is the
-        on-sync validate-config pair (read from the catalog declaration)."""
+        the artifact_store_default field and the execution mode, and the only
+        hook is the on-sync validate-config pair (read from the catalog
+        declaration)."""
         self.recipe_add(RECIPE_ID)
         raw = _recipe_toml()
         fields = raw["config"]
-        self.assertEqual(list(fields), ["artifact_store_default"])
+        self.assertEqual(list(fields), ["artifact_store_default", "mode"])
         field = fields["artifact_store_default"]
         self.assertFalse(field["required"])
         self.assertEqual(field["type"], "string")
@@ -207,6 +208,19 @@ class PlanBuildFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         raw_text = (CATALOG / RECIPE_ID / "recipe.toml").read_text()
         self.assertEqual(raw_text.count("[config.artifact_store_default]"), 1)
         self.assertIn('enum = ["openspec", "engram", "both"]', raw_text)
+
+    def test_recipe_declares_the_execution_mode_as_config(self):
+        """S13: the artifact-derived execution mode is declared config, not a
+        key the manifest merge can only report as unknown."""
+        self.recipe_add(RECIPE_ID)
+        field = _recipe_toml()["config"]["mode"]
+        self.assertFalse(field["required"])
+        self.assertEqual(field["type"], "string")
+        self.assertEqual(field["enum"], ["auto", "odd", "openspec"])
+        self.assertNotIn("default", field)
+        self.assertTrue(field["help_text"].strip())
+        raw_text = (CATALOG / RECIPE_ID / "recipe.toml").read_text()
+        self.assertEqual(raw_text.count("[config.mode]"), 1)
 
     def test_brief_and_catalog_readme_vocabulary_clean(self):
         """Brief workflow rules and the recipe's catalog README carry no
@@ -448,7 +462,11 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         raw = _recipe_toml()
         schema_keys = set(raw["config"])
         self.assertNotIn("chained_" + "pr_default", schema_keys)
-        self.assertFalse(any("mode" in key.lower() for key in schema_keys))
+        # The artifact-derived execution mode is declared config (S13); every
+        # other mode-shaped session control stays out of the schema.
+        self.assertEqual(
+            {key for key in schema_keys if "mode" in key.lower()}, {"mode"}
+        )
 
         surface = _recipe_surface_text(CATALOG / RECIPE_ID)
         removed_root = "bud" + "get"
@@ -694,7 +712,7 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
 
     def test_phase_contract_stays_out_of_recipe_config_and_named_vocabulary(self):
         raw = _recipe_toml()
-        self.assertEqual(list(raw["config"]), ["artifact_store_default"])
+        self.assertEqual(list(raw["config"]), ["artifact_store_default", "mode"])
         rules = "\n".join(raw["provides"]["brief"]["workflow_rules"])
         surface = _recipe_surface_text(CATALOG / RECIPE_ID)
         for term in ("gentle-ai", "gentle ai"):
