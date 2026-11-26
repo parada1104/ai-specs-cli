@@ -105,6 +105,28 @@ func trackerBlockedMessage(checkpoint, reason string) string {
 		" (Tracker advisory: reported, not enforced).\n"
 }
 
+// trackerLoadStore reads the ledger store the fixture bound.
+func trackerLoadStore(t *testing.T, common string) ledger.Store {
+	t.Helper()
+	store, err := ledger.LoadStore(ledger.StorePath(common))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+// trackerWriteCard writes one change's ## Tracker card onto disk.
+func trackerWriteCard(t *testing.T, repo, change, body string) {
+	t.Helper()
+	folder := filepath.Join(repo, "openspec", "changes", change)
+	if err := os.MkdirAll(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(folder, "proposal.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // An event with no path and no gated shell command is never graded: exit 0,
 // nothing on either stream.
 func TestTrackerCardGateNoCardInEventIsSilent(t *testing.T) {
@@ -137,6 +159,9 @@ func TestTrackerCardGatePathWriteWithoutCardIsAdvisory(t *testing.T) {
 	if code != 0 || stdout != "" || stderr != want {
 		t.Fatalf("gate = (%d, %q, %q), want (0, %q, %q)", code, stdout, stderr, "", want)
 	}
+	if store := trackerLoadStore(t, common); len(store.Items) != 0 {
+		t.Fatalf("a card-less grade wrote %d rows, want 0", len(store.Items))
+	}
 }
 
 // A satisfied checkpoint (the open card satisfies it) grades allow and says
@@ -149,6 +174,9 @@ func TestTrackerCardGateSatisfiedCheckpointIsSilent(t *testing.T) {
 	input := `{"tool_name":"Edit","cwd":"` + repo + `","tool_input":{"file_path":"lib/app.go"}}`
 	if code, stdout, stderr := runTrackerGate(t, home, repo, repo, input); code != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("hook = (%d, %q, %q), want silence", code, stdout, stderr)
+	}
+	if store := trackerLoadStore(t, common); len(store.Items) != 1 {
+		t.Fatalf("a satisfied grade wrote %d rows, want the single existing row", len(store.Items))
 	}
 	for _, args := range [][]string{
 		{"--root", repo, "--checkpoint", "pre-merge"},
@@ -276,5 +304,182 @@ func TestTrackerCardGateReadsGateModeFromSnapshot(t *testing.T) {
 	code, stdout, stderr := runTrackerGateHost(t, home, "--root", repo, "--checkpoint", "pre-merge")
 	if code != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("host = (%d, %q, %q), want silence at off", code, stdout, stderr)
+	}
+}
+
+// apply-start binds the card the change evidence names: one write, one ledger
+// row, and one stderr line (S3).
+func TestTrackerCardGateApplyStartBindsTheCard(t *testing.T) {
+	repo, common, branch := trackerGateFixtureRepo(t)
+	bindTrackerLedger(t, common, branch, false)
+	home := t.TempDir()
+	writeTrackerSnapshot(t, repo, home, "warn")
+	trackerWriteCard(t, repo, "demo", "## Tracker\n- **card_id**: `card-1`\n- url: `https://example.test/card/1`\n")
+
+	input := `{"tool_name":"Write","cwd":"` + repo + `","tool_input":{"file_path":"lib/app.go"}}`
+	code, stdout, stderr := runTrackerGate(t, home, repo, repo, input)
+	want := "tracker-card-gate: bound card card-1 at apply-start (ledger row recorded).\n"
+	if code != 0 || stdout != "" || stderr != want {
+		t.Fatalf("gate = (%d, %q, %q), want (0, %q, %q)", code, stdout, stderr, "", want)
+	}
+	store := trackerLoadStore(t, common)
+	if len(store.Items) != 1 {
+		t.Fatalf("store rows = %d, want 1", len(store.Items))
+	}
+	item := store.Items[0]
+	if item.ItemID != "card-1" || item.URL != "https://example.test/card/1" || item.Identity.Change != "demo" {
+		t.Fatalf("bound item = %+v, want card-1 / url / demo", item)
+	}
+}
+
+// A dormant ledger never binds and never writes a row.
+func TestTrackerCardGateApplyStartDormantWritesNothing(t *testing.T) {
+	repo, common, _ := trackerGateFixtureRepo(t)
+	home := t.TempDir()
+	writeTrackerSnapshot(t, repo, home, "warn")
+	trackerWriteCard(t, repo, "demo", "## Tracker\ncard_id: card-1\n")
+
+	input := `{"tool_name":"Write","cwd":"` + repo + `","tool_input":{"file_path":"lib/app.go"}}`
+	code, stdout, stderr := runTrackerGate(t, home, repo, repo, input)
+	if code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("gate = (%d, %q, %q), want silence", code, stdout, stderr)
+	}
+	if _, err := os.Stat(ledger.StorePath(common)); !os.IsNotExist(err) {
+		t.Fatalf("dormant grade wrote a store: %v", err)
+	}
+}
+
+// A missing card in warn mode is no longer silent: the actionable needs-item
+// line names the checkpoint and identity even though the decision is allow
+// (S5, T4 regression).
+func TestTrackerCardGateApplyStartWithoutCardReportsNeedsItemInWarnMode(t *testing.T) {
+	repo, common, branch := trackerGateFixtureRepo(t)
+	bindTrackerLedger(t, common, branch, false)
+	home := t.TempDir()
+	writeTrackerSnapshot(t, repo, home, "warn")
+
+	input := `{"tool_name":"Write","cwd":"` + repo + `","tool_input":{"file_path":"lib/app.go"}}`
+	code, stdout, stderr := runTrackerGate(t, home, repo, repo, input)
+	want := "tracker-card-gate: needs-item at apply-start for " + branch +
+		" — link or create the tracker item, or record the exemption (Tracker advisory).\n"
+	if code != 0 || stdout != "" || stderr != want {
+		t.Fatalf("gate = (%d, %q, %q), want (0, %q, %q)", code, stdout, stderr, "", want)
+	}
+	if store := trackerLoadStore(t, common); len(store.Items) != 0 {
+		t.Fatalf("a card-less grade wrote %d rows, want 0", len(store.Items))
+	}
+}
+
+// The same needs-item line is reported at the review checkpoints, so a missing
+// row is visible where the merge skills grade (S5).
+func TestTrackerCardGateReviewCheckpointReportsNeedsItemInWarnMode(t *testing.T) {
+	repo, common, branch := trackerGateFixtureRepo(t)
+	bindTrackerLedger(t, common, branch, false)
+	home := t.TempDir()
+	writeTrackerSnapshot(t, repo, home, "warn")
+	code, stdout, stderr := runTrackerGateHost(t, home, "--root", repo, "--checkpoint", "pre-merge")
+	want := "tracker-card-gate: needs-item at pre-merge for " + branch +
+		" — link or create the tracker item, or record the exemption (Tracker advisory).\n"
+	if code != 0 || stdout != "" || stderr != want {
+		t.Fatalf("host = (%d, %q, %q), want (0, %q, %q)", code, stdout, stderr, "", want)
+	}
+}
+
+// trackerGateMissingTrackerMessage is the strong advisory an existing change
+// document without a ## Tracker section produces. Pinned verbatim so a later
+// edit cannot silently soften it.
+func trackerGateMissingTrackerMessage(checkpoint, identity, document string) string {
+	return "tracker-card-gate: missing-tracker-section at " + checkpoint + " for " + identity +
+		": " + document + " has no ## Tracker section — add `## Tracker` with `card_id` " +
+		"(or record the exemption in tracker.none); reported, never blocking (Tracker advisory).\n"
+}
+
+// S13: an ODD plan that exists but has no ## Tracker section reports the strong
+// line naming the plan, writes no ledger row and still exits 0.
+func TestTrackerCardGateReportsAMissingTrackerSectionInAnODDPlan(t *testing.T) {
+	repo, common, branch := trackerGateFixtureRepo(t)
+	bindTrackerLedger(t, common, branch, false)
+	home := t.TempDir()
+	writeTrackerSnapshot(t, repo, home, "warn")
+	gitTest(t, repo, "checkout", "-q", "-b", "feat/odd-demo")
+	if err := os.MkdirAll(filepath.Join(repo, "odd", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "odd", "tasks", "odd-demo.md"),
+		[]byte("# odd-demo\n\n## Specs\n\n- S1 — the plan.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	input := `{"tool_name":"Write","cwd":"` + repo + `","tool_input":{"file_path":"lib/app.go"}}`
+	code, stdout, stderr := runTrackerGate(t, home, repo, repo, input)
+	want := trackerGateMissingTrackerMessage("apply-start", "feat/odd-demo", "odd/tasks/odd-demo.md")
+	if code != 0 || stdout != "" || stderr != want {
+		t.Fatalf("gate = (%d, %q, %q), want (0, %q, %q)", code, stdout, stderr, "", want)
+	}
+	if store := trackerLoadStore(t, common); len(store.Items) != 0 {
+		t.Fatalf("a section-less plan wrote %d rows, want 0", len(store.Items))
+	}
+}
+
+// S13: an OpenSpec change without a ## Tracker section names that document too.
+func TestTrackerCardGateReportsAMissingTrackerSectionInAnOpenSpecChange(t *testing.T) {
+	repo, common, branch := trackerGateFixtureRepo(t)
+	bindTrackerLedger(t, common, branch, false)
+	home := t.TempDir()
+	writeTrackerSnapshot(t, repo, home, "warn")
+	trackerWriteCard(t, repo, "demo", "# demo\n\n## Why\n\nNo tracker yet.\n")
+
+	code, stdout, stderr := runTrackerGateHost(t, home, "--root", repo, "--checkpoint", "pre-merge")
+	want := trackerGateMissingTrackerMessage("pre-merge", "demo", "openspec/changes/demo/proposal.md")
+	if code != 0 || stdout != "" || stderr != want {
+		t.Fatalf("host = (%d, %q, %q), want (0, %q, %q)", code, stdout, stderr, "", want)
+	}
+	if store := trackerLoadStore(t, common); len(store.Items) != 0 {
+		t.Fatalf("a section-less change wrote %d rows, want 0", len(store.Items))
+	}
+}
+
+// PRESERVE S13: an ODD plan with a ## Tracker card still takes the bind path and
+// never the missing-section line.
+func TestTrackerCardGateApplyStartBindsAnODDPlanCard(t *testing.T) {
+	repo, common, branch := trackerGateFixtureRepo(t)
+	bindTrackerLedger(t, common, branch, false)
+	home := t.TempDir()
+	writeTrackerSnapshot(t, repo, home, "warn")
+	gitTest(t, repo, "checkout", "-q", "-b", "feat/odd-demo")
+	if err := os.MkdirAll(filepath.Join(repo, "odd", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "odd", "tasks", "odd-demo.md"),
+		[]byte("## Tracker\n- **card_id**: `card-odd`\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	input := `{"tool_name":"Write","cwd":"` + repo + `","tool_input":{"file_path":"lib/app.go"}}`
+	code, stdout, stderr := runTrackerGate(t, home, repo, repo, input)
+	want := "tracker-card-gate: bound card card-odd at apply-start (ledger row recorded).\n"
+	if code != 0 || stdout != "" || stderr != want {
+		t.Fatalf("gate = (%d, %q, %q), want (0, %q, %q)", code, stdout, stderr, "", want)
+	}
+	store := trackerLoadStore(t, common)
+	if len(store.Items) != 1 || store.Items[0].ItemID != "card-odd" || store.Items[0].Identity.Change != "" {
+		t.Fatalf("store = %+v, want one branch-level card-odd row", store.Items)
+	}
+}
+
+// PRESERVE S13: a change with no document at all keeps the generic needs-item
+// line. TestTrackerCardGateApplyStartWithoutCardReportsNeedsItemInWarnMode pins
+// the same bytes; this one adds the host checkpoint.
+func TestTrackerCardGateWithoutAnyDocumentKeepsTheGenericLine(t *testing.T) {
+	repo, common, branch := trackerGateFixtureRepo(t)
+	bindTrackerLedger(t, common, branch, false)
+	home := t.TempDir()
+	writeTrackerSnapshot(t, repo, home, "warn")
+
+	code, stdout, stderr := runTrackerGateHost(t, home, "--root", repo, "--checkpoint", "pre-merge")
+	want := "tracker-card-gate: needs-item at pre-merge for " + branch +
+		" — link or create the tracker item, or record the exemption (Tracker advisory).\n"
+	if code != 0 || stdout != "" || stderr != want {
+		t.Fatalf("host = (%d, %q, %q), want (0, %q, %q)", code, stdout, stderr, "", want)
 	}
 }

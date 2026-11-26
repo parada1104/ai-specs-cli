@@ -53,6 +53,12 @@ const (
 	// trackerGateNoTerminal answers an ask checkpoint when /dev/tty is absent.
 	trackerGateNoTerminal = "%s: %s needs a decision but no terminal is available; " +
 		"no opt-out was recorded — Tracker advisory, continuing without blocking.\n"
+	// trackerGateNoTrackerSection is the strong advisory for a change whose
+	// planning document exists but has no ## Tracker section (S13): the cause is a
+	// plan nobody wrote the card into, which the generic needs-item line hides.
+	trackerGateNoTrackerSection = "%s: missing-tracker-section at %s for %s: %s has no " +
+		"## Tracker section — add `## Tracker` with `card_id` (or record the exemption " +
+		"in tracker.none); reported, never blocking (Tracker advisory).\n"
 )
 
 // trackerCardGateUsage is the verb's help text, on stdout for --help/-h.
@@ -86,7 +92,11 @@ type trackerGateVerdict struct {
 	Decision string `json:"decision"`
 	Reason   string `json:"reason"`
 	Active   bool   `json:"active"`
-	Prompt   *struct {
+	Identity struct {
+		Branch string  `json:"branch"`
+		Change *string `json:"change"`
+	} `json:"identity"`
+	Prompt *struct {
 		Evidence struct {
 			Local  string `json:"local"`
 			Remote string `json:"remote"`
@@ -363,12 +373,33 @@ func trackerGateGrade(home, checkpoint, root, slug string, stderr io.Writer) {
 		extra = append(extra, "--evidence", evidence)
 		defer done()
 	}
-	out, rc := trackerGateLedger(home, checkpoint, root, extra...)
+	out, predicateErr, rc := trackerGateLedger(home, checkpoint, root, extra...)
 	if out == "" {
+		// A deliberately disabled ledger stays silent; anything else that produced no
+		// verdict (unresolved mode, usage error, lock timeout, corrupt store) is
+		// reported, because an empty verdict is not a pass and that silence is what
+		// S5 forbids.
+		mode := trackerGateMode(home, root)
+		if mode == "off" {
+			return
+		}
+		line := fmt.Sprintf("%s: %s could not be graded", trackerGateName, checkpoint)
+		switch {
+		case mode == "":
+			// The snapshot resolves the mode; without one the predicate falls back and
+			// silently grades nothing, which is how a missing sync hid the ledger.
+			line += " (no ledger mode resolved: run ai-specs sync to write this project's snapshot)"
+		case predicateErr != "":
+			line += " (" + predicateErr + ")"
+		}
+		fmt.Fprintf(stderr, "%s — Tracker advisory: reported, not enforced.\n", line)
 		return
 	}
 	var verdict trackerGateVerdict
 	if err := json.Unmarshal([]byte(out), &verdict); err != nil || verdict.Decision == "" {
+		return
+	}
+	if trackerGateApplyStartBind(home, checkpoint, root, slug, verdict, stderr) {
 		return
 	}
 	if rc == 2 || verdict.Decision == "block" {
@@ -387,16 +418,52 @@ func trackerGateGrade(home, checkpoint, root, slug string, stderr io.Writer) {
 		trackerGateAsk(home, checkpoint, root, verdict, stderr)
 		return
 	}
+	if verdict.Active && verdict.Decision == "allow" && verdict.Reason == "needs-item" {
+		if line := trackerGateMissingTrackerSection(checkpoint, root, slug, trackerGateIdentity(verdict)); line != "" {
+			fmt.Fprint(stderr, line)
+			return
+		}
+		fmt.Fprintf(stderr, "%s: needs-item at %s for %s — link or create the tracker item, or record the exemption (Tracker advisory).\n",
+			trackerGateName, checkpoint, trackerGateIdentity(verdict))
+		return
+	}
 	if verdict.Active && verdict.Decision != "allow" {
 		fmt.Fprintf(stderr, "%s: %s at %s — %s (Tracker advisory).\n",
 			trackerGateName, verdict.Decision, checkpoint, trackerGateOr(verdict.Reason, "no primary item"))
 	}
 }
 
+// trackerGateMissingTrackerSection renders the strong advisory for a change
+// whose planning document exists but carries no ## Tracker section. It returns
+// "" when a document has the section (the ledger then owns the verdict) and when
+// no document exists at all (the generic needs-item line stays).
+func trackerGateMissingTrackerSection(checkpoint, root, slug, identity string) string {
+	doc, err := tracker.ResolveChangeDocument(root, slug)
+	if err != nil || doc.Path == "" || doc.HasTracker {
+		return ""
+	}
+	return fmt.Sprintf(trackerGateNoTrackerSection, trackerGateName, checkpoint, identity,
+		trackerGateDocumentPath(root, doc.Path))
+}
+
+// trackerGateDocumentPath renders a planning document relative to the graded root
+// so the advisory names a path the reader can open.
+func trackerGateDocumentPath(root, path string) string {
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return path
+	}
+	return filepath.ToSlash(rel)
+}
+
 // trackerGateLedger runs `worktree-gate --ledger` in process and returns its
 // verdict JSON and exit code. The predicate's own stderr is discarded, exactly
 // as the shell host discarded it.
-func trackerGateLedger(home, checkpoint, root string, extra ...string) (string, int) {
+// trackerGateLedger runs `worktree-gate --ledger` in process and returns its
+// verdict JSON, the first line of the predicate's own stderr, and the exit code.
+// The caller keeps the predicate's diagnostics: swallowing them turned a refused
+// grade into silence.
+func trackerGateLedger(home, checkpoint, root string, extra ...string) (string, string, int) {
 	args := []string{
 		"--ledger",
 		"--checkpoint", checkpoint,
@@ -404,9 +471,9 @@ func trackerGateLedger(home, checkpoint, root string, extra ...string) (string, 
 		"--project-root", root,
 	}
 	args = append(args, extra...)
-	var out bytes.Buffer
-	rc := runner.Run(args, strings.NewReader(""), &out, io.Discard, "unknown")
-	return out.String(), rc
+	var out, errOut bytes.Buffer
+	rc := runner.Run(args, strings.NewReader(""), &out, &errOut, "unknown")
+	return out.String(), firstLine(errOut.String()), rc
 }
 
 // trackerGateMode reads the legacy gate_mode hint from the sync snapshot (S2).
@@ -488,6 +555,21 @@ func trackerGateAsk(home, checkpoint, root string, verdict trackerGateVerdict, s
 		trackerGateName, checkpoint)
 }
 
+// trackerGateApplyStartBind records the card the change evidence names when the
+// active ledger has no item at apply-start, and reports that one outcome. It
+// reports nothing when a bind cannot be justified, so a bind is never fabricated.
+func trackerGateApplyStartBind(home, checkpoint, root, slug string, verdict trackerGateVerdict, stderr io.Writer) bool {
+	if !verdict.Active || verdict.Reason != "needs-item" || checkpoint != "apply-start" {
+		return false
+	}
+	item, ok, err := tracker.ResolveProviderItem(root, slug)
+	if err != nil || !ok {
+		return false
+	}
+	fmt.Fprintf(stderr, "%s\n", trackerGateBind(home, checkpoint, root, item, trackerGateIdentity(verdict)))
+	return true
+}
+
 // trackerGateDecide persists the human answer through the predicate's own
 // --decide vehicle, forwarding the raw stamped hint so Go re-resolves the mode
 // it graded with.
@@ -499,6 +581,75 @@ func trackerGateDecide(home, checkpoint, root, decide string) int {
 		"--project-root", root,
 		"--decide", decide,
 	}, strings.NewReader(""), io.Discard, io.Discard, "unknown")
+}
+
+// trackerGateBind issues the apply-start bind write through the same native
+// surface trackerGateDecide uses and returns the one stderr line describing it.
+// A failure keeps the remediation and names the write error, so a refused bind is
+// diagnosable instead of just empty.
+func trackerGateBind(home, checkpoint, root string, item tracker.ProviderItem, identity string) string {
+	payload, err := json.Marshal(map[string]string{
+		"kind":        "bind",
+		"item_id":     item.CardID,
+		"url":         item.URL,
+		"native_type": "card",
+		"change":      item.Change,
+	})
+	if err != nil {
+		return trackerGateBindFailed(checkpoint, identity, "")
+	}
+	args := []string{
+		"--ledger",
+		"--checkpoint", checkpoint,
+		"--ledger-gate-mode", trackerGateMode(home, root),
+		"--project-root", root,
+		"--write", string(payload),
+	}
+	var out, errOut bytes.Buffer
+	rc := runner.Run(args, strings.NewReader(""), &out, &errOut, "unknown")
+	var result struct {
+		Write *struct {
+			Applied bool `json:"applied"`
+		} `json:"write"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); rc != 0 || err != nil || result.Write == nil {
+		return trackerGateBindFailed(checkpoint, identity, firstLine(errOut.String()))
+	}
+	if result.Write.Applied {
+		return fmt.Sprintf("%s: bound card %s at %s (ledger row recorded).",
+			trackerGateName, item.CardID, checkpoint)
+	}
+	return fmt.Sprintf("%s: card %s already bound at %s.",
+		trackerGateName, item.CardID, checkpoint)
+}
+
+// trackerGateBindFailed renders the actionable failure line: what was not
+// recorded, why when the predicate said so, and what the human can do about it.
+func trackerGateBindFailed(checkpoint, identity, reason string) string {
+	line := fmt.Sprintf("%s: bind failed at %s for %s", trackerGateName, checkpoint, identity)
+	if reason != "" {
+		line += " (" + reason + ")"
+	}
+	return line + " — needs-item; link or create the tracker item, or record the exemption (Tracker advisory)."
+}
+
+// firstLine returns the first non-empty line of s, trimmed, or "".
+func firstLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+// trackerGateIdentity names the graded identity: its change slug when one is
+// stored, else the branch.
+func trackerGateIdentity(verdict trackerGateVerdict) string {
+	if verdict.Identity.Change != nil && *verdict.Identity.Change != "" {
+		return *verdict.Identity.Change
+	}
+	return trackerGateOr(verdict.Identity.Branch, "this branch")
 }
 
 // trackerGateOr returns value, or fallback when it is empty.
