@@ -104,6 +104,13 @@ Branch `chore/plan-build-evals-goldens`, from `development ea35a329`. Mode: `odd
   check fails closed on every claude run since the R3-004 hardening. Capture the tool
   calls (stream-json) so the case grades the agent instead of the plumbing.
 
+- **S21** — `tests/test_plan_build_flow_recipe.py` still carries 17 failures and 1 error
+  over goldens of the retired contract (the 18 golden tests of T4, never rewritten).
+  They must state the current contract instead: a retired rule is replaced by the rule
+  that now governs the same concern, and a live rule stated in stale words is re-pointed
+  at the current words. Nothing that proves behavior the CLI still has may be deleted or
+  widened.
+
 ## Tasks (delivery phase)
 
 | ID | Specs | Route | Content | Commit |
@@ -112,10 +119,12 @@ Branch `chore/plan-build-evals-goldens`, from `development ea35a329`. Mode: `odd
 | T13 | S14 | inline | Offer the waiver in the SKILL and in the openspec gate refusal | `fix(gates): offer changes start --none when the gate blocks` — landed `de24cd8e` |
 | T14 | S15 | inline | Diagnose the flaky `ac_specs_write_without_delta` | `—` — cause in the scenario prompt, fixed in the T14 commit |
 | T15 | S16 | inline | Sandbox allow-list `Bash(git add:*)` + `Bash(git commit:*)`, runner test extended | `test(evals): allow git add and git commit in the eval sandbox` — landed `33bd9f80` |
+| T21 | S21 | worker | Rewrite the 18 golden tests of `test_plan_build_flow_recipe.py` to the new contract | `test(plan-build): state the current contract in the golden tests` |
 | T17 | S18 | worker | Enumerate the six high-risk items in SKILL, README and the R-b refusal | `docs(plan-build): name the six high-risk items the Risk trailer numbers` — landed `f30d1fbf` |
 | T18 | S19 | worker | Sandbox allow-list admits the absolute CLI path (sandbox only) | `test(evals): record the tool calls claude runs, and let it run the CLI it was shown` — landed `75ab61eb` with T19 |
 | T19 | S20 | worker | Capture claude tool calls so `forbidden_commands` is provable | same unit, `75ab61eb` |
 | T20 | S15 | inline | Grade the archive case's merge question in either language | `test(evals): grade the merge question in either language` — `bd8b5231` |
+| T22 | S18 | inline | The change's author records the `Risk:` trailer | `docs(plan-build): the change's author records the Risk trailer` — `b3a12b3b` |
 | T16 | S17 | parent | `review mode disable --scope clone`, push, PR, then re-enable | `—` |
 
 ## Golden case inventory (current, `tests/evals/scenarios/plan-build-flow`)
@@ -287,3 +296,10 @@ needs network beyond the model call.
   quoted T13's waiver line from the gate and tried to run it. `ac_archive_with_verb_...`
   failed only in the primitive: the agent archived with the verb and did not merge, and
   `claude --output-format json` reports no `tool_use` at all.
+- **L18** — Robert's three decisions after the delivery report: (1) he creates the PR himself;
+  (2) `ac_high_risk_path_odd` takes option (a) — the author of the change records `Risk: item N`,
+  aligned with ODD, one line in the SKILL, commit, live re-run of that case (T22);
+  (3) the branch does not merge with a red suite, so the 17 failures and 1 error of
+  `tests/test_plan_build_flow_recipe.py` are rewritten to the new contract without
+  loosening anything that proves current behavior, plus a native review of that slice and a
+  push to the same branch (T21).
