@@ -360,3 +360,11 @@ gate reproduction matrix in that design's §1, and the `start --none` inventory 
   the pre-merge guardian owes an archive for any active change folder and this
   change spans twelve units, not one. Commit field below records the merged
   squash commit as each unit closes.
+- **L10** — L9's delivery shape is superseded by Cody's decision (same message as
+  change-ledger-t1 L1): one unit is its own ODD change. Every unit PR carries a
+  branch-paired plan (`odd/tasks/<unit>.md`) plus only the deltas that unit
+  implements, promoted and archived before its merge; this master plan, its design,
+  audit and the full target deltas live under `odd/tasks/change-ledger-v2/` — the
+  change folder moved out of `odd/changes/` on purpose, so the guardian never owes
+  an archive for the redesign as a whole. The deltas for T4–T12 are drafted here
+  and each is created with its unit.
