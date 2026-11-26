@@ -1,0 +1,4 @@
+Agregá validación de teléfono al signup: opcional, formato E.164, y se ignora si
+el campo no viene.
+El change se llama signup-validation. Dejá el plan escrito con la forma que el
+guardian espera, y no toques producción todavía.

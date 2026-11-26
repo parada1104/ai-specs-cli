@@ -1,0 +1,25 @@
+id = "ac_plan_shape"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "plan"
+fixture_mode = "both"
+slug = "signup-validation"
+description = "The plan carries ## Specs with S1, ## Tasks and a ## Log starting at L1"
+
+[modes.openspec]
+required_path_globs = ["openspec/changes/signup-validation/tasks.md"]
+required_content = [
+  { path = "openspec/changes/signup-validation/tasks.md", contains_any = ["## specs"] },
+  { path = "openspec/changes/signup-validation/tasks.md", contains_any = ["**s1.**"] },
+  { path = "openspec/changes/signup-validation/tasks.md", contains_any = ["## tasks"] },
+  { path = "openspec/changes/signup-validation/tasks.md", contains_any = ["**l1**"] },
+]
+
+[modes.odd]
+required_path_globs = ["odd/tasks/signup-validation.md"]
+required_content = [
+  { path = "odd/tasks/signup-validation.md", contains_any = ["## specs"] },
+  { path = "odd/tasks/signup-validation.md", contains_any = ["**s1.**"] },
+  { path = "odd/tasks/signup-validation.md", contains_any = ["## tasks"] },
+  { path = "odd/tasks/signup-validation.md", contains_any = ["**l1**"] },
+]

@@ -49,14 +49,22 @@ func planBuildGateEvent(repo, tool, target string) string {
 func planBuildNearestRefusal(tool, rel string) string {
 	return "plan-build-gate: refusing to " + tool + " '" + rel + "' — no active change folder " +
 		"(openspec/changes/<slug>/tasks.md) found. Classify the change and write the plan first, " +
-		"then implement. Writing planning artifacts under openspec/changes/ is never blocked.\n"
+		"then implement. Writing planning artifacts under openspec/changes/ is never blocked.\n" +
+		planBuildNoneOfferLine
 }
+
+// planBuildNoneOfferLine is the waiver offer every openspec plan refusal appends,
+// verbatim.
+const planBuildNoneOfferLine = "If this change genuinely needs no plan, run " +
+	"'ai-specs changes start --none --root <planning-root>' and retry the write " +
+	"instead of writing a plan nobody needs.\n"
 
 // planBuildCentralRefusal is the shell host's central-root refusal, verbatim.
 func planBuildCentralRefusal(tool, rel, central, sub string) string {
 	return "plan-build-gate: refusing to " + tool + " '" + rel + "' — no active change folder found " +
 		"under central planning root '" + central + "/openspec/changes/' for submodule '" + sub + "'. " +
-		"Classify the change and write the central plan first; writes under that planning tree are allowed.\n"
+		"Classify the change and write the central plan first; writes under that planning tree are allowed.\n" +
+		planBuildNoneOfferLine
 }
 
 // planBuildWritePlan writes one active change folder under root.
@@ -80,7 +88,7 @@ func planBuildResolverRefusal(t *testing.T, repo, tool, rel string) string {
 	if err == nil {
 		t.Fatalf("ResolveChange(%s) = nil error, want a refusal", repo)
 	}
-	return "plan-build-gate: refusing to " + tool + " '" + rel + "' — " + err.Error() + "\n"
+	return "plan-build-gate: refusing to " + tool + " '" + rel + "' — " + err.Error() + "\n" + planBuildNoneOfferLine
 }
 
 // An unclassifiable event, a non-production target, the agent's own config, the
@@ -622,6 +630,53 @@ func TestPlanBuildGateAutoWithoutStateDirStaysOpenspec(t *testing.T) {
 		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
 	}
 	planBuildAssertAbsent(t, filepath.Join(repo, "src", "app.go"))
+}
+
+// S14: every openspec plan refusal offers the documented waiver, so a refusal is
+// not a dead end. The offer never leaks into odd mode.
+func TestPlanBuildGateOpenspecRefusalOffersTheNoneWaiver(t *testing.T) {
+	const offer = "ai-specs changes start --none --root"
+	assertOffer := func(t *testing.T, code int, stderr string) {
+		t.Helper()
+		if code != 2 || !strings.Contains(stderr, offer) {
+			t.Fatalf("gate = (%d, %q), want exit 2 and an offer naming %q", code, stderr, offer)
+		}
+	}
+	t.Run("paired folder without a plan", func(t *testing.T) {
+		repo := sharedRealPath(newGateFixture(t))
+		planBuildBranch(t, repo, "feat/alpha")
+		if err := os.MkdirAll(filepath.Join(repo, "openspec", "changes", "alpha"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		code, _, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/x.go"))
+		assertOffer(t, code, stderr)
+	})
+	t.Run("no active change", func(t *testing.T) {
+		repo := sharedRealPath(newGateFixture(t))
+		code, _, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/x.go"))
+		assertOffer(t, code, stderr)
+	})
+	t.Run("ambiguous change", func(t *testing.T) {
+		repo := sharedRealPath(newGateFixture(t))
+		planBuildWritePlan(t, repo, "alpha")
+		planBuildWritePlan(t, repo, "beta")
+		code, _, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/x.go"))
+		assertOffer(t, code, stderr)
+	})
+	t.Run("central planning root", func(t *testing.T) {
+		central, repo := nestedRepo(t)
+		stubCentralProof(t, `{"central_root":"`+central+`","submodule":"app"}`, true)
+		code, _, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/x.go"))
+		assertOffer(t, code, stderr)
+	})
+	t.Run("odd mode", func(t *testing.T) {
+		repo, _ := oddRepo(t)
+		target := "odd/specs/cap/spec.md"
+		code, _, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", target))
+		if code != 2 || strings.Contains(stderr, offer) {
+			t.Fatalf("odd gate = (%d, %q), want exit 2 with no waiver offer", code, stderr)
+		}
+	})
 }
 
 // --- OpenSpec change resolver (plan-build-openspec-odd-align P0) -----------

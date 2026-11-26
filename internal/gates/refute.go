@@ -32,9 +32,10 @@ const GitPRRecipeID = "git-pr-flow"
 // [recipes.plan-build-flow.config] high_risk_paths in ai-specs/ai-specs.toml at
 // the trusted base revision the diff is graded against, never the working tree,
 // so a candidate cannot delete a pattern to stop being graded by it. The key is
-// not declared in the recipe's recipe.toml: that schema is frozen by a test, and
-// the mode is read the same undeclared way. Any other shape than an array of
-// strings yields no list, so no declaration means no R-b refusal.
+// not declared in the recipe's recipe.toml: that schema is frozen by a test and
+// an array of path patterns has no shape the wizard can offer. Any other shape
+// than an array of strings yields no list, so no declaration means no R-b
+// refusal.
 func HighRiskPaths(root, base string) []string {
 	text, ok := planbuild.FileAt(root, base, planbuild.ManifestRelPath)
 	if !ok {
@@ -176,7 +177,10 @@ func highRiskRefutation(repoRoot, mode, change, base string, diff []planbuild.Di
 		}
 		return []string{found + fmt.Sprintf(", but no commit of `%s..HEAD` carries a `Risk: item N (<reason>)` "+
 			"trailer — the trailer is the verification evidence an ODD high-risk change must carry, and a "+
-			"bare `Risk: none` does not satisfy it. Add the trailer to one commit of the range and retry.",
+			"bare `Risk: none` does not satisfy it. N is one of: 1 data or irreversible effects that "+
+			"cannot be rebuilt, 2 security, 3 contracts others already consume, 4 concurrency, "+
+			"5 delivery or environment, 6 no test would catch a regression. "+
+			"Add the trailer to one commit of the range and retry.",
 			base)}
 	}
 	// A plan from an earlier change never counts: only a plan this diff adds or

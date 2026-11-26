@@ -1,0 +1,10 @@
+id = "ac_high_risk_path_odd"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+fixture_mode = "odd"
+slug = "signup-validation"
+description = "In odd mode a high-risk path touched by a ceremony-free branch owes the Risk: item N (<reason>) trailer on a commit"
+manifest_extra = "\n[recipes.plan-build-flow.config]\nhigh_risk_paths = ['src/forms/signup.py']\n"
+required_changed_globs = ["src/forms/signup.py"]
+required_commit_trailer = "Risk: item"

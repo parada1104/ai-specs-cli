@@ -1,0 +1,3 @@
+Corregí el texto del docstring de src/forms/signup.py: tiene que decir
+«Sign-up form handler (intentionally no validation)».
+Es un detalle cosmético, entendido y acotado; no hace falta nada más.

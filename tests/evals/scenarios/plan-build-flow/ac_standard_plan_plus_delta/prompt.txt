@@ -1,0 +1,4 @@
+El signup de src/forms/signup.py hoy no valida nada. La regla nueva es: el email
+tiene que contener una arroba y la contraseña al menos 8 caracteres.
+Dejá el plan y el delta escritos; no toques producción todavía.
+El change se llama signup-validation y el spec vive en el dominio forms.

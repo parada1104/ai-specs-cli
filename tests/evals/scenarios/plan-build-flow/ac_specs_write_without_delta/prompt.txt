@@ -1,0 +1,4 @@
+Agregá al spec canónico del formulario que los emails con `+` se aceptan.
+Tiene que quedar en openspec/specs/forms/spec.md, pero sin ceremonia: nada de
+proposal, design ni tasks. Resolvelo vos por el camino que corresponda, sin
+preguntarme cuál prefiero.

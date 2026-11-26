@@ -1,8 +1,7 @@
-"""Live plan-build-flow behavioral evals (AC3–AC7). Requires EVALS_LIVE=1."""
+"""Live plan-build-flow behavioral evals. Requires EVALS_LIVE=1."""
 
 from __future__ import annotations
 
-import fnmatch
 import os
 import subprocess
 import sys
@@ -16,10 +15,14 @@ sys.path.insert(0, str(REPO_ROOT))
 from tests.evals.lib.harness import (  # noqa: E402
     NO_FILE_WRITE_HOOK_RUNTIMES,
     SUPPORTED_RUNTIMES,
+    allow_cli_commands,
     api_key_present,
-    detect_runtime,
+    assert_resolved_mode,
+    assert_scenario_outputs,
     git_paths_changed,
+    glob_exists,
     init_git_repo,
+    install_root,
     live_enabled,
     load_scenario,
     materialize_project,
@@ -30,8 +33,10 @@ from tests.evals.lib.harness import (  # noqa: E402
 from tests.evals.lib.project_fixture import (  # noqa: E402
     recipe_version,
     seed_authorized_plan,
+    seed_fixture_branch,
     seed_project_files,
     setup_runtime_skills,
+    write_manifest,
 )
 
 SCENARIOS = REPO_ROOT / "tests" / "evals" / "scenarios" / "plan-build-flow"
@@ -39,19 +44,27 @@ LIVE_SCENARIOS = (
     "ac3_plan_stops_before_apply",
     "ac4_build_after_auth",
     "ac5_archive_before_merge",
-    "ac7_light_gitignore_file_store",
-    "ac8_approval_verb_without_folder",
+    "ac_none_no_ceremony",
+    "ac_light_plan_only",
+    "ac_standard_plan_plus_delta",
+    "ac_tier_is_not_declared",
+    "ac_ceremony_none_openspec",
+    "ac_plan_shape",
+    "ac_delta_only_for_observable_rule",
+    "ac_archive_with_verb_then_ask_before_merge",
+    "ac_archive_marker_without_folder",
+    "ac_high_risk_path_odd",
+    "ac_specs_write_without_delta",
+    "ac_mode_odd_artifacts",
+    "ac_mode_openspec_artifacts",
+    "ac_brief_reports_the_mode",
     "ac_delivery_contract_artifact_store",
-    "ac_depth_conflict_ask",
-    "ac_depth_conflict_same_turn",
 )
 
-def _glob_exists(root: Path, pattern: str) -> bool:
-    return any(root.glob(pattern))
-
-
-def _matches_any(path: str, patterns: list[str]) -> bool:
-    return any(fnmatch.fnmatch(path, pat) for pat in patterns)
+# `fixture_mode = "both"` runs the scenario once per artifact mode; the mode is
+# declared in the manifest the fixture seeds, so a case asserts the tree its
+# mode owns. Per-mode assertion overrides live under `[modes.<mode>]`.
+ALL_MODES = ("openspec", "odd")
 
 
 def _selected_runtimes() -> list[str]:
@@ -85,8 +98,101 @@ def _selected_scenarios() -> list[str]:
     return list(LIVE_SCENARIOS)
 
 
+def _fixture_modes(meta: dict) -> tuple[str, ...]:
+    declared = str(meta.get("fixture_mode", "openspec"))
+    if declared == "both":
+        return ALL_MODES
+    return (declared,)
+
+
+def _meta_for_mode(meta: dict, mode: str) -> dict:
+    """Scenario assertions for one artifact mode: `[modes.<mode>]` over the top
+    level, so a case that must assert a different tree per mode stays one case."""
+    overrides = (meta.get("modes") or {}).get(mode) or {}
+    return {**meta, **overrides}
+
+
 def _n_of_m(passed: int, trials: int) -> int:
     return trials if trials == 1 else max(2, (trials * 2) // 3)
+
+
+SEEDED_IMPLEMENTATION = (
+    '"""Signup form handler."""\n'
+    "\n"
+    "\n"
+    "def signup(email: str, password: str) -> dict:\n"
+    '    if "@" not in email:\n'
+    '        raise ValueError("invalid email")\n'
+    "    if len(password) < 8:\n"
+    '        raise ValueError("invalid password")\n'
+    '    return {"email": email, "password": password}\n'
+)
+
+
+SEEDED_CANONICAL_SPEC = (
+    "# forms\n"
+    "\n"
+    "## Requirements\n"
+    "\n"
+    "### Requirement: Signup accepts an email\n"
+    "\n"
+    "The signup form accepts an email and a password.\n"
+)
+
+
+def _write_evidence(
+    name: str,
+    runtime: str,
+    fixture_mode: str,
+    prompt: str,
+    result: dict,
+    changed: list[str],
+    root: Path,
+) -> None:
+    """Keep what the agent actually did, so a verdict can be explained.
+
+    Written on pass and on fail: a failure whose transcript is gone is not a
+    finding about the skill, it is a number. Inert unless EVALS_EVIDENCE_DIR is
+    set.
+    """
+    target = os.environ.get("EVALS_EVIDENCE_DIR")
+    if not target:
+        return
+    out = Path(target)
+    out.mkdir(parents=True, exist_ok=True)
+    lines = [
+        f"scenario: {name}",
+        f"runtime: {runtime}",
+        f"mode: {fixture_mode}",
+        f"model: {result.get('model')}",
+        f"returncode: {result.get('returncode')}",
+        f"timed_out: {result.get('timed_out')}",
+        f"cost: {result.get('cost')}",
+        "",
+        "== prompt ==",
+        prompt,
+        "",
+        "== agent answer ==",
+        str(result.get("result_text") or ""),
+        "",
+        "== changed paths ==",
+        *(changed or ["(none)"]),
+        "",
+        "== tree ==",
+        *(
+            str(p.relative_to(root))
+            for p in sorted(root.rglob("*"))
+            if p.is_file() and ".git/" not in str(p.relative_to(root))
+        ),
+        "",
+        "== stdout tail ==",
+        (result.get("stdout") or "")[-4000:],
+        "",
+        "== stderr ==",
+        (result.get("stderr") or "")[-2000:],
+    ]
+    name_part = f"{runtime}-{fixture_mode}-{name}.txt"
+    (out / name_part).write_text("\n".join(lines), encoding="utf-8")
 
 
 @unittest.skipUnless(
@@ -94,11 +200,12 @@ def _n_of_m(passed: int, trials: int) -> int:
     "Set EVALS_LIVE=1 with a supported runtime on PATH to run live evals",
 )
 class PlanBuildFlowLiveEvals(unittest.TestCase):
-    def _run_scenario(self, name: str, runtime: str):
+    def _run_scenario(self, name: str, runtime: str, fixture_mode: str):
         scenario_dir = SCENARIOS / name
         scenario = load_scenario(scenario_dir)
         meta = scenario.meta
         slug = str(meta.get("slug", "signup-validation"))
+        label = f"{runtime}/{fixture_mode}/{name}"
 
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -106,6 +213,18 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
         version = recipe_version(REPO_ROOT / "catalog", scenario.recipe_id)
         manifest_extra = str(meta.get("manifest_extra", ""))
         materialize_project(root, scenario.recipe_id, version, extra=manifest_extra)
+        if fixture_mode != "openspec":
+            # materialize_project renders the default mode; the mode under test is
+            # declared in the manifest and re-rendered by the final sync below.
+            write_manifest(
+                root,
+                recipe_id=scenario.recipe_id,
+                version=version,
+                extra_recipes=manifest_extra,
+                mode=fixture_mode,
+            )
+        # The mode under test has to be the mode the CLI resolves. The manifest
+        # key alone proves nothing: the recipe-config validator ignores it.
         if meta.get("sync_before_prompt"):
             sync = subprocess.run(
                 [str(REPO_ROOT / "bin" / "ai-specs"), "sync", str(root)],
@@ -122,36 +241,119 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
         # the scenario exercises the gate hook end-to-end, not just the advisory
         # skill/brief layer.
         wire_runtime_hooks(root, runtime)
-        if meta.get("seed_plan"):
-            seed_authorized_plan(
-                root, slug=slug, tier=str(meta.get("tier", "standard"))
-            )
-
+        # The fixture's own settings file: the skill needs `ai-specs <verb>` and
+        # the high-risk case needs a commit, and a headless session cannot
+        # approve either. Nothing wider, and never the repo's or the user's
+        # settings.
+        allow_cli_commands(root)
         init_git_repo(root)
         subprocess.run(["git", "add", "-A"], cwd=root, check=True)
         subprocess.run(["git", "commit", "-qm", "baseline"], cwd=root, check=True)
+        # The branch pairs the change, so the derived slug is the fixture slug and
+        # `branch.<branch>.*` / the commit range resolve for the assertions.
+        seed_fixture_branch(root)
+        # Checked here, before any plan exists: with a plan present both modes
+        # allow the write and the probe would prove nothing.
+        assert_resolved_mode(root, fixture_mode)
+        if meta.get("seed_plan"):
+            # Seeded after the branch exists and committed on it: a plan written
+            # into the baseline is not a branch change, which left the archive
+            # cases with nothing to archive and made the branch look untouched.
+            seed_authorized_plan(
+                root,
+                slug=slug,
+                mode=fixture_mode,
+                # The fixture's only seed knob: `light` seeds a plan with no
+                # delta, `standard` a plan plus its delta.
+                tier="standard" if meta.get("seed_plan_delta", True) else "light",
+            )
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", f"plan: authorize {slug}"], cwd=root, check=True
+            )
+
+        if meta.get("seed_canonical_spec"):
+            # The canonical-spec case asks the agent to hand-write a rule that
+            # already lives somewhere. Without a canonical spec there is nothing
+            # to write into, and the agent rightly stops.
+            canonical = root / "openspec" / "specs" / "forms" / "spec.md"
+            canonical.parent.mkdir(parents=True, exist_ok=True)
+            canonical.write_text(SEEDED_CANONICAL_SPEC, encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "specs: seed the canonical forms spec"],
+                cwd=root,
+                check=True,
+            )
+
+        if meta.get("seed_implementation"):
+            # The archive prompts say the change is ready; a plan with no code is
+            # not, and every agent in the P0 pass refused to archive it for
+            # exactly that reason -- a false premise in the eval, not a defect in
+            # the skill.
+            target = root / "src" / "forms" / "signup.py"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(SEEDED_IMPLEMENTATION, encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "feat: implement the change"],
+                cwd=root,
+                check=True,
+            )
+
+        if meta.get("seed_promoted_delta"):
+            # `changes archive` refuses while a delta is unpromoted, so seed the
+            # change already promoted: the case measures the archive, not the
+            # promotion it never asked for.
+            promote = subprocess.run(
+                [
+                    str(install_root() / "dist" / "ai-specs"),
+                    "specs",
+                    "promote",
+                    slug,
+                    "--root",
+                    str(root),
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+                env={**os.environ, "AI_SPECS_HOME": str(install_root())},
+            )
+            self.assertEqual(promote.returncode, 0, promote.stderr or promote.stdout)
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", f"specs: promote {slug}"], cwd=root, check=True
+            )
 
         prompt = scenario.prompt_path.read_text()
         old = os.environ.get("EVALS_RUNTIME")
+        # The skill tells the agent to run `ai-specs changes start --none`,
+        # `specs promote` and `changes archive`; without the binary on PATH those
+        # instructions are unexecutable and the case measures the PATH, not the
+        # skill.
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = str(install_root() / "dist") + os.pathsep + old_path
         os.environ["EVALS_RUNTIME"] = runtime
         try:
             result = run_prompt(root, prompt, runtime=runtime, mode=scenario.mode)
         finally:
+            os.environ["PATH"] = old_path
             if old is None:
                 os.environ.pop("EVALS_RUNTIME", None)
             else:
                 os.environ["EVALS_RUNTIME"] = old
 
         changed = git_paths_changed(root)
+        _write_evidence(name, runtime, fixture_mode, prompt, result, changed, root)
         # If the agent wrote required artifacts then hung (MCP/etc), accept timeout.
         soft_ok = False
         if result.get("timed_out"):
             required_ok = all(
-                _glob_exists(root, required)
+                glob_exists(root, required)
                 for required in meta.get("required_path_globs", [])
             )
             any_ok = all(
-                any(_glob_exists(root, pat) for pat in group)
+                any(glob_exists(root, pat) for pat in group)
                 for group in meta.get("required_any_path_globs", [])
             )
             soft_ok = (bool(meta.get("required_path_globs")) and required_ok) or (
@@ -163,7 +365,7 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
                 result["returncode"],
                 0,
                 msg=(
-                    f"{runtime}/{name} failed rc={result.get('returncode')} "
+                    f"{label} failed rc={result.get('returncode')} "
                     f"timed_out={result.get('timed_out')}\n"
                     f"stderr={result.get('stderr')}\n"
                     f"stdout_tail={(result.get('stdout') or '')[-2000:]}\n"
@@ -171,150 +373,53 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
                     f"changed={changed}"
                 ),
             )
-        forbidden = meta.get("forbidden_path_globs", [])
-        for path in changed:
-            self.assertFalse(
-                _matches_any(path, forbidden),
-                f"{runtime}/{name}: forbidden path modified: {path}",
-            )
-
-        for required in meta.get("required_path_globs", []):
-            self.assertTrue(
-                _glob_exists(root, required),
-                f"{runtime}/{name}: missing {required}; changed={changed}",
-            )
-
-        for group in meta.get("required_any_path_globs", []):
-            self.assertTrue(
-                any(_glob_exists(root, pat) for pat in group),
-                f"{runtime}/{name}: expected any of {group}; changed={changed}",
-            )
-
-        for pattern in meta.get("required_changed_globs", []):
-            self.assertTrue(
-                any(_matches_any(path, [pattern]) for path in changed)
-                or _glob_exists(root, pattern),
-                f"{runtime}/{name}: expected change matching {pattern}; changed={changed}",
-            )
-
-        for rule in meta.get("required_content", []):
-            path = root / rule["path"]
-            self.assertTrue(path.is_file(), f"{runtime}/{name}: missing {rule['path']}")
-            text = path.read_text(encoding="utf-8", errors="replace").lower()
-            needles = [str(n).lower() for n in rule.get("contains_any", [])]
-            self.assertTrue(
-                any(n in text for n in needles),
-                f"{runtime}/{name}: {rule['path']} missing any of {needles}",
-            )
-
-        for rule in meta.get("forbidden_content", []):
-            path = root / rule["path"]
-            if not path.is_file():
-                continue
-            text = path.read_text(encoding="utf-8", errors="replace").lower()
-            for needle in rule.get("contains_any", []):
-                self.assertNotIn(
-                    str(needle).lower(),
-                    text,
-                    f"{runtime}/{name}: {rule['path']} must not contain {needle!r}",
-                )
-
-        transcript = (result.get("result_text") or result.get("stdout") or "").lower()
-        for needle in meta.get("required_transcript_all", []):
-            # Soft: only enforce when no required_content path was written.
-            if meta.get("required_content"):
-                break
-            self.assertIn(
-                str(needle).lower(),
-                transcript,
-                f"{runtime}/{name}: transcript missing required {needle!r}",
-            )
-        one_of = [str(needle).lower() for needle in meta.get("required_transcript_one_of", [])]
-        if one_of and not meta.get("required_content"):
-            self.assertTrue(
-                any(needle in transcript for needle in one_of),
-                f"{runtime}/{name}: transcript missing any of {one_of!r}",
-            )
-        for needle in meta.get("required_transcript_any", []):
-            # Soft: only enforce when no required_content path was written
-            if meta.get("required_content"):
-                break
-            self.assertIn(
-                str(needle).lower(),
-                transcript,
-                f"{runtime}/{name}: transcript missing required {needle!r}",
-            )
-
-        if meta.get("assert_active_change_gone"):
-            active = root / "openspec" / "changes" / slug
-            self.assertFalse(
-                active.exists(),
-                f"{runtime}/{name}: active change folder still present at {active}",
-            )
-
-    def test_ac_depth_conflict_ask(self):
-        if "ac_depth_conflict_ask" not in _selected_scenarios():
-            self.skipTest("depth conflict ask not selected via EVALS_SCENARIOS")
-        self._run_named("ac_depth_conflict_ask")
-
-    def test_ac_depth_conflict_same_turn(self):
-        if "ac_depth_conflict_same_turn" not in _selected_scenarios():
-            self.skipTest("depth same-turn resolution not selected via EVALS_SCENARIOS")
-        self._run_named("ac_depth_conflict_same_turn")
-
+        # Every scenario.toml assertion key lives in the harness, so the live
+        # module and the primitive tests share one implementation.
+        assert_scenario_outputs(
+            root, _meta_for_mode(meta, fixture_mode), result, changed, label=label
+        )
 
     def _run_named(self, name: str):
         trials = int(os.environ.get("EVALS_TRIALS", "1"))
         runtimes = _selected_runtimes()
         self.assertTrue(runtimes, "no runtimes selected")
-        requires_hook = bool(load_scenario(SCENARIOS / name).meta.get("requires_hook"))
+        meta = load_scenario(SCENARIOS / name).meta
+        requires_hook = bool(meta.get("requires_hook"))
+        modes = _fixture_modes(meta)
         failures: list[str] = []
         for runtime in runtimes:
             # A gate scenario asserts only where the gate can be enforced; skip
             # runtimes with no pre-file-write hook event (e.g. cursor-agent).
             if requires_hook and runtime in NO_FILE_WRITE_HOOK_RUNTIMES:
                 continue
-            passed = 0
-            last_err: Exception | None = None
-            for _ in range(trials):
-                try:
-                    self._run_scenario(name, runtime)
-                    passed += 1
-                except AssertionError as exc:
-                    last_err = exc
-            needed = _n_of_m(passed, trials)
-            if passed < needed:
-                failures.append(f"{runtime}:{name} {passed}/{trials} — {last_err}")
+            for mode in modes:
+                passed = 0
+                last_err: Exception | None = None
+                for _ in range(trials):
+                    try:
+                        self._run_scenario(name, runtime, mode)
+                        passed += 1
+                    except AssertionError as exc:
+                        last_err = exc
+                needed = _n_of_m(passed, trials)
+                if passed < needed:
+                    failures.append(f"{runtime}:{mode}:{name} {passed}/{trials} — {last_err}")
         self.assertFalse(failures, msg="; ".join(failures))
 
-    def test_ac3_plan_stops_before_apply(self):
-        if "ac3_plan_stops_before_apply" not in _selected_scenarios():
-            self.skipTest("ac3 not selected via EVALS_SCENARIOS")
-        self._run_named("ac3_plan_stops_before_apply")
 
-    def test_ac4_build_after_auth(self):
-        if "ac4_build_after_auth" not in _selected_scenarios():
-            self.skipTest("ac4 not selected via EVALS_SCENARIOS")
-        self._run_named("ac4_build_after_auth")
+def _scenario_test(name: str):
+    def test(self: PlanBuildFlowLiveEvals):
+        if name not in _selected_scenarios():
+            self.skipTest(f"{name} not selected via EVALS_SCENARIOS")
+        self._run_named(name)
 
-    def test_ac5_archive_before_merge(self):
-        if "ac5_archive_before_merge" not in _selected_scenarios():
-            self.skipTest("ac5 not selected via EVALS_SCENARIOS")
-        self._run_named("ac5_archive_before_merge")
+    test.__name__ = f"test_{name}"
+    test.__doc__ = f"Live golden: {name}"
+    return test
 
-    def test_ac7_light_gitignore_file_store(self):
-        if "ac7_light_gitignore_file_store" not in _selected_scenarios():
-            self.skipTest("ac7 not selected via EVALS_SCENARIOS")
-        self._run_named("ac7_light_gitignore_file_store")
 
-    def test_ac8_approval_verb_without_folder(self):
-        if "ac8_approval_verb_without_folder" not in _selected_scenarios():
-            self.skipTest("ac8 not selected via EVALS_SCENARIOS")
-        self._run_named("ac8_approval_verb_without_folder")
-    def test_ac_delivery_contract_artifact_store(self):
-        if "ac_delivery_contract_artifact_store" not in _selected_scenarios():
-            self.skipTest("delivery contract not selected via EVALS_SCENARIOS")
-        self._run_named("ac_delivery_contract_artifact_store")
+for _name in LIVE_SCENARIOS:
+    setattr(PlanBuildFlowLiveEvals, f"test_{_name}", _scenario_test(_name))
 
 
 class PlanBuildDeliveryContractHermetic(unittest.TestCase):

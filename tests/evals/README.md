@@ -65,10 +65,37 @@ Live: `./tests/evals/run-live.sh` → `eval_plan_build_flow_live.py`
 
 | Scenario | Mode | Asserts |
 |----------|------|---------|
-| AC3 `ac3_plan_stops_before_apply` | plan | tasks + specs; no `src/` edits |
-| AC4 `ac4_build_after_auth` | build | implements seeded plan (`signup.py`) |
-| AC5 `ac5_archive_before_merge` | build | archives change folder; active gone |
-| AC7 `ac7_light_gitignore_file_store` | build | writes `.gitignore` (file store) |
+| AC3 `ac3_plan_stops_before_apply` | plan | plan + delta (observable rule); no `src/` edits |
+| AC4 `ac4_build_after_auth` | build | implements the seeded plan (`signup.py`) |
+| AC5 `ac5_archive_before_merge` | build | archives with `ai-specs changes archive`; active gone |
+| `ac_delivery_contract_artifact_store` | plan | brief reports the store preference and the file-backed invariant |
+
+P0, artifact-derived contract:
+
+| Scenario | Mode | Asserts |
+|----------|------|---------|
+| `ac_none_no_ceremony` | plan | a small change edits the file and writes no plan, folder or delta |
+| `ac_light_plan_only` | plan | a plan alone and no delta |
+| `ac_standard_plan_plus_delta` | plan | plan + delta + `## Log` `L1` + one `## Verification` row per `S#` |
+| `ac_tier_is_not_declared` | plan | the answer derives the tier from the artifacts |
+| `ac_ceremony_none_openspec` | plan | `changes start --none` waives the openspec plan requirement |
+| `ac_plan_shape` | plan | `## Specs` with `S1`, `## Tasks` linking it, `## Log` `L1` |
+| `ac_archive_with_verb_then_ask_before_merge` | build | archives through the verb and asks before merging |
+| `ac_mode_odd_artifacts` | plan | artifacts under `odd/`, nothing under `openspec/` |
+| `ac_mode_openspec_artifacts` | plan | artifacts under `openspec/`, nothing under `odd/` |
+
+P1 and P2:
+
+| Scenario | Mode | Asserts |
+|----------|------|---------|
+| `ac_delta_only_for_observable_rule` | plan | a pure refactor writes no delta |
+| `ac_archive_marker_without_folder` | build | a folder-less change archives to a dated `archived.md` marker |
+| `ac_high_risk_path_odd` | build | a high-risk path with no plan carries a `Risk: item N` trailer |
+| `ac_specs_write_without_delta` | build | a hand write to canonical specs is replaced by a delta + promotion |
+| `ac_brief_reports_the_mode` | plan | the brief names the resolved mode and where artifacts live |
+
+Cases may declare `fixture_mode = "openspec" | "odd" | "both"`; a `both` case
+runs once per mode and may override assertions per mode under `[modes.<mode>]`.
 
 ```bash
 EVALS_RUNTIMES=opencode,claude EVALS_SCENARIOS=ac3_plan_stops_before_apply \

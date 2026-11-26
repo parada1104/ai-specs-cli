@@ -1,0 +1,15 @@
+id = "ac_brief_reports_the_mode"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "plan"
+fixture_mode = "both"
+description = "The brief consumption pattern reports the resolved mode and the tree its artifacts live in"
+required_content = [
+  { path = "AGENTS.md", contains_any = ["in odd mode the pre-tool-use hook"] },
+]
+
+[modes.openspec]
+required_transcript_all = ["openspec"]
+
+[modes.odd]
+required_transcript_all = ["odd"]

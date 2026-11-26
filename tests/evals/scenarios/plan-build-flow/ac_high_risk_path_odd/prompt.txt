@@ -1,0 +1,3 @@
+Corregí el texto del docstring de src/forms/signup.py a «Sign-up form handler».
+Es un one-liner, no quiero ceremonia. Commitealo con un mensaje claro y dejá el
+change listo para el PR.

@@ -66,6 +66,11 @@ gate hook: it neither rewrites nor removes a stale launcher.
   override, as advisory WARNs with copy-pasteable fixes.
 
 ### Changed
+- **The plan-build execution mode is declared config.** `[recipes.plan-build-flow.config]
+mode` now belongs to the recipe schema (`auto | odd | openspec`, absent means
+`auto`), so a project manifest that declares it is honoured without being
+reported as `unknown config key 'mode' (ignored)`, and
+`ai-specs recipe configure --set mode=odd` can set it.
 - **Every recipe runtime piece is CLI-served.** Sync renders a shell command
   bound to the install that ran sync (`dist/ai-specs` first, `ai-specs` on `PATH`
   second), and writes no `.sh` file and no recipe `README.md` into the project.

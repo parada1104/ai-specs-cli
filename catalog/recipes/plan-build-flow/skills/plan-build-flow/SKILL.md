@@ -246,8 +246,11 @@ but never replaces them.
 A change that carries a plan MUST have a slug folder at `openspec/changes/<slug>/`
 (excluding `archive/`) before implementation begins on that change. If the user
 jumps straight to "implement X" and the change needs a plan, create the folder
-and write the plan first. A change that needs no plan (`none`) creates no folder
-and passes unless its diff is refuted (Section 7.4).
+and write the plan first. That refusal is not a dead end: if the change genuinely
+needs no plan, run `ai-specs changes start --none --root <planning-root>` and
+retry the write instead of writing a plan nobody needs. A change that needs no
+plan (`none`) creates no folder and passes unless its diff is refuted
+(Section 7.4).
 
 The `openspec` hook accepts a local declaration that the branch needs no plan:
 `ai-specs changes start --none --root <planning-root>` writes
@@ -549,7 +552,17 @@ refutes it, graded at the pre-merge guardian and in CI, never at the gate:
   per-mode: in `openspec` the change must carry a plan (tier light), because the
   plan is where the verification evidence lives; in `odd` one commit of the
   range must carry a `Risk: item N (<reason>)` trailer, N in 1..6 — a bare
-  `Risk: none` does not satisfy it.
+  `Risk: none` does not satisfy it. The six items are: 1 data or irreversible
+  effects that cannot be rebuilt (migrations, rewriting or deleting stored data,
+  format changes, writing stored data without validation); 2 security (auth,
+  permissions, credentials, secrets, guards, sandbox); 3 contracts others
+  already consume (public API, CLI flags, config formats, exports, mirrored
+  prompts — adding a flag or a command is not); 4 concurrency; 5 delivery or
+  environment (installers, release, CI, deploy, dependencies); 6 no test would
+  catch a regression in what changes. The change's author records the trailer:
+  choosing the item is part of the change's evidence, exactly like naming its
+  artifacts, and never a permission the user has to grant first — a blocked
+  agent picks the item that actually applies and closes the change with it.
 
 No diff computable means no refutation: without a base ref, in a shallow clone
 or outside a repository, the guardian refutes nothing rather than blocking every

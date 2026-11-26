@@ -1,0 +1,3 @@
+Los emails con `+` tienen que aceptarse en el signup: hoy la validación los
+rechaza. El change se llama signup-validation y el spec vive en el dominio forms.
+Dejá el plan y el delta escritos, sin tocar producción todavía.
