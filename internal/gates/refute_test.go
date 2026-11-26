@@ -460,6 +460,70 @@ func TestRefuteNotesARefutationItCouldNotApply(t *testing.T) {
 	}
 }
 
+// writeRepo is a committed repository whose base branch is main and whose HEAD is
+// feat/thing, so WriteRefutations resolves a base ref and grades later commits.
+func writeRepo(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	gitRun(t, root, "init", "-q", "-b", "main")
+	gitRun(t, root, "config", "user.email", "test@example.invalid")
+	gitRun(t, root, "config", "user.name", "test")
+	writeFile(t, filepath.Join(root, "README.md"), "# base\n")
+	for rel, content := range files {
+		writeFile(t, filepath.Join(root, filepath.FromSlash(rel)), content)
+	}
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-q", "-m", "base")
+	gitRun(t, root, "checkout", "-q", "-b", "feat/thing")
+	return root
+}
+
+// R2 grades the pending write, not only the paths the branch already changed:
+// on a clean branch the first write to a declared high-risk path is refused
+// before it happens.
+func TestWriteRefutationsGradeThePendingHighRiskTarget(t *testing.T) {
+	root := writeRepo(t, map[string]string{
+		"ai-specs/ai-specs.toml": "[recipes.plan-build-flow.config]\nmode = \"odd\"\n" +
+			"high_risk_paths = [\"src/**\"]\n",
+	})
+	blockers := WriteRefutations(root, planbuild.ModeOdd, "thing", "src/app.go")
+	if len(blockers) != 1 || !strings.HasPrefix(blockers[0], "R2:") ||
+		!strings.Contains(blockers[0], "src/app.go") {
+		t.Fatalf("WriteRefutations = %q, want one R2 blocker naming the pending path", blockers)
+	}
+}
+
+// S16: no plan, no delta and no product-path divergence is a workstream, so a
+// documentation-only diff never trips R3's line threshold.
+func TestWriteRefutationsSkipAWorkstreamDespiteTheDiffThreshold(t *testing.T) {
+	root := writeRepo(t, map[string]string{
+		"ai-specs/ai-specs.toml": "[recipes.plan-build-flow.config]\nmode = \"openspec\"\n" +
+			"max_diff_lines = 1\n",
+	})
+	writeFile(t, filepath.Join(root, "docs", "notes.md"), "a\nb\nc\n")
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-q", "-m", "docs: notes")
+
+	if blockers := WriteRefutations(root, planbuild.ModeOpenspec, "thing", "src/app.go"); len(blockers) != 0 {
+		t.Fatalf("WriteRefutations = %q, want a documentation-only workstream ungraded", blockers)
+	}
+}
+
+// R4 needs a removed public declaration, not the disappearance of a spelling:
+// deleting a comment that names an obsolete flag proves no contract change.
+func TestWriteRefutationsIgnoreARemovedProseFlag(t *testing.T) {
+	root := writeRepo(t, map[string]string{
+		"src/cli.go": "package src\n\n// obsolete: --old-flag\n",
+	})
+	writeFile(t, filepath.Join(root, "src", "cli.go"), "package src\n\n// the obsolete flag is gone\n")
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-q", "-m", "docs: drop the mention")
+
+	if blockers := WriteRefutations(root, planbuild.ModeOpenspec, "thing", "src/app.go"); len(blockers) != 0 {
+		t.Fatalf("WriteRefutations = %q, want no R4 over a removed comment", blockers)
+	}
+}
+
 // The pre-archive stage grades the same refutations: a canonical spec edit with
 // no delta is a promotion bypass there too.
 func TestCheckPrearchiveBlocksACanonicalSpecEditWithoutADelta(t *testing.T) {

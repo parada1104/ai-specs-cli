@@ -16,6 +16,7 @@ package gates
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -28,6 +29,12 @@ import (
 
 // GitPRRecipeID is the recipe whose config declares the project base branch.
 const GitPRRecipeID = "git-pr-flow"
+
+// ProductDirs is the write gate's graded production scope; ProductDirsEnv overrides it.
+const (
+	ProductDirs    = "src lib catalog"
+	ProductDirsEnv = "PLAN_BUILD_GATE_PATHS"
+)
 
 // HighRiskPaths reads the project's explicit high-risk list from
 // [recipes.plan-build-flow.config] high_risk_paths in ai-specs/ai-specs.toml at
@@ -124,7 +131,7 @@ func Refutations(repoRoot, mode, change string, base *string) (blockers, notes [
 			"grade. Fetch the base branch, or pass `--base <ref>` naming a ref that resolves.", baseRef)}
 	}
 	blockers = append(blockers, canonicalSpecRefutation(repoRoot, mode, change, diff, "R-a")...)
-	blockers = append(blockers, highRiskRefutation(repoRoot, mode, change, baseRef, diff, "R-b")...)
+	blockers = append(blockers, highRiskRefutation(repoRoot, mode, change, baseRef, diff, "R-b", "")...)
 	return blockers, nil
 }
 
@@ -153,7 +160,11 @@ func WriteRefutations(repoRoot, mode, change, target string) []string {
 	if change != "" && !planbuild.HasDelta(repoRoot, mode, change) {
 		blockers = append(blockers, canonicalSpecRefutation(repoRoot, mode, change, diff, "R1")...)
 	}
-	blockers = append(blockers, highRiskRefutation(repoRoot, mode, change, base, diff, "R2")...)
+	blockers = append(blockers, highRiskRefutation(repoRoot, mode, change, base, diff, "R2", target)...)
+	// S16: a plan-less, delta-less change with no product path is a workstream.
+	if nothingToGrade(repoRoot, mode, change, diff) {
+		return blockers
+	}
 	blockers = append(blockers, sizeRefutation(repoRoot, base, diff, diffText)...)
 	blockers = append(blockers, contractRefutation(repoRoot, diffText)...)
 	blockers = append(blockers, planEvidenceRefutation(repoRoot, mode, change)...)
@@ -200,6 +211,37 @@ func diffSides(text string) (removed, added []string) {
 		}
 	}
 	return removed, added
+}
+
+// nothingToGrade reports the S16 workstream: no plan, no delta and no product
+// path in the diff is nothing to grade, so only R1 and R2 still apply.
+func nothingToGrade(repoRoot, mode, change string, diff []planbuild.DiffEntry) bool {
+	if change != "" && (planbuild.PlanIsValidForMode(repoRoot, mode, change) ||
+		planbuild.HasDelta(repoRoot, mode, change)) {
+		return false
+	}
+	for _, entry := range diff {
+		if productPath(entry.Path) {
+			return false
+		}
+	}
+	return true
+}
+
+// productPath reports whether a repository-relative path is in the production scope.
+func productPath(rel string) bool {
+	dirs := os.Getenv(ProductDirsEnv)
+	// `${prod_dirs// /}`: only spaces make the value blank.
+	if strings.ReplaceAll(dirs, " ", "") == "" {
+		dirs = ProductDirs
+	}
+	first, _, _ := strings.Cut(rel, "/")
+	for _, dir := range strings.Fields(dirs) {
+		if first == dir {
+			return true
+		}
+	}
+	return false
 }
 
 // sizeRefutation is R3: the diff exceeds a size or module threshold the project
@@ -280,7 +322,7 @@ func contractRefutation(repoRoot, diffText string) []string {
 			added += line[1:] + "\n"
 		case strings.HasPrefix(line, "-"):
 			content := line[1:]
-			flags = append(flags, longFlagRe.FindAllString(content, -1)...)
+			flags = append(flags, declaredFlags(content)...)
 			if strings.HasSuffix(current, ".toml") {
 				if match := tomlKeyRe.FindStringSubmatch(content); match != nil {
 					keys = append(keys, match[1])
@@ -305,6 +347,16 @@ func contractRefutation(repoRoot, diffText string) []string {
 			"and its migration, record an exemption decision, or escalate.", key)}
 	}
 	return nil
+}
+
+// declaredFlags returns the long flags a removed line declares: a CLI switch case
+// or a help line, never a comment that merely names the flag.
+func declaredFlags(line string) []string {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "case ") && !strings.HasPrefix(trimmed, "--") {
+		return nil
+	}
+	return longFlagRe.FindAllString(trimmed, -1)
 }
 
 // planEvidenceRefutation is R5: the plan declares S# rows but carries no
@@ -356,19 +408,25 @@ func canonicalSpecRefutation(repoRoot, mode, change string, diff []planbuild.Dif
 // highRiskRefutation is R-b/R2: a changed path the project declares as
 // high-risk, answered per mode — a plan this diff contributes in openspec, a
 // Risk trailer in odd.
-func highRiskRefutation(repoRoot, mode, change, base string, diff []planbuild.DiffEntry, rule string) []string {
+func highRiskRefutation(repoRoot, mode, change, base string, diff []planbuild.DiffEntry, rule, pending string) []string {
 	patterns := HighRiskPaths(repoRoot, base)
 	if len(patterns) == 0 {
 		return nil
 	}
-	first, count := firstMatch(diff, func(entry planbuild.DiffEntry) bool {
+	matches := func(rel string) bool {
 		for _, pattern := range patterns {
-			if matchesHighRisk(pattern, entry.Path) {
+			if matchesHighRisk(pattern, rel) {
 				return true
 			}
 		}
 		return false
-	})
+	}
+	first, count := firstMatch(diff, func(entry planbuild.DiffEntry) bool { return matches(entry.Path) })
+	// The pending write is graded before it happens, so a clean branch cannot
+	// write a declared high-risk path without its evidence.
+	if first == "" && pending != "" && matches(pending) {
+		first, count = pending, 1
+	}
 	if first == "" {
 		return nil
 	}

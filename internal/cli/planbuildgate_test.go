@@ -350,6 +350,18 @@ func TestPlanBuildGateOddModeAllowsCanonicalSpecsWriteWithDelta(t *testing.T) {
 	}
 }
 
+// --explain reports the inferred tier and the rules on the canonical-spec path
+// too, not only on the production-write path.
+func TestPlanBuildGateOddModeExplainsCanonicalSpecWrite(t *testing.T) {
+	repo, _ := oddRepo(t)
+	planBuildWriteOddDelta(t, repo, "odd-change")
+	code, stdout, stderr := runPlanBuildGateArgs(t, repo,
+		planBuildGateEvent(repo, "Write", "odd/specs/cap/spec.md"), "--explain")
+	if code != 0 || stdout != "" || stderr != "plan-build-gate: tier light; refutations none\n" {
+		t.Fatalf("explain = (%d, %q, %q), want the inferred tier line", code, stdout, stderr)
+	}
+}
+
 // Planning artifacts stay writable: the odd tree and every openspec change.
 func TestPlanBuildGateOddModeAllowsPlanningWrites(t *testing.T) {
 	repo, _ := oddRepo(t)

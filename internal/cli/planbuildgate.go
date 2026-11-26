@@ -48,9 +48,9 @@ const (
 	// the script of the same name, so the prefix is unchanged.
 	planBuildGateName = "plan-build-gate"
 	// planBuildGateProdDirsEnv overrides the graded production directories.
-	planBuildGateProdDirsEnv = "PLAN_BUILD_GATE_PATHS"
+	planBuildGateProdDirsEnv = gates.ProductDirsEnv
 	// planBuildGateDefaultProdDirs is the default of that env.
-	planBuildGateDefaultProdDirs = "src lib catalog"
+	planBuildGateDefaultProdDirs = gates.ProductDirs
 	// planBuildGateCheckpoint is the checkpoint this host grades.
 	planBuildGateCheckpoint = "work-start"
 )
@@ -147,7 +147,7 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 		if tool == "" {
 			tool = "edit"
 		}
-		return planBuildGateCanonicalSpec(repoRoot, target.Probe, mode, tool, rel, stderr)
+		return planBuildGateCanonicalSpec(repoRoot, target.Probe, mode, tool, rel, explain, stderr)
 	}
 	if mode == planbuild.ModeOdd && planBuildGateUnder(filepath.Join(repoRoot, "odd"), abs) {
 		return 0
@@ -216,11 +216,16 @@ func planBuildGateCommonDir(probeDir string) string {
 
 // planBuildGateCanonicalSpec grades a write to the canonical spec tree: a hand
 // write there is a promotion bypass (R1), so it passes only when the branch
-// pairs a change whose delta promotion would promote.
-func planBuildGateCanonicalSpec(repoRoot, probeDir, mode, tool, rel string, stderr io.Writer) int {
+// pairs a change whose delta promotion would promote. A passing canonical write
+// still owes the --explain report.
+func planBuildGateCanonicalSpec(repoRoot, probeDir, mode, tool, rel string, explain bool, stderr io.Writer) int {
 	change := ""
 	if name, ok := planbuild.ChangeFromBranch(planbuild.Branch(probeDir)); ok {
 		if planbuild.HasDelta(repoRoot, mode, name) {
+			if explain {
+				fmt.Fprintf(stderr, "%s: tier %s; refutations none\n", planBuildGateName,
+					planBuildGateInferredTier(repoRoot, mode, name))
+			}
 			return 0
 		}
 		change = name
