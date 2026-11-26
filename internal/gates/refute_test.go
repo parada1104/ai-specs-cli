@@ -524,6 +524,23 @@ func TestWriteRefutationsIgnoreARemovedProseFlag(t *testing.T) {
 	}
 }
 
+// A real registration is a declaration: removing `flag.String("--x", ...)` is a
+// contract change even though the line does not start with `case` or `--`.
+func TestWriteRefutationsReportARemovedFlagRegistration(t *testing.T) {
+	root := writeRepo(t, map[string]string{
+		"src/cli.go": "package src\n\nimport \"flag\"\n\nfunc init() {\n\tflag.String(\"--old-flag\", \"\", \"helper\")\n}\n",
+	})
+	writeFile(t, filepath.Join(root, "src", "cli.go"), "package src\n\nimport \"flag\"\n")
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-q", "-m", "refactor: drop the flag")
+
+	blockers := WriteRefutations(root, planbuild.ModeOpenspec, "thing", "src/app.go")
+	if len(blockers) != 1 || !strings.Contains(blockers[0], "R4") ||
+		!strings.Contains(blockers[0], "--old-flag") {
+		t.Fatalf("WriteRefutations = %q, want one R4 blocker naming the removed registration", blockers)
+	}
+}
+
 // The pre-archive stage grades the same refutations: a canonical spec edit with
 // no delta is a promotion bypass there too.
 func TestCheckPrearchiveBlocksACanonicalSpecEditWithoutADelta(t *testing.T) {

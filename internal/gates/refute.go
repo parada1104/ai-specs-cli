@@ -349,11 +349,17 @@ func contractRefutation(repoRoot, diffText string) []string {
 	return nil
 }
 
-// declaredFlags returns the long flags a removed line declares: a CLI switch case
-// or a help line, never a comment that merely names the flag.
+// flagRegistrationRe matches the constructs that declare a CLI flag, so a removed
+// registration counts as a contract change while a comment or a doc line does not.
+var flagRegistrationRe = regexp.MustCompile(`\b(?:p?flag\.\w+|Flags\(\)\.\w+|Flag\s*\{)`)
+
+// declaredFlags returns the long flags a removed line declares: a CLI switch case,
+// a help line, or a flag registration, never a comment that merely names the flag.
 func declaredFlags(line string) []string {
 	trimmed := strings.TrimSpace(line)
-	if !strings.HasPrefix(trimmed, "case ") && !strings.HasPrefix(trimmed, "--") {
+	declared := strings.HasPrefix(trimmed, "case ") || strings.HasPrefix(trimmed, "--") ||
+		flagRegistrationRe.MatchString(trimmed)
+	if !declared {
 		return nil
 	}
 	return longFlagRe.FindAllString(trimmed, -1)
