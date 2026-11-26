@@ -6,8 +6,8 @@
 # detection; recipe/skill content hashes are not tracked.
 
 [meta]
-cli_version = "0.26.2"
-synced_at = "2026-11-22T22:50:13Z"
+cli_version = "0.27.0"
+synced_at = "2026-11-26T17:18:29Z"
 
 [managed.".claude/commands/pr-create.md"]
 sha256 = "709a703204ad4437a24f7f5a4bc9ca47e2101ca6e6f081c9c96916813dda963d"
@@ -110,7 +110,7 @@ recipe = "worktree-flow"
 kind = "recipe-command"
 
 [managed."AGENTS.md"]
-sha256 = "00e4a34576562b6fa2274a90c94cb90bf26ad28a2be8d1bba0beb1532a3e237d"
+sha256 = "8dd92b4f7e1de7f73fbb0dac4f258b7834d8c207b881a639f11b01f0d6252156"
 kind = "runtime-brief"
 policy = "never-force"
 
