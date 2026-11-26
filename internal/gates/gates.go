@@ -16,6 +16,7 @@ import (
 
 	"ai-specs.dev/ai-specs/internal/planbuild"
 	"ai-specs.dev/ai-specs/internal/specs"
+	"ai-specs.dev/ai-specs/internal/tier"
 )
 
 // depthRe keeps the exact standalone-line contract: plan annotations must not
@@ -31,20 +32,10 @@ type Result struct {
 	ArchivePath string   // inspected folder, empty when no archive resolved
 }
 
-// deriveTier reads the artifacts of one change folder (S15): the plan is the
-// artifact that asks for ceremony, and a delta alone is a light change because
-// S20 allows a delta with no plan.
+// deriveTier reads the artifacts of one change folder (S15) through the one
+// derivation both modes share.
 func deriveTier(folder string) string {
-	hasPlan := isFile(filepath.Join(folder, "tasks.md"))
-	hasDelta := hasSpecDelta(folder)
-	switch {
-	case !hasPlan && !hasDelta:
-		return TierNone
-	case hasPlan && hasDelta:
-		return TierStandard
-	default:
-		return TierLight
-	}
+	return tier.Derive(isFile(filepath.Join(folder, "tasks.md")), hasSpecDelta(folder))
 }
 
 // declaredTier collects the tier declarations a change may still carry: the
@@ -215,10 +206,6 @@ func baseOption(base []*string) *string {
 	return base[0]
 }
 
-// TierOdd is the guardian's label in odd mode: there is no Plan Build depth
-// there, because ODD owns planning.
-const TierOdd = "odd"
-
 // CheckPremergeOdd validates an ODD change before merge: the branch-paired plan
 // must be a regular file of the repository, every delta under
 // odd/changes/<change>/specs/ must already be promoted into odd/specs/ — read from
@@ -239,7 +226,7 @@ func CheckPremergeOdd(repoRoot, change string,
 	change = planbuild.NormalizeChange(change)
 	if change == "" {
 		return Result{Blockers: []string{"ODD mode is active but the current branch cannot be " +
-			"resolved (detached HEAD), so no change can be paired"}, Tier: TierOdd}
+			"resolved (detached HEAD), so no change can be paired"}, Tier: TierNone}
 	}
 	changesBase := planbuild.ChangesBase(repoRoot, planbuild.ModeOdd)
 	folder := filepath.Join(changesBase, change)
@@ -265,17 +252,17 @@ func CheckPremergeOdd(repoRoot, change string,
 	if archive != "" {
 		blockers = append(blockers, oddParityBlockers(repoRoot, changesBase, archive)...)
 	}
-	tier := TierNone
-	if active || present || validPlan {
-		tier = TierOdd
-	}
+	// ODD computes the same three values as OpenSpec (S1/S2): the artifacts the
+	// change carries decide the tier, so a plan-only change is light, a plan plus
+	// a delta is standard, and only "neither" stays none.
+	resolved := tier.Derive(validPlan, planbuild.HasDelta(repoRoot, planbuild.ModeOdd, change))
 	refutations, notes := Refutations(repoRoot, planbuild.ModeOdd, change, baseOption(base))
 	blockers = append(blockers, refutations...)
 	archivePath := archive
 	if archivePath == "" && validPlan {
 		archivePath = planbuild.PlanPath(repoRoot, change)
 	}
-	return Result{OK: len(blockers) == 0, Blockers: blockers, Notes: notes, Tier: tier, ArchivePath: archivePath}
+	return Result{OK: len(blockers) == 0, Blockers: blockers, Notes: notes, Tier: resolved, ArchivePath: archivePath}
 }
 
 // oddParityBlockers is the promotion parity of one odd change folder, refused when

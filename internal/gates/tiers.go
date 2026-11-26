@@ -1,17 +1,16 @@
 package gates
 
-// Tiers are derived from the artifacts a change carries (S15), never declared:
-// no plan means `none`, which is the guardian's name for an ODD small task; a
-// plan alone is `light`; a plan plus a delta is `standard`. A change that
-// carries only a delta is `light` as well, because S20 allows a delta with no
-// plan.
+import "ai-specs.dev/ai-specs/internal/tier"
+
+// The tier vocabulary is the shared derivation's: internal/tier owns both the
+// values and the rule, so the guardian and its callers read one contract.
 const (
-	TierNone     = "none"
-	TierLight    = "light"
-	TierStandard = "standard"
+	TierNone     = tier.None
+	TierLight    = tier.Light
+	TierStandard = tier.Standard
 
 	// TierFull is not a tier any more: it exists only so that a stale `Depth:
 	// full` line or `--tier full` can block with the migration message instead
 	// of an unhelpful "unknown tier".
-	TierFull = "full"
+	TierFull = tier.Full
 )
