@@ -74,6 +74,33 @@ Branch `chore/plan-build-evals-goldens`, from `development ea35a329`. Mode: `odd
   same PR and are run live too. All 14 approved cases ship together; ordering stays P0
   first because the P1/P2 assertions build on the same primitives.
 
+## Specs (delivery phase)
+
+- **S13** — Declare `mode` officially in the `plan-build-flow` recipe schema and regenerate the
+  frozen `internal/schema` oracle. Robert: «1 ok». This is the fix for R3-001: today the gates
+  honour the key while the recipe-config validator reports `unknown config key 'mode' (ignored)`.
+- **S14** — The SKILL and the openspec gate block message must offer
+  `ai-specs changes start --none`. Parent decision (technical), from the
+  `ac_ceremony_none_openspec` finding: the agent knows the waiver exists and never runs it.
+- **S15** — Find out why `ac_specs_write_without_delta` is unstable. Same fixture produced
+  "delta + promote + archive" on one run and "did nothing" on the next. Parent decision
+  (technical).
+- **S16** — Widen the eval sandbox allow-list to `Bash(git add:*)` and `Bash(git commit:*)`,
+  sandbox only, with the runner test extended. Robert: «3 si». Unblocks
+  `ac_high_risk_path_odd`, which cannot produce a `Risk: item` commit trailer without git.
+- **S17** — Disable native review for this clone **only** for delivering this branch, and
+  re-enable it when done. Robert: «2 ok».
+
+## Tasks (delivery phase)
+
+| ID | Specs | Route | Content | Commit |
+|----|-------|-------|---------|--------|
+| T12 | S13 | inline | `mode` in the recipe schema + regenerate `internal/schema` oracle | `feat(schema): declare the plan-build artifact mode` |
+| T13 | S14 | inline | Offer the waiver in the SKILL and in the openspec gate refusal | `fix(gates): offer changes start --none when the gate blocks` |
+| T14 | S15 | inline | Diagnose the flaky `ac_specs_write_without_delta` | `—` |
+| T15 | S16 | inline | Sandbox allow-list `Bash(git add:*)` + `Bash(git commit:*)`, runner test extended | `test(evals): allow git add and git commit in the eval sandbox` |
+| T16 | S17 | parent | `review mode disable --scope clone`, push, PR, then re-enable | `—` |
+
 ## Golden case inventory (current, `tests/evals/scenarios/plan-build-flow`)
 
 A live golden here is not an exit code: it is a fixture + a natural-language prompt + what the
@@ -208,3 +235,27 @@ needs network beyond the model call.
   the line without changing the recipe-manifest contract — S3 therefore deletes the
   dead script and fixes the contradictory description, which is what "igual que
   worktree-gate" actually does (worktree-flow also keeps its `script` line).
+- **L11** — Delivery decisions, Robert's own words: «1 ok, 2 ok, 3 si».
+  (1) declare `mode` officially in the plan-build-flow recipe schema, regenerating the frozen
+  `internal/schema` oracle; (2) disable native review in this clone **only** to deliver this
+  branch, and re-enable it when done; (3) widen the eval sandbox allow-list to
+  `Bash(git add:*)` and `Bash(git commit:*)`, sandbox only.
+- **L12** — Parent decision (technical): the SKILL and the openspec gate block message must
+  offer `ai-specs changes start --none`. That is the `ac_ceremony_none_openspec` finding — the
+  agent sees the gate, knows the waiver exists, and never runs it.
+- **L13** — Parent decision (technical): investigate why `ac_specs_write_without_delta` is
+  unstable. Same fixture, two runs: "delta + promote + archive" and "did nothing".
+- **L14** — State at handoff. Landed locally, **never pushed**: 28 commits from `ea35a329`,
+  runner suite at 30 green tests, dry run green (55 tests, 27 skipped). 14 scenarios written;
+  the P0 live pass measured 15 pass / 3 fail, of which one is the SKILL finding above, one is
+  blocked by the missing git permission, one is the unstable case. **Two review lineages are
+  `escalated` and terminal with no continuation offered** — `review-591fcf679e826580` and
+  `review-4dac0810507e7f75`; both rejected their targeted validator. R3-001 (the `mode` key) is
+  the finding that keeps coming back, which is why S13 comes first. Open non-blocking findings
+  from the last review: R3-002 (`required_changed_globs` also passes when the file merely
+  exists), R3-003 (the canonical spec is seeded, so promotion is not really proved), R3-004 /
+  R3-006 (`ac_plan_shape` asserts isolated tokens, not structure), R2-golden-pins-ignored-mode,
+  R2-duplicated-install-root, R2-retired-tier-param-kept, R2-dead-hook-payload-helper.
+  Evidence for every live run is in `~/tmp-evidence/` (throwaway, regenerated per batch).
+- **L15** — Continuity for a fresh session: read this document until `## Log`, then start at T12.
+  Nothing is running: all background jobs exited and every subagent is completed or cancelled.
