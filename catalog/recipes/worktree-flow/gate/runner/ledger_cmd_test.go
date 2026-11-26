@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -490,9 +491,11 @@ func TestLedgerItemPopulatedWhenOpenItem(t *testing.T) {
 	}
 }
 
-// TestLedgerPersistsConflictSnapshotAndClearsOnDecide pins the persistence seam
-// end to end: a conflict grade records the snapshot, and --decide clears it.
-func TestLedgerPersistsConflictSnapshotAndClearsOnDecide(t *testing.T) {
+// TestLedgerConflictReachesVerdictAndDecideClearsIt pins the conflict seam end to
+// end: the computed conflict is in the verdict JSON (where the host presents it),
+// and --decide settles it. Neither invocation is a reason to persist a snapshot on
+// the grade path.
+func TestLedgerConflictReachesVerdictAndDecideClearsIt(t *testing.T) {
 	dir, common, branch := ledgerRepo(t)
 	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
 	storePath := saveLedgerStore(t, common, branch, "card-local", nil)
@@ -500,12 +503,17 @@ func TestLedgerPersistsConflictSnapshotAndClearsOnDecide(t *testing.T) {
 	base := []string{"--ledger", "--checkpoint", "pre-merge", "--ledger-mode", "ask", "--project-root", dir, "--evidence", evidence}
 	key := ledger.IdentityKey(common, branch, "")
 
-	if code, _, _ := runCLI(t, base...); code != 0 {
-		t.Fatalf("conflict grade exit = %d, want 0", code)
+	code, stdout, stderr := runCLI(t, base...)
+	if code != 0 {
+		t.Fatalf("conflict grade exit = %d, want 0; stderr: %s", code, stderr)
 	}
-	snapshot := recordedConflict(t, storePath, key)
-	if snapshot == nil || snapshot.Sides.Local != "card-local" || snapshot.Sides.Remote != "card-remote" {
-		t.Fatalf("recorded snapshot = %+v, want local card-local / remote card-remote", snapshot)
+	conflict, ok := decodeLedgerOut(t, stdout)["conflict"].(map[string]any)
+	if !ok {
+		t.Fatalf("verdict conflict = %v, want the computed snapshot", decodeLedgerOut(t, stdout)["conflict"])
+	}
+	sides := conflict["sides"].(map[string]any)
+	if sides["local"] != "card-local" || sides["remote"] != "card-remote" {
+		t.Fatalf("verdict conflict sides = %v, want local card-local / remote card-remote", sides)
 	}
 
 	if code, _, stderr := runCLI(t, append(append([]string{}, base...), "--decide", `{"choice":"remote"}`)...); code != 0 {
@@ -1194,6 +1202,45 @@ func TestLedgerGradeNeverWritesStore(t *testing.T) {
 	}
 	if !ledgerStoreMtime(t, storePath).Equal(beforeMtime) {
 		t.Fatal("a consistent grade must not touch the store at all")
+	}
+
+	// A grade that computes a conflict is still pure (S6).
+	assertLedgerConflictGradeIsPure(t, dir, storePath)
+}
+
+// assertLedgerConflictGradeIsPure grades a real conflict and pins the S6 rule: the
+// computed snapshot reaches the verdict, while the store stays byte-identical and
+// no lock file or temp residue appears.
+func assertLedgerConflictGradeIsPure(t *testing.T, dir, storePath string) {
+	t.Helper()
+	evidence := writeLedgerEvidence(t, map[string]string{"remote": "card-remote"})
+	before := ledgerStoreBytes(t, storePath)
+	beforeMtime := ledgerStoreMtime(t, storePath)
+	code, stdout, stderr := runCLI(t, "--ledger", "--checkpoint", "pre-merge", "--ledger-mode", "ask",
+		"--project-root", dir, "--evidence", evidence)
+	if code != 0 {
+		t.Fatalf("conflict grade exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	out := decodeLedgerOut(t, stdout)
+	if out["decision"] != "ask" || out["reason"] != "conflict" || out["conflict"] == nil {
+		t.Fatalf("conflict grade = %v/%v conflict=%v, want ask/conflict with the snapshot",
+			out["decision"], out["reason"], out["conflict"])
+	}
+	if !bytes.Equal(before, ledgerStoreBytes(t, storePath)) {
+		t.Fatal("a conflicting grade must leave the store byte-identical")
+	}
+	if !ledgerStoreMtime(t, storePath).Equal(beforeMtime) {
+		t.Fatal("a conflicting grade must not touch the store at all")
+	}
+	if _, err := os.Stat(storePath + ".lock"); !os.IsNotExist(err) {
+		t.Fatalf("a conflicting grade created the store lock: %v", err)
+	}
+	residue, err := filepath.Glob(filepath.Join(filepath.Dir(storePath), "state.json.tmp.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(residue) != 0 {
+		t.Fatalf("a conflicting grade left temp residue: %v", residue)
 	}
 }
 

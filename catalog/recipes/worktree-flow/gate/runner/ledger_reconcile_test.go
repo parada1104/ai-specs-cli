@@ -875,10 +875,11 @@ func TestLedgerReconcileParsesTheManifestSubset(t *testing.T) {
 	}
 }
 
-// TestLedgerReconcileDoesNotRecordConflict pins that the documented read-only
-// contract covers the whole path, not just the sidecar: a conflicting grade that
-// would normally persist a snapshot must persist nothing when --reconcile is
-// requested, and the legacy grade must still record it.
+// TestLedgerReconcileDoesNotRecordConflict pins grade purity on the reconcile
+// path (S6): the documented read-only contract covers the whole invocation, and a
+// plain conflicting grade is pure too — the conflict reaches the verdict JSON, and
+// neither invocation writes the store, takes the store lock, or leaves temp
+// residue behind.
 func TestLedgerReconcileDoesNotRecordConflict(t *testing.T) {
 	dir, common, branch := ledgerRepo(t)
 	writeLedgerWitness(t, common, "bound", reconcileRecipeID)
@@ -904,18 +905,12 @@ func TestLedgerReconcileDoesNotRecordConflict(t *testing.T) {
 	if snapshot := recordedConflict(t, storePath, key); snapshot != nil {
 		t.Fatalf("snapshot = %+v, want none recorded by a --reconcile invocation", snapshot)
 	}
-	if !strings.Contains(stderr, "conflict") {
-		t.Fatalf("stderr = %q, want the suppressed conflict recording reported", stderr)
-	}
 
-	t.Run("legacy grade still records it", func(t *testing.T) {
-		if code, _, stderr := runCLI(t, base...); code != 0 {
-			t.Fatalf("legacy exit = %d, want 0; stderr: %s", code, stderr)
-		}
-		if snapshot := recordedConflict(t, storePath, key); snapshot == nil {
-			t.Fatal("a plain grade must still record the conflict snapshot")
-		}
-	})
+	// The plain grade is pure as well: no grade path persists the snapshot.
+	assertLedgerConflictGradeIsPure(t, dir, storePath)
+	if snapshot := recordedConflict(t, storePath, key); snapshot != nil {
+		t.Fatalf("snapshot = %+v, want none recorded by a plain conflict grade", snapshot)
+	}
 }
 
 // TestLedgerReconcileObservationSizeIsBounded pins the same-class read bound: an
