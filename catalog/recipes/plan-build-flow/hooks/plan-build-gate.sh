@@ -236,8 +236,10 @@ if central_root_proof; then
     exit 0
   fi
   echo "plan-build-gate: refusing to ${tool_name:-edit} '$rel' — no active change folder found under central planning root '$central_root/openspec/changes/' for submodule '$central_sub'. Classify the change and write the central plan first; writes under that planning tree are allowed." >&2
+  echo "If this change genuinely needs no plan, run 'ai-specs changes start --none --root <planning-root>' and retry the write instead of writing a plan nobody needs." >&2
   exit 2
 fi
 
 echo "plan-build-gate: refusing to ${tool_name:-edit} '$rel' — no active change folder (openspec/changes/<slug>/tasks.md) found. Classify the change and write the plan first, then implement. Writing planning artifacts under openspec/changes/ is never blocked." >&2
+echo "If this change genuinely needs no plan, run 'ai-specs changes start --none --root <planning-root>' and retry the write instead of writing a plan nobody needs." >&2
 exit 2

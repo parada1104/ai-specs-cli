@@ -432,6 +432,12 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("Exception — `odd` mode (Section 4.1)", section)
         self.assertIn("`odd/tasks/<change>.md`", section)
 
+    def test_skill_7_1_offers_the_none_waiver_at_the_block_response(self):
+        """S14: §7.1 offers `changes start --none` when the gate blocks, not a dead end."""
+        section = _skill_section("7.1 Change folder required")
+        self.assertIn("ai-specs changes start --none", section)
+        self.assertIn("instead of writing a plan", section)
+
     def test_skill_4_1_names_odd_layout_and_mode_key(self):
         """S1, S4, S6: §4.1 names the mode key and the odd artifact layout."""
         section = _skill_section("4.1 Companion mode (ODD owns the change)", level=2)

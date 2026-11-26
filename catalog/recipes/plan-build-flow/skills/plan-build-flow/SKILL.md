@@ -246,8 +246,11 @@ but never replaces them.
 A change that carries a plan MUST have a slug folder at `openspec/changes/<slug>/`
 (excluding `archive/`) before implementation begins on that change. If the user
 jumps straight to "implement X" and the change needs a plan, create the folder
-and write the plan first. A change that needs no plan (`none`) creates no folder
-and passes unless its diff is refuted (Section 7.4).
+and write the plan first. That refusal is not a dead end: if the change genuinely
+needs no plan, run `ai-specs changes start --none --root <planning-root>` and
+retry the write instead of writing a plan nobody needs. A change that needs no
+plan (`none`) creates no folder and passes unless its diff is refuted
+(Section 7.4).
 
 The `openspec` hook accepts a local declaration that the branch needs no plan:
 `ai-specs changes start --none --root <planning-root>` writes

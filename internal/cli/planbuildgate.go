@@ -135,6 +135,13 @@ const planBuildGateAmbiguousRefusal = "%s: refusing to %s '%s' — %s\n"
 // branch names none; the resolver error names the plan path to write.
 const planBuildGateNoChangeRefusal = "%s: refusing to %s '%s' — %s\n"
 
+// planBuildGateNoneOffer is appended to every openspec plan refusal: a refusal
+// that never names the waiver reads as a dead end (S14), and the branch that
+// genuinely needs no plan has a documented way to say so.
+const planBuildGateNoneOffer = "If this change genuinely needs no plan, run " +
+	"'ai-specs changes start --none --root <planning-root>' and retry the write " +
+	"instead of writing a plan nobody needs.\n"
+
 // runPlanBuildGate grades one pre-tool-use event from stdin.
 func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	for _, arg := range args {
@@ -231,6 +238,7 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 			return 0
 		}
 		fmt.Fprintf(stderr, planBuildGateCentralRefusal, planBuildGateName, tool, rel, central, sub)
+		fmt.Fprint(stderr, planBuildGateNoneOffer)
 		return 2
 	}
 	switch {
@@ -241,6 +249,7 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 	default:
 		fmt.Fprintf(stderr, planBuildGateNearestRefusal, planBuildGateName, tool, rel)
 	}
+	fmt.Fprint(stderr, planBuildGateNoneOffer)
 	return 2
 }
 
