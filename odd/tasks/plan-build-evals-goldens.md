@@ -91,6 +91,19 @@ Branch `chore/plan-build-evals-goldens`, from `development ea35a329`. Mode: `odd
 - **S17** — Disable native review for this clone **only** for delivering this branch, and
   re-enable it when done. Robert: «2 ok».
 
+- **S18** — The six high-risk items that `Risk: item N (<reason>)` numbers must be
+  enumerable from the recipe surface: the SKILL, the README and the R-b refusal that
+  demands the trailer. Today they say `N in 1..6` and never name the list, so the agent
+  cannot know which N applies and correctly refuses to invent one (2 of 3 live runs).
+- **S19** — The eval sandbox allow-list must admit the CLI as the fixture actually
+  exposes it: the rendered hook names the absolute `<install-root>/dist/ai-specs`, and
+  `Bash(ai-specs:*)` matches only the bare word, so the documented waiver was refused
+  after the agent found it. Exact pattern, sandbox only, no wildcard.
+- **S20** — The `forbidden_commands` primitive must be provable on `claude`:
+  `--output-format json` records no `tool_use` at all, only `permission_denials`, so the
+  check fails closed on every claude run since the R3-004 hardening. Capture the tool
+  calls (stream-json) so the case grades the agent instead of the plumbing.
+
 ## Tasks (delivery phase)
 
 | ID | Specs | Route | Content | Commit |
@@ -99,6 +112,10 @@ Branch `chore/plan-build-evals-goldens`, from `development ea35a329`. Mode: `odd
 | T13 | S14 | inline | Offer the waiver in the SKILL and in the openspec gate refusal | `fix(gates): offer changes start --none when the gate blocks` — landed `de24cd8e` |
 | T14 | S15 | inline | Diagnose the flaky `ac_specs_write_without_delta` | `—` — cause in the scenario prompt, fixed in the T14 commit |
 | T15 | S16 | inline | Sandbox allow-list `Bash(git add:*)` + `Bash(git commit:*)`, runner test extended | `test(evals): allow git add and git commit in the eval sandbox` — landed `33bd9f80` |
+| T17 | S18 | worker | Enumerate the six high-risk items in SKILL, README and the R-b refusal | `docs(plan-build): name the six high-risk items the Risk trailer numbers` — landed `f30d1fbf` |
+| T18 | S19 | worker | Sandbox allow-list admits the absolute CLI path (sandbox only) | `test(evals): record the tool calls claude runs, and let it run the CLI it was shown` — landed `75ab61eb` with T19 |
+| T19 | S20 | worker | Capture claude tool calls so `forbidden_commands` is provable | same unit, `75ab61eb` |
+| T20 | S15 | inline | Grade the archive case's merge question in either language | `test(evals): grade the merge question in either language` — `bd8b5231` |
 | T16 | S17 | parent | `review mode disable --scope clone`, push, PR, then re-enable | `—` |
 
 ## Golden case inventory (current, `tests/evals/scenarios/plan-build-flow`)
@@ -259,3 +276,14 @@ needs network beyond the model call.
   Evidence for every live run is in `~/tmp-evidence/` (throwaway, regenerated per batch).
 - **L15** — Continuity for a fresh session: read this document until `## Log`, then start at T12.
   Nothing is running: all background jobs exited and every subagent is completed or cancelled.
+- **L16** — Robert's decisions on the three live failures (asked, answered in one
+  round): (1) enumerate the six high-risk items in the SKILL, the README and the gate
+  message; (2) add the absolute binary form to the sandbox allow-list; (3) switch the
+  claude live runs to stream-json. Added as S18-S20 / T17-T19.
+- **L17** — Live pass on `claude`, 11 of 14 green, ~$5.2 recorded for 15 of the 26 runs.
+  `ac_high_risk_path_odd` failed 2 of 3 (the six items are named nowhere; in the run that
+  passed the model guessed "item 1"). `ac_ceremony_none_openspec` failed because the
+  sandbox denied the absolute binary path the rendered hook itself shows — the agent
+  quoted T13's waiver line from the gate and tried to run it. `ac_archive_with_verb_...`
+  failed only in the primitive: the agent archived with the verb and did not merge, and
+  `claude --output-format json` reports no `tool_use` at all.
