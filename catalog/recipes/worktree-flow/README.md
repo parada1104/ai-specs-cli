@@ -14,9 +14,14 @@ post-merge cleanup.
   protected heads, deletes merged remote branches from the main worktree, verifies
   remote absence with `git ls-remote --heads`, and closes the matching tracker-ledger
   item at `archive-close` before any destructive removal.
-- **Managed `.git/hooks/post-merge` trigger** — a one-line CLI hook that runs that
-  cleanup automatically at a merge boundary. Sync always regenerates it.
-  It is workflow-agnostic: no SDD/ODD/OpenSpec dependency and no provider mutation. Cleanup may perform the documented read-only PR merge-commit acquisition when local proofs are inconclusive.
+- **Managed `.git/hooks/post-merge` and `.git/hooks/post-checkout` triggers** — two
+  short CLI hooks that run that cleanup automatically. `post-merge` fires at a merge
+  boundary (including a fast-forward pull); `post-checkout` runs the verb with
+  `--if-integration`, so a PR squashed or merged on the hosting provider is cleaned
+  when you check the integration branch out after a fetch. Sync always regenerates
+  both. They are workflow-agnostic: no SDD/ODD/OpenSpec dependency and no provider
+  mutation. Cleanup may perform the documented read-only PR merge-commit acquisition
+  when local proofs are inconclusive.
 
 ## Enable
 

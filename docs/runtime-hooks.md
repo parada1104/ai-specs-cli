@@ -344,9 +344,11 @@ checkpoints still grading. The runtime brief and generated agent files gain no
 dormancy line. No host performs a provider MCP/API create or update; `always`
 blocks until a human supplies the item. Path hosts never block `openspec/**`.
 
-**VCS-boundary close (`post-merge`).** Independent of the tracker gate hook,
-`worktree-flow` installs a managed `.git/hooks/post-merge` trigger: one
-`exec ai-specs worktree-cleanup` line that sync ALWAYS regenerates (it is not an
+**VCS-boundary close (`post-merge` and `post-checkout`).** Independent of the
+tracker gate hook, `worktree-flow` installs a managed `.git/hooks/post-merge`
+trigger: a short `sh`
+script that proves the installed CLI serves `worktree-cleanup` (`--help`) and then
+`exec`s the verb, which sync ALWAYS regenerates (it is not an
 override, so a hand-written hook is replaced). At a merge boundary the verb
 closes the matching open item at `archive-close` — matched on the Git common dir
 + branch, ignoring any stored change slug — **before** removing a provably
@@ -354,7 +356,19 @@ merged worktree or local branch. The close is
 idempotent and never reopens a closed row (D17). The hook is fail-open for the
 already-sealed merge outcome (failures go to stderr and it exits `0`), while the
 destructive cleanup fails closed: a close that cannot be persisted preserves the
-candidate. The trigger is workflow-agnostic (no SDD/ODD/OpenSpec and no provider
+candidate. The one skew case the hook reports itself is an installed CLI older
+than the verb: it removes nothing and prints a single actionable line
+(`post-merge: … does not serve 'worktree-cleanup'; reinstall a current ai-specs,
+then run: ai-specs sync`) on stderr, then exits `0`. A second managed trigger, `.git/hooks/post-checkout`, covers the merge that never
+happens locally: a pull request squashed or merged on the hosting provider lands
+as `git checkout <integration>` (or `git switch`) after a fetch, which
+`post-merge` never sees. It runs the same verb with `--if-integration`, which
+compares the primary checkout's branch with the snapshot's `integration_branch`:
+on a match it runs the pass, otherwise it prints one line
+(`worktree-cleanup: current branch is X, not the integration branch Y; skipping
+the cleanup pass.`) and exits `0`. The comparison lives in Go, so the hook still
+carries no policy. `ai-specs sync` deliberately runs no cleanup: it runs
+unattended in every project and must never delete worktrees. The trigger is workflow-agnostic (no SDD/ODD/OpenSpec and no provider
 call), and the direct tracker host
 (`ai-specs tracker-card-gate --root <root> --checkpoint archive-close`) remains
 the fallback when the hook is absent. The hook carries **no** config: the verb

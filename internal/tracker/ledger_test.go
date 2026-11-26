@@ -3,6 +3,7 @@ package tracker
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -234,5 +235,149 @@ func TestEvidencePayloadRejectsAnInvalidSlugFormat(t *testing.T) {
 		if _, err := EvidencePayload(root, slug); err == nil || !strings.Contains(err.Error(), "invalid change slug") {
 			t.Errorf("slug %q: err = %v, want invalid change slug", slug, err)
 		}
+	}
+}
+
+func trackerGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+}
+
+// ODD evidence: the branch names the feature and its plan is odd/tasks/<feature>.md
+// (S4). The absence of an OpenSpec change makes the ODD source win.
+func TestEvidencePayloadResolvesTheODDPlanFromTheBranch(t *testing.T) {
+	root := t.TempDir()
+	trackerGit(t, root, "init", "-b", "feat/odd-feature")
+	trackerMkdir(t, filepath.Join(root, "odd", "tasks"))
+	writeFile(t, filepath.Join(root, "odd", "tasks", "odd-feature.md"),
+		"## Tracker\ncard_id: odd-card\n")
+
+	got, err := EvidencePayload(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"local": "", "remote": "", "code": "odd-card", "git": ""}`
+	if string(got.JSON()) != want {
+		t.Fatalf("JSON = %s, want %s", got.JSON(), want)
+	}
+}
+
+// OpenSpec still wins when an openspec change exists, byte-identically.
+func TestEvidencePayloadPrefersTheOpenSpecChangeOverTheODDPlan(t *testing.T) {
+	root := t.TempDir()
+	trackerGit(t, root, "init", "-b", "feat/odd-feature")
+	trackerMkdir(t, filepath.Join(root, "odd", "tasks"))
+	writeFile(t, filepath.Join(root, "odd", "tasks", "odd-feature.md"), "## Tracker\ncard_id: odd-card\n")
+	folder := filepath.Join(root, "openspec", "changes", "demo")
+	trackerMkdir(t, folder)
+	writeFile(t, filepath.Join(folder, "proposal.md"), "## Tracker\ncard_id: openspec-card\n")
+
+	got, err := EvidencePayload(root, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"local": "", "remote": "", "code": "openspec-card", "git": ""}`
+	if string(got.JSON()) != want {
+		t.Fatalf("JSON = %s, want %s", got.JSON(), want)
+	}
+}
+
+// The bind resolver returns the same card and keeps an ODD identity branch-level.
+func TestResolveProviderItemKeepsTheODDIdentityBranchLevel(t *testing.T) {
+	root := t.TempDir()
+	trackerGit(t, root, "init", "-b", "feat/odd-feature")
+	trackerMkdir(t, filepath.Join(root, "odd", "tasks"))
+	writeFile(t, filepath.Join(root, "odd", "tasks", "odd-feature.md"),
+		"## Tracker\ncard_id: odd-card\nurl: https://example.test/odd\n")
+
+	item, ok, err := ResolveProviderItem(root, "")
+	if err != nil || !ok {
+		t.Fatalf("item = %+v, ok = %v, err = %v", item, ok, err)
+	}
+	if item.CardID != "odd-card" || item.URL != "https://example.test/odd" || item.Change != "" {
+		t.Fatalf("item = %+v, want odd-card / url / empty change", item)
+	}
+}
+
+// With no card id the resolver reports no item, so a bind is never fabricated.
+func TestResolveProviderItemWithoutACardIsNotBindeable(t *testing.T) {
+	root := t.TempDir()
+	trackerGit(t, root, "init", "-b", "feat/odd-feature")
+	trackerMkdir(t, filepath.Join(root, "odd", "tasks"))
+	writeFile(t, filepath.Join(root, "odd", "tasks", "odd-feature.md"), "## Tracker\nlist: In Progress\n")
+
+	if _, ok, err := ResolveProviderItem(root, ""); err != nil || ok {
+		t.Fatalf("ok = %v, err = %v, want no item", ok, err)
+	}
+}
+
+// S13: the resolver names the ODD plan it found and that the plan carries no
+// ## Tracker section, so the gate can report the real cause instead of a bare
+// "no card".
+func TestResolveChangeDocumentReportsAnODDPlanWithoutTrackerSection(t *testing.T) {
+	root := t.TempDir()
+	trackerGit(t, root, "init", "-b", "feat/odd-feature")
+	plan := filepath.Join(root, "odd", "tasks", "odd-feature.md")
+	writeFile(t, plan, "# odd-feature\n\n## Specs\n\n- S1 — the plan.\n")
+
+	doc, err := ResolveChangeDocument(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Path != plan || doc.HasTracker || doc.Slug != "" || len(doc.Fields) != 0 {
+		t.Fatalf("doc = %+v, want %q, no section, no fields, empty slug", doc, plan)
+	}
+}
+
+// S13: an OpenSpec change without a ## Tracker section names that document too.
+func TestResolveChangeDocumentReportsAnOpenSpecChangeWithoutTrackerSection(t *testing.T) {
+	root := t.TempDir()
+	folder := filepath.Join(root, "openspec", "changes", "demo")
+	trackerMkdir(t, folder)
+	proposal := filepath.Join(folder, "proposal.md")
+	writeFile(t, proposal, "# demo\n\n## Why\n\nNo tracker yet.\n")
+
+	doc, err := ResolveChangeDocument(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Path != proposal || doc.HasTracker || doc.Slug != "demo" || len(doc.Fields) != 0 {
+		t.Fatalf("doc = %+v, want %q, no section, slug demo, no fields", doc, proposal)
+	}
+}
+
+// S13: a document that has the section reports it and its fields, and the card
+// resolution it feeds is unchanged.
+func TestResolveChangeDocumentReportsTheSectionAndItsFields(t *testing.T) {
+	root := t.TempDir()
+	folder := filepath.Join(root, "openspec", "changes", "demo")
+	trackerMkdir(t, folder)
+	proposal := filepath.Join(folder, "proposal.md")
+	writeFile(t, proposal, "## Tracker\n- **card_id**: `card-1`\n")
+
+	doc, err := ResolveChangeDocument(root, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Path != proposal || !doc.HasTracker || doc.Slug != "demo" || doc.Fields["card_id"] != "card-1" {
+		t.Fatalf("doc = %+v, want %q with card-1", doc, proposal)
+	}
+}
+
+// S13: with no planning document at all the resolver names nothing, so the gate
+// keeps its generic needs-item line.
+func TestResolveChangeDocumentWithoutADocumentNamesNothing(t *testing.T) {
+	root := t.TempDir()
+	trackerGit(t, root, "init", "-b", "feat/odd-feature")
+
+	doc, err := ResolveChangeDocument(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Path != "" || doc.HasTracker || doc.Slug != "" || len(doc.Fields) != 0 {
+		t.Fatalf("doc = %+v, want an empty document", doc)
 	}
 }

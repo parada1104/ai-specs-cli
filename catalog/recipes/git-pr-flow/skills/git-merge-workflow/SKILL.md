@@ -169,11 +169,15 @@ gh pr create --base <integration-branch> --title "<title>" --body "<summary and 
 ai-specs tracker-card-gate --root <planning-root> --checkpoint pre-merge <slug>
 ```
 
-   Merge only after explicit user approval and required checks/review. Merge
-   without asking the hosting provider to delete the source branch:
+   Merge only after explicit user approval and required checks/review. The merge
+   strategy is the user's choice: ask the user which one to use (merge commit,
+   squash, rebase, or fast-forward where the provider allows it) and pass exactly
+   that, never a strategy you picked yourself. Merge without asking the hosting
+   provider to delete the source branch:
 
 ```bash
-gh pr merge --squash
+# <strategy> = --merge | --squash | --rebase, whichever the user chose
+gh pr merge <strategy>
 ```
 
 7. After the PR is merged, run the complete cleanup sequence from the main

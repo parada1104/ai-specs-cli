@@ -18,7 +18,7 @@
      },
      {
       "key": null,
-      "text": "After a merged PR, remove the feature worktree and delete the local branch (`git branch -D` after squash); delete the remote branch if it still exists."
+      "text": "After a merged PR, remove the feature worktree and delete the local branch (`git branch -d`, or `-D` after a squash or a rebase); delete the remote branch if it still exists."
      },
      {
       "key": null,
@@ -128,7 +128,7 @@
      },
      {
       "key": null,
-      "text": "After a merged PR, remove the feature worktree and delete the local branch (`git branch -D` after squash); delete the remote branch if it still exists."
+      "text": "After a merged PR, remove the feature worktree and delete the local branch (`git branch -d`, or `-D` after a squash or a rebase); delete the remote branch if it still exists."
      },
      {
       "key": null,
@@ -238,7 +238,7 @@
      },
      {
       "key": null,
-      "text": "After a merged MR, remove the feature worktree and delete the local branch (`git branch -D` after squash); delete the remote branch if it still exists."
+      "text": "After a merged MR, remove the feature worktree and delete the local branch (`git branch -d`, or `-D` after a squash or a rebase); delete the remote branch if it still exists."
      },
      {
       "key": null,
@@ -1517,7 +1517,7 @@
     "tables": {}
    },
    "conflicts_with": [],
-   "description": "Isolated git worktrees under .worktrees/ with post-merge cleanup for ai-specs change work",
+   "description": "Isolated git worktrees under .worktrees/ with post-merge and post-checkout cleanup for ai-specs change work",
    "docs": [
     {
      "source": "README.md",
@@ -1576,6 +1576,12 @@
      "condition": "not_exists",
      "source": "templates/post-merge.sh",
      "target": ".git/hooks/post-merge",
+     "update_policy": "auto"
+    },
+    {
+     "condition": "not_exists",
+     "source": "templates/post-checkout.sh",
+     "target": ".git/hooks/post-checkout",
      "update_policy": "auto"
     }
    ],
