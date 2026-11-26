@@ -71,8 +71,8 @@ func TestCheckPremergeOddDoesNotRequireAnArchiveForAPlanOnlyChange(t *testing.T)
 	if !got.OK || len(got.Blockers) != 0 {
 		t.Fatalf("Result = %+v, want OK with no blocker", got)
 	}
-	if got.Tier != TierOdd {
-		t.Fatalf("Tier = %q, want %q", got.Tier, TierOdd)
+	if got.Tier != TierLight {
+		t.Fatalf("Tier = %q, want %q", got.Tier, TierLight)
 	}
 }
 
@@ -125,8 +125,8 @@ func TestCheckPremergeOddAllowsADeltaWithoutAPlan(t *testing.T) {
 	if !got.OK || len(got.Blockers) != 0 {
 		t.Fatalf("Result = %+v, want OK after promotion and archiving", got)
 	}
-	if got.Tier != TierOdd {
-		t.Fatalf("Tier = %q, want %q", got.Tier, TierOdd)
+	if got.Tier != TierLight {
+		t.Fatalf("Tier = %q, want %q", got.Tier, TierLight)
 	}
 }
 
@@ -145,8 +145,9 @@ func TestCheckPremergeOddBlocksADeltaWithoutAPlanWhenUnpromoted(t *testing.T) {
 func TestCheckPremergeOddBlocksOnDetachedHead(t *testing.T) {
 	root := oddRepo(t)
 	wantBlocked(t, CheckPremergeOdd(root, ""), "cannot be resolved (detached HEAD)")
-	if got := CheckPremergeOdd(root, ""); got.Tier != TierOdd {
-		t.Fatalf("Tier = %q, want %q", got.Tier, TierOdd)
+	// Nothing can be paired, so no artifact is observed and the tier is `none`.
+	if got := CheckPremergeOdd(root, ""); got.Tier != TierNone {
+		t.Fatalf("Tier = %q, want %q", got.Tier, TierNone)
 	}
 }
 
@@ -159,8 +160,8 @@ func TestCheckPremergeOddGradesAPlanOnlyChangeThatCarriesAnArchive(t *testing.T)
 	if !got.OK || len(got.Blockers) != 0 {
 		t.Fatalf("Result = %+v, want OK once archived", got)
 	}
-	if got.Tier != TierOdd {
-		t.Fatalf("Tier = %q, want %q", got.Tier, TierOdd)
+	if got.Tier != TierLight {
+		t.Fatalf("Tier = %q, want %q", got.Tier, TierLight)
 	}
 }
 
@@ -204,8 +205,8 @@ func TestCheckPremergeOddPassesAPromotedDelta(t *testing.T) {
 	if !got.OK || len(got.Blockers) != 0 {
 		t.Fatalf("Result = %+v, want OK after promotion and archiving", got)
 	}
-	if got.ArchivePath == "" || got.Tier != TierOdd {
-		t.Fatalf("ArchivePath = %q, Tier = %q, want the plan and %q", got.ArchivePath, got.Tier, TierOdd)
+	if got.ArchivePath == "" || got.Tier != TierStandard {
+		t.Fatalf("ArchivePath = %q, Tier = %q, want the plan and %q", got.ArchivePath, got.Tier, TierStandard)
 	}
 }
 
