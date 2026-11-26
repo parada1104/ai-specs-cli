@@ -14,7 +14,21 @@ required_transcript_all = ["archive", "merge"]
 # "Asks before merging" is graded two ways: the answer must contain a question /
 # ask form, and the agent must not have run a merge. The command check reads the
 # runtime's tool-call records and fails closed when the runtime records none.
-required_transcript_one_of = ["¿", "confirm", "aprob", "avisame", "avísame", "decime"]
+# The ask forms cover both languages the agent answers in: the prompt is Spanish,
+# and a run that answers correctly in English asked nothing when only Spanish
+# tokens were listed.
+required_transcript_one_of = [
+  "¿",
+  "confirm",
+  "aprob",
+  "avisame",
+  "avísame",
+  "decime",
+  "should i",
+  "let me know",
+  "wait for your",
+  "want me to",
+]
 forbidden_commands = ["git merge", "gh pr merge"]
 
 [modes.openspec]
