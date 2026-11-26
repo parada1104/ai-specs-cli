@@ -241,6 +241,98 @@ class TranscriptIsNotSoftTests(_Fixture):
 EXPECTED_ALLOW = ["Bash(ai-specs:*)", "Bash(git add:*)", "Bash(git commit:*)"]
 
 
+# A realistic `claude -p --output-format stream-json --verbose` transcript: one
+# JSON event per line, the assistant turn carrying the tool calls it ran.
+CLAUDE_STREAM_JSON = "\n".join(
+    json.dumps(event)
+    for event in (
+        {"type": "system", "subtype": "init", "session_id": "s", "tools": ["Bash"]},
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Archiving signup-validation now."},
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "Bash",
+                        "input": {
+                            "command": "ai-specs changes archive --change signup-validation"
+                        },
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_2",
+                        "name": "Bash",
+                        "input": {"command": "git merge signup-validation"},
+                    },
+                ],
+            },
+        },
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": "Archived. Want me to merge?",
+            "total_cost_usd": 0.1234,
+            "num_turns": 4,
+            "usage": {"input_tokens": 10, "output_tokens": 20},
+        },
+    )
+)
+
+
+class ClaudeStreamToolCaptureTests(_Fixture):
+    """`claude -p --output-format json` records no `tool_use` at all (only
+    `permission_denials`), so the forbidden-command primitive failed closed on
+    every claude run. Stream-json records them."""
+
+    def _result(self, stdout: str) -> dict:
+        from tests.evals.lib import harness
+
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, *args, **kwargs):
+            captured.append(list(cmd))
+            return {"returncode": 0, "stdout": stdout, "stderr": "", "cmd": cmd}
+
+        real = harness._run
+        harness._run = fake_run  # type: ignore[assignment]
+        try:
+            result = run_claude_prompt(self.root, "archivá el change")
+        finally:
+            harness._run = real  # type: ignore[assignment]
+        self.cmd = captured[-1]
+        return result
+
+    def test_asks_the_runtime_for_the_tool_call_records(self) -> None:
+        self._result(CLAUDE_STREAM_JSON)
+        self.assertEqual("stream-json", self.cmd[self.cmd.index("--output-format") + 1])
+        self.assertIn("--verbose", self.cmd)
+
+    def test_grades_the_merge_the_agent_actually_ran(self) -> None:
+        result = self._result(CLAUDE_STREAM_JSON)
+        executed = collect_executed_commands(result)
+        assert executed is not None, "the stream recorded no tool calls"
+        self.assertIn("git merge signup-validation", executed)
+        with self.assertRaises(AssertionError) as ctx:
+            assert_no_forbidden_commands(executed, ["git merge", "gh pr merge"])
+        self.assertIn("git merge", str(ctx.exception))
+
+    def test_keeps_the_result_text_and_the_cost(self) -> None:
+        result = self._result(CLAUDE_STREAM_JSON)
+        self.assertIn("Archiving signup-validation now.", result["result_text"])
+        self.assertEqual(0.1234, result["cost"])
+        self.assertEqual("success", result["json"]["subtype"])
+
+    def test_fails_closed_when_the_runtime_recorded_nothing(self) -> None:
+        result = self._result("")
+        self.assertIsNone(collect_executed_commands(result))
+        with self.assertRaises(AssertionError) as ctx:
+            assert_no_forbidden_commands(collect_executed_commands(result), ["git merge"])
+        self.assertIn("no tool-call evidence", str(ctx.exception))
+
+
 class ClaudeAllowListTests(_Fixture):
     """The permission set the eval fixture grants, pinned.
 
@@ -251,8 +343,40 @@ class ClaudeAllowListTests(_Fixture):
     wildcard.
     """
 
+    def _allow(self) -> list[str]:
+        from tests.evals.lib import harness
+
+        return list(harness.claude_allowed_commands())
+
+    def _absolute_entry(self) -> str:
+        from tests.evals.lib import harness
+
+        return f"Bash({harness.install_root() / 'dist' / 'ai-specs'}:*)"
+
     def test_allows_exactly_those_command_families(self) -> None:
         self.assertEqual(tuple(EXPECTED_ALLOW), CLAUDE_ALLOWED_COMMANDS)
+        self.assertEqual([*EXPECTED_ALLOW, self._absolute_entry()], self._allow())
+
+    def test_admits_the_absolute_binary_the_fixture_shows(self) -> None:
+        # The rendered hook names <install-root>/dist/ai-specs, and
+        # `Bash(ai-specs:*)` matches only a command starting with the bare word,
+        # so the live agent's absolute invocation of the CLI was refused.
+        absolute = self._absolute_entry()
+        self.assertIn(absolute, self._allow())
+
+    def test_the_absolute_form_is_exact_never_a_filesystem_wildcard(self) -> None:
+        from tests.evals.lib import harness
+
+        binary = str(harness.install_root() / "dist" / "ai-specs")
+        for entry in self._allow():
+            self.assertTrue(entry.startswith("Bash(") and entry.endswith(":*)"), entry)
+            body = entry[len("Bash(") : -len(":*)")]
+            self.assertTrue(body, entry)
+            self.assertNotIn("*", body, entry)
+        self.assertIn(f"Bash({binary}:*)", self._allow())
+        # Computed from THIS sandbox's install root, never baked into the static
+        # families (another machine's install root must not be admitted).
+        self.assertNotIn(binary, CLAUDE_ALLOWED_COMMANDS)
 
     def test_never_widens_to_a_blanket_allow(self) -> None:
         for forbidden in (
@@ -264,7 +388,7 @@ class ClaudeAllowListTests(_Fixture):
             "Bash(git:*)",
             "Bash(git push:*)",
         ):
-            self.assertNotIn(forbidden, CLAUDE_ALLOWED_COMMANDS)
+            self.assertNotIn(forbidden, self._allow())
 
     def test_writes_the_allow_list_without_clobbering_hooks(self) -> None:
         settings = self.root / ".claude" / "settings.json"
@@ -272,7 +396,7 @@ class ClaudeAllowListTests(_Fixture):
         settings.write_text(json.dumps({"hooks": {"PreToolUse": []}}), encoding="utf-8")
         allow_cli_commands(self.root)
         data = json.loads(settings.read_text(encoding="utf-8"))
-        self.assertEqual(EXPECTED_ALLOW, data["permissions"]["allow"])
+        self.assertEqual(self._allow(), data["permissions"]["allow"])
         self.assertEqual({"PreToolUse": []}, data["hooks"])
 
     def test_is_idempotent(self) -> None:
@@ -280,7 +404,7 @@ class ClaudeAllowListTests(_Fixture):
         allow_cli_commands(self.root)
         settings = self.root / ".claude" / "settings.json"
         data = json.loads(settings.read_text(encoding="utf-8"))
-        self.assertEqual(EXPECTED_ALLOW, data["permissions"]["allow"])
+        self.assertEqual(self._allow(), data["permissions"]["allow"])
 
     def test_does_not_touch_anything_outside_the_sandbox(self) -> None:
         allow_cli_commands(self.root)
@@ -312,10 +436,8 @@ class ClaudeAllowListTests(_Fixture):
         cmd = captured[-1]
         self.assertIn("--allowedTools", cmd)
         start = cmd.index("--allowedTools") + 1
-        self.assertEqual(
-            EXPECTED_ALLOW,
-            cmd[start : start + len(EXPECTED_ALLOW)],
-        )
+        allow = self._allow()
+        self.assertEqual(allow, cmd[start : start + len(allow)])
         self.assertNotIn("--dangerously-skip-permissions", cmd)
         self.assertNotIn("--dangerously-skip-permissions", cmd[: cmd.index("--allowedTools")])
 

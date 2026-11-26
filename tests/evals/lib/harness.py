@@ -185,6 +185,19 @@ CLAUDE_ALLOWED_COMMANDS = (
 )
 
 
+def claude_allowed_commands() -> tuple[str, ...]:
+    """The one allow-list, as handed to both sites that grant it.
+
+    `Bash(ai-specs:*)` matches only a command that starts with the bare word,
+    but the rendered hook names the absolute `<install-root>/dist/ai-specs`, and
+    a live run ran exactly that path: it was refused, so the case measured the
+    sandbox instead of the skill. The absolute form is computed from THIS
+    sandbox's install root -- exact path, sandbox only, never a wildcard.
+    """
+    binary = install_root() / "dist" / "ai-specs"
+    return (*CLAUDE_ALLOWED_COMMANDS, f"Bash({binary}:*)")
+
+
 def allow_cli_commands(project_root: Path) -> None:
     """Let the agent under test run `ai-specs`, `git add` and `git commit`.
 
@@ -200,7 +213,7 @@ def allow_cli_commands(project_root: Path) -> None:
     settings.parent.mkdir(parents=True, exist_ok=True)
     data = json.loads(settings.read_text()) if settings.is_file() else {}
     allow = data.setdefault("permissions", {}).setdefault("allow", [])
-    for command in CLAUDE_ALLOWED_COMMANDS:
+    for command in claude_allowed_commands():
         if command not in allow:
             allow.append(command)
     settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
@@ -389,13 +402,54 @@ def _run(
         }
 
 
-def _parse_claude_json(stdout: str) -> dict[str, Any]:
-    if not stdout.strip():
-        return {}
-    try:
-        return json.loads(stdout)
-    except json.JSONDecodeError:
-        return {}
+def _parse_claude_stream(stdout: str) -> dict[str, Any]:
+    """`claude -p --output-format stream-json --verbose` emits one event per line.
+
+    The single-object `json` format records no `tool_use` at all (only
+    `permission_denials`), which left `forbidden_commands` unprovable on every
+    claude run.
+    """
+    texts: list[str] = []
+    tool_calls: list[str] = []
+    final: dict[str, Any] = {}
+    saw_event = False
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        saw_event = True
+        etype = event.get("type")
+        if etype == "result":
+            # Final summary object: result text, cost and usage live here.
+            final = event
+        elif etype == "assistant":
+            message = event.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            for block in content or []:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
+                    texts.append(str(block.get("text", "")))
+                elif block.get("type") == "tool_use":
+                    _walk_tool_inputs(block, tool_calls)
+    cost = final.get("total_cost_usd")
+    usage = final.get("usage")
+    if cost is None and isinstance(usage, dict):
+        cost = usage.get("total_cost_usd")
+    return {
+        "result_text": "".join(texts) or str(final.get("result") or ""),
+        "cost": cost,
+        # None when no event was parsed at all: that is no evidence, and the
+        # forbidden-command check has to fail closed on it.
+        "tool_calls": tool_calls if saw_event else None,
+        "json": final,
+    }
 
 
 def _parse_opencode_ndjson(stdout: str) -> dict[str, Any]:
@@ -476,11 +530,14 @@ def run_claude_prompt(
         # .claude/settings.json -- the settings file alone is not read by `-p`,
         # so the rules are repeated where the runtime honours them.
         "--allowedTools",
-        *CLAUDE_ALLOWED_COMMANDS,
+        *claude_allowed_commands(),
         "--max-turns",
         _max_turns(),
         "--output-format",
-        "json",
+        "stream-json",
+        # stream-json requires --verbose with -p; it is what records the tool
+        # calls the agent actually ran.
+        "--verbose",
     ]
     if bypass:
         cmd.append("--dangerously-skip-permissions")
@@ -497,15 +554,12 @@ def run_claude_prompt(
     for extra in add_dirs or []:
         cmd.extend(["--add-dir", str(extra)])
     result = _run(cmd, project_root, env=env)
+    result.update(_parse_claude_stream(result["stdout"]))
     result["runtime"] = "claude"
     result["model"] = model
     result["mode"] = mode
-    result["json"] = _parse_claude_json(result["stdout"])
-    result["result_text"] = (
-        result["json"].get("result")
-        if isinstance(result["json"], dict)
-        else None
-    ) or result["stdout"]
+    if not result.get("result_text"):
+        result["result_text"] = result["stdout"]
     return result
 
 
@@ -826,6 +880,11 @@ def collect_executed_commands(result: dict[str, Any]) -> list[str] | None:
     prose instead was the original defect: an agent could run a prohibited
     merge and then answer without quoting it, and the case still passed.
     """
+    recorded = result.get("tool_calls")
+    if isinstance(recorded, list):
+        # Runtimes that parse their stream (claude) hand over the records
+        # directly; an empty list means "ran no tool", not "no evidence".
+        return [str(command) for command in recorded]
     texts: list[str] = []
     payload = result.get("json")
     if isinstance(payload, dict):
