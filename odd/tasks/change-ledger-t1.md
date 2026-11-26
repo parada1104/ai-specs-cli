@@ -43,7 +43,7 @@ and `odd/tasks/change-ledger-v2/`.
 | --- | --- |
 | S1 | `internal/gates/tier_table_test.go` (both modes, three values); real-flow run with the branch binary: `premerge-guardian: OK (light, change demo)` and `(standard, change demo)` where `36438150` printed `(odd, change demo)`. |
 | S2 | Diff of the same run: only the tier token differs; every blocker and note line is byte-identical between the base and the branch binary. |
-| S3 | Plan only, tier `light`, no delta folder — see L3: the tier requirement ships with T2's delta because another active change already declares `specs/plan-build-flow/spec.md` and blocks the promotion. Pre-merge guardian: `OK (odd, change change-ledger-t1)`. |
+| S3 | Plan only, tier `light`, no delta folder — see L3: the tier requirement ships with T2's delta because another active change already declares `specs/plan-build-flow/spec.md` and blocks the promotion. Pre-merge guardian: `OK (odd, change change-ledger-t1)` — that `odd` token is the released 0.27.1 binary that ships today, and it is exactly the label this unit retires; the branch binary prints `(light, change change-ledger-t1)` for the same tree (S1 row). |
 
 ## Log
 

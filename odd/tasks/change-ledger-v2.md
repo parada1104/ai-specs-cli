@@ -7,12 +7,14 @@ can do next and why. It starts by removing what today contradicts Robert's rule:
 `plan-build-gate` blocks an OpenSpec production write when no plan exists. It also
 gives a name to the worktree that is not a change at all (audit, exploration,
 spike), which today has no representation. Worktree `.worktrees/change-ledger-v2`,
-branch `plan/change-ledger-v2`, base `development@36438150`. No commit, push or PR
-in this task.
+base `development@36438150`. Planning phase closed with no commit, push or PR;
+implementation runs one unit per branch and per PR (L10).
 
-Design source of truth: `odd/changes/change-ledger-v2/design.md` (v3, closed).
-Evidence base: the read-only audit in `odd/changes/change-ledger-v2/audit.md`, the
+Design source of truth: `odd/tasks/change-ledger-v2/design.md` (v3, closed).
+Evidence base: the read-only audit in `odd/tasks/change-ledger-v2/audit.md`, the
 gate reproduction matrix in that design's §1, and the `start --none` inventory in L8.
+The full target deltas live under `odd/tasks/change-ledger-v2/specs/` as context;
+each unit's own delta lives in its own change folder.
 
 ## Specs
 
@@ -346,7 +348,8 @@ gate reproduction matrix in that design's §1, and the `start --none` inventory 
   S16 needs a fact-based discriminator plus an explicit `workstream` decision, and
   why removing the verb without it would leave audit/exploration worktrees with no
   legal path in OpenSpec mode.
-- **L9** — Implementation phase opened with Robert's per-unit mandate: T1–T3 in
+- **L9** — *(superseded by L10; kept as history.)* Implementation phase opened with
+  Robert's per-unit mandate: T1–T3 in
   order, one unit = one PR — implement, validate (focused tests + real-flow proof
   with the branch binary + RED), native review before the merge, PR to
   `development`, merge, then `ai-specs sync` with its own PR; at the close of T3,
