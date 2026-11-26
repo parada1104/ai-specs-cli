@@ -160,6 +160,80 @@ func TestWorktreeCleanupRejectsOptionAsScopeValue(t *testing.T) {
 	}
 }
 
+// S12/L12: --if-integration is the post-checkout trigger. On the integration
+// branch it runs the ordinary pass.
+func TestWorktreeCleanupIfIntegrationRunsOnTheIntegrationBranch(t *testing.T) {
+	project := cleanupRepo(t)
+	home := t.TempDir()
+	if _, err := projectcache.WriteRuntimeSnapshot(project, home, projectcache.RuntimeSnapshot{
+		RepoTopology: "standalone", WorktreesDir: ".worktrees", IntegrationBranch: "main", Protected: "main",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runWorktreeCleanupVerb(t, home, project, "--if-integration")
+	if code != 0 {
+		t.Fatalf("exit = %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if strings.Contains(stderr, "skipping") {
+		t.Fatalf("stderr = %q, want no skip line on the integration branch", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".worktrees", "feat-merged")); !os.IsNotExist(err) {
+		t.Fatalf("merged worktree survived the pass: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".worktrees", "feat-open")); err != nil {
+		t.Fatalf("unmerged worktree was removed: %v", err)
+	}
+}
+
+// S12/L12: the branch comparison lives in Go, never in the hook. Off the
+// integration branch the pass changes nothing and says so once, on stderr.
+func TestWorktreeCleanupIfIntegrationSkipsOnAFeatureBranch(t *testing.T) {
+	project := cleanupRepo(t)
+	gitTest(t, project, "checkout", "-q", "-b", "feature")
+	home := t.TempDir()
+	if _, err := projectcache.WriteRuntimeSnapshot(project, home, projectcache.RuntimeSnapshot{
+		RepoTopology: "standalone", WorktreesDir: ".worktrees", IntegrationBranch: "main", Protected: "main",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runWorktreeCleanupVerb(t, home, project, "--if-integration")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+	want := "worktree-cleanup: current branch is feature, not the integration branch main; skipping the cleanup pass.\n"
+	if stderr != want {
+		t.Fatalf("stderr = %q, want the one skip line %q", stderr, want)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".worktrees", "feat-merged")); err != nil {
+		t.Fatalf("a skipped pass removed a worktree: %v", err)
+	}
+	if branches := gitOutput(t, project, "branch", "--list", "feat-merged"); branches == "" {
+		t.Fatal("a skipped pass removed the merged branch")
+	}
+}
+
+// S6 is not weakened: --if-integration without a snapshot stays fail-closed.
+func TestWorktreeCleanupIfIntegrationWithoutSnapshotKeepsFailClosed(t *testing.T) {
+	project := cleanupRepo(t)
+	home := t.TempDir()
+	code, stdout, stderr := runWorktreeCleanupVerb(t, home, project, "--if-integration")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2 (fail-closed)\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "has no ai-specs sync snapshot") {
+		t.Fatalf("stderr = %q, want the fail-closed message", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".worktrees", "feat-merged")); err != nil {
+		t.Fatalf("a snapshotless --if-integration removed a worktree: %v", err)
+	}
+}
+
 // R3-001: --dry-run previews and mutates nothing.
 func TestWorktreeCleanupDryRunMutatesNothing(t *testing.T) {
 	project := cleanupRepo(t)

@@ -26,7 +26,7 @@ import (
 const worktreeCleanupNoSnapshotMessage = "worktree-cleanup: %s has no ai-specs sync snapshot, " +
 	"so there is no cleanup policy to apply and nothing was removed. Run `ai-specs sync` in that project first."
 
-const worktreeCleanupUsage = `Usage: ai-specs worktree-cleanup [--dry-run] [--submodule <path> | --subrepo <path>]
+const worktreeCleanupUsage = `Usage: ai-specs worktree-cleanup [--dry-run] [--if-integration] [--submodule <path> | --subrepo <path>]
 
 Remove merged worktrees and their branches. Every cleanup input (worktrees dir,
 integration branch, topology, protected branches) comes from the project's last
@@ -34,15 +34,33 @@ ai-specs sync snapshot; without one nothing is removed and the exit code is 2.
 
 Options:
   --dry-run           Preview the removals without changing anything
+  --if-integration    Run the pass only when the current branch of the primary
+                      checkout is the snapshot's integration branch; otherwise
+                      change nothing and print one line on stderr (this is the
+                      .git/hooks/post-checkout trigger, exit code 0)
   --submodule <path>  Limit the pass to one initialized submodule (repeatable)
   --subrepo <path>    Alias of --submodule
   --help, -h          Show this help
 `
 
+// worktreeCleanupSkipMessage is the S12 quiet line: the hook fires on every
+// checkout, so a non-integration branch says once what it skipped and exits 0.
+const worktreeCleanupSkipMessage = "worktree-cleanup: current branch is %s, not the integration branch %s; skipping the cleanup pass."
+
+// worktreeCleanupBranch names the primary checkout's branch, or "detached HEAD"
+// when there is none, so the skip line always names both sides.
+func worktreeCleanupBranch(root string) string {
+	if branch := worktreeGateGit(root, "symbolic-ref", "--quiet", "--short", "HEAD"); branch != "" {
+		return branch
+	}
+	return "detached HEAD"
+}
+
 // runWorktreeCleanup parses the verb's flags, loads the snapshot and runs the
 // cleanup pass. An unknown flag is a usage error, never a partial pass.
 func runWorktreeCleanup(home string, args []string, stdout, stderr io.Writer) int {
 	dryRun := false
+	ifIntegration := false
 	var scopes []string
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -52,6 +70,8 @@ func runWorktreeCleanup(home string, args []string, stdout, stderr io.Writer) in
 			return 0
 		case arg == "--dry-run":
 			dryRun = true
+		case arg == "--if-integration":
+			ifIntegration = true
 		case arg == "--submodule" || arg == "--subrepo":
 			if i+1 >= len(args) {
 				fmt.Fprintf(stderr, "ERROR: %s requires a value\n", arg)
@@ -96,6 +116,15 @@ func runWorktreeCleanup(home string, args []string, stdout, stderr io.Writer) in
 	if !found {
 		fmt.Fprintf(stderr, worktreeCleanupNoSnapshotMessage+"\n", roots[0])
 		return 2
+	}
+	// The branch comparison lives here, never in the hook: post-checkout fires on
+	// every checkout, so the hook cannot know whether the integration branch
+	// landed. Off it, nothing changes and the one line goes to stderr (S12).
+	if ifIntegration {
+		if branch := worktreeCleanupBranch(roots[0]); branch != snapshot.IntegrationBranch {
+			fmt.Fprintf(stderr, worktreeCleanupSkipMessage+"\n", branch, snapshot.IntegrationBranch)
+			return 0
+		}
 	}
 	return runner.RunCleanupFromPolicy(roots[0], runner.CleanupPolicy{
 		WorktreesDir:      snapshot.WorktreesDir,
