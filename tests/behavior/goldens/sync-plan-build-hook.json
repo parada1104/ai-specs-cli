@@ -15,7 +15,7 @@
    ],
    "exit": 0,
    "label": "sync .",
-   "stderr": "  ! recipe 'Plan / Build Flow': unknown config key 'mode' in manifest (ignored)\n",
+   "stderr": "",
    "stdout": "\nai-specs sync\n  root:    <ROOT>\n  planning: <ROOT>\n  topology: standalone (via auto; source: default)\n  targets: root:.\n  fan-out: declared-only (project.subrepos; .gitmodules is advisory-only)\n  derived: AGENTS.md, ai-specs/.gitignore, ai-specs/skills/**, ai-specs/commands/**, agent-configs\n\n  syncing ai-specs/.gitignore\n  syncing root .gitignore (agent block)\n  syncing bundled skills + commands\n  syncing vendored skills\n  (no [[deps]] declared \u2014 nothing to vendor)\n  syncing harness env (.envrc + ai-specs.env.example)\nWrote <ROOT>/ai-specs.env.example\n  syncing recipes \u2192 plan-build-flow\n  syncing AGENTS.md\n  syncing root:. \u2192 <ROOT>\n  syncing flatten resolved skills\n  syncing merge commands\n  syncing claude\n    \u2139 mcp skipped (no [mcp.*] in manifest)\n\n\u2713 ai-specs sync complete\n"
   }
  ],
