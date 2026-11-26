@@ -477,7 +477,7 @@ func parityHelpSnapshot(stdout string) string {
 	// N16 in tests/parity/parity.py: `changes start --none` is a verb the frozen
 	// legacy goldens predate, so the same line is dropped from the Go side.
 	const startLine = "  changes start --none --root <planning-root>  " +
-		"Declare that this branch needs no plan\n"
+		"Deprecated: the tier is inferred; see changes workstream\n"
 	stdout = strings.ReplaceAll(stdout, startLine, "")
 	const hubPrefix = "  hub [path] Interactive status + command menu (also bare "
 	const helpAnchor = "\n  help Show this help"
@@ -609,45 +609,40 @@ func changesCeremonyValue(t *testing.T, root, branch string) (string, bool) {
 	return strings.TrimSpace(string(out)), true
 }
 
-// changesStartConfirmation is the verb's one confirmation line, verbatim.
-func changesStartConfirmation(branch string) string {
-	return "changes start: declared no-plan ceremony for branch '" + branch + "' " +
-		"(git config branch." + branch + ".aiSpecsCeremony none); " +
-		"the declaration is local and never committed\n"
-}
+// changesStartNotice is the verb's one deprecation line, verbatim.
+const changesStartNotice = "changes start: deprecated — the tier is inferred from the change's " +
+	"artifacts, so this verb no longer affects any gate; a worktree that is not a change is declared " +
+	"with 'ai-specs changes workstream'.\n"
 
-// The declaration lands in the local git config, which is what the hook reads.
+// The verb still runs for one version, prints its deprecation notice, exits 0
+// and records nothing the gate reads.
 func TestChangesStartDeclaresTheLocalNoPlanCeremony(t *testing.T) {
 	root := changesStartRepo(t, "feat/thing")
 
 	code, stdout, stderr := runChangesCLI(t, "changes", "start", "--none", "--root", root)
 
-	if code != 0 || stderr != "" {
-		t.Fatalf("exit = %d, stderr = %q; want 0/empty", code, stderr)
+	if code != 0 || stdout != "" || stderr != changesStartNotice {
+		t.Fatalf("exit = %d, stdout = %q, stderr = %q; want 0/empty/notice", code, stdout, stderr)
 	}
-	if want := changesStartConfirmation("feat/thing"); stdout != want {
-		t.Errorf("stdout = %q, want %q", stdout, want)
-	}
-	value, found := changesCeremonyValue(t, root, "feat/thing")
-	if !found || value != planbuild.CeremonyNoneValue {
-		t.Errorf("git config branch.feat/thing.aiSpecsCeremony = (%q, %v), want (none, true)", value, found)
+	if value, found := changesCeremonyValue(t, root, "feat/thing"); found {
+		t.Errorf("git config branch.feat/thing.aiSpecsCeremony = %q; want nothing written", value)
 	}
 }
 
-// Running it twice is idempotent and prints the same confirmation.
+// Running it twice is idempotent and prints the same notice, with no side effect.
 func TestChangesStartIsIdempotent(t *testing.T) {
 	root := changesStartRepo(t, "feat/thing")
 	first, firstStdout, firstStderr := runChangesCLI(t, "changes", "start", "--none", "--root", root)
 	second, secondStdout, secondStderr := runChangesCLI(t, "changes", "start", "--none", "--root", root)
 
-	if first != 0 || second != 0 || firstStderr != "" || secondStderr != "" {
-		t.Fatalf("exit = (%d, %d), stderr = (%q, %q); want 0/0 and empty", first, second, firstStderr, secondStderr)
+	if first != 0 || second != 0 || firstStdout != "" || secondStdout != "" {
+		t.Fatalf("exit = (%d, %d), stdout = (%q, %q); want 0/0 and empty", first, second, firstStdout, secondStdout)
 	}
-	if firstStdout != secondStdout || firstStdout != changesStartConfirmation("feat/thing") {
-		t.Errorf("stdout = (%q, %q), want the same confirmation twice", firstStdout, secondStdout)
+	if firstStderr != changesStartNotice || secondStderr != changesStartNotice {
+		t.Errorf("stderr = (%q, %q), want the same notice twice", firstStderr, secondStderr)
 	}
-	if value, found := changesCeremonyValue(t, root, "feat/thing"); !found || value != planbuild.CeremonyNoneValue {
-		t.Errorf("git config value = (%q, %v), want (none, true)", value, found)
+	if value, found := changesCeremonyValue(t, root, "feat/thing"); found {
+		t.Errorf("git config value = %q; want nothing written", value)
 	}
 }
 
@@ -669,21 +664,15 @@ func TestChangesStartWithoutNoneIsAUsageError(t *testing.T) {
 	}
 }
 
-// Outside a Git repository no branch can be resolved: usage error, exit 2, and
-// no silent success.
+// A worktree that is not a Git repository is still served: the verb is inert, so
+// it warns and exits 0 instead of demanding a branch to declare on.
 func TestChangesStartOutsideARepositoryIsAUsageError(t *testing.T) {
 	root := t.TempDir()
 
 	code, stdout, stderr := runChangesCLI(t, "changes", "start", "--none", "--root", root)
 
-	if code != 2 || stdout != "" {
-		t.Fatalf("exit = %d, stdout = %q; want 2/empty", code, stdout)
-	}
-	if !strings.Contains(stderr, "cannot resolve the current branch") {
-		t.Errorf("stderr = %q, want the branch resolution error", stderr)
-	}
-	if !strings.Contains(stderr, "Run 'ai-specs changes start --help' for usage.") {
-		t.Errorf("stderr = %q, want the usage hint", stderr)
+	if code != 0 || stdout != "" || stderr != changesStartNotice {
+		t.Fatalf("exit = %d, stdout = %q, stderr = %q; want 0/empty/notice", code, stdout, stderr)
 	}
 }
 

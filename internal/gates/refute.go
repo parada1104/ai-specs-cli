@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"ai-specs.dev/ai-specs/internal/config"
@@ -122,9 +123,211 @@ func Refutations(repoRoot, mode, change string, base *string) (blockers, notes [
 			"no usable answer (a shallow clone, or no such history in this root), so there is no diff to "+
 			"grade. Fetch the base branch, or pass `--base <ref>` naming a ref that resolves.", baseRef)}
 	}
-	blockers = append(blockers, canonicalSpecRefutation(repoRoot, mode, change, diff)...)
-	blockers = append(blockers, highRiskRefutation(repoRoot, mode, change, baseRef, diff)...)
+	blockers = append(blockers, canonicalSpecRefutation(repoRoot, mode, change, diff, "R-a")...)
+	blockers = append(blockers, highRiskRefutation(repoRoot, mode, change, baseRef, diff, "R-b")...)
 	return blockers, nil
+}
+
+// WriteRefutations returns the write gate's objective refutations of a `none`
+// claim: R1–R5, each named with the fact that proves it and the exits that
+// resolve it. They reuse the guardian's rules (R1/R2 are its R-a/R-b) and add
+// the three the diff itself proves (R3 size, R4 contract removal, R5 plan
+// evidence orphanhood). No refutation fires without a fact, so an empty
+// worktree is never blocked.
+func WriteRefutations(repoRoot, mode, change, target string) []string {
+	base := BaseRef(repoRoot, nil)
+	var diff []planbuild.DiffEntry
+	diffText := ""
+	if base != "" {
+		if entries, ok := planbuild.DiffEntries(repoRoot, base); ok {
+			diff = entries
+		}
+		if text, ok := planbuild.DiffText(repoRoot, base); ok {
+			diffText = text
+		}
+	}
+	var blockers []string
+	// R1 also reads the diff: a canonical spec the branch already changed with
+	// no delta this change contributes is a promotion bypass even when the
+	// pending write targets something else.
+	if change != "" && !planbuild.HasDelta(repoRoot, mode, change) {
+		blockers = append(blockers, canonicalSpecRefutation(repoRoot, mode, change, diff, "R1")...)
+	}
+	blockers = append(blockers, highRiskRefutation(repoRoot, mode, change, base, diff, "R2")...)
+	blockers = append(blockers, sizeRefutation(repoRoot, base, diff, diffText)...)
+	blockers = append(blockers, contractRefutation(repoRoot, diffText)...)
+	blockers = append(blockers, planEvidenceRefutation(repoRoot, mode, change)...)
+	return blockers
+}
+
+// CanonicalSpecRefusal is R1's message body for a hand write to a canonical
+// spec, naming the missing delta and the promotion exit. change is empty when
+// no branch can be paired.
+func CanonicalSpecRefusal(mode, change, specPath string) string {
+	changes := "openspec/changes/"
+	if mode == planbuild.ModeOdd {
+		changes = "odd/changes/"
+	}
+	if change == "" {
+		return fmt.Sprintf("R1: `%s` is written by promotion, not by hand, and the current branch "+
+			"cannot be resolved (detached HEAD), so no delta can back it. Run the write from the "+
+			"change's branch, or promote the delta instead of editing the canonical tree.", specPath)
+	}
+	return fmt.Sprintf("R1: `%s` is written by promotion, not by hand, and the change `%s` carries "+
+		"no delta under `%s%s/specs/`. Write the delta there and run `ai-specs specs promote`, or "+
+		"promote from the change folder that owns the rule. Writing under `%s` is never blocked.",
+		specPath, change, changes, change, changes)
+}
+
+var (
+	longFlagRe = regexp.MustCompile(`--[a-z][a-z0-9-]*`)
+	tomlKeyRe  = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_-]*)[ \t]*=`)
+)
+
+// diffSides splits a unified diff into the content lines it removes and adds,
+// skipping headers, hunk markers and the no-newline notice.
+func diffSides(text string) (removed, added []string) {
+	for _, line := range strings.Split(text, "\n") {
+		switch {
+		case strings.HasPrefix(line, "+++"), strings.HasPrefix(line, "---"),
+			strings.HasPrefix(line, "@@"), strings.HasPrefix(line, "diff "),
+			strings.HasPrefix(line, "index "), strings.HasPrefix(line, "\\"):
+			continue
+		case strings.HasPrefix(line, "-"):
+			removed = append(removed, line[1:])
+		case strings.HasPrefix(line, "+"):
+			added = append(added, line[1:])
+		}
+	}
+	return removed, added
+}
+
+// sizeRefutation is R3: the diff exceeds a size or module threshold the project
+// declares. An unconfigured threshold proves nothing, so it never refuses.
+func sizeRefutation(repoRoot, base string, diff []planbuild.DiffEntry, diffText string) []string {
+	maxLines, hasLines := projectInt(repoRoot, base, "max_diff_lines")
+	maxModules, hasModules := projectInt(repoRoot, base, "max_changed_modules")
+	if !hasLines && !hasModules {
+		return nil
+	}
+	removed, added := diffSides(diffText)
+	if hasLines && len(removed)+len(added) > maxLines {
+		return []string{fmt.Sprintf("R3: the branch changes %d diff lines, over the project's "+
+			"max_diff_lines = %d declared in ai-specs/ai-specs.toml. Split the change, write the "+
+			"plan/delta that justifies it, record an exemption decision, or escalate.",
+			len(removed)+len(added), maxLines)}
+	}
+	if hasModules {
+		modules := map[string]bool{}
+		for _, entry := range diff {
+			if module, _, found := strings.Cut(entry.Path, "/"); found && module != "" {
+				modules[module] = true
+			}
+		}
+		if len(modules) > maxModules {
+			return []string{fmt.Sprintf("R3: the branch touches %d modules, over the project's "+
+				"max_changed_modules = %d declared in ai-specs/ai-specs.toml. Split the change, write "+
+				"the plan/delta that justifies it, record an exemption decision, or escalate.",
+				len(modules), maxModules)}
+		}
+	}
+	return nil
+}
+
+// projectInt reads one integer from [recipes.plan-build-flow.config] at the
+// trusted base revision, so a candidate cannot relax the threshold it is graded by.
+func projectInt(root, base, key string) (int, bool) {
+	text, ok := planbuild.FileAt(root, base, planbuild.ManifestRelPath)
+	if !ok {
+		return 0, false
+	}
+	manifest, err := toml.Parse([]byte(text))
+	if err != nil {
+		return 0, false
+	}
+	_, _, cfg := config.RecipeConfigState(manifest, planbuild.RecipeID)
+	value, ok := config.LookupNestedConfig(cfg, key)
+	if !ok {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case int64:
+		return int(typed), true
+	case float64:
+		return int(typed), true
+	}
+	return 0, false
+}
+
+// contractRefutation is R4: the diff removes a public long flag or a config key
+// that no tracked file of the working tree still declares, which is a contract
+// others consume. It tracks the file each hunk belongs to so a prose assignment
+// outside a .toml is never read as a config key.
+func contractRefutation(repoRoot, diffText string) []string {
+	current := ""
+	added := ""
+	var flags, keys []string
+	for _, line := range strings.Split(diffText, "\n") {
+		switch {
+		case strings.HasPrefix(line, "+++ "):
+			current = strings.TrimPrefix(line[4:], "b/")
+			continue
+		case strings.HasPrefix(line, "--- "), strings.HasPrefix(line, "@@"),
+			strings.HasPrefix(line, "diff "), strings.HasPrefix(line, "index "),
+			strings.HasPrefix(line, "\\"):
+			continue
+		case strings.HasPrefix(line, "+"):
+			added += line[1:] + "\n"
+		case strings.HasPrefix(line, "-"):
+			content := line[1:]
+			flags = append(flags, longFlagRe.FindAllString(content, -1)...)
+			if strings.HasSuffix(current, ".toml") {
+				if match := tomlKeyRe.FindStringSubmatch(content); match != nil {
+					keys = append(keys, match[1])
+				}
+			}
+		}
+	}
+	for _, flag := range flags {
+		if strings.Contains(added, flag) || planbuild.WorktreeContains(repoRoot, flag) {
+			continue
+		}
+		return []string{fmt.Sprintf("R4: the branch removes the public flag `%s`, a contract others "+
+			"already consume. Record the decision: write the plan or delta that declares the flag change "+
+			"and its migration, record an exemption decision, or escalate.", flag)}
+	}
+	for _, key := range keys {
+		if strings.Contains(added, key) || planbuild.WorktreeContains(repoRoot, key) {
+			continue
+		}
+		return []string{fmt.Sprintf("R4: the branch removes the config key `%s`, a contract others "+
+			"already consume. Record the decision: write the plan or delta that declares the config change "+
+			"and its migration, record an exemption decision, or escalate.", key)}
+	}
+	return nil
+}
+
+// planEvidenceRefutation is R5: the plan declares S# rows but carries no
+// `## Verification` section at all. Rows inside an existing section are graded
+// by the merge guardian, so a plan still being authored is not blocked before
+// the code exists to verify.
+func planEvidenceRefutation(repoRoot, mode, change string) []string {
+	if change == "" || !planbuild.PlanIsValidForMode(repoRoot, mode, change) {
+		return nil
+	}
+	planPath := planbuild.TasksPath(repoRoot, mode, change)
+	plan, _ := ParsePlan(readText(planPath))
+	if len(plan.Specs) == 0 || plan.HasVerification {
+		return nil
+	}
+	var declared []string
+	for _, spec := range plan.Specs {
+		declared = append(declared, spec.ID)
+	}
+	return []string{fmt.Sprintf("R5: the plan `%s` declares %s but carries no `## Verification` section — "+
+		"a declared specification without its rows is an evidence orphan. Add one row per declared S# "+
+		"under `## Verification`, record an exemption decision, or escalate.",
+		repoRelative(repoRoot, planPath), strings.Join(declared, ", "))}
 }
 
 // unresolvedBaseNote names a base the caller supplied that does not resolve.
@@ -134,9 +337,9 @@ func unresolvedBaseNote(base string) string {
 		"(`git rev-parse --verify %s`) or omit `--base` to use the project's base branch.", base, base)
 }
 
-// canonicalSpecRefutation is R-a: a changed canonical spec with no delta this
+// canonicalSpecRefutation is R-a/R1: a changed canonical spec with no delta this
 // diff contributes, so an archive left by an earlier change proves nothing.
-func canonicalSpecRefutation(repoRoot, mode, change string, diff []planbuild.DiffEntry) []string {
+func canonicalSpecRefutation(repoRoot, mode, change string, diff []planbuild.DiffEntry, rule string) []string {
 	first, count := firstMatch(diff, func(entry planbuild.DiffEntry) bool {
 		return isCanonicalSpec(entry.Path)
 	})
@@ -144,16 +347,16 @@ func canonicalSpecRefutation(repoRoot, mode, change string, diff []planbuild.Dif
 		return nil
 	}
 	delta := repoRelative(repoRoot, filepath.Join(planbuild.ChangeFolder(repoRoot, mode, change), "specs"))
-	return []string{fmt.Sprintf("R-a: the branch modifies the canonical spec `%s`%s but the change `%s` "+
+	return []string{fmt.Sprintf("%s: the branch modifies the canonical spec `%s`%s but the change `%s` "+
 		"carries no delta — changing a canonical spec without a delta is a promotion bypass. "+
 		"Write the delta under `%s/` and run `ai-specs specs promote`.",
-		first, andMore(count), change, delta)}
+		rule, first, andMore(count), change, delta)}
 }
 
-// highRiskRefutation is R-b: a changed path the project declares as high-risk,
-// answered per mode — a plan this diff contributes in openspec, a Risk trailer in
-// odd.
-func highRiskRefutation(repoRoot, mode, change, base string, diff []planbuild.DiffEntry) []string {
+// highRiskRefutation is R-b/R2: a changed path the project declares as
+// high-risk, answered per mode — a plan this diff contributes in openspec, a
+// Risk trailer in odd.
+func highRiskRefutation(repoRoot, mode, change, base string, diff []planbuild.DiffEntry, rule string) []string {
 	patterns := HighRiskPaths(repoRoot, base)
 	if len(patterns) == 0 {
 		return nil
@@ -169,8 +372,8 @@ func highRiskRefutation(repoRoot, mode, change, base string, diff []planbuild.Di
 	if first == "" {
 		return nil
 	}
-	found := fmt.Sprintf("R-b: the branch modifies the high-risk path `%s`%s, declared by the project in "+
-		"ai-specs/ai-specs.toml", first, andMore(count))
+	found := fmt.Sprintf("%s: the branch modifies the high-risk path `%s`%s, declared by the project in "+
+		"ai-specs/ai-specs.toml", rule, first, andMore(count))
 	if mode == planbuild.ModeOdd {
 		if planbuild.CommitsWithRiskTrailer(repoRoot, base) {
 			return nil
