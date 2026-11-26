@@ -552,7 +552,14 @@ refutes it, graded at the pre-merge guardian and in CI, never at the gate:
   per-mode: in `openspec` the change must carry a plan (tier light), because the
   plan is where the verification evidence lives; in `odd` one commit of the
   range must carry a `Risk: item N (<reason>)` trailer, N in 1..6 — a bare
-  `Risk: none` does not satisfy it.
+  `Risk: none` does not satisfy it. The six items are: 1 data or irreversible
+  effects that cannot be rebuilt (migrations, rewriting or deleting stored data,
+  format changes, writing stored data without validation); 2 security (auth,
+  permissions, credentials, secrets, guards, sandbox); 3 contracts others
+  already consume (public API, CLI flags, config formats, exports, mirrored
+  prompts — adding a flag or a command is not); 4 concurrency; 5 delivery or
+  environment (installers, release, CI, deploy, dependencies); 6 no test would
+  catch a regression in what changes.
 
 No diff computable means no refutation: without a base ref, in a shallow clone
 or outside a repository, the guardian refutes nothing rather than blocking every

@@ -177,7 +177,10 @@ func highRiskRefutation(repoRoot, mode, change, base string, diff []planbuild.Di
 		}
 		return []string{found + fmt.Sprintf(", but no commit of `%s..HEAD` carries a `Risk: item N (<reason>)` "+
 			"trailer — the trailer is the verification evidence an ODD high-risk change must carry, and a "+
-			"bare `Risk: none` does not satisfy it. Add the trailer to one commit of the range and retry.",
+			"bare `Risk: none` does not satisfy it. N is one of: 1 data or irreversible effects that "+
+			"cannot be rebuilt, 2 security, 3 contracts others already consume, 4 concurrency, "+
+			"5 delivery or environment, 6 no test would catch a regression. "+
+			"Add the trailer to one commit of the range and retry.",
 			base)}
 	}
 	// A plan from an earlier change never counts: only a plan this diff adds or

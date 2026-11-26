@@ -457,6 +457,22 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("`odd/tasks/<change>.md`", section)
         self.assertIn("`odd/changes/<change>/`", section)
 
+    def test_skill_and_readme_enumerate_the_six_high_risk_items(self):
+        """S18: `Risk: item N` is answerable because 1..6 are named where it is demanded."""
+        skill = _skill_section("Refutations of a `none` change")
+        readme = " ".join((CATALOG / RECIPE_ID / "README.md").read_text().split())
+        for surface, text in (("SKILL", skill), ("README", readme)):
+            for marker in (
+                "1 data or irreversible effects that cannot be rebuilt",
+                "2 security",
+                "3 contracts others already consume",
+                "4 concurrency",
+                "5 delivery or environment",
+                "6 no test would catch a regression",
+            ):
+                with self.subTest(surface=surface, marker=marker):
+                    self.assertIn(marker, text)
+
     def test_skill_has_ambient_auto_invoke(self):
         skill = CATALOG / RECIPE_ID / "skills" / "plan-build-flow" / "SKILL.md"
         text = skill.read_text()

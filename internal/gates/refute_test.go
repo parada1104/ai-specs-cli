@@ -218,6 +218,14 @@ func TestRefuteRbRequiresARiskTrailerInOdd(t *testing.T) {
 		"no commit of `" + base + "..HEAD`",
 		"Risk: item N (<reason>)",
 		"`Risk: none` does not satisfy it",
+		// The refusal is the one place the blocked agent reads, so it must say
+		// which N applies instead of leaving 1..6 opaque.
+		"1 data or irreversible effects that cannot be rebuilt",
+		"2 security",
+		"3 contracts others already consume",
+		"4 concurrency",
+		"5 delivery or environment",
+		"6 no test would catch a regression",
 	} {
 		if !strings.Contains(blockers[0], want) {
 			t.Errorf("blocker %q does not contain %q", blockers[0], want)

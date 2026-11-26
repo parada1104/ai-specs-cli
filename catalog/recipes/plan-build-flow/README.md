@@ -215,7 +215,14 @@ requires `## Log` with `L1`; light keeps it optional.
   by hand; a trailing `/**` covers a prefix and anything else matches the whole
   path. In `openspec` the exit is a plan (tier light); in `odd` it is a commit in
   the range carrying a `Risk: item N (<reason>)` trailer, N in 1..6, which a bare
-  `Risk: none` does not satisfy. No diff computable means no refutation, so a
+  `Risk: none` does not satisfy. The six items, in order: 1 data or irreversible
+  effects that cannot be rebuilt (migrations, rewriting or deleting stored data,
+  format changes, writing stored data without validation); 2 security (auth,
+  permissions, credentials, secrets, guards, sandbox); 3 contracts others
+  already consume (public API, CLI flags, config formats, exports, mirrored
+  prompts; adding a flag or a command is not); 4 concurrency; 5 delivery or
+  environment (installers, release, CI, deploy, dependencies); 6 no test would
+  catch a regression in what changes. No diff computable means no refutation, so a
   shallow clone never blocks every small change: `gates premerge --base <ref>`
   pins the ref, and CI passes the pull request's base sha.
 - **`gates premerge` flags:** `--tier none|light|standard` is a coherence
