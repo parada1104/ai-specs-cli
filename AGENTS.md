@@ -63,7 +63,7 @@ Never expose env-backed secrets from MCP config in generated docs or comments.
 - Use a PR-based merge workflow; all changes to `development` go through a pull request.
 - VCS/PR provider: GitHub (gh CLI). Use gh for all PR operations.
 - Do not push directly to `development`; always open a PR from a feature branch.
-- After a merged PR, remove the feature worktree and delete the local branch (`git branch -D` after squash); delete the remote branch if it still exists.
+- After a merged PR, remove the feature worktree and delete the local branch (`git branch -d`, or `-D` after a squash or a rebase); delete the remote branch if it still exists.
 - After a merged PR, sync `development` in the main worktree before further work: `git checkout development` then `git pull --ff-only`.
 - A session works on one explicit user request or tracker card; resolve focus from memory and tracker before starting.
 - Follow red-green-refactor discipline: write a failing test first, then implement, then clean up.
