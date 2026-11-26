@@ -175,19 +175,26 @@ def runtime_to_agent(runtime: str) -> str:
     return RUNTIME_TO_AGENT.get(runtime, runtime)
 
 
-# The one command family the agent under test may run. Deliberately not a
-# blanket wildcard: the skill only needs `ai-specs <verb>`.
-CLAUDE_ALLOWED_COMMANDS = ("Bash(ai-specs:*)",)
+# The command families the agent under test may run: the skill's `ai-specs
+# <verb>`, plus `git add` / `git commit` because a case must produce a
+# `Risk: item N` commit trailer. Deliberately not a blanket wildcard.
+CLAUDE_ALLOWED_COMMANDS = (
+    "Bash(ai-specs:*)",
+    "Bash(git add:*)",
+    "Bash(git commit:*)",
+)
 
 
 def allow_cli_commands(project_root: Path) -> None:
-    """Let the agent under test run `ai-specs` and nothing else.
+    """Let the agent under test run `ai-specs`, `git add` and `git commit`.
 
     The skill tells the agent to run `changes start --none`, `specs promote` and
-    `changes archive`. A headless session cannot approve them interactively, so
-    without this the case measures the sandbox instead of the skill. This writes
-    the allow-list into THIS sandbox's `.claude/settings.json` only -- never the
-    repo's, never the user's -- and names exactly one command family.
+    `changes archive`; the high-risk odd case needs a commit to carry a
+    `Risk: item N` trailer. A headless session cannot approve them
+    interactively, so without this the case measures the sandbox instead of the
+    skill. This writes the allow-list into THIS sandbox's
+    `.claude/settings.json` only -- never the repo's, never the user's -- and
+    names exactly those command families.
     """
     settings = project_root / ".claude" / "settings.json"
     settings.parent.mkdir(parents=True, exist_ok=True)
@@ -465,9 +472,9 @@ def run_claude_prompt(
         "--permission-mode",
         permission,
         # `acceptEdits` still stops Bash, and a headless session has nobody to
-        # ask. The grant is the same single family the fixture writes into its
-        # own .claude/settings.json -- the settings file alone is not read by
-        # `-p`, so the rule is repeated where the runtime honours it.
+        # ask. The grant is the same list the fixture writes into its own
+        # .claude/settings.json -- the settings file alone is not read by `-p`,
+        # so the rules are repeated where the runtime honours them.
         "--allowedTools",
         *CLAUDE_ALLOWED_COMMANDS,
         "--max-turns",

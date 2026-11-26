@@ -241,9 +241,10 @@ class PlanBuildFlowLiveEvals(unittest.TestCase):
         # the scenario exercises the gate hook end-to-end, not just the advisory
         # skill/brief layer.
         wire_runtime_hooks(root, runtime)
-        # The fixture's own settings file: the skill needs `ai-specs <verb>` and a
-        # headless session cannot approve it. Nothing wider, and never the repo's
-        # or the user's settings.
+        # The fixture's own settings file: the skill needs `ai-specs <verb>` and
+        # the high-risk case needs a commit, and a headless session cannot
+        # approve either. Nothing wider, and never the repo's or the user's
+        # settings.
         allow_cli_commands(root)
         init_git_repo(root)
         subprocess.run(["git", "add", "-A"], cwd=root, check=True)
