@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.1] — 2026-11-26
+
+### Upgrade notes
+If `ai-specs version` reports `unknown`, or `ai-specs upgrade` refuses with
+"does not match the expected global path", that install predates this fix and
+cannot upgrade itself: re-run the installer once, then sync each project.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/parada1104/ai-specs-cli/main/install.sh | bash
+ai-specs sync
+```
+
+### Fixed
+- A fresh install resolves its own data home. `install.sh` installs a real
+  binary at `~/.local/bin/ai-specs` while the data home stays `~/.ai-specs`, and
+  the resolver trusted the binary's parent directory blindly, so without
+  `AI_SPECS_HOME` the CLI resolved `~/.local`: `ai-specs version` printed
+  `unknown`, `init`/`sync` could not find their templates, generated hooks baked
+  a `dist/` path that did not exist (and failed open), and `ai-specs upgrade`
+  refused to run. The resolver now verifies that guess and falls back to
+  `~/.ai-specs`; a `VERSION` file counts only when it holds a single version
+  field, so a `dist/VERSION` cache stamp is never mistaken for a home.
+
 ## [0.27.0] — 2026-11-26
 
 ### Upgrade notes

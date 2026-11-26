@@ -1,4 +1,4 @@
-# Expected SHA-256 digests of the published ai-specs release assets (v0.27.0).
+# Expected SHA-256 digests of the published ai-specs release assets (v0.27.1).
 # This file is the trust root (D5): the network supplies only bytes, the
 # repository supplies the expected digest. A downloaded asset whose SHA-256 does
 # not match is deleted and never installed: install.sh and `ai-specs upgrade`
@@ -27,7 +27,7 @@
 # The worktree gate ships inside the CLI (no separate gate sums), so a version
 # bump only needs this file regenerated from the exact committed tree.
 #
-5abfa878f694b217a73d3942ae199c9e218c9422278e40ce95d7f143ab42e84d  ai-specs-darwin-amd64
-9d4afaee827b50ad736e310ec0b93ed6a31a4283f3d36fecc321e83e9e228f47  ai-specs-darwin-arm64
-5fa3a4371b1e3a1b93849a744abdcd4ee8e83b116b07b15692ab3da70a8c80ac  ai-specs-linux-amd64
-03b0b22035d26c7b5db5ca02276ba3fe7ec02e7ace937c83251197077fbd47f5  ai-specs-linux-arm64
+857a81d31058252fe5c9d9330a15916b5744a8b002b4470a94d6357b3ab7041e  ai-specs-darwin-amd64
+f33a49fa25c8f8c6867931a13f8e211e42326de59209d06ae52a60ab5e1ccf45  ai-specs-darwin-arm64
+4a533b6b0cf707d40799ab0954d808263f86bc1aeb883604fa6d49e216b8cfbc  ai-specs-linux-amd64
+71dcda511a25a07576e3ead1aca0fffdf41d72af07771add8442ddbc7cf486cf  ai-specs-linux-arm64
