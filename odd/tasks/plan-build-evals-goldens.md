@@ -95,10 +95,10 @@ Branch `chore/plan-build-evals-goldens`, from `development ea35a329`. Mode: `odd
 
 | ID | Specs | Route | Content | Commit |
 |----|-------|-------|---------|--------|
-| T12 | S13 | inline | `mode` in the recipe schema + regenerate `internal/schema` oracle | `feat(schema): declare the plan-build artifact mode` |
-| T13 | S14 | inline | Offer the waiver in the SKILL and in the openspec gate refusal | `fix(gates): offer changes start --none when the gate blocks` |
-| T14 | S15 | inline | Diagnose the flaky `ac_specs_write_without_delta` | `—` |
-| T15 | S16 | inline | Sandbox allow-list `Bash(git add:*)` + `Bash(git commit:*)`, runner test extended | `test(evals): allow git add and git commit in the eval sandbox` |
+| T12 | S13 | inline | `mode` in the recipe schema + regenerate `internal/schema` oracle | `feat(schema): declare the plan-build artifact mode` — landed `7e09b1ab` |
+| T13 | S14 | inline | Offer the waiver in the SKILL and in the openspec gate refusal | `fix(gates): offer changes start --none when the gate blocks` — landed `de24cd8e` |
+| T14 | S15 | inline | Diagnose the flaky `ac_specs_write_without_delta` | `—` — cause in the scenario prompt, fixed in the T14 commit |
+| T15 | S16 | inline | Sandbox allow-list `Bash(git add:*)` + `Bash(git commit:*)`, runner test extended | `test(evals): allow git add and git commit in the eval sandbox` — landed `33bd9f80` |
 | T16 | S17 | parent | `review mode disable --scope clone`, push, PR, then re-enable | `—` |
 
 ## Golden case inventory (current, `tests/evals/scenarios/plan-build-flow`)
