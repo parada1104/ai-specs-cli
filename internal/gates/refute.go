@@ -394,9 +394,8 @@ var flagRegistrationRe = regexp.MustCompile(`\b(?:p?flag\.\w+|Flags\(\)\.\w+|Fla
 // declaredFlags returns the long flags a removed line declares: a CLI switch case,
 // a help line, or a flag registration, never a comment that merely names the flag.
 func declaredFlags(line string) []string {
-	trimmed := strings.TrimSpace(line)
-	// A commented-out registration is not a declaration.
-	if trimmed != "" && strings.ContainsAny(trimmed[:1], "/#*") {
+	trimmed := stripLeadingComments(strings.TrimSpace(line))
+	if trimmed == "" {
 		return nil
 	}
 	declared := strings.HasPrefix(trimmed, "case ") || strings.HasPrefix(trimmed, "--") ||
@@ -405,6 +404,26 @@ func declaredFlags(line string) []string {
 		return nil
 	}
 	return longFlagRe.FindAllString(trimmed, -1)
+}
+
+// stripLeadingComments drops the comment prefixes a removed line may open with, so a
+// registration that follows a leading block comment is still a declaration while a
+// line that is only a comment declares nothing.
+func stripLeadingComments(line string) string {
+	for {
+		switch {
+		case strings.HasPrefix(line, "/*"):
+			end := strings.Index(line, "*/")
+			if end < 0 {
+				return ""
+			}
+			line = strings.TrimSpace(line[end+2:])
+		case strings.HasPrefix(line, "//"), strings.HasPrefix(line, "#"), strings.HasPrefix(line, "*"):
+			return ""
+		default:
+			return line
+		}
+	}
 }
 
 // planEvidenceRefutation is R5: the plan declares S# rows but carries no

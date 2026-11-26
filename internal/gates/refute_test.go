@@ -584,6 +584,22 @@ func TestWriteRefutationsIgnoreACommentedOutRegistration(t *testing.T) {
 	}
 }
 
+// A registration that merely follows a leading block comment is still a declaration.
+func TestWriteRefutationsReportARegistrationAfterALeadingBlockComment(t *testing.T) {
+	root := writeRepo(t, map[string]string{
+		"src/cli.go": "package src\n\nimport \"flag\"\n\nfunc init() {\n" +
+			"\t/* legacy helper */ flag.String(\"--old-flag\", \"\", \"x\")\n}\n",
+	})
+	writeFile(t, filepath.Join(root, "src", "cli.go"), "package src\n\nimport \"flag\"\n")
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-q", "-m", "refactor: drop the flag")
+
+	blockers := WriteRefutations(root, planbuild.ModeOpenspec, "thing", "src/app.go")
+	if len(blockers) != 1 || !strings.Contains(blockers[0], "--old-flag") {
+		t.Fatalf("WriteRefutations = %q, want one R4 blocker for the registration", blockers)
+	}
+}
+
 // The advertised exits are real: a plan naming the token or a delta naming the rule unblocks.
 func TestWriteRefutationsHonourAChangeThatDeclaresTheRefutation(t *testing.T) {
 	root := writeRepo(t, map[string]string{
