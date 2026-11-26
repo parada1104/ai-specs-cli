@@ -150,21 +150,28 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 	if mode == planbuild.ModeOdd && planBuildGateUnder(filepath.Join(repoRoot, "odd"), abs) {
 		return 0
 	}
-	if !planBuildGateProduction(rel) {
-		return 0
+	change := ""
+	if name, ok := planbuild.ChangeFromBranch(planbuild.Branch(target.Probe)); ok {
+		change = name
 	}
+	// S16: a worktree with no plan, no delta and no product-path divergence is not a
+	// change, so it owes no ledger row, no tier and no refutation, wherever it writes.
+	// The ledger checkpoint is a pending decision, not a tier, so it still comes first.
 	tool := target.Tool
 	if tool == "" {
 		tool = "edit"
 	}
 	// Work-start fires before the first non-read-only production write, whether
 	// or not a change folder exists.
-	if !planBuildGateGradeLedger(repoRoot, stderr) {
+	if planBuildGateProduction(rel) && !planBuildGateGradeLedger(repoRoot, stderr) {
 		return 2
 	}
-	change := ""
-	if name, ok := planbuild.ChangeFromBranch(planbuild.Branch(target.Probe)); ok {
-		change = name
+	if planBuildGateWorkstream(repoRoot, mode, change) {
+		if explain {
+			fmt.Fprintf(stderr, "%s: tier %s; refutations %s\n", planBuildGateName,
+				planBuildGateInferredTier(repoRoot, mode, change), planBuildGateRules(nil))
+		}
+		return 0
 	}
 	// The tier is inferred, never required: no plan, declaration or authorization
 	// is a precondition, and only a proven refutation refuses.
@@ -180,6 +187,29 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 		return 2
 	}
 	return 0
+}
+
+// planBuildGateWorkstream reports a worktree that is not a change at all: no plan,
+// no delta and no product-path divergence from the integration base (S16). A change
+// is conservative — any product-path divergence is enough — and an unresolvable
+// base is graded rather than exempted.
+func planBuildGateWorkstream(repoRoot, mode, change string) bool {
+	if change == "" || planbuild.HasDelta(repoRoot, mode, change) {
+		return false
+	}
+	if info, err := os.Stat(planbuild.TasksPath(repoRoot, mode, change)); err == nil && !info.IsDir() {
+		return false
+	}
+	entries, ok := planbuild.DiffEntries(repoRoot, gates.BaseRef(repoRoot, nil))
+	if !ok {
+		return false
+	}
+	for _, entry := range entries {
+		if planBuildGateProduction(entry.Path) {
+			return false
+		}
+	}
+	return true
 }
 
 // planBuildGateInferredTier derives the change tier from the artifacts the

@@ -162,3 +162,43 @@ func TestPlanBuildGateWriteFlow(t *testing.T) {
 		}
 	})
 }
+
+// S16: an inherited canonical-spec edit in a worktree with no plan, no delta and
+// no product divergence is not a change, so the next ordinary write is allowed.
+func TestPlanBuildGateDoesNotGradeAWorkstreamWithACanonicalSpecEdit(t *testing.T) {
+	bin, _ := smokeSetup(t)
+	repo := flowRepo(t, "odd", map[string]string{"src/app.go": "package src\n"})
+	flowWrite(t, repo, "odd/specs/widget/spec.md", "x\n")
+	flowGit(t, repo, "add", "-A")
+	flowGit(t, repo, "commit", "-m", "spec: edit the canonical tree")
+
+	stdout, stderr, code := flowRun(t, bin, repo, flowEvent(repo, "src/app.go"), "plan-build-gate")
+	if code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("gate = (%d, %q, %q), want a silent allow", code, stdout, stderr)
+	}
+}
+
+// R2 is independent of the production scope: a declared high-risk target is graded
+// wherever it lives.
+func TestPlanBuildGateGradesADeclaredHighRiskTargetOutsideProduction(t *testing.T) {
+	bin, _ := smokeSetup(t)
+	repo := t.TempDir()
+	flowGit(t, repo, "init", "-b", "main")
+	flowGit(t, repo, "config", "user.email", "flow@example.invalid")
+	flowGit(t, repo, "config", "user.name", "flow")
+	flowWrite(t, repo, "ai-specs/ai-specs.toml", "[recipes.plan-build-flow]\nenabled = true\n\n"+
+		"[recipes.plan-build-flow.config]\nmode = \"odd\"\nhigh_risk_paths = [\"docs/**\"]\n")
+	flowWrite(t, repo, "README.md", "x\n")
+	flowGit(t, repo, "add", "-A")
+	flowGit(t, repo, "commit", "-m", "base")
+	flowGit(t, repo, "checkout", "-b", "feat/thing")
+	flowWrite(t, repo, "odd/tasks/thing.md", "## Specs\n\n- **S1** — x\n\n## Tasks\n\n- T1 — y\n\n"+
+		"## Verification\n\n| Spec | Evidence |\n| --- | --- |\n| S1 | fixture |\n")
+	flowGit(t, repo, "add", "-A")
+	flowGit(t, repo, "commit", "-m", "plan")
+
+	_, stderr, code := flowRun(t, bin, repo, flowEvent(repo, "docs/deploy.md"), "plan-build-gate")
+	if code != 2 || !strings.Contains(stderr, "R2") || !strings.Contains(stderr, "docs/deploy.md") {
+		t.Fatalf("gate = (%d, %q), want exit 2 naming R2 and the pending target", code, stderr)
+	}
+}
