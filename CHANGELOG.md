@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0] — 2026-11-26
+
 ### Upgrade notes
 Run `ai-specs sync` in each project. The CLI now serves every recipe runtime
 piece, so the next sync **removes** the files it used to materialize:
@@ -44,11 +46,27 @@ Hook policy now comes from the per-project sync snapshot
 `gate_scope`, `repo_topology`, `worktrees_dir` or `integration_branch` edit takes
 effect on the next sync. `.git/hooks/post-merge` is regenerated on every sync as
 one `exec ai-specs worktree-cleanup` line — it is no longer an override, so a
-hand-written hook there is replaced. `--refresh-gates` still refreshes a
+hand-written hook there is replaced.
+`.git/hooks/post-checkout` follows the same rule with one difference: a hook that
+is not managed by ai-specs is **preserved** (with a one-line notice), because that
+hook was never ours to claim. `--refresh-gates` still refreshes a
 materialized hook after backing up its previous bytes, but it no longer owns any
 gate hook: it neither rewrites nor removes a stale launcher.
 
 ### Added
+- **Provider-independent cleanup triggers.** `.git/hooks/post-checkout` runs
+  `ai-specs worktree-cleanup --if-integration`, so a pull request merged or
+  squashed on the hosting provider cleans up and closes its tracker-ledger row
+  when the integration branch is checked out after a fetch — a boundary
+  `post-merge` never sees. Both generated hooks probe the verb (the
+  `post-checkout` one also the option) and print one actionable line instead of
+  doing nothing when the installed CLI is older than the hook that calls it.
+- **The tracker ledger fills itself in.** `apply-start` binds the provider card the
+  change evidence names — `openspec/changes/<slug>` first, then the branch's ODD
+  plan `odd/tasks/<feature>.md` — so both planning modes register automatically.
+  A change document that exists without a `## Tracker` section gets a strong
+  advisory naming the file, and a grade that refuses to produce a verdict is
+  reported instead of disappearing.
 - **`ai-specs worktree-cleanup`** — the post-merge cleanup sequence (merged
   worktree removal, remote branch deletion plus verification, local branch
   removal, then the base fast-forward) reads the sync snapshot and fails closed
@@ -66,6 +84,9 @@ gate hook: it neither rewrites nor removes a stale launcher.
   override, as advisory WARNs with copy-pasteable fixes.
 
 ### Changed
+- **The merge strategy is the caller's choice.** The provider merge skills no
+  longer hardcode `--squash`, and the generated brief says when `git branch -d`
+  suffices and when a squash or a rebase needs `-D`.
 - **The plan-build execution mode is declared config.** `[recipes.plan-build-flow.config]
 mode` now belongs to the recipe schema (`auto | odd | openspec`, absent means
 `auto`), so a project manifest that declares it is honoured without being
@@ -81,6 +102,12 @@ reported as `unknown config key 'mode' (ignored)`, and
   check owns. Its other messages are unchanged.
 
 ### Fixed
+- **The tracker-ledger grade is pure again.** Grading no longer persists a
+  conflict snapshot, matching the documented contract that no grade of any
+  checkpoint writes store state; the conflict still reaches the verdict.
+- **`tracker evidence` keeps its contract.** An explicitly empty slug means "no
+  scope" again, and a slug that names no change yields no evidence instead of
+  returning the branch's other card.
 - **A worktree-cleanup scope that looks like an option is a usage error.**
   `ai-specs worktree-cleanup --dry-run --submodule` used to consume `--submodule`
   as the scope value and run a real cleanup; `--dry-run` now never mutates.
