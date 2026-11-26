@@ -36,10 +36,16 @@ func hookRepo(t *testing.T) (repo, hook string) {
 }
 
 // runCleanupHook runs the hook the way git does: the script itself, cwd at the
-// repository root, AI_SPECS_HOME pointing at the fake installation.
+// repository root, AI_SPECS_HOME pointing at the fake installation. Git passes
+// the post-checkout arguments, so callers that need them use runCleanupHookArgs.
 func runCleanupHook(t *testing.T, repo, hook, cliHome string) (stdout, stderr string) {
 	t.Helper()
-	cmd := exec.Command(hook)
+	return runCleanupHookArgs(t, repo, hook, cliHome)
+}
+
+func runCleanupHookArgs(t *testing.T, repo, hook, cliHome string, args ...string) (stdout, stderr string) {
+	t.Helper()
+	cmd := exec.Command(hook, args...)
 	cmd.Dir = repo
 	cmd.Env = append(os.Environ(), "AI_SPECS_HOME="+cliHome)
 	var out, errOut bytes.Buffer
@@ -87,9 +93,12 @@ func TestWorktreePostCheckoutHookProbesTheCleanupVerb(t *testing.T) {
 		"#!/bin/sh\n",
 		`[ -x "$cli" ] || cli=ai-specs`,
 		`command -v "$cli" >/dev/null 2>&1 || exit 0`,
-		`"$cli" worktree-cleanup --help >/dev/null 2>&1 || {`,
+		`case "$("$cli" worktree-cleanup --help 2>/dev/null)" in`,
+		`*--if-integration*) ;;`,
 		`echo "post-checkout: $cli does not serve 'worktree-cleanup'; reinstall a current ai-specs, then run: ai-specs sync" >&2`,
 		`exec "$cli" worktree-cleanup --if-integration`,
+		`[ "${3:-1}" = "1" ] || exit 0`,
+		worktreeHookMarker,
 	} {
 		if !strings.Contains(hook, want) {
 			t.Fatalf("hook does not contain %q:\n%s", want, hook)
@@ -97,6 +106,56 @@ func TestWorktreePostCheckoutHookProbesTheCleanupVerb(t *testing.T) {
 	}
 	if strings.Contains(hook, "main") || strings.Contains(hook, "rev-parse") {
 		t.Fatalf("the hook must hold no branch policy, it lives in Go:\n%s", hook)
+	}
+}
+
+// R3-002: the probe proves the `--if-integration` option, not just the verb. A
+// binary that serves the verb without the flag would otherwise pass the probe and
+// then do nothing at all.
+func TestWorktreePostCheckoutHookProbesTheIfIntegrationOption(t *testing.T) {
+	repo, hook := hookRepoAt(t, "post-checkout", worktreePostCheckoutHook())
+	cliHome := t.TempDir()
+	argv := fakeCLI(t, cliHome, "Usage: ai-specs worktree-cleanup [slug]\n", 0)
+
+	stdout, stderr := runCleanupHookArgs(t, repo, hook, cliHome, "old", "new", "1")
+	if stdout != "" {
+		t.Fatalf("hook stdout = %q, want the probe to discard the CLI output", stdout)
+	}
+	want := fmt.Sprintf("post-checkout: %s does not serve 'worktree-cleanup'; reinstall a current ai-specs, then run: ai-specs sync\n",
+		filepath.Join(cliHome, "dist", "ai-specs"))
+	if stderr != want {
+		t.Fatalf("hook stderr = %q, want the one actionable line %q", stderr, want)
+	}
+	if recorded := readFileString(t, argv); recorded != "worktree-cleanup\n--help\n" {
+		t.Fatalf("CLI argv = %q, want only the option probe and no exec", recorded)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".worktrees", "merged")); err != nil {
+		t.Fatalf("an unusable CLI must remove nothing, the merged worktree is gone: %v", err)
+	}
+}
+
+// R4-postcheckout-latency: git fires post-checkout for a file restore too, where
+// the third argument is 0. The hook exits before touching the CLI, and a branch
+// checkout (1) still delegates.
+func TestWorktreePostCheckoutHookSkipsFileRestores(t *testing.T) {
+	repo, hook := hookRepoAt(t, "post-checkout", worktreePostCheckoutHook())
+	cliHome := t.TempDir()
+	argv := fakeCLI(t, cliHome, "ai-specs worktree-cleanup [--if-integration]\n", 0)
+
+	stdout, stderr := runCleanupHookArgs(t, repo, hook, cliHome, "old", "new", "0")
+	if stdout != "" || stderr != "" {
+		t.Fatalf("file restore: stdout = %q, stderr = %q, want silence", stdout, stderr)
+	}
+	if _, err := os.Stat(argv); !os.IsNotExist(err) {
+		t.Fatalf("a file restore must not invoke the CLI: %v", err)
+	}
+
+	stdout, _ = runCleanupHookArgs(t, repo, hook, cliHome, "old", "new", "1")
+	if !strings.Contains(stdout, "--if-integration") {
+		t.Fatalf("branch checkout stdout = %q, want the delegating exec", stdout)
+	}
+	if recorded := readFileString(t, argv); recorded != "worktree-cleanup\n--if-integration\n" {
+		t.Fatalf("branch checkout CLI argv = %q, want the last call to be the exec (fakeCLI keeps the last argv)", recorded)
 	}
 }
 
@@ -129,7 +188,7 @@ func TestWorktreePostCheckoutHookFailsOpenWhenTheInstalledCLILacksTheVerb(t *tes
 func TestWorktreePostCheckoutHookDelegatesWithIfIntegration(t *testing.T) {
 	repo, hook := hookRepoAt(t, "post-checkout", worktreePostCheckoutHook())
 	cliHome := t.TempDir()
-	argv := fakeCLI(t, cliHome, "worktree-cleanup: current branch is feature, not the integration branch main; skipping the cleanup pass.\n", 0)
+	argv := fakeCLI(t, cliHome, "Usage: ai-specs worktree-cleanup [--if-integration]\nworktree-cleanup: current branch is feature, not the integration branch main; skipping the cleanup pass.\n", 0)
 
 	stdout, stderr := runCleanupHook(t, repo, hook, cliHome)
 	if stderr != "" {
@@ -138,8 +197,11 @@ func TestWorktreePostCheckoutHookDelegatesWithIfIntegration(t *testing.T) {
 	if !strings.Contains(stdout, "skipping the cleanup pass") {
 		t.Fatalf("hook stdout = %q, want the verb's own output", stdout)
 	}
+	if n := strings.Count(stdout, "Usage:"); n != 1 {
+		t.Fatalf("hook stdout = %q, want the probe output discarded (%d Usage lines)", stdout, n)
+	}
 	if recorded := readFileString(t, argv); recorded != "worktree-cleanup\n--if-integration\n" {
-		t.Fatalf("CLI argv = %q, want the integration-only exec (the probe is the previous call)", recorded)
+		t.Fatalf("CLI argv = %q, want the last call to be the integration-only exec (fakeCLI keeps the last argv)", recorded)
 	}
 	if _, err := os.Stat(filepath.Join(repo, ".worktrees", "merged")); err != nil {
 		t.Fatalf("the fake CLI never touches worktrees, sentinel missing: %v", err)
@@ -159,6 +221,55 @@ func TestSyncGeneratesPostCheckoutHook(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got, want := string(data), string(worktreePostCheckoutHook()); got != want {
+		t.Fatalf("post-checkout hook = %q, want %q", got, want)
+	}
+	if info, err := os.Stat(hook); err != nil || info.Mode()&0o111 == 0 {
+		t.Fatalf("post-checkout hook is not executable: %v %v", info, err)
+	}
+}
+
+// R1-001: a project that already has its own post-checkout hook keeps it byte for
+// byte; sync says once that it was preserved and how to opt in, and the rest of
+// the sync is unaffected.
+func TestSyncPreservesAUserPostCheckoutHook(t *testing.T) {
+	home, _ := spineEnv(t)
+	project := spineProject(t, cliServedManifest)
+	userHook := "#!/bin/sh\n# the project's own hook\nexec ./scripts/after-checkout\n"
+	hook := filepath.Join(project, ".git", "hooks", "post-checkout")
+	spineWrite(t, hook, userHook, 0o755)
+
+	rc, stdout, stderr := runCLIServedSync(t, home, project)
+	if rc != 0 {
+		t.Fatalf("sync rc=%d\n%s\n%s", rc, stdout, stderr)
+	}
+	if got := readFileString(t, hook); got != userHook {
+		t.Fatalf("user post-checkout hook = %q, want it byte-identical to %q", got, userHook)
+	}
+	if data, err := os.ReadFile(filepath.Join(project, ".git", "hooks", "post-merge")); err != nil {
+		t.Fatalf("post-merge hook must still be generated: %v", err)
+	} else if string(data) != string(worktreePostMergeHook()) {
+		t.Fatalf("post-merge hook = %q, want %q", data, worktreePostMergeHook())
+	}
+	if !strings.Contains(stderr, "not managed by ai-specs") || !strings.Contains(stderr, "exec ai-specs worktree-cleanup --if-integration") {
+		t.Fatalf("sync stderr = %q, want once the preserved notice with the opt-in", stderr)
+	}
+	if n := strings.Count(stderr, "post-checkout"); n != 1 {
+		t.Fatalf("sync stderr = %q, want exactly one post-checkout line", stderr)
+	}
+}
+
+// R1-001: our own post-checkout hook (marked) is regenerated, so a sync repairs
+// it instead of preserving a stale body.
+func TestSyncRegeneratesItsOwnPostCheckoutHook(t *testing.T) {
+	home, _ := spineEnv(t)
+	project := spineProject(t, cliServedManifest)
+	hook := filepath.Join(project, ".git", "hooks", "post-checkout")
+	spineWrite(t, hook, "#!/bin/sh\n"+worktreeHookMarker+"\n# stale\nexit 0\n", 0o755)
+
+	if rc, stdout, stderr := runCLIServedSync(t, home, project); rc != 0 {
+		t.Fatalf("sync rc=%d\n%s\n%s", rc, stdout, stderr)
+	}
+	if got, want := readFileString(t, hook), string(worktreePostCheckoutHook()); got != want {
 		t.Fatalf("post-checkout hook = %q, want %q", got, want)
 	}
 	if info, err := os.Stat(hook); err != nil || info.Mode()&0o111 == 0 {
