@@ -99,7 +99,7 @@ each unit's own delta lives in its own change folder.
   - deps: none. PR size ~300.
 - T2 — The decisive fix: the OpenSpec write gate stops requiring a plan, blocks
   only on a proven refutation, and never blocks a worktree without a change
-  (S1, S2, S9, S16).
+  (S1, S2, S9, S16). *(R3-R5 moved to T8 by L11.)*
   route: worker. commit: none.
   - scope: `internal/cli/planbuildgate.go` (remove the plan/ceremony requirement
     in OpenSpec; treat a worktree with no product-path divergence and no artifact
@@ -203,7 +203,10 @@ each unit's own delta lives in its own change folder.
   checkpoint (S5, S10).
   route: worker. commit: none.
   - scope: transition→posture map, project config for `require` (with
-    per-checkpoint list) and for the R3/R4 thresholds, exit 2 only when opted in.
+    per-checkpoint list) and for the R3/R4 thresholds, exit 2 only when opted in,
+    plus the refutations R3-R5 themselves (L11): the size and module threshold, the
+    removed public contract, and the plan whose `S#` rows carry no evidence, each
+    with the exit it honours.
   - facts/ledger: composition layer only.
   - tests: default project never blocks even with high risk; a project with
     `require = ["merge"]` exits 2 with rule and exits; thresholds override the
@@ -371,3 +374,13 @@ each unit's own delta lives in its own change folder.
   change folder moved out of `odd/changes/` on purpose, so the guardian never owes
   an archive for the redesign as a whole. The deltas for T4–T12 are drafted here
   and each is created with its unit.
+- **L11** — «Nota de Cody: elegí recortar (decisión técnica mía, no de Robert:
+  regístralo así). T2 entrega el tier inferido, R1/R2 y start --none inerte; R3–R5
+  pasan a T8 junto a los umbrales. Actualiza el plan maestro con el movimiento y su
+  motivo, y pasa la revisión nativa al candidato recortado antes del merge.»
+  Movement: T2 keeps S1/S9/S16 and the R1/R2 half of S2; T8 gains the refutations R3
+  (configured size and module threshold), R4 (a removed public contract) and R5 (a
+  plan whose `S#` rows carry no evidence), beside the per-project thresholds and the
+  postures that give them their exit. Motive: all ten severe findings of T2's two
+  review lineages lived in R3–R5, and a refusal whose exit depends on thresholds and
+  recorded decisions belongs to the unit that introduces that configuration.

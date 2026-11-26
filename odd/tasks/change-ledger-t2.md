@@ -16,7 +16,9 @@ deltas live in `odd/tasks/change-ledger-v2.md` and `odd/tasks/change-ledger-v2/`
 - **S2** — `none` is refutable only by objective facts, and a refusal names the
   rule and the exits. Verbatim, master plan S2: «El CLI no prueba "small": solo lo
   refuta con hechos objetivos, y si lo refuta, el bloqueo nombra la regla y las
-  salidas. El agente puede planificar igual.»
+  salidas. El agente puede planificar igual.» This unit ships R1 (a hand write to
+  the canonical spec tree without its delta) and R2 (a project-declared high-risk
+  target written without its evidence); R3-R5 arrive with T8 (L4).
 - **S9** — `changes start --none` is inert for one version, then removed. Verbatim,
   master plan S9: «deprecar `changes start --none` (sin efecto una versión, luego
   se elimina)».
@@ -33,14 +35,15 @@ deltas live in `odd/tasks/change-ledger-v2.md` and `odd/tasks/change-ledger-v2/`
 - T2 — The write gate infers the tier and refuses only on a proven refutation.
   route: worker. commit: pending.  - scope: `internal/cli/planbuildgate.go` (drop the plan/ceremony requirement in
     OpenSpec mode; a worktree with no artifact and no product-path divergence is
-    nothing to grade), refutations R1–R5 with R3/R4 scored from the diff,
+    nothing to grade), the refutations R1 and R2 (R3-R5 belong to T8, L4),
     `internal/planbuild/ceremony.go` + `changes start --none` become inert with a
     deprecation notice, and the messages lose every "go ask permission" line.
   - tests: one real-flow scenario in a temp repo over the audit matrix — ODD with
     no plan → 0; OpenSpec with no plan → 0; audit worktree with no divergence → 0;
-    R1 (canonical spec written by hand without its delta) → 2 naming R1; R4
-    (contract change) → 2 naming R4; a leftover `aiSpecsCeremony = none` changes
-    nothing; a fresh `start --none` warns and exits 0.
+    R1 (canonical spec written by hand without its delta) → 2 naming R1; R2 (a
+    project-declared high-risk target) → 2 naming R2; a leftover
+    `aiSpecsCeremony = none` changes nothing; a fresh `start --none` warns and exits
+    0.
   - RED: today the OpenSpec no-plan write exits 2 and the declaration is a
     precondition.
   - risks: this removes a guard. Mitigation: every refusal is now fact-based and
@@ -77,3 +80,12 @@ diff-based refutations, and `--explain` reports the tier on the allowed canonica
   Archiving that folder is another change's record and outside T1–T3, so T2 ships
   `light` (plan only) like T1 and the requirement text stays in the master plan's
   target delta until the flow adopts `odd/specs/`.
+- **L4** — «Nota de Cody: elegí recortar (decisión técnica mía, no de Robert:
+  regístralo así). T2 entrega el tier inferido, R1/R2 y start --none inerte; R3–R5
+  pasan a T8 junto a los umbrales. Actualiza el plan maestro con el movimiento y su
+  motivo, y pasa la revisión nativa al candidato recortado antes del merge.»
+  Motive: the two earlier lineages of this unit found ten severe findings and every
+  one of them lived in the new R3–R5 machinery (size threshold, removed public
+  contract, plan whose `S#` rows carry no evidence). A refusal whose exit depends on
+  thresholds and recorded decisions belongs with the unit that introduces that
+  configuration, so those rules ship with T8 and T2 keeps only what is decisive.
