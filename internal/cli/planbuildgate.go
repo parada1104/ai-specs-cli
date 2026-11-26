@@ -5,7 +5,7 @@ package cli
 //
 // The verb no longer authorizes a write: in both execution modes it derives the
 // change tier from the artifacts that exist (none, light, standard) and refuses
-// only on an objective refutation R1–R5, each naming the fact that proves it and
+// only on an objective refutation R1–R2, each naming the fact that proves it and
 // the exits that resolve it. A worktree with no artifact and no product-path
 // divergence is nothing to grade: it exits 0, tier none.
 //
@@ -63,9 +63,7 @@ both modes the gate infers the change tier from the artifacts that exist (no
 plan and no delta = none, either one = light, both = standard) and refuses only
 when an objective refutation is proven: R1 a canonical spec (odd/specs/ or
 openspec/specs/) written without its delta, R2 a project-declared high-risk path
-without the evidence the project requires, R3 a project-configured size or
-module threshold exceeded, R4 a public flag or config key removed, R5 a plan
-declaring S# rows without a Verification section. Every refusal names the rule,
+without the evidence the project requires. Every refusal names the rule,
 the fact and the exits. No plan, declaration or authorization is required for a
 production write in any mode, and a worktree with no artifact and no product
 change is nothing to grade.

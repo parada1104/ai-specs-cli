@@ -121,21 +121,6 @@ func TestPlanBuildGateWriteFlow(t *testing.T) {
 		}
 	})
 
-	t.Run("R4 contract change with a plan", func(t *testing.T) {
-		// A switch case is a real declaration: the shape R4 grades.
-		repo := flowRepo(t, "openspec", map[string]string{
-			"src/cli.go": "package src\n\nfunc flag(arg string) string {\n\tswitch arg {\n" +
-				"\tcase \"--old-flag\":\n\t\treturn arg\n\t}\n\treturn \"\"\n}\n",
-		})
-		flowWrite(t, repo, "openspec/changes/thing/tasks.md", "# plan\n")
-		flowWrite(t, repo, "src/cli.go", "package src\n\nfunc flag(arg string) string {\n\tswitch arg {\n"+
-			"\tcase \"--new-flag\":\n\t\treturn arg\n\t}\n\treturn \"\"\n}\n")
-		stdout, stderr, code := flowRun(t, bin, repo, flowEvent(repo, "src/other.go"), "plan-build-gate")
-		if code != 2 || stdout != "" || !strings.Contains(stderr, "R4:") || !strings.Contains(stderr, "--old-flag") {
-			t.Fatalf("gate = (%d, %q, %q), want exit 2 naming R4 and the removed flag", code, stdout, stderr)
-		}
-	})
-
 	t.Run("R2 grades a canonical spec write that carries its delta", func(t *testing.T) {
 		repo := t.TempDir()
 		flowGit(t, repo, "init", "-b", "main")

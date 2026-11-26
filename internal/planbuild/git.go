@@ -76,39 +76,6 @@ func DiffEntries(root, base string) ([]DiffEntry, bool) {
 	return entries, true
 }
 
-// DiffText is the unified diff of the branch against base, working tree
-// included, so the write gate can prove the content refutations (R3 size, R4
-// contract removal) from the same range DiffEntries reads. false on any git
-// failure.
-func DiffText(root, base string) (string, bool) {
-	if !validGitRef(base) {
-		return "", false
-	}
-	mergeBase, err := gitText(root, "merge-base", base, "HEAD")
-	if err != nil {
-		return "", false
-	}
-	mergeBase = strings.TrimSpace(mergeBase)
-	if mergeBase == "" {
-		return "", false
-	}
-	out, err := gitText(root, "diff", mergeBase)
-	if err != nil {
-		return "", false
-	}
-	return out, true
-}
-
-// WorktreeContains reports whether needle appears literally in a tracked file
-// of the working tree, so a contract token is only called removed when no file
-// still declares it.
-func WorktreeContains(root, needle string) bool {
-	if needle == "" {
-		return false
-	}
-	return exec.Command("git", "-C", root, "grep", "-q", "-F", "-e", needle, "--").Run() == nil
-}
-
 // CommitsWithRiskTrailer reports whether any commit of base..HEAD carries a
 // `Risk: item N (<reason>)` trailer. Git supplies the values, so only a trailer
 // can satisfy it, never prose. Any git error is false.

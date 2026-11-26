@@ -16,11 +16,8 @@ package gates
 
 import (
 	"fmt"
-	"io/fs"
-	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"ai-specs.dev/ai-specs/internal/config"
@@ -137,21 +134,15 @@ func Refutations(repoRoot, mode, change string, base *string) (blockers, notes [
 }
 
 // WriteRefutations returns the write gate's objective refutations of a `none`
-// claim: R1–R5, each named with the fact that proves it and the exits that
-// resolve it. They reuse the guardian's rules (R1/R2 are its R-a/R-b) and add
-// the three the diff itself proves (R3 size, R4 contract removal, R5 plan
-// evidence orphanhood). No refutation fires without a fact, so an empty
-// worktree is never blocked.
+// claim: R1 and R2, each named with the fact that proves it and the exits that
+// resolve it. They are the guardian's R-a/R-b. No refutation fires without a
+// fact, so an empty worktree is never blocked.
 func WriteRefutations(repoRoot, mode, change, target string) []string {
 	base := BaseRef(repoRoot, nil)
 	var diff []planbuild.DiffEntry
-	diffText := ""
 	if base != "" {
 		if entries, ok := planbuild.DiffEntries(repoRoot, base); ok {
 			diff = entries
-		}
-		if text, ok := planbuild.DiffText(repoRoot, base); ok {
-			diffText = text
 		}
 	}
 	var blockers []string
@@ -162,13 +153,6 @@ func WriteRefutations(repoRoot, mode, change, target string) []string {
 		blockers = append(blockers, canonicalSpecRefutation(repoRoot, mode, change, diff, "R1")...)
 	}
 	blockers = append(blockers, highRiskRefutation(repoRoot, mode, change, base, diff, "R2", target)...)
-	// S16: a plan-less, delta-less change with no product path is a workstream.
-	if nothingToGrade(repoRoot, mode, change, diff) {
-		return blockers
-	}
-	blockers = append(blockers, sizeRefutation(repoRoot, mode, change, base, diff, diffText)...)
-	blockers = append(blockers, contractRefutation(repoRoot, mode, change, diffText)...)
-	blockers = append(blockers, planEvidenceRefutation(repoRoot, mode, change)...)
 	return blockers
 }
 
@@ -197,256 +181,6 @@ func CanonicalSpecRefusal(mode, change, specPath string) string {
 		"no delta under `%s%s/specs/`. Write the delta there and run `ai-specs specs promote`, or "+
 		"promote from the change folder that owns the rule. Writing under `%s` is never blocked.",
 		specPath, change, changes, change, changes)
-}
-
-var (
-	longFlagRe = regexp.MustCompile(`--[a-z][a-z0-9-]*`)
-	tomlKeyRe  = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_-]*)[ \t]*=`)
-)
-
-// diffSides splits a unified diff into the content lines it removes and adds,
-// skipping headers, hunk markers and the no-newline notice.
-func diffSides(text string) (removed, added []string) {
-	for _, line := range strings.Split(text, "\n") {
-		switch {
-		case strings.HasPrefix(line, "+++"), strings.HasPrefix(line, "---"),
-			strings.HasPrefix(line, "@@"), strings.HasPrefix(line, "diff "),
-			strings.HasPrefix(line, "index "), strings.HasPrefix(line, "\\"):
-			continue
-		case strings.HasPrefix(line, "-"):
-			removed = append(removed, line[1:])
-		case strings.HasPrefix(line, "+"):
-			added = append(added, line[1:])
-		}
-	}
-	return removed, added
-}
-
-// nothingToGrade reports the S16 workstream: no plan, no delta and no product
-// path in the diff is nothing to grade, so only R1 and R2 still apply.
-func nothingToGrade(repoRoot, mode, change string, diff []planbuild.DiffEntry) bool {
-	if change != "" && (planbuild.PlanIsValidForMode(repoRoot, mode, change) ||
-		planbuild.HasDelta(repoRoot, mode, change)) {
-		return false
-	}
-	for _, entry := range diff {
-		if productPath(entry.Path) {
-			return false
-		}
-	}
-	return true
-}
-
-// productPath reports whether a repository-relative path is in the production scope.
-func productPath(rel string) bool {
-	dirs := os.Getenv(ProductDirsEnv)
-	// `${prod_dirs// /}`: only spaces make the value blank.
-	if strings.ReplaceAll(dirs, " ", "") == "" {
-		dirs = ProductDirs
-	}
-	first, _, _ := strings.Cut(rel, "/")
-	for _, dir := range strings.Fields(dirs) {
-		if first == dir {
-			return true
-		}
-	}
-	return false
-}
-
-// sizeRefutation is R3: the diff exceeds a size or module threshold the project
-// declares. An unconfigured threshold proves nothing, so it never refuses.
-func sizeRefutation(repoRoot, mode, change, base string, diff []planbuild.DiffEntry, diffText string) []string {
-	maxLines, hasLines := projectInt(repoRoot, base, "max_diff_lines")
-	maxModules, hasModules := projectInt(repoRoot, base, "max_changed_modules")
-	if !hasLines && !hasModules {
-		return nil
-	}
-	removed, added := diffSides(diffText)
-	if hasLines && len(removed)+len(added) > maxLines &&
-		!strings.Contains(changeRecord(repoRoot, mode, change), "R3") {
-		return []string{fmt.Sprintf("R3: the branch changes %d diff lines, over the project's "+
-			"max_diff_lines = %d declared in ai-specs/ai-specs.toml. Split the change. %s",
-			len(removed)+len(added), maxLines, changeExit(change, "R3"))}
-	}
-	if hasModules {
-		modules := map[string]bool{}
-		for _, entry := range diff {
-			if module, _, found := strings.Cut(entry.Path, "/"); found && module != "" {
-				modules[module] = true
-			}
-		}
-		if len(modules) > maxModules && !strings.Contains(changeRecord(repoRoot, mode, change), "R3") {
-			return []string{fmt.Sprintf("R3: the branch touches %d modules, over the project's "+
-				"max_changed_modules = %d declared in ai-specs/ai-specs.toml. Split the change. %s",
-				len(modules), maxModules, changeExit(change, "R3"))}
-		}
-	}
-	return nil
-}
-
-// projectInt reads one integer from [recipes.plan-build-flow.config] at the
-// trusted base revision, so a candidate cannot relax the threshold it is graded by.
-func projectInt(root, base, key string) (int, bool) {
-	text, ok := planbuild.FileAt(root, base, planbuild.ManifestRelPath)
-	if !ok {
-		return 0, false
-	}
-	manifest, err := toml.Parse([]byte(text))
-	if err != nil {
-		return 0, false
-	}
-	_, _, cfg := config.RecipeConfigState(manifest, planbuild.RecipeID)
-	value, ok := config.LookupNestedConfig(cfg, key)
-	if !ok {
-		return 0, false
-	}
-	switch typed := value.(type) {
-	case int64:
-		return int(typed), true
-	case float64:
-		return int(typed), true
-	}
-	return 0, false
-}
-
-// contractRefutation is R4: the diff removes a public long flag or a config key
-// that no tracked file of the working tree still declares, which is a contract
-// others consume. It tracks the file each hunk belongs to so a prose assignment
-// outside a .toml is never read as a config key.
-func contractRefutation(repoRoot, mode, change, diffText string) []string {
-	onToml := false
-	added := ""
-	var flags, keys []string
-	for _, line := range strings.Split(diffText, "\n") {
-		switch {
-		case strings.HasPrefix(line, "+++ "):
-			onToml = onToml || strings.HasSuffix(line, ".toml")
-			continue
-		case strings.HasPrefix(line, "--- "):
-			// A whole-file deletion carries `+++ /dev/null`, so both sides count.
-			onToml = strings.HasSuffix(line, ".toml")
-			continue
-		case strings.HasPrefix(line, "@@"), strings.HasPrefix(line, "index "),
-			strings.HasPrefix(line, "\\"):
-			continue
-		case strings.HasPrefix(line, "+"):
-			added += line[1:] + "\n"
-		case strings.HasPrefix(line, "-"):
-			content := line[1:]
-			flags = append(flags, declaredFlags(content)...)
-			if onToml {
-				if match := tomlKeyRe.FindStringSubmatch(content); match != nil {
-					keys = append(keys, match[1])
-				}
-			}
-		}
-	}
-	for _, flag := range flags {
-		if strings.Contains(added, flag) || planbuild.WorktreeContains(repoRoot, flag) ||
-			strings.Contains(changeRecord(repoRoot, mode, change), flag) {
-			continue
-		}
-		return []string{fmt.Sprintf("R4: the branch removes the public flag `%s`, a contract others "+
-			"already consume. %s", flag, changeExit(change, "R4", flag))}
-	}
-	for _, key := range keys {
-		if strings.Contains(added, key) || planbuild.WorktreeContains(repoRoot, key) ||
-			strings.Contains(changeRecord(repoRoot, mode, change), key) {
-			continue
-		}
-		return []string{fmt.Sprintf("R4: the branch removes the config key `%s`, a contract others "+
-			"already consume. %s", key, changeExit(change, "R4", key))}
-	}
-	return nil
-}
-
-// changeExit names the exits R3 and R4 actually honour: the plan or a delta of
-// the paired change naming the rule or the removed token, or no removal at all.
-func changeExit(change string, tokens ...string) string {
-	if change == "" {
-		return "The branch pairs no change, so no plan or delta can declare it: restore the previous state."
-	}
-	return fmt.Sprintf("Write the plan or a delta of `%s` naming `%s`, or restore the previous state.",
-		change, strings.Join(tokens, "` or `"))
-}
-
-// changeRecord is the text of the paired change's plan and its deltas: the one
-// record whose naming of a rule or token satisfies a refusal.
-func changeRecord(repoRoot, mode, change string) string {
-	if change == "" {
-		return ""
-	}
-	record := readText(planbuild.TasksPath(repoRoot, mode, change))
-	specs := filepath.Join(planbuild.ChangeFolder(repoRoot, mode, change), "specs")
-	_ = filepath.WalkDir(specs, func(path string, entry fs.DirEntry, err error) error {
-		if err == nil && !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
-			record += readText(path)
-		}
-		return nil
-	})
-	return record
-}
-
-// flagRegistrationRe matches the constructs that declare a CLI flag, so a removed
-// registration counts as a contract change while a comment or a doc line does not.
-var flagRegistrationRe = regexp.MustCompile(`\b(?:p?flag\.\w+|Flags\(\)\.\w+|Flag\s*\{)`)
-
-// declaredFlags returns the long flags a removed line declares: a CLI switch case,
-// a help line, or a flag registration, never a comment that merely names the flag.
-func declaredFlags(line string) []string {
-	trimmed := stripLeadingComments(strings.TrimSpace(line))
-	if trimmed == "" {
-		return nil
-	}
-	declared := strings.HasPrefix(trimmed, "case ") || strings.HasPrefix(trimmed, "--") ||
-		flagRegistrationRe.MatchString(trimmed)
-	if !declared {
-		return nil
-	}
-	return longFlagRe.FindAllString(trimmed, -1)
-}
-
-// stripLeadingComments drops the comment prefixes a removed line may open with, so a
-// registration that follows a leading block comment is still a declaration while a
-// line that is only a comment declares nothing.
-func stripLeadingComments(line string) string {
-	for {
-		switch {
-		case strings.HasPrefix(line, "/*"):
-			end := strings.Index(line, "*/")
-			if end < 0 {
-				return ""
-			}
-			line = strings.TrimSpace(line[end+2:])
-		case strings.HasPrefix(line, "//"), strings.HasPrefix(line, "#"), strings.HasPrefix(line, "*"):
-			return ""
-		default:
-			return line
-		}
-	}
-}
-
-// planEvidenceRefutation is R5: the plan declares S# rows but carries no
-// `## Verification` section at all. Rows inside an existing section are graded
-// by the merge guardian, so a plan still being authored is not blocked before
-// the code exists to verify.
-func planEvidenceRefutation(repoRoot, mode, change string) []string {
-	if change == "" || !planbuild.PlanIsValidForMode(repoRoot, mode, change) {
-		return nil
-	}
-	planPath := planbuild.TasksPath(repoRoot, mode, change)
-	plan, _ := ParsePlan(readText(planPath))
-	if len(plan.Specs) == 0 || plan.HasVerification {
-		return nil
-	}
-	var declared []string
-	for _, spec := range plan.Specs {
-		declared = append(declared, spec.ID)
-	}
-	return []string{fmt.Sprintf("R5: the plan `%s` declares %s but carries no `## Verification` section — "+
-		"a declared specification without its rows is an evidence orphan. Add one row per declared S# "+
-		"under `## Verification`, record an exemption decision, or escalate.",
-		repoRelative(repoRoot, planPath), strings.Join(declared, ", "))}
 }
 
 // unresolvedBaseNote names a base the caller supplied that does not resolve.
