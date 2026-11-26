@@ -7,7 +7,9 @@ package tracker
 // grades. `recipe_id` and `_git_common_dir` stay in internal/doctor.
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +17,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"ai-specs.dev/ai-specs/internal/planbuild"
 )
 
 const trackerNone = "tracker.none"
@@ -227,30 +231,148 @@ func jsonString(s string) string {
 	return b.String()
 }
 
+// ChangeDocument is the planning document a change resolves its ## Tracker
+// section from: the OpenSpec proposal.md/tasks.md pair or the ODD plan, and
+// whether that document carries a ## Tracker section at all. Path is empty when
+// no document exists, which keeps "nobody wrote the change" distinct from
+// "nobody wrote the card into the plan" (S13).
+type ChangeDocument struct {
+	Path       string
+	Slug       string
+	Fields     map[string]string
+	HasTracker bool
+}
+
+// ResolveChangeDocument resolves the ## Tracker section of a change: the
+// OpenSpec change (active, archived or fallback folder) first, then the ODD plan
+// of the current branch's feature (S4). Slug is the OpenSpec slug that supplied
+// the fields, or "" when the ODD plan did, so a caller can keep an ODD bind
+// branch-level.
+func ResolveChangeDocument(root, slug string) (ChangeDocument, error) {
+	doc := ChangeDocument{Fields: map[string]string{}}
+	// An explicit slug scopes the lookup to that change. Only an empty slug is
+	// discovery, and only discovery may fall through to the branch's ODD plan, so
+	// an unknown slug never returns another change's card.
+	explicit := slug != ""
+	if !explicit {
+		slug = ChangeSlug(root)
+	}
+	if slug != "" {
+		if !validSlug(slug) {
+			return doc, fmt.Errorf("invalid change slug %q", slug)
+		}
+		if _, present, err := trackerNoneReason(root, slug); err != nil {
+			return doc, err
+		} else if present {
+			// tracker.none is the recorded exemption: no card is expected, so no
+			// document is named as missing one.
+			doc.Slug = slug
+			return doc, nil
+		}
+		if folder, ok := changeDir(root, slug); ok && isDir(folder) {
+			doc.Slug = slug
+			return resolveDocuments(doc, []string{
+				filepath.Join(folder, "proposal.md"),
+				filepath.Join(folder, "tasks.md"),
+			})
+		}
+	}
+	if explicit {
+		return doc, nil
+	}
+	feature, ok := planbuild.ChangeFromBranch(planbuild.Branch(root))
+	if !ok {
+		return doc, nil
+	}
+	return resolveDocuments(doc, []string{planbuild.TasksPath(root, planbuild.ModeOdd, feature)})
+}
+
+// resolveDocuments fills doc from the first candidate that carries a ## Tracker
+// section, else names the first candidate that exists. The fields are still the
+// ones ParseSection extracts, so the graded values never diverge. A candidate
+// that exists but cannot be read is an error: treating it as absent would drop a
+// real card silently (R3-003).
+func resolveDocuments(doc ChangeDocument, paths []string) (ChangeDocument, error) {
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return doc, fmt.Errorf("%s: %v", path, err)
+		}
+		if !info.Mode().IsRegular() {
+			return doc, fmt.Errorf("%s: not a regular file", path)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return doc, fmt.Errorf("%s: %v", path, err)
+		}
+		if !utf8.Valid(raw) {
+			return doc, fmt.Errorf("%s: invalid UTF-8", path)
+		}
+		if doc.Path == "" {
+			doc.Path = path
+		}
+		if _, ok := extractTrackerBody(string(raw)); !ok {
+			continue
+		}
+		fields, err := ParseSection([]string{path})
+		if err != nil {
+			return doc, err
+		}
+		doc.Path, doc.HasTracker, doc.Fields = path, true, fields
+		break
+	}
+	return doc, nil
+}
+
+// trackerFields is the fields-only view of ResolveChangeDocument.
+func trackerFields(root, slug string) (map[string]string, string, error) {
+	doc, err := ResolveChangeDocument(root, slug)
+	if err != nil {
+		return nil, "", err
+	}
+	return doc.Fields, doc.Slug, nil
+}
+
+// ProviderItem is the provider card a change's ## Tracker section records.
+// Change is the OpenSpec slug, and "" when the ODD plan supplied the card.
+type ProviderItem struct {
+	CardID string
+	URL    string
+	Change string
+}
+
+// ResolveProviderItem returns the card recorded for a change, OpenSpec first and
+// the branch's ODD plan second. ok is false when no card id is recorded, so a
+// bind is never fabricated.
+func ResolveProviderItem(root, slug string) (ProviderItem, bool, error) {
+	fields, change, err := trackerFields(root, slug)
+	if err != nil {
+		return ProviderItem{}, false, err
+	}
+	card := strings.TrimSpace(fields["card_id"])
+	if card == "" {
+		return ProviderItem{}, false, nil
+	}
+	return ProviderItem{CardID: card, URL: strings.TrimSpace(fields["url"]), Change: change}, true, nil
+}
+
 // EvidencePayload mirrors ledger_bridge.evidence_payload: local and remote stay
 // empty, code is the change's card_id (blank under tracker.none) and git is that
 // same id only when a pr: is recorded. Parse and decode errors propagate.
+//
+// An explicitly empty slug means NO scope and yields empty evidence, exactly as
+// before the ODD port (R1-003): discovery belongs to ResolveChangeDocument and
+// ResolveProviderItem, so an unscoped caller never inherits an inferred change's
+// card.
 func EvidencePayload(root, slug string) (Evidence, error) {
 	empty := Evidence{}
 	if slug == "" {
 		return empty, nil
 	}
-	if !validSlug(slug) {
-		return empty, fmt.Errorf("invalid change slug %q", slug)
-	}
-	if _, present, err := trackerNoneReason(root, slug); err != nil {
-		return empty, err
-	} else if present {
-		return empty, nil
-	}
-	folder, ok := changeDir(root, slug)
-	if !ok {
-		return empty, nil
-	}
-	fields, err := ParseSection([]string{
-		filepath.Join(folder, "proposal.md"),
-		filepath.Join(folder, "tasks.md"),
-	})
+	fields, _, err := trackerFields(root, slug)
 	if err != nil {
 		return empty, err
 	}

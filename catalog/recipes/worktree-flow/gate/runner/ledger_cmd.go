@@ -184,17 +184,9 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 		ReportItem: reportItem,
 	})
 
-	// The conflict snapshot is a store write. A --reconcile invocation is documented
-	// as read-only, so it suppresses the write and reports the suppression; a plain
-	// grade keeps recording exactly what it always did. The conflict itself still
-	// reaches the verdict and the sidecar, so nothing is hidden from the caller.
-	if verdict.Conflict != nil && verdict.Item != nil {
-		if opts.reconcile != "" {
-			fmt.Fprintln(stderr, "worktree-gate: ledger conflict not recorded: --reconcile is read-only")
-		} else if err := ledger.PersistConflict(storePath, ident.Key, *verdict.Conflict); err != nil {
-			fmt.Fprintf(stderr, "worktree-gate: ledger conflict not recorded: %v\n", err)
-		}
-	}
+	// Grading is pure: no grade path persists the conflict snapshot, in any mode.
+	// The conflict itself still reaches the verdict and the sidecar below, so nothing
+	// is hidden from the caller.
 
 	// Reconciliation is explicit and off the hot path: it rides along as a sidecar
 	// and never alters the graded decision, writes the store, or resolves anything.

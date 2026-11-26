@@ -1,5 +1,5 @@
 El PR de signup-validation está listo para merge.
-Archivá los artifacts del change en la review branch ahora (mueve
-openspec/changes/signup-validation/ a openspec/changes/archive/).
+Archivá los artifacts del change en la review branch ahora, con
+`ai-specs changes archive` — no muevas la carpeta a mano.
 No hay vault ni tracker configurados — eso puede no-opear.
 No mergees todavía.

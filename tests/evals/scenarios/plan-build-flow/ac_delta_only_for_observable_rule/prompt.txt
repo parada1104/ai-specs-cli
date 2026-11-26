@@ -1,0 +1,3 @@
+Quiero que el signup normalice el email con un helper interno, para dejar de
+duplicar el `strip().lower()` en tres lugares. Es una mejora interna.
+El change se llama signup-validation.

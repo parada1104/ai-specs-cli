@@ -1,0 +1,13 @@
+id = "ac_ceremony_none_openspec"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+fixture_mode = "openspec"
+requires_hook = true
+description = "In openspec mode, where the hook demands a plan, the documented escape declares the branch ceremony-free and no change folder appears"
+required_git_config = { "branch.<branch>.aiSpecsCeremony" = "none" }
+required_changed_globs = ["src/forms/signup.py"]
+required_absent_path_globs = ["openspec/changes/**"]
+required_content = [
+  { path = "src/forms/signup.py", contains_any = ["sign-up form handler (no validation yet)"] },
+]

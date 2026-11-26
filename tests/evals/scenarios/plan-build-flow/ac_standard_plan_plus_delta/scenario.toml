@@ -1,0 +1,33 @@
+id = "ac_standard_plan_plus_delta"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "plan"
+fixture_mode = "both"
+slug = "signup-validation"
+description = "An observable rule change derives standard: plan plus delta, with Specs, Log L1 and one Verification row per S#"
+
+[modes.openspec]
+required_path_globs = [
+  "openspec/changes/signup-validation/tasks.md",
+  "openspec/changes/signup-validation/specs/forms/spec.md",
+]
+required_content = [
+  { path = "openspec/changes/signup-validation/tasks.md", contains_any = ["## specs"] },
+  { path = "openspec/changes/signup-validation/tasks.md", contains_any = ["## verification"] },
+  { path = "openspec/changes/signup-validation/tasks.md", contains_any = ["## log"] },
+  { path = "openspec/changes/signup-validation/tasks.md", contains_any = ["**l1**"] },
+  { path = "openspec/changes/signup-validation/specs/forms/spec.md", contains_any = ["added", "modified"] },
+]
+
+[modes.odd]
+required_path_globs = [
+  "odd/tasks/signup-validation.md",
+  "odd/changes/signup-validation/specs/forms/spec.md",
+]
+required_content = [
+  { path = "odd/tasks/signup-validation.md", contains_any = ["## specs"] },
+  { path = "odd/tasks/signup-validation.md", contains_any = ["## verification"] },
+  { path = "odd/tasks/signup-validation.md", contains_any = ["## log"] },
+  { path = "odd/tasks/signup-validation.md", contains_any = ["**l1**"] },
+  { path = "odd/changes/signup-validation/specs/forms/spec.md", contains_any = ["added", "modified"] },
+]

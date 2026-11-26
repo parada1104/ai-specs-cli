@@ -151,8 +151,8 @@ ever guessing a provider.
   direct host mode) all reach the same predicate and share one exit contract (`0` allow/ask/dormant,
   `2` only when the host must stop). Path hosts never block `openspec/**`.
 - **Tracker lifecycle is Plan Build-independent.** The `pre-merge` and
-  `archive-close` checkpoints are hosted by the `tracker-card-gate.sh` shell
-  bridge
+  `archive-close` checkpoints are hosted by the `ai-specs tracker-card-gate`
+  verb
   (`--root <root> --checkpoint pre-merge|archive-close`, optional slug; the
   `--stage pre-merge|pre-archive` form stays as a compatibility alias). The host
   grades with **no `openspec/` tree** and never infers tracker item closure from
@@ -196,7 +196,7 @@ ever guessing a provider.
   reopens a closed row. The hook itself is fail-open for the already-sealed merge
   (failures to stderr, exit `0`), while the destructive cleanup fails closed: a close
   that cannot be persisted preserves the candidate. The direct tracker host
-  (`tracker-card-gate.sh --root <root> --checkpoint archive-close`) stays the fallback
+  (`ai-specs tracker-card-gate --root <root> --checkpoint archive-close`) stays the fallback
   when the hook is absent.
 - **Failed writes fail closed.** A validation failure, a lock timeout (bounded ~100 ms
   attempt), a `change-ambiguous` identity without an explicit slug, or a store IO
@@ -245,10 +245,10 @@ ever guessing a provider.
   section from a hardcoded recipe id. Reading the witness is acquisition, not
   grading.
 - **`work-start` host.** `work-start` is hosted by `plan-build-flow`'s
-  `plan-build-gate.sh`, which resolves the bound recipe id through its stamped
-  `__TRACKER_LIB_INTERNAL__` seam, so `recipes.<witness recipe id>.config`
-  drives its effective mode. A tracker-bound project without `plan-build-flow`
-  enabled has an unhosted `work-start`; `doctor` reports it as an INFO line
+  `ai-specs plan-build-gate` hook, which resolves the witness-bound recipe id in
+  process, so `recipes.<witness recipe id>.config` drives its effective mode. A
+  tracker-bound project without `plan-build-flow` enabled has an unhosted
+  `work-start`; `doctor` reports it as an INFO line
   (`work-start is unhosted`) while the other four checkpoints keep grading.
 
 This is the project-level Python→Go strangler policy applied at the seam it

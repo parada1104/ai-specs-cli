@@ -37,6 +37,20 @@ import (
 
 const hooksManagedKey = "_ai_specs_managed"
 
+// hooksCLIProjectRootPrefix binds the hook to the project that installed it.
+const hooksCLIProjectRootPrefix = "export AI_SPECS_PROJECT_ROOT="
+
+// hooksCLIAgentExport names the runtime for the CLI verb, so its fail-open
+// no-snapshot message can ride that runtime's allow-with-message channel (S6).
+func hooksCLIAgentExport(agent string) string {
+	return "export AI_SPECS_HOOK_AGENT=" + agent + "; "
+}
+
+// hooksCursorJSONArg encodes "$out" as a JSON string scalar with POSIX awk under
+// LC_ALL=C: matches json.dumps for ASCII (0x01-0x1f as \u00XX, DEL raw) but emits
+// non-ASCII UTF-8 bytes raw (accepted divergence, GO-20 U2e T7).
+const hooksCursorJSONArg = `"$(printf %s "$out" | LC_ALL=C awk 'BEGIN{esc["\\"]="\\\\";esc["\""]="\\\"";esc["\r"]="\\r";esc["\t"]="\\t";esc["\b"]="\\b";esc["\f"]="\\f";for(i=1;i<32;i++){c=sprintf("%c",i);if(!(c in esc))esc[c]=sprintf("\\u%04x",i)}} {line=$0;if(NR>1)printf "%s","\\n";for(i=1;i<=length(line);i++){c=substr(line,i,1);printf "%s",((c in esc)?esc[c]:c)}}')"`
+
 // hooksEventMap mirrors EVENT_MAP: abstract event → native event per harness.
 // A nil value means the harness has no native mapping (warn-and-skip).
 var hooksEventMap = map[string]map[string]any{
@@ -548,6 +562,43 @@ func hooksEnvLines(env *mcpObj, indent string) string {
 	return sb.String()
 }
 
+// hooksSpawnDecl emits the generated module's spawn target declaration: the
+// module-derived script path for a script hook, or the CLI command a
+// CLI-served hook runs through `sh -c`.
+func hooksSpawnDecl(command, scriptPath string, cliServed bool) string {
+	if cliServed {
+		return "// CLI-served hook: the installed ai-specs CLI decides (a missing CLI\n" +
+			"// fails open); no script is materialized into the project.\n" +
+			"const PROJECT_ROOT = fileURLToPath(new URL(\"../../\", import.meta.url));\n" +
+			"const COMMAND = " + hooksJSONDumpsCompact(command) + ";\n"
+	}
+	return "// The materialized launcher resolves beside this generated module at\n" +
+		"// runtime, so relocating the plugin keeps working from any process cwd.\n" +
+		hooksModuleScriptDecl(scriptPath)
+}
+
+// hooksSpawnTarget is spawnSync's leading arguments for the hook's target.
+func hooksSpawnTarget(cliServed bool) string {
+	if cliServed {
+		return `"sh", ["-c", COMMAND], `
+	}
+	return "SCRIPT, "
+}
+
+// hooksSpawnEnv is spawnSync's env; a CLI-served hook passes its module's root
+// and, for a runtime whose adapter forwards the CLI's fail-open message (S6),
+// the runtime name so the CLI can pick that channel.
+func hooksSpawnEnv(cliServed bool, agent string) string {
+	if cliServed {
+		env := "{ ...process.env, ...ENV, AI_SPECS_PROJECT_ROOT: PROJECT_ROOT"
+		if agent != "" {
+			env += ", AI_SPECS_HOOK_AGENT: " + mcpJSONString(agent)
+		}
+		return env + " }"
+	}
+	return "{ ...process.env, ...ENV }"
+}
+
 // hooksModuleScriptDecl mirrors _module_script_decl.
 func hooksModuleScriptDecl(scriptPath string) string {
 	return "const SCRIPT = fileURLToPath(new URL(\"../../" + scriptPath + "\", import.meta.url));\n"
@@ -560,6 +611,14 @@ func hooksMatcherLiteral(h *mcpObj) string {
 		v = ""
 	}
 	return hooksJSONDumpsCompact(v)
+}
+
+// hooksHookCommand returns the CLI command a resolved hook is served by. A
+// CLI-served hook (cli-served-recipes T2) carries `command` instead of
+// `script_path`; every renderer wires that command and never a script path.
+func hooksHookCommand(h *mcpObj) (string, bool) {
+	command, ok := hooksGet(h, "command").(string)
+	return command, ok && command != ""
 }
 
 // hooksLoadJSONFile mirrors _load_json_file for the read-only resolved hooks input:
@@ -709,13 +768,20 @@ func hooksRenderClaude(h *mcpObj, nativeEvent, projectRoot, guardRoot string, st
 	if mcpJSONTruthy(hooksGet(h, "matcher")) {
 		entry.set("matcher", hooksGet(h, "matcher"))
 	}
-	scriptPath, err := hooksRequireStr(h, "script_path")
-	if err != nil {
-		return err
+	command, cliServed := hooksHookCommand(h)
+	if cliServed {
+		// R1-project-policy-binding: the installing project's policy, from the runtime.
+		command = hooksCLIProjectRootPrefix + `"$CLAUDE_PROJECT_DIR"; ` + hooksCLIAgentExport("claude") + command
+	} else {
+		scriptPath, err := hooksRequireStr(h, "script_path")
+		if err != nil {
+			return err
+		}
+		command = "$CLAUDE_PROJECT_DIR/" + scriptPath
 	}
 	commandHook := newMCPObj()
 	commandHook.set("type", "command")
-	commandHook.set("command", "$CLAUDE_PROJECT_DIR/"+scriptPath)
+	commandHook.set("command", command)
 	env, needsEnv, err := hooksEnvDict(h)
 	if err != nil {
 		return err
@@ -773,11 +839,15 @@ func hooksRenderCursor(h *mcpObj, nativeEvent, projectRoot, guardRoot string, st
 	if err != nil {
 		return "", err
 	}
-	scriptPath, err := hooksRequireStr(h, "script_path")
-	if err != nil {
-		return "", err
+	command, cliServed := hooksHookCommand(h)
+	script := ""
+	if !cliServed {
+		scriptPath, err := hooksRequireStr(h, "script_path")
+		if err != nil {
+			return "", err
+		}
+		script = "$CURSOR_PROJECT_DIR/" + scriptPath
 	}
-	script := "$CURSOR_PROJECT_DIR/" + scriptPath
 	envPrefix, err := hooksEnvAssignments(hooksGet(h, "env"))
 	if err != nil {
 		return "", err
@@ -786,18 +856,33 @@ func hooksRenderCursor(h *mcpObj, nativeEvent, projectRoot, guardRoot string, st
 	var b strings.Builder
 	b.WriteString(hooksCursorHeader)
 	b.WriteString("# maps exit 2 \u2192 Cursor deny (decision channel is stdout JSON, snake_case).\n")
-	b.WriteString("script=\"" + script + "\"\n")
+	if cliServed {
+		b.WriteString("# CLI-served hook: the installed ai-specs CLI decides; a missing CLI fails open.\n")
+		b.WriteString("run_hook() {\n  " + hooksCLIProjectRootPrefix + `"$CURSOR_PROJECT_DIR"; ` +
+			hooksCLIAgentExport("cursor") + command + "\n}\n")
+	} else {
+		b.WriteString("script=\"" + script + "\"\n")
+	}
 	b.WriteString("input=\"$(cat)\"\n")
 	b.WriteString("out=\"$(printf %s \"$input\" | ")
 	if envPrefix != "" {
 		b.WriteString(envPrefix + " ")
 	}
-	b.WriteString("\"$script\")\"; code=$?\n")
+	if cliServed {
+		b.WriteString("run_hook")
+	} else {
+		b.WriteString("\"$script\"")
+	}
+	b.WriteString(")\"; code=$?\n")
 	b.WriteString("if [ \"$code\" = 2 ]; then\n")
-	// Deny message -> JSON scalar with POSIX awk under LC_ALL=C: matches
-	// json.dumps for ASCII (0x01-0x1f as \u00XX, DEL raw) but emits non-ASCII
-	// UTF-8 bytes raw (accepted divergence, GO-20 U2e T7).
-	b.WriteString(`  printf '{"permission":"deny","agent_message":"%s"}' "$(printf %s "$out" | LC_ALL=C awk 'BEGIN{esc["\\"]="\\\\";esc["\""]="\\\"";esc["\r"]="\\r";esc["\t"]="\\t";esc["\b"]="\\b";esc["\f"]="\\f";for(i=1;i<32;i++){c=sprintf("%c",i);if(!(c in esc))esc[c]=sprintf("\\u%04x",i)}} {line=$0;if(NR>1)printf "%s","\\n";for(i=1;i<=length(line);i++){c=substr(line,i,1);printf "%s",((c in esc)?esc[c]:c)}}')` + "\"\n")
+	// Deny message -> JSON scalar (hooksCursorJSONArg).
+	b.WriteString(`  printf '{"permission":"deny","agent_message":"%s"}' ` + hooksCursorJSONArg + "\n")
+	if cliServed {
+		// S6: exit 0 with a message on stdout is the CLI's fail-open notice; the
+		// action stays allowed and Cursor feeds the text to the agent.
+		b.WriteString("elif [ -n \"$out\" ]; then\n")
+		b.WriteString(`  printf '{"permission":"allow","agent_message":"%s"}' ` + hooksCursorJSONArg + "\n")
+	}
 	b.WriteString("else\n")
 	b.WriteString("  printf '{\"permission\":\"allow\"}'\n")
 	b.WriteString("fi\n")
@@ -851,9 +936,13 @@ func hooksRenderOpencode(h *mcpObj, nativeEvent, projectRoot, guardRoot string) 
 	if err != nil {
 		return "", err
 	}
-	scriptPath, err := hooksRequirePyStr(h, "script_path")
-	if err != nil {
-		return "", err
+	command, cliServed := hooksHookCommand(h)
+	scriptPath := ""
+	if !cliServed {
+		scriptPath, err = hooksRequirePyStr(h, "script_path")
+		if err != nil {
+			return "", err
+		}
 	}
 
 	var b strings.Builder
@@ -865,9 +954,7 @@ func hooksRenderOpencode(h *mcpObj, nativeEvent, projectRoot, guardRoot string) 
 	b.WriteString("import { fileURLToPath } from \"node:url\";\n")
 	b.WriteString("import { isAbsolute } from \"node:path\";\n")
 	b.WriteString("import { statSync } from \"node:fs\";\n\n")
-	b.WriteString("// The materialized launcher resolves beside this generated module at\n")
-	b.WriteString("// runtime, so relocating the plugin keeps working from any process cwd.\n")
-	b.WriteString(hooksModuleScriptDecl(scriptPath))
+	b.WriteString(hooksSpawnDecl(command, scriptPath, cliServed))
 	b.WriteString("const MATCHER = " + hooksMatcherLiteral(h) + ";\n")
 	b.WriteString("const ENV = {\n")
 	b.WriteString(envLines)
@@ -906,9 +993,9 @@ func hooksRenderOpencode(h *mcpObj, nativeEvent, projectRoot, guardRoot string) 
 	b.WriteString("      };\n")
 	b.WriteString("      let res;\n")
 	b.WriteString("      try {\n")
-	b.WriteString("        res = spawnSync(SCRIPT, {\n")
+	b.WriteString("        res = spawnSync(" + hooksSpawnTarget(cliServed) + "{\n")
 	b.WriteString("          input: JSON.stringify(event),\n")
-	b.WriteString("          env: { ...process.env, ...ENV },\n")
+	b.WriteString("          env: " + hooksSpawnEnv(cliServed, "") + ",\n")
 	b.WriteString("          cwd,\n")
 	b.WriteString("          encoding: \"utf8\",\n")
 	b.WriteString("        });\n")
@@ -956,20 +1043,30 @@ func hooksRenderPiExt(h *mcpObj, dir, extImport, adapter, nativeEvent, guardRoot
 	if err != nil {
 		return "", err
 	}
-	scriptPath, err := hooksRequirePyStr(h, "script_path")
-	if err != nil {
-		return "", err
+	command, cliServed := hooksHookCommand(h)
+	scriptPath := ""
+	if !cliServed {
+		scriptPath, err = hooksRequirePyStr(h, "script_path")
+		if err != nil {
+			return "", err
+		}
 	}
 
 	var b strings.Builder
 	b.WriteString(hooksTSHeader + recipe + ":" + id + " (event " + event + ").\n")
 	b.WriteString("import type { ExtensionAPI } from \"" + extImport + "\";\n")
 	b.WriteString("import { spawnSync } from \"node:child_process\";\n")
-	b.WriteString("import { fileURLToPath } from \"node:url\";\n\n")
-	b.WriteString("// The materialized launcher resolves beside this generated module at\n")
-	b.WriteString("// runtime; the " + adapter + " event context stays process cwd (no workspace root\n")
-	b.WriteString("// is claimed by this adapter).\n")
-	b.WriteString(hooksModuleScriptDecl(scriptPath))
+	b.WriteString("import { fileURLToPath } from \"node:url\";\n")
+	if cliServed {
+		b.WriteString("\n")
+		b.WriteString(hooksSpawnDecl(command, scriptPath, cliServed))
+	} else {
+		b.WriteString("\n")
+		b.WriteString("// The materialized launcher resolves beside this generated module at\n")
+		b.WriteString("// runtime; the " + adapter + " event context stays process cwd (no workspace root\n")
+		b.WriteString("// is claimed by this adapter).\n")
+		b.WriteString(hooksModuleScriptDecl(scriptPath))
+	}
 	b.WriteString("const MATCHER = " + hooksMatcherLiteral(h) + ";\n")
 	b.WriteString("const ENV: Record<string, string> = {\n")
 	b.WriteString(envLines)
@@ -995,14 +1092,22 @@ func hooksRenderPiExt(h *mcpObj, dir, extImport, adapter, nativeEvent, guardRoot
 	b.WriteString("      tool_input: { ...rawInput, file_path: rawInput.file_path ?? rawInput.path ?? rawInput.notebook_path },\n")
 	b.WriteString("      cwd: process.cwd(),\n")
 	b.WriteString("    };\n")
-	b.WriteString("    const res = spawnSync(SCRIPT, {\n")
+	b.WriteString("    const res = spawnSync(" + hooksSpawnTarget(cliServed) + "{\n")
 	b.WriteString("      input: JSON.stringify(event),\n")
-	b.WriteString("      env: { ...process.env, ...ENV },\n")
+	b.WriteString("      env: " + hooksSpawnEnv(cliServed, adapter) + ",\n")
 	b.WriteString("      encoding: \"utf8\",\n")
 	b.WriteString("    });\n")
 	b.WriteString("    if (res.status === 2) {\n")
 	b.WriteString("      return { block: true, reason: res.stderr || \"blocked by ai-specs runtime hook\" };\n")
 	b.WriteString("    }\n")
+	if cliServed {
+		// S6: exit 0 with a message on stdout is the CLI's fail-open notice; the
+		// extension hands it to the model and the call still proceeds.
+		b.WriteString("    if (res.status === 0 && res.stdout) {\n")
+		b.WriteString("      // Delivery is best effort: the gate already allowed the edit.\n")
+		b.WriteString("      try { void Promise.resolve(pi.sendMessage({ customType: \"ai-specs-worktree-gate\", content: res.stdout.trim(), display: false })).catch(() => {}); } catch {}\n")
+		b.WriteString("    }\n")
+	}
 	b.WriteString("    // any other exit code: fail-open (allow).\n")
 	b.WriteString("  });\n")
 	b.WriteString("}\n")

@@ -833,6 +833,27 @@ func TestNativeMergeConfigRealCatalogSchema(t *testing.T) {
 			t.Fatalf("error = %q, want the allowed-values message", got.Error)
 		}
 	})
+
+	t.Run("plan-build-flow declares the artifact mode the gates honour", func(t *testing.T) {
+		// S13 / R3-001: the mode the gates resolve must be declared config, or
+		// the manifest merge can only report the honoured value as an unknown
+		// key the project is told was ignored.
+		got := plan(t, "plan-build-flow", "mode = \"odd\"\n")
+		if got.Error != "" {
+			t.Fatalf("error = %q, want none", got.Error)
+		}
+		if len(got.Warnings) != 0 {
+			t.Fatalf("warnings = %#v, want none", got.Warnings)
+		}
+		if want := `{"artifact_store_default":"openspec","mode":"odd"}`; mergeConfigRaw(t, got) != want {
+			t.Fatalf("config = %s, want %s", mergeConfigRaw(t, got), want)
+		}
+		got = plan(t, "plan-build-flow", "mode = \"turbo\"\n")
+		want := "recipe 'Plan / Build Flow': config field 'mode' value 'turbo' is invalid; allowed: auto | odd | openspec"
+		if got.Error != want {
+			t.Fatalf("error = %q, want %q", got.Error, want)
+		}
+	})
 }
 
 // mergeConfigPlanManifestFor renders a manifest for the given recipe id.

@@ -55,7 +55,7 @@ workflow_rules = [
     "Use a MR-based merge workflow; all changes to `{config.base_branch}` go through a merge request.",
     "VCS/MR provider: GitLab (glab CLI). Use glab for all MR operations.",
     "Do not push directly to `{config.base_branch}`; always open an MR from a feature branch.",
-    "After a merged MR, remove the feature worktree and delete the local branch (`git branch -D` after squash); delete the remote branch if it still exists.",
+    "After a merged MR, remove the feature worktree and delete the local branch (`git branch -d`, or `-D` after a squash or a rebase); delete the remote branch if it still exists.",
     "After a merged MR, sync `{config.base_branch}` in the main worktree before further work: `git checkout {config.base_branch}` then `git pull --ff-only`.",
 ]
 

@@ -9,14 +9,19 @@ post-merge cleanup.
   stay outside one (pure exploration), naming conventions, and cleanup rules.
 - **Commands `/worktree-new`, `/worktree-clean`** — agent-facing flows to create
   a worktree for a change and to reclaim merged worktrees.
-- **Script `worktree-cleanup.sh`** — launcher for the CLI's Go cleanup: removes
+- **`ai-specs worktree-cleanup`** — the CLI verb (no materialized script): removes
   only merged + clean worktrees, preserves dirty and unmerged ones, never touches
   protected heads, deletes merged remote branches from the main worktree, verifies
   remote absence with `git ls-remote --heads`, and closes the matching tracker-ledger
   item at `archive-close` before any destructive removal.
-- **Managed `.git/hooks/post-merge` trigger** — runs that cleanup automatically at a
-  merge boundary (`condition = "not_exists"`, so an existing user hook is preserved).
-  It is workflow-agnostic: no SDD/ODD/OpenSpec dependency and no provider mutation. Cleanup may perform the documented read-only PR merge-commit acquisition when local proofs are inconclusive.
+- **Managed `.git/hooks/post-merge` and `.git/hooks/post-checkout` triggers** — two
+  short CLI hooks that run that cleanup automatically. `post-merge` fires at a merge
+  boundary (including a fast-forward pull); `post-checkout` runs the verb with
+  `--if-integration`, so a PR squashed or merged on the hosting provider is cleaned
+  when you check the integration branch out after a fetch. Sync always regenerates
+  both. They are workflow-agnostic: no SDD/ODD/OpenSpec dependency and no provider
+  mutation. Cleanup may perform the documented read-only PR merge-commit acquisition
+  when local proofs are inconclusive.
 
 ## Enable
 
@@ -46,13 +51,13 @@ value, and it keeps resolving even when this recipe is disabled.
 alias for one migration window (the project field wins; a recipe-only value is
 reported with a deprecation marker), and it is never written by new flows.
 
-Then run `ai-specs sync`. The cleanup launcher materializes to
-`ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh` and invokes
-`worktree-gate --cleanup` through the installed CLI at
-`${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs`. Cleanup fails closed if the
-CLI cannot serve the gate; a set `WORKTREE_CLEANUP_BIN` is rejected — the
-launcher aborts with exit 2 and a one-line error instead of running the override
-or falling back to the installed CLI. Unset it to run cleanup.
+Then run `ai-specs sync`. Sync writes the resolved cleanup policy (`worktrees_dir`,
+`integration_branch`, `[project].repo_topology`, protected branches) into the
+per-project cache snapshot, and `ai-specs worktree-cleanup` reads that snapshot —
+never `ai-specs.toml`. Without a snapshot the verb removes nothing and exits 2,
+telling you to run `ai-specs sync` first. There is no launcher script and no
+`WORKTREE_CLEANUP_BIN` escape hatch: cleanup always runs through the installed
+CLI.
 
 ## Worktree-gate modes
 
@@ -160,25 +165,13 @@ Shared layout: worktrees always live under the **superproject**
 `<worktrees_dir>/` (default `.worktrees/`). Under submodules the directory name
 is `<subrepo>-<slug>`.
 
-## Stale cleanup override
+## Cleanup ownership
 
-The cleanup script uses `condition = "not_exists"` and is a governed template.
-Sync records the bytes it last wrote in `[managed.*]` in
-`ai-specs/.ai-specs.lock`, then classifies the target on later runs:
-
-| State / policy | Sync behavior |
-|---|---|
-| Managed current | Leave unchanged and stay quiet. |
-| Managed stale + `auto` (default) | Refresh from the catalog and update the lock. |
-| Managed stale + `confirm` or `never-force` | Preserve, warn, and defer to explicit refresh. |
-| User-modified or untracked custom | Preserve, warn, and never force an overwrite. |
-
-To explicitly discard local content and seed a fresh managed copy:
-
-```bash
-rm ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh
-ai-specs sync
-```
+The old `ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh` launcher
+is retired. It was an override, so a user could edit it; `ai-specs sync` now
+removes every copy — including a modified one, with a one-line notice — and never
+writes it again. Cleanup lives in the CLI verb, whose config comes from the sync
+snapshot, so a local edit would have no effect anyway.
 
 Runtime hook scripts follow gate provenance instead of template policy. Sync
 records a baseline of the exact bytes the CLI last rendered for each generated
@@ -207,8 +200,9 @@ gate as needed.
 
 ## Post-merge lifecycle close
 
-The recipe materializes a managed `.git/hooks/post-merge` wrapper. At a merge
-boundary it invokes the cleanup launcher, which closes the matching open
+Sync writes a managed `.git/hooks/post-merge` hook that is exactly one shebang
+plus `exec ai-specs worktree-cleanup`. At a merge boundary it invokes the CLI,
+which closes the matching open
 `tracker-ledger` item at `archive-close` (matched on the Git common dir + branch,
 ignoring any stored change slug) **before** removing a provably merged worktree or
 local branch. The close is idempotent and never reopens a closed row (D17), and it
@@ -220,15 +214,15 @@ and exits `0`, so it never changes the already-sealed merge outcome. The
 destructive cleanup it triggers fails closed: if the ledger close cannot be
 persisted, the candidate worktree/branch is preserved instead of removed. Without
 the hook, the direct tracker host
-(`tracker-card-gate.sh --root <root> --checkpoint archive-close`) remains the
-fallback.
+(`ai-specs tracker-card-gate --root <root> --checkpoint archive-close`) remains
+the fallback.
 
-At sync the wrapper is stamped with the project's `worktrees_dir`,
-`integration_branch`, and resolved `[project].repo_topology`, and passes them to the launcher as
-`--dir`, `--base`, and `--topology`. A customized project therefore never silently
-falls back to `.worktrees`/current HEAD during automatic cleanup. The
-`not_exists` policy preserves any pre-existing user hook at `.git/hooks/post-merge`;
-remove the file and run `ai-specs sync` to (re)install the managed wrapper.
+The hook is always regenerated by `ai-specs sync`, and it carries no policy: the
+verb reads the project's snapshot, so a customized project never silently falls
+back to `.worktrees`/current HEAD during automatic cleanup. A local edit of the
+hook is overwritten on the next sync. The hook keeps its git resolution
+(`git rev-parse --git-path hooks`), so in a linked worktree it lands in the
+shared hooks directory of the main repository.
 
 ## Post-merge remote cleanup
 
@@ -240,8 +234,7 @@ out in the main worktree. Run cleanup as a separate step from the main worktree:
 
 ```bash
 cd <main-repository-root>
-bash ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh \\
-  --dir <worktrees_dir> --base <integration_branch>
+ai-specs worktree-cleanup
 ```
 
 The Go cleanup command repeats the protected-name check immediately before
@@ -251,7 +244,8 @@ ref is absent with `git ls-remote --heads <remote> <branch>`. A surviving ref or
 verification failure is reported as a non-success; cleanup never claims remote
 removal without this proof.
 
-The catalog source remains the authoritative launcher template.
+The cleanup implementation lives in the CLI (`worktree-gate --cleanup`), and its
+policy comes from the sync snapshot.
 
 ## Worktree ledger port
 

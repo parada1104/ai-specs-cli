@@ -1071,22 +1071,24 @@ class ResolvedConfigContextTests(unittest.TestCase):
         self.assertEqual(data["topology"]["configured"], "monorepo-apps")
         self.assertEqual(data["topology"]["source"], "project")
 
-    def test_stamps_project_topology_into_gate_and_cleanup(self):
+    def test_records_project_topology_into_the_runtime_snapshot(self):
+        """The retired launchers were stamped with the resolved topology; the
+        CLI-served verbs read it from the per-project runtime snapshot instead."""
         root, home = self._project(
             topology="standalone", project_topology="monorepo-apps"
         )
         result = _run(root, "sync", home=home)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        hook = (
-            root / "ai-specs" / "recipes" / "worktree-flow" / "hooks"
-            / "worktree-gate.sh"
+        snapshot = tomllib.loads(
+            (cache_project_dir(root, home) / "runtime.toml").read_text()
         )
-        self.assertIn('stamped_repo_topology="monorepo-apps"', hook.read_text())
-        cleanup = (
+        self.assertEqual(snapshot["worktree_gate"]["repo_topology"], "monorepo-apps")
+        for retired in (
+            root / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh",
             root / "ai-specs" / "recipes" / "worktree-flow" / "overrides" / "bin"
-            / "worktree-cleanup.sh"
-        )
-        self.assertIn('stamped_repo_topology="monorepo-apps"', cleanup.read_text())
+            / "worktree-cleanup.sh",
+        ):
+            self.assertFalse(retired.exists(), f"{retired.name} is CLI-served, not materialized")
 
 
 class RuntimeHookMaterializeTests(unittest.TestCase):
@@ -1394,50 +1396,27 @@ class StaleCleanupOverrideTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
 
-    def test_identical_override_no_stale_warn(self):
-        root, home = self._make_wf_project()
-        dest = self._cleanup_target(root)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        payload = self._catalog_src().read_bytes()
-        dest.write_bytes(payload)
-        result = self._sync_wf(root, home)
-        self.assertEqual(dest.read_bytes(), payload)
-        self.assertNotIn("not refreshed", result.stderr)
-        self.assertNotIn("condition=not_exists", result.stderr)
-
-    def test_divergent_override_warns_and_sync_succeeds(self):
-        root, home = self._make_wf_project()
-        dest = self._cleanup_target(root)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        custom = b"# customized override\n"
-        dest.write_bytes(custom)
-        result = self._sync_wf(root, home)
-        self.assertEqual(dest.read_bytes(), custom)
-        err = result.stderr
-        self.assertIn("preserving existing file", err)
-        self.assertIn("leave it unchanged", err)
-        self.assertIn("remove it and run sync again", err)
-        self.assertIn("worktree-cleanup.sh", err)
-        self.assertIn("rm ", err)
-        self.assertIn("ai-specs sync", err)
-        self.assertNotIn("user-managed", err.lower())
-        self.assertNotIn("customized", err.lower())
-
-    def test_missing_override_gets_fresh_copy(self):
+    def test_ordinary_sync_never_creates_the_override(self):
         root, home = self._make_wf_project()
         dest = self._cleanup_target(root)
         self.assertFalse(dest.exists())
         result = self._sync_wf(root, home)
-        self.assertTrue(dest.is_file())
-        # Sync stamps __WORKTREE_REPO_TOPOLOGY__ (default auto), mirroring gate_mode.
-        expected = (
-            self._catalog_src()
-            .read_text()
-            .replace("__WORKTREE_REPO_TOPOLOGY__", "auto")
-        )
-        self.assertEqual(dest.read_text(), expected)
-        self.assertNotIn("__WORKTREE_REPO_TOPOLOGY__", dest.read_text())
+        self.assertFalse(dest.exists(),
+                         "the cleanup launcher is retired; the CLI verb replaces it")
         self.assertNotIn("not refreshed", result.stderr)
+        self.assertNotIn("condition=not_exists", result.stderr)
+
+    def test_a_stale_override_is_removed_even_when_edited(self):
+        """S1/S4: a copy the user modified is still removed, with one notice.
+        The override is not a user-owned config surface any more."""
+        root, home = self._make_wf_project()
+        dest = self._cleanup_target(root)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"# customized override\n")
+        result = self._sync_wf(root, home)
+        self.assertFalse(dest.exists(), "the retired override is removed")
+        self.assertIn("removed user-modified worktree-cleanup.sh override", result.stderr)
+
 
 
 class NativeBinaryGuardTests(unittest.TestCase):

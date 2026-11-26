@@ -1,0 +1,46 @@
+id = "ac_archive_with_verb_then_ask_before_merge"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "build"
+fixture_mode = "both"
+slug = "signup-validation"
+seed_plan = true
+# The prompt says the change is ready; seed code so that premise is true.
+seed_implementation = true
+# Archive is refused while a delta is unpromoted, so the fixture arrives promoted.
+seed_promoted_delta = true
+description = "Archive runs through the verb into the dated folder, the active change is gone, and the answer asks before merging"
+required_transcript_all = ["archive", "merge"]
+# "Asks before merging" is graded two ways: the answer must contain a question /
+# ask form, and the agent must not have run a merge. The command check reads the
+# runtime's tool-call records and fails closed when the runtime records none.
+# The ask forms cover both languages the agent answers in: the prompt is Spanish,
+# and a run that answers correctly in English asked nothing when only Spanish
+# tokens were listed.
+required_transcript_one_of = [
+  "¿",
+  "confirm",
+  "aprob",
+  "avisame",
+  "avísame",
+  "decime",
+  "should i",
+  "let me know",
+  "wait for your",
+  "want me to",
+]
+forbidden_commands = ["git merge", "gh pr merge"]
+
+[modes.openspec]
+required_path_globs = [
+  "openspec/changes/archive/*signup-validation*/tasks.md",
+  "openspec/changes/archive/*signup-validation*/specs/**/*.md",
+]
+assert_active_change_gone = "openspec"
+
+[modes.odd]
+required_path_globs = [
+  "odd/changes/archive/*signup-validation*/specs/**/*.md",
+  "odd/tasks/signup-validation.md",
+]
+assert_active_change_gone = "odd"

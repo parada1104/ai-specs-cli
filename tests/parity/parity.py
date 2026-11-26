@@ -238,6 +238,8 @@ def _norm_gate_cache_size(text: str, ctx: dict) -> str:
 # a separately acquired binary (contract: "Worktree-gate doctor probe").
 _GATE_HELP_LINE = ("  worktree-gate [gate args...]  Run the worktree gate "
                    "(arguments passed through unchanged)\n")
+_CHANGES_START_HELP_LINE = ("  changes start --none --root <planning-root>  "
+                            "Declare that this branch needs no plan\n")
 _TRACKER_LEDGER_ERROR_RE = re.compile(
     r"^(  ERROR  tracker-ledger   ).*the tracker ledger is failing open.*$",
     re.MULTILINE)
@@ -247,6 +249,12 @@ def _norm_gate_help_line(text: str, ctx: dict) -> str:
     if tuple(ctx.get("argv") or ())[:1] != ("help",):
         return text
     return text.replace(_GATE_HELP_LINE, "")
+
+
+def _norm_changes_start_help_line(text: str, ctx: dict) -> str:
+    if tuple(ctx.get("argv") or ())[:1] != ("help",):
+        return text
+    return text.replace(_CHANGES_START_HELP_LINE, "")
 
 
 def _norm_tracker_ledger_probe(text: str, ctx: dict) -> str:
@@ -524,6 +532,14 @@ NORMALIZATIONS = (
         justification="gate-into-cli: the gate is now a CLI verb the legacy "
                       "help never listed. Scoped to that exact line.",
         fn=_norm_gate_help_line,
+    ),
+    Normalization(
+        rule_id="N16-changes-start-help-verb",
+        surfaces=("stdout",),
+        description="Drop the `changes start` verb line from `ai-specs help`.",
+        justification="odd-align S19: `changes start --none` is a new verb the "
+                      "frozen legacy goldens predate. Scoped to that exact line.",
+        fn=_norm_changes_start_help_line,
     ),
     Normalization(
         rule_id="N15-tracker-ledger-probe",
@@ -1194,10 +1210,11 @@ def _setup_doctor_healthy(project: Path) -> None:
     generated surface.
 
     Deliberately excludes the tracker recipe. Its required board_id makes sync
-    materialize a path-stamped tracker-card-gate.sh whose raw hash the lock
-    records, so the lock can never agree between two isolated scratch roots
-    (an environment artifact, not port behavior). The tracker recipe's own dep
-    and env coverage lives in doctor-degraded, which is zero-delta.
+    write a board-scoped project snapshot, so the recorded lock/hook surface can
+    never agree between two isolated scratch roots (an environment artifact, not
+    port behavior). The tracker gate itself is CLI-served and writes no script;
+    the tracker recipe's own dep and env coverage lives in doctor-degraded, which
+    is zero-delta.
     """
     _write(project, "ai-specs/ai-specs.toml", _manifest(
         agents=("claude", "pi"),
@@ -1308,12 +1325,11 @@ CORPUS: tuple[Fixture, ...] = (
         description="Synced project: `sync`, `sync-agent --all`, then "
                     "`doctor` must agree on the generated surface. Enables "
                     "`tdd-flow`, `session-context` and `worktree-flow` only: "
-                    "the tracker recipe's required `board_id` makes sync "
-                    "materialize a path-stamped `tracker-card-gate.sh` whose "
-                    "raw hash the lock records, so the lock can never agree "
-                    "between two isolated scratch roots; the tracker recipe's "
-                    "own dep and env coverage lives in `doctor-degraded`, "
-                    "which is zero-delta.",
+                    "the tracker recipe's required `board_id` makes sync write "
+                    "a board-scoped project snapshot, so the lock can never "
+                    "agree between two isolated scratch roots; the tracker "
+                    "recipe's own dep and env coverage lives in "
+                    "`doctor-degraded`, which is zero-delta.",
         setup=_setup_doctor_healthy,
         steps=(Step(("sync",)), Step(("sync-agent", "--all")),
                Step(("doctor",))),

@@ -1,0 +1,27 @@
+id = "ac_tier_is_not_declared"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "plan"
+fixture_mode = "both"
+slug = "signup-validation"
+description = "The artifacts decide the classification and nothing declares a depth"
+
+[modes.openspec]
+# Only openspec derives and grades a tier, so only here is the tier name asked
+# for -- and it must come with the artifacts that make it standard.
+required_transcript_all = ["standard"]
+required_path_globs = [
+  "openspec/changes/signup-validation/tasks.md",
+  "openspec/changes/signup-validation/specs/**/*.md",
+]
+forbidden_content = [
+  { path = "openspec/changes/signup-validation/tasks.md", contains_any = ["depth:", "requested depth", "signal depth", "decided depth"] },
+]
+
+[modes.odd]
+# `odd` derives no tier: the guardian grades the delta and never a depth
+# annotation, so the odd half asserts what this mode actually asks for.
+required_path_globs = ["odd/changes/signup-validation/specs/**/*.md"]
+forbidden_content = [
+  { path = "odd/tasks/signup-validation.md", contains_any = ["depth:", "requested depth", "signal depth", "decided depth"] },
+]

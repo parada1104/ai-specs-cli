@@ -69,7 +69,7 @@ never touches the foundational layer.
 | [`playwright-ui-flow`](#playwright-ui-flow) | Specific | Playwright UI test/smoke discipline + CLI surface | `ui-browser-testing` | — | `ui_test_command`, `ui_smoke_command`, `playwright_config` |
 | [`playwright-mcp`](#playwright-mcp) | Specific | Exploratory browser automation via `@playwright/mcp` (add-on) | — (augments base) | `playwright` | — (override via `[mcp.playwright]`) |
 | [`jinna-mcp-recipe`](#jinna-mcp-recipe) | Specific | Install and configure the local OpenProject provider | — | `jinna` | OpenProject env references |
-| [`plan-build-flow`](#plan-build-flow) | Foundational | Ambient skill-only plan/build workflow (no slash commands) | `plan-build-flow` | — | `artifact_store_default` |
+| [`plan-build-flow`](#plan-build-flow) | Foundational | Ambient skill-only plan/build workflow (no slash commands) | `plan-build-flow` | — | `artifact_store_default`, `mode` |
 | [`worktree-flow`](#worktree-flow) | Foundational | Isolated `.worktrees/` + safe post-merge cleanup (standalone / monorepo-apps / monorepo-submodules) | `worktree-isolation`, `worktree-cleanup` | — | `worktrees_dir`, `integration_branch`, `auto_remove_merged`, `repo_topology` (deprecated alias of `[project].repo_topology`), `gate_mode`, `gate_scope`, `WORKTREE_GATE_PROTECTED` |
 | [`git-pr-flow`](#git-pr-flow) | Specific | Branch → PR → approval-gated merge (GitHub) | `vcs-pr-flow` | — | `base_branch`, `expected_owner`, `auto_switch_account` |
 | [`gitlab-mr-flow`](#gitlab-mr-flow) | Specific | Branch → MR → approval-gated merge (GitLab) | `vcs-pr-flow` | — | `base_branch`, `expected_owner` |
@@ -269,7 +269,7 @@ dated-plus-undated candidates.
 
 This OpenSpec archive is Plan Build's change-folder boundary and is separate from
 a tracker recipe's `archive-close` checkpoint: `archive-close` is tracker item
-closure through the tracker gate's direct host mode (`tracker-card-gate.sh --root
+closure through the tracker gate verb (`ai-specs tracker-card-gate --root
 <root> --checkpoint archive-close`), never moving the change folder, never
 inferring closure from archive state, and writing nothing. The pre-merge
 artifact guardian is tracker-free.
@@ -280,6 +280,7 @@ artifact guardian is tracker-free.
   | Key | Type | Required | Default | Accepted values | Description |
   |-----|------|----------|---------|-----------------|-------------|
   | `artifact_store_default` | string | no | `openspec` | `openspec`, `engram`, `both` | External-session persistence preference for planning artifacts; may be overridden in the project manifest and is materialized into the brief during sync. Plan-build readiness is always proven by file-backed artifacts, never by the store selection. |
+  | `mode` | string | no | — (absent means `auto`) | `auto`, `odd`, `openspec` | Execution mode of the flow, resolved once per repository: `auto` derives it from the state directory the harness keeps in the Git common directory, `odd` keeps every planning artifact under `odd/`, and `openspec` keeps the OpenSpec change tree. An explicit `odd` or `openspec` wins over the derivation. |
 
   The generated rule is repository-declared guidance. An external session runtime may
   consume it when asked where planning artifacts should live, but runtime session behavior
@@ -297,6 +298,7 @@ version = "1.8.0"
 
 [recipes.plan-build-flow.config]
 artifact_store_default = "both"
+mode = "auto"
 ```
 
 ### Cross-repository planning boundaries
@@ -316,33 +318,34 @@ pull requests.
 
 **Isolated git worktrees under `.worktrees/` with safe post-merge cleanup.**
 File-writing change work runs in a dedicated worktree; pure exploration stays
-outside one. The bundled cleanup script removes only merged + clean worktrees
+outside one. The bundled cleanup command (`ai-specs worktree-cleanup`) removes only merged + clean worktrees
 (detecting regular, squash, and rebase merges by patch-id, plus a PR merge commit
 proven reachable from a resolved base candidate), preserves dirty and unmerged
 ones, and never touches the main worktree.
 
 - **Provides:** skill `worktree-flow`, commands `/worktree-new`,
-  `/worktree-clean`, script `bin/worktree-cleanup.sh`, and a `worktree-gate`
-  runtime hook (`[[provides.hooks]]`) that blocks writes to the main worktree on
+  `/worktree-clean`, the CLI verb `ai-specs worktree-cleanup`, and a
+  `worktree-gate` runtime hook (`[[provides.hooks]]`) that blocks writes to the main worktree on
   protected branches, supports `gate_mode` dispatch (`always` / `ask` / `off`),
   and applies the proven-topology `gate_scope` policy — see
   [`docs/runtime-hooks.md`](runtime-hooks.md); capabilities
   `worktree-isolation`, `worktree-cleanup`.
 - **Gate implementation:** the gate ships inside the single zero-dependency
   Go CLI. `gate_impl` accepts `auto` (default) or `go`; both use the CLI's
-  `worktree-gate` route. `ai-specs sync` materializes a thin bash-3.2 launcher
-  at the unchanged hook path. There are no separate gate release assets, cache
-  acquisitions, or checksum trust root. If the CLI route is unavailable, the
-  launcher fails open with one stderr warning and `ai-specs doctor` reports
-  ERROR. `ai-specs doctor` reports the resolved implementation and version;
-  `gate_impl = bash` is rejected at sync.
-- **Gate provenance:** sync records a baseline of the exact bytes the CLI last
-  rendered for the generated gate hook. A baseline match means unmodified and
-  may be force-updated; a byte mismatch or missing baseline is preserved with a
-  warning (no seeding). An explicit refresh (`ai-specs sync --refresh-gates`)
-  saves the exact pre-refresh bytes to a cache-only immutable backup before
-  replacing a customized gate; `ai-specs doctor` warns on customized gates and
-  stays quiet on matching baselines.
+  `worktree-gate` route. No launcher and no `.sh` file is written into the
+  project: every harness's runtime hook carries the CLI command, and the gate
+  reads its policy from the per-project sync snapshot. There are no separate
+  gate release assets, cache acquisitions, or checksum trust root. If no CLI
+  resolves, the hook fails open with one stderr warning and `ai-specs doctor`
+  reports ERROR. `ai-specs doctor` reports the resolved implementation and
+  version; `gate_impl = bash` is rejected at sync.
+- **Gate provenance:** sync records, in `ai-specs/.ai-specs.lock`, the exact
+  bytes the CLI last rendered for any materialized hook. Because the gate hooks
+  are CLI-served, a `worktree-gate.sh` still on disk is a stale pre-migration
+  launcher: `ai-specs doctor` reports it as a WARN with `rm <path> && ai-specs
+  sync`, and sync itself neither rewrites nor removes it (it holds no record).
+  `--refresh-gates` still refreshes a genuinely materialized hook after backing
+  up its pre-refresh bytes; it has no gate-hook subject any more.
 - **Worktree ledger port (cleanup classification):** cleanup classifies each
   candidate through the pure `ledger.EvaluateWorktree` domain port of the same Go
   binary — a deterministic evaluator over a normalized observation (`detached`,
@@ -528,7 +531,7 @@ requires a `## Tracker` link section before production/PR-archive work.
 
 - **Provides:** skill `trello-mcp-workflow`, command `/trello-workflow`, 6 card
   templates, an MCP preset, dual runtime hooks (`tracker-card-gate` +
-  `tracker-card-gate-shell`); capability `tracker` (+ `trello-session-bootstrap`,
+  `tracker-card-gate-shell`, both served by `ai-specs tracker-card-gate`); capability `tracker` (+ `trello-session-bootstrap`,
   `trello-card-linking`, `trello-state-sync`, `trello-progress-comment`).
 - **Config:**
 
@@ -567,9 +570,11 @@ and handoffs in a configured vault MCP (e.g. Obsidian over a filesystem MCP
 server). Defines when to read/write canonical context, plus decision- and
 handoff-note shapes. The rule: Vault holds the deliberate, human-auditable
 record; operational memory holds searchable continuity. Ships an MCP preset for
-`@modelcontextprotocol/server-filesystem` (pinned `2025.7.1`) via
-`vault-fs-mcp.sh`, which reads absolute `CANONICAL_VAULT_PATH` from the
-environment at exec time (not a bare `${VAR}` MCP arg). Also vendors the
+`@modelcontextprotocol/server-filesystem` (pinned `2025.7.1`) served by
+`ai-specs mcp vault-fs`, which reads absolute `CANONICAL_VAULT_PATH` from the
+environment at run time (not a bare `${VAR}` MCP arg). The generated entry is
+`command: ai-specs` with `args: [mcp, vault-fs]`, so no script is materialized
+into the project. Also vendors the
 kepano Obsidian skills (`obsidian-markdown`, `obsidian-bases`, `json-canvas`,
 `obsidian-cli`, `defuddle`) for LLM wiki / second-brain note formats. Set the
 path in `.envrc` (shell expansion); quote when the Obsidian path contains

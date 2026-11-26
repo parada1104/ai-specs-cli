@@ -23,6 +23,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _blackbox import cache_project_dir, invoke, isolated_home  # noqa: E402
@@ -88,6 +89,25 @@ def _without_delivery_contracts_section(raw: str) -> str:
     return stripped
 
 
+def _skill_section(heading: str, level: int = 3) -> str:
+    """One SKILL.md section body, whitespace-normalized, up to the next heading."""
+    skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text()
+    marker = "#" * level
+    pattern = rf"(?ms)^{marker} {re.escape(heading)}\n(.*?)(?=^#{{1,{level}}} |\Z)"
+    match = re.search(pattern, skill)
+    assert match, f"missing skill section {marker} {heading}"
+    return " ".join(match.group(1).split())
+
+
+# The mixin is always combined with unittest.TestCase by its only user, so the
+# type checker needs that base while the runtime keeps plain object (no MRO or
+# collection change).
+if TYPE_CHECKING:
+    _FixtureBase = unittest.TestCase
+else:
+    _FixtureBase = object
+
+
 def _recipe_surface_text(recipe_dir: Path) -> str:
     recipe = _without_store_config_table((recipe_dir / "recipe.toml").read_text())
     readme = _without_delivery_contracts_section((recipe_dir / "README.md").read_text())
@@ -95,7 +115,7 @@ def _recipe_surface_text(recipe_dir: Path) -> str:
     return "\n".join((recipe, readme, skill)).lower()
 
 
-class _CliFixtureMixin:
+class _CliFixtureMixin(_FixtureBase):
     """One shared isolated cli_home and temp project per test command sequence."""
 
     def setUp(self):
@@ -133,7 +153,8 @@ class _CliFixtureMixin:
     def cache(self) -> Path:
         return cache_project_dir(self.root, self.home)
 
-    def materialized_readme(self) -> Path:
+    def recipe_readme_path(self) -> Path:
+        """The project path sync used to copy the recipe doc to; CLI-served now."""
         return self.root / "ai-specs" / "recipes" / RECIPE_ID / "README.md"
 
     def materialized_skill(self) -> Path:
@@ -168,12 +189,13 @@ class PlanBuildFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
 
     def test_recipe_declares_exact_store_schema_and_hook_pair(self):
         """`recipe add` validates the schema; the declared config schema is
-        exactly the artifact_store_default field and the only hook is the
-        on-sync validate-config pair (read from the catalog declaration)."""
+        the artifact_store_default field and the execution mode, and the only
+        hook is the on-sync validate-config pair (read from the catalog
+        declaration)."""
         self.recipe_add(RECIPE_ID)
         raw = _recipe_toml()
         fields = raw["config"]
-        self.assertEqual(list(fields), ["artifact_store_default"])
+        self.assertEqual(list(fields), ["artifact_store_default", "mode"])
         field = fields["artifact_store_default"]
         self.assertFalse(field["required"])
         self.assertEqual(field["type"], "string")
@@ -187,9 +209,22 @@ class PlanBuildFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         self.assertEqual(raw_text.count("[config.artifact_store_default]"), 1)
         self.assertIn('enum = ["openspec", "engram", "both"]', raw_text)
 
-    def test_brief_and_readme_vocabulary_clean(self):
-        """Brief workflow rules and the materialized README carry no forbidden
-        vocabulary (SDD/spec-driven terms)."""
+    def test_recipe_declares_the_execution_mode_as_config(self):
+        """S13: the artifact-derived execution mode is declared config, not a
+        key the manifest merge can only report as unknown."""
+        self.recipe_add(RECIPE_ID)
+        field = _recipe_toml()["config"]["mode"]
+        self.assertFalse(field["required"])
+        self.assertEqual(field["type"], "string")
+        self.assertEqual(field["enum"], ["auto", "odd", "openspec"])
+        self.assertNotIn("default", field)
+        self.assertTrue(field["help_text"].strip())
+        raw_text = (CATALOG / RECIPE_ID / "recipe.toml").read_text()
+        self.assertEqual(raw_text.count("[config.mode]"), 1)
+
+    def test_brief_and_catalog_readme_vocabulary_clean(self):
+        """Brief workflow rules and the recipe's catalog README carry no
+        forbidden vocabulary (SDD/spec-driven terms)."""
         rules = _recipe_toml()["provides"]["brief"]["workflow_rules"]
         fragments = "\n".join(rules).lower()
         for term in FORBIDDEN_TERMS:
@@ -197,11 +232,15 @@ class PlanBuildFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
         for slash in FORBIDDEN_SLASH:
             self.assertNotIn(slash, fragments)
 
-        self.recipe_add(RECIPE_ID)
-        self.sync_ok()
-        readme = self.materialized_readme().read_text()
+        # The README stays in the CLI's catalog, so the checked bytes are the
+        # catalog source, not a project copy.
+        readme = (CATALOG / RECIPE_ID / "README.md").read_text()
         for term in FORBIDDEN_TERMS:
             self.assertNotIn(term, _without_delivery_contracts_section(readme).lower())
+        self.recipe_add(RECIPE_ID)
+        self.sync_ok()
+        self.assertFalse(self.recipe_readme_path().exists(),
+                         "the recipe doc is never materialized into the project")
 
     def test_store_defaults_override_and_enum_rejection(self):
         """The store config resolves into the rendered brief: the manifest
@@ -271,11 +310,11 @@ class PlanBuildFlowRecipeTests(_CliFixtureMixin, unittest.TestCase):
                 )
 
     def test_materialization_preserves_cross_repo_guidance(self):
-        """Sync materializes the topology guidance into both the recipe README
-        and the bundled skill."""
+        """The topology guidance lives in the catalog README (CLI-served) and
+        in the bundled skill sync materializes."""
         self.recipe_add(RECIPE_ID)
         self.sync_ok()
-        generated_readme = self.materialized_readme().read_text().lower()
+        generated_readme = (CATALOG / RECIPE_ID / "README.md").read_text().lower()
         generated_skill = self.materialized_skill().read_text().lower()
         for text in (generated_readme, generated_skill):
             self.assertIn("topology", text)
@@ -311,21 +350,21 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         self.assertEqual(
             rules[:5],
             [
-                "Classify each substantial change (full planning chain, spec+tasks, or tasks-only) before writing production code; compute the signal depth, compare any explicit requested depth, ask on conflicts, and annotate requested/signal/decided depth in tasks.md before authorization.",
-                "Direct implementation requests without a change folder still require planning at the classified depth; approval verbs do not skip the plan step.",
-                "Do not open a PR until the change folder on the branch contains the tier minimum planning files (Light: proposal.md + tasks.md; Standard: proposal.md + tasks.md + specs/**/*.md; Full: tasks.md plus proposal.md or design.md plus specs/**/*.md), committed.",
+                "Classify each substantial change from the artifacts it carries instead of from a declared or requested depth: no plan is `none` (an ODD small task), a plan alone (a tasks-only change) is `light`, a plan plus a delta is `standard`, and a delta with no plan is allowed; nothing declares a depth, no tier has artifact minima, and `full` does not exist.",
+                "Direct implementation requests without a change folder need no plan when the change stays `none` or carries only a delta; approval verbs never skip the plan a `light` or `standard` change needs.",
+                "Do not open a PR until the change's plan parses (`## Specs` and `## Tasks`, plus `## Log` with `L1` from `standard` up), until the delivery evidence the guardian grades — the plan and the delta — is contributed by the change's own diff, and until that evidence is committed; `proposal.md`, `design.md` and `verify-report.md` are optional and still honoured when present.",
                 "After authorization, implement and validate in the change worktree when isolated worktrees are enabled.",
-                "Before merge on the review branch: run verify evidence (Standard/Full block without a conforming verify-report.md; Light is advisory), then promote canonical specs so every delta under specs/<domain>/spec.md is composed into openspec/specs/<domain>/spec.md (the promoter is the only writer and the guardian only validates), then pass the pre-archive guardian, then archive the change folder at openspec/changes/archive/YYYY-MM-DD-<slug>/ using a valid ISO calendar date, then run the pre-merge guardian again; an unpromoted or unresolved delta blocks Standard/Full, exact undated archive/<slug>/ is legacy fallback only, ambiguity and malformed or near-match candidates block, and archive is never deferred until after merge.",
+                "Before merge on the review branch: run the evidence the plan's `## Verification` records as one row per declared `S#`, graded from `standard` up and advisory for `light` (`verify-report.md` is never required, and `proposal.md` and `design.md` stay optional), then promote canonical specs so every delta under specs/<domain>/spec.md is composed into openspec/specs/<domain>/spec.md (the promoter is the only writer and the guardian only validates), then pass the pre-archive guardian, then archive the change folder at openspec/changes/archive/YYYY-MM-DD-<slug>/ using a valid ISO calendar date, then run the pre-merge guardian again; an unpromoted or unresolved delta blocks a `standard` change, exact undated archive/<slug>/ is legacy fallback only, ambiguity and malformed or near-match candidates block, and archive is never deferred until after merge.",
             ],
         )
         self.assertIn("{config.artifact_store_default}", rules[5])
         self.assertEqual(rules[5].count("{config.artifact_store_default}"), 1)
         self.assertIn("topology", rules[6].lower())
         self.assertIn("superproject", rules[6].lower())
-        self.assertIn("Full planning", rules[7])
-        self.assertIn("inline", rules[7])
-        self.assertIn("malformed", rules[8])
-        self.assertIn("Standard and Light", rules[8])
+        self.assertIn("in odd mode", rules[7])
+        self.assertIn("in openspec mode", rules[7])
+        self.assertIn("gates premerge", rules[8])
+        self.assertIn("coherence assertion", rules[8])
         self.assertIn("session-level preflight", rules[9])
         self.assertIn("artifact-derived plan", rules[10])
 
@@ -349,43 +388,124 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("1.6.0` → `1.7.0", unreleased)
         self.assertIn("1.5.0` → `1.6.0", unreleased)
 
-    def test_skill_describes_adversarial_depth_conflicts(self):
-        skill = CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md"
-        text = skill.read_text().lower()
+    def test_skill_states_depth_as_a_coherence_assertion_not_a_conflict(self):
+        """Retired: the requested-vs-signal depth conflict and the question it
+        forced. The current rule: `Depth:`/`--tier` is a coherence assertion that
+        blocks when it contradicts the derived tier, and no conflict machinery
+        is left to ask about."""
+        skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text()
+        skill_normalized = " ".join(skill.lower().split())
         for phrase in (
-            "depth conflict",
-            "requested depth",
-            "signal depth",
-            "decision source: user",
-            "same-turn",
-            "both directions",
-            "illustrative",
-            "exhaustive parser",
-            "fixed token whitelist",
+            "coherence assertions, never a choice",
+            "a value that contradicts the artifacts blocks",
+            "naming the derived tier and both exits",
+            "keep the line only when it matches, and drop it freely",
         ):
-            self.assertIn(phrase, text)
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill_normalized)
 
-    def test_skill_preserves_standalone_depth_annotation_contract(self):
-        skill = CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md"
-        text = skill.read_text()
-        self.assertRegex(text, r"(?m)^Depth: full$")
-        for label in (
-            "Requested depth: full",
-            "Signal depth: standard",
-            "Decided depth: full",
-            "Decision source: user",
+        readme = (CATALOG / RECIPE_ID / "README.md").read_text()
+        combined = skill_normalized + " " + " ".join(readme.lower().split())
+        for phrase in (
+            "the tier is derived from the artifacts of the change",
+            "add a specs/ delta to reach standard, or drop the declaration",
+            "no signal tier to compare and no depth conflict to ask about",
         ):
-            self.assertIn(label, text)
-        self.assertNotRegex(text, r"(?m)^Depth: (?:light|standard|full) \(")
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, combined)
+        for retired in (
+            "requested depth:",
+            "signal depth:",
+            "decided depth:",
+            "decision source: user",
+        ):
+            with self.subTest(retired=retired):
+                self.assertNotIn(retired, combined)
+
+    def test_skill_states_the_depth_annotation_migration(self):
+        """Retired: a standalone `Depth: full` annotation and its requested/
+        signal/decided labels. The current rule: no depth line is declared, and a
+        plan still carrying `Depth: full` migrates to `Depth: standard`."""
+        skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text()
+        self.assertNotRegex(skill, r"(?m)^Depth: ")
+        normalized = " ".join(skill.split())
+        self.assertIn("rewriting the `Depth:` line to `standard`", normalized)
+        readme = " ".join((CATALOG / RECIPE_ID / "README.md").read_text().split())
+        self.assertIn("rewriting `Depth: full` to `Depth: standard`", readme)
+        self.assertIn(
+            "migrate the change to `Depth: standard` (the plan plus at least one `specs/` delta)",
+            readme,
+        )
+        for retired in (
+            "Requested depth:",
+            "Signal depth:",
+            "Decided depth:",
+            "Decision source:",
+        ):
+            with self.subTest(retired=retired):
+                self.assertNotIn(retired, skill)
+                self.assertNotIn(retired, readme)
 
     def test_brief_describes_adversarial_depth_conflicts(self):
         rules = list(_recipe_toml()["provides"]["brief"]["workflow_rules"])
         combined = "\n".join(rules).lower()
-        self.assertIn("compare any explicit requested depth", combined)
-        self.assertIn("ask on conflicts", combined)
-        self.assertIn("annotate requested/signal/decided depth", combined)
+        self.assertIn("classify each substantial change from the artifacts it carries", combined)
+        self.assertIn("nothing declares a depth", combined)
+        self.assertIn("no tier has artifact minima", combined)
         self.assertIn("{config.artifact_store_default}", rules[5])
         self.assertEqual(rules[5].count("{config.artifact_store_default}"), 1)
+
+    def test_skill_7_1_names_the_odd_plan_exception(self):
+        """S3: §7.1 states that in odd mode the paired plan replaces the folder."""
+        section = _skill_section("7.1 Change folder required")
+        self.assertIn("Exception — `odd` mode (Section 4.1)", section)
+        self.assertIn("`odd/tasks/<change>.md`", section)
+
+    def test_skill_7_1_offers_the_none_waiver_at_the_block_response(self):
+        """S14: §7.1 offers `changes start --none` when the gate blocks, not a dead end."""
+        section = _skill_section("7.1 Change folder required")
+        self.assertIn("ai-specs changes start --none", section)
+        self.assertIn("instead of writing a plan", section)
+
+    def test_skill_4_1_names_odd_layout_and_mode_key(self):
+        """S1, S4, S6: §4.1 names the mode key and the odd artifact layout."""
+        section = _skill_section("4.1 Companion mode (ODD owns the change)", level=2)
+        for marker in (
+            "[recipes.plan-build-flow.config] mode",
+            "`odd/tasks/<change>.md`",
+            "`odd/changes/",
+            "`odd/specs/",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, section)
+
+    def test_skill_7_2_pr_gate_accepts_the_odd_plan(self):
+        """S3, S6: §7.2 item 1 is satisfied by the odd plan, plus the delta."""
+        section = _skill_section("7.2 PR creation gate (hard stop)")
+        self.assertIn("In `odd` mode (Section 4.1)", section)
+        self.assertIn("`odd/tasks/<change>.md`", section)
+        self.assertIn("`odd/changes/<change>/`", section)
+
+    def test_skill_and_readme_enumerate_the_six_high_risk_items(self):
+        """S18: `Risk: item N` is answerable because 1..6 are named where it is demanded."""
+        skill = _skill_section("Refutations of a `none` change")
+        readme = " ".join((CATALOG / RECIPE_ID / "README.md").read_text().split())
+        for surface, text in (("SKILL", skill), ("README", readme)):
+            for marker in (
+                "1 data or irreversible effects that cannot be rebuilt",
+                "2 security",
+                "3 contracts others already consume",
+                "4 concurrency",
+                "5 delivery or environment",
+                "6 no test would catch a regression",
+            ):
+                with self.subTest(surface=surface, marker=marker):
+                    self.assertIn(marker, text)
+            # The author of the change records the trailer; picking the item is
+            # part of the evidence, never a permission the user must grant.
+            with self.subTest(surface=surface, rule="ownership"):
+                self.assertIn("The change's author records the trailer", text)
+                self.assertIn("never a permission the user has to grant", text)
 
     def test_skill_has_ambient_auto_invoke(self):
         skill = CATALOG / RECIPE_ID / "skills" / "plan-build-flow" / "SKILL.md"
@@ -395,10 +515,18 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         self.assertNotIn("/plan", text.split("auto_invoke")[0])  # frontmatter ok
 
     def test_recipe_surface_excludes_session_controls_and_removed_contract(self):
+        """S13 plus the retired session controls: `mode` is the only
+        mode-shaped config key, no review-budget session control survives, and
+        §7.5 is the pull-request CI layer, not the retired review workload
+        budget."""
         raw = _recipe_toml()
         schema_keys = set(raw["config"])
         self.assertNotIn("chained_" + "pr_default", schema_keys)
-        self.assertFalse(any("mode" in key.lower() for key in schema_keys))
+        # The artifact-derived execution mode is declared config (S13); every
+        # other mode-shaped session control stays out of the schema.
+        self.assertEqual(
+            {key for key in schema_keys if "mode" in key.lower()}, {"mode"}
+        )
 
         surface = _recipe_surface_text(CATALOG / RECIPE_ID)
         removed_root = "bud" + "get"
@@ -408,16 +536,21 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         # only the retired review-budget session-control marker must be absent, below.
         self.assertNotIn(removed_key, surface)
         skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text()
-        self.assertNotRegex(skill, r"(?im)^#{1,6}\s*7\.5\b")
+        # §7.5 now names the CI layer; the retired review-workload budget is
+        # what must stay gone, both as a section and as a warning.
+        self.assertRegex(skill, r"(?im)^#{1,6}\s*7\.5\s+The layer above the agent\b")
         self.assertNotRegex(skill, r"(?im)^#{1,6}\s*Review workload budget\b")
         self.assertNotRegex(skill, r"(?im)^\s*WARN:\s*review budget\b")
         gate = (CATALOG / RECIPE_ID / "hooks" / "plan-build-gate.sh").read_text().lower()
         self.assertNotIn(removed_root, gate)
         self.assertNotIn("forecast", gate)
-        external_terms = ("gentle-" + "ai", "gentle-" + "pi")
         catalog_section = (ROOT / "docs" / "recipes-catalog.md").read_text().lower()
-        for term in external_terms:
-            self.assertNotIn(term, surface)
+        # The ODD mode signal names the state directory itself; every other
+        # external-product mention stays forbidden on the recipe surface.
+        allowed = surface.replace("<git-common-dir>/gentle-ai/", "")
+        allowed = allowed.replace("gentle ai state directory", "")
+        for term in ("gentle-" + "ai", "gentle-" + "pi"):
+            self.assertNotIn(term, allowed)
             self.assertNotIn(term, catalog_section)
 
     def test_config_help_text_states_persistence_preference(self):
@@ -435,7 +568,12 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("never", rule6)
 
     def test_skill_separates_persistence_from_readiness(self):
-        skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text().lower()
+        """The store is a persistence preference only: readiness is proven by
+        the file-backed plan, there are no per-tier file minima, and the resolved
+        store is never consulted for readiness."""
+        skill = " ".join(
+            (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text().lower().split()
+        )
         for phrase in (
             "persistence preference",
             "readiness",
@@ -443,9 +581,11 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
             "mirror",
             "memory-only",
             "never replaces",
-            "tier minimum",
+            "per-tier file minima",
+            "never consulted for readiness",
         ):
-            self.assertIn(phrase, skill)
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill)
 
     def test_readme_delivery_contracts_state_file_backed_readiness(self):
         readme = (CATALOG / RECIPE_ID / "README.md").read_text().lower()
@@ -490,14 +630,31 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
             self.assertIn("tracker item closure", text)
             self.assertIn("openspec", text)
 
-    def test_success_criteria_source_selection_contract_is_documented(self):
-        readme = (CATALOG / RECIPE_ID / "README.md").read_text()
-        skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text()
+    def test_verification_evidence_source_selection_contract_is_documented(self):
+        """Retired: success criteria read from verify-report.md, otherwise from
+        design.md. The current rule: the plan's `## Verification` section is the
+        evidence, verify-report.md is read only when the plan has none, and an
+        unparseable section is a blocker rather than a fallback."""
+        readme = " ".join((CATALOG / RECIPE_ID / "README.md").read_text().split())
+        skill = " ".join(
+            (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text().split()
+        )
 
-        self.assertIn("authoritative source", readme)
-        self.assertIn("when present, otherwise `design.md`", readme)
-        self.assertIn("does not fall back to `design.md`", skill)
-        self.assertIn("Duplicate `## Success Criteria` headings", skill)
+        self.assertIn(
+            "The legacy `verify-report.md` is only read when the plan has no `## Verification` section.",
+            readme,
+        )
+        for phrase in (
+            "The evidence artifact is the plan's `## Verification` section",
+            "The report is read only when the plan has no `## Verification` section at all",
+            "a present but unparseable section is a blocker, never a fallback",
+            "`proposal.md`, `design.md` and `verify-report.md` are accepted and honoured when present, but they are not required",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill)
+        # No success-criteria source of its own survives on either surface.
+        self.assertNotIn("Success Criteria", readme)
+        self.assertNotIn("Success-criteria mapping", readme)
 
     def test_cross_repo_artifact_scope_recipe_contract(self):
         readme = (CATALOG / RECIPE_ID / "README.md").read_text().lower()
@@ -536,12 +693,28 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         self.assertNotIn("/build", combined)
         self.assertNotIn("worktree-flow", raw.get("conflicts_with", []))
 
-    def test_skill_has_change_depth_classifier(self):
+    def test_skill_derives_the_tier_from_the_artifacts(self):
+        """Retired: a change depth classifier over full/standard/light. The
+        current rule: nothing is classified or estimated, the tier is read from
+        the artifacts the branch carries, and a delta alone stays light."""
         skill = CATALOG / RECIPE_ID / "skills" / "plan-build-flow" / "SKILL.md"
-        text = skill.read_text().lower()
-        self.assertIn("change depth classifier", text)
-        for tier in ("full", "standard", "light"):
-            self.assertIn(tier, text)
+        text = " ".join(skill.read_text().lower().split())
+        for phrase in (
+            "the tier is derived from the artifacts",
+            "there is nothing to classify and no size to estimate",
+            "the tier of a change is read by the cli",
+            "a delta with no plan stays light: a delta never forces a plan",
+            "odd's task size",
+            "no line count forces a split",
+            "the plan grammar (`## specs`, `## tasks`)",
+            "one `## verification` row per `s#`",
+            "promotion parity",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+        for retired in ("change depth classifier", "classify change depth", "signal depth"):
+            with self.subTest(retired=retired):
+                self.assertNotIn(retired, text)
 
     def test_skill_has_pr_and_archive_gates(self):
         skill = CATALOG / RECIPE_ID / "skills" / "plan-build-flow" / "SKILL.md"
@@ -575,31 +748,36 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         self.assertIn("do not open a pr", combined)
         self.assertIn("before merge", combined)
 
-    def test_full_phase_contract_maps_dependencies_and_fallbacks(self):
-        skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text().lower()
-        normalized = " ".join(skill.split())
+    def test_full_tier_removal_collapses_the_phase_machine(self):
+        """Retired: the explore -> proposal -> spec/design -> tasks phase machine
+        with one host-advertised executor per phase and its malformed/partial
+        fallbacks. The current rule: `full` is gone, `Depth: full`/`--tier full`
+        blocks with the migration message, and standard and light stay collapsed
+        and provider-neutral."""
+        skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text()
+        normalized = " ".join(skill.lower().split())
         for phrase in (
-            "explore -> proposal -> spec/design -> tasks",
-            "`explore.md`",
-            "`proposal.md`",
-            "`specs/**/*.md`",
-            "`design.md`",
-            "`tasks.md`",
-            "spec and design may run in parallel only after proposal",
-            "tasks waits for both outputs",
-            "host-advertised executor",
+            "removed: the full tier",
+            "the former **full** tier is gone",
+            "(`explore -> proposal -> spec/design -> tasks`)",
+            "that dispatch is no longer part of this recipe",
+            "`depth: full`, or graded with `--tier full`, blocks with the migration message",
+            "rewriting the `depth:` line to `standard` and keeping the plan plus its spec delta",
+            "standard and light remain collapsed and unchanged",
             "provider-neutral",
-            "current phase inline",
-            "inline fallback",
-            "malformed",
-            "partial",
-            "blocked",
-            "stop and preserve",
-            "incomplete artifact",
-            "do not skip phases",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
+        for retired in (
+            "current phase inline",
+            "inline fallback",
+            "stop and preserve",
+            "incomplete artifact",
+            "do not skip phases",
+            "tasks waits for both outputs",
+        ):
+            with self.subTest(retired=retired):
+                self.assertNotIn(retired, normalized)
 
     def test_preflight_and_presentation_contracts_are_composed(self):
         skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text().lower()
@@ -641,15 +819,20 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
 
     def test_phase_contract_stays_out_of_recipe_config_and_named_vocabulary(self):
         raw = _recipe_toml()
-        self.assertEqual(list(raw["config"]), ["artifact_store_default"])
+        self.assertEqual(list(raw["config"]), ["artifact_store_default", "mode"])
         rules = "\n".join(raw["provides"]["brief"]["workflow_rules"])
         surface = _recipe_surface_text(CATALOG / RECIPE_ID)
         for term in ("gentle-ai", "gentle ai"):
             self.assertNotIn(term, rules.lower())
-            self.assertNotIn(term, surface)
+        # Only the ODD mode state directory may name the external product.
+        allowed = surface.replace("<git-common-dir>/gentle-ai/", "")
+        allowed = allowed.replace("gentle ai state directory", "")
+        for term in ("gentle-ai", "gentle ai"):
+            self.assertNotIn(term, allowed)
 
     def test_skill_orders_promotion_before_archive_and_a_guardian(self):
-        """The lifecycle order is verify → promote → pre-archive → archive → merge."""
+        """The lifecycle order is verify → promote → pre-archive → archive →
+        pre-merge guardian; odd mode skips the pre-archive stage."""
         skill = (CATALOG / RECIPE_ID / "skills" / RECIPE_ID / "SKILL.md").read_text()
         text = skill.lower()
         for marker in (
@@ -666,7 +849,7 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
         steps = [
             "1. implement and verify.",
             "4. promote canonical specs.",
-            "5. before moving the change folder",
+            "5. in `openspec` mode, before moving the change folder, run the executable pre-archive gate",
             "6. after the pre-archive gate passes, run archive-tail",
             "7. run the pre-merge guardian",
         ]

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
 import shutil
 import subprocess
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +35,7 @@ DEFAULT_MODELS = {
 }
 
 _OPENCODE_FAMILY = frozenset({"opencode", "pi", "omp"})
+_INSTALL_ROOT: Path | None = None
 
 META_PROMPT_RE = re.compile(
     r"(?i)(/plan\b|/build\b|haz un plan|run the /plan|produce planning artifacts only)"
@@ -51,17 +54,47 @@ def _cli() -> Path:
     return _go_cli.cli()
 
 
+def install_root() -> Path:
+    """A throwaway install root for the fixture's rendered hook commands.
+
+    `sync` pins the hook command to `<AI_SPECS_HOME>/dist/ai-specs`. Pointing
+    AI_SPECS_HOME at the checkout left that path empty, so every rendered hook
+    fell through to whatever `ai-specs` sat on PATH and the gate refused every
+    write for the wrong reason. This mirrors a real install instead.
+    """
+    global _INSTALL_ROOT
+    if _INSTALL_ROOT is None:
+        root = Path(tempfile.mkdtemp(prefix="ai-specs-eval-install-"))
+        dist = root / "dist"
+        dist.mkdir()
+        shutil.copy2(_cli(), dist / "ai-specs")
+        (dist / "ai-specs").chmod(0o755)
+        for name in ("templates", "catalog", "bundled-skills", "bundled-commands"):
+            source = ROOT / name
+            if source.is_dir():
+                shutil.copytree(source, root / name)
+        _INSTALL_ROOT = root
+    return _INSTALL_ROOT
+
+
 def _sync(project_root: Path) -> None:
     """Run the native `sync`: the one authority that materializes recipes, the
     lock, the brief and the gitignore/envrc, and fans out to enabled agents."""
-    env = {**os.environ, "AI_SPECS_HOME": str(ROOT)}
-    subprocess.run(
+    env = {**os.environ, "AI_SPECS_HOME": str(install_root())}
+    proc = subprocess.run(
         [str(_cli()), "sync", str(project_root)],
-        check=True,
         text=True,
         capture_output=True,
         env=env,
+        check=False,
     )
+    if proc.returncode != 0:
+        # check=True threw away the cause; a failing fixture setup is unreadable
+        # without sync's own stderr.
+        raise AssertionError(
+            f"sync failed ({proc.returncode}) on {project_root}\n"
+            f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+        )
 
 
 def _enabled_agents(project_root: Path) -> list[str]:
@@ -142,6 +175,88 @@ def runtime_to_agent(runtime: str) -> str:
     return RUNTIME_TO_AGENT.get(runtime, runtime)
 
 
+# The command families the agent under test may run: the skill's `ai-specs
+# <verb>`, plus `git add` / `git commit` because a case must produce a
+# `Risk: item N` commit trailer. Deliberately not a blanket wildcard.
+CLAUDE_ALLOWED_COMMANDS = (
+    "Bash(ai-specs:*)",
+    "Bash(git add:*)",
+    "Bash(git commit:*)",
+)
+
+
+def claude_allowed_commands() -> tuple[str, ...]:
+    """The one allow-list, as handed to both sites that grant it.
+
+    `Bash(ai-specs:*)` matches only a command that starts with the bare word,
+    but the rendered hook names the absolute `<install-root>/dist/ai-specs`, and
+    a live run ran exactly that path: it was refused, so the case measured the
+    sandbox instead of the skill. The absolute form is computed from THIS
+    sandbox's install root -- exact path, sandbox only, never a wildcard.
+    """
+    binary = install_root() / "dist" / "ai-specs"
+    return (*CLAUDE_ALLOWED_COMMANDS, f"Bash({binary}:*)")
+
+
+def allow_cli_commands(project_root: Path) -> None:
+    """Let the agent under test run `ai-specs`, `git add` and `git commit`.
+
+    The skill tells the agent to run `changes start --none`, `specs promote` and
+    `changes archive`; the high-risk odd case needs a commit to carry a
+    `Risk: item N` trailer. A headless session cannot approve them
+    interactively, so without this the case measures the sandbox instead of the
+    skill. This writes the allow-list into THIS sandbox's
+    `.claude/settings.json` only -- never the repo's, never the user's -- and
+    names exactly those command families.
+    """
+    settings = project_root / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    data = json.loads(settings.read_text()) if settings.is_file() else {}
+    allow = data.setdefault("permissions", {}).setdefault("allow", [])
+    for command in claude_allowed_commands():
+        if command not in allow:
+            allow.append(command)
+    settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def resolved_mode(project_root: Path) -> str:
+    """The mode the CLI actually resolves, proved by the gate's behaviour.
+
+    No verb prints the mode, and the recipe-config validator ignores the manifest
+    key, so a text assertion proves nothing. In `odd` the gate allows a
+    production write with no plan; in `openspec` it refuses one. The probe must
+    run while the change carries no plan, or both modes would allow it.
+    """
+    probe = project_root / "src" / "mode-probe.py"
+    probe.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(
+        {
+            "tool_name": "Edit",
+            "tool_input": {"file_path": str(probe)},
+            "cwd": str(project_root),
+        }
+    )
+    proc = subprocess.run(
+        [str(install_root() / "dist" / "ai-specs"), "plan-build-gate"],
+        cwd=str(project_root),
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "AI_SPECS_HOME": str(install_root())},
+        input=payload,
+    )
+    return "odd" if proc.returncode == 0 else "openspec"
+
+
+def assert_resolved_mode(project_root: Path, expected: str) -> None:
+    """Fail when the fixture measures a mode the CLI did not resolve."""
+    actual = resolved_mode(project_root)
+    if actual != expected:
+        raise AssertionError(
+            f"the CLI resolved mode {actual!r}, not the requested {expected!r}"
+        )
+
+
 def wire_runtime_hooks(project_root: Path, runtime: str) -> None:
     """Wire enabled recipes' `[[provides.hooks]]` into the runtime's native
     channel (e.g. `.claude/settings.json` PreToolUse) by re-syncing with ONLY
@@ -156,6 +271,13 @@ def wire_runtime_hooks(project_root: Path, runtime: str) -> None:
     `Edit|Write|MultiEdit|NotebookEdit` matchers for cursor, which has no
     pre-file-write event.
     """
+    # `setup_runtime_skills` copies a recipe skill into a real `<agent>/skills`
+    # directory, but `sync` owns that path and wants it to be a symlink into
+    # ai-specs/skills — it refuses to replace a non-symlink, which used to abort
+    # every live scenario's fixture setup.
+    for skills in project_root.glob(".*/skills"):
+        if skills.is_dir() and not skills.is_symlink():
+            shutil.rmtree(skills)
     _set_enabled_agents(project_root, [runtime_to_agent(runtime)])
     _sync(project_root)
 
@@ -280,13 +402,58 @@ def _run(
         }
 
 
-def _parse_claude_json(stdout: str) -> dict[str, Any]:
-    if not stdout.strip():
-        return {}
-    try:
-        return json.loads(stdout)
-    except json.JSONDecodeError:
-        return {}
+def _parse_claude_stream(stdout: str) -> dict[str, Any]:
+    """`claude -p --output-format stream-json --verbose` emits one event per line.
+
+    The single-object `json` format records no `tool_use` at all (only
+    `permission_denials`), which left `forbidden_commands` unprovable on every
+    claude run.
+    """
+    texts: list[str] = []
+    tool_calls: list[str] = []
+    final: dict[str, Any] = {}
+    saw_event = False
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        saw_event = True
+        etype = event.get("type")
+        if etype == "result":
+            # Final summary object: result text, cost and usage live here.
+            final = event
+        elif etype == "assistant":
+            message = event.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            for block in content or []:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
+                    texts.append(str(block.get("text", "")))
+                elif block.get("type") == "tool_use":
+                    _walk_tool_inputs(block, tool_calls)
+    cost = final.get("total_cost_usd")
+    usage = final.get("usage")
+    if cost is None and isinstance(usage, dict):
+        cost = usage.get("total_cost_usd")
+    # The graded transcript is the runtime's final answer, never the
+    # concatenation of narration: an earlier "I will confirm ..." would
+    # otherwise satisfy a case that must prove the agent asked at the end.
+    answer = str(final.get("result") or "") or (texts[-1] if texts else "")
+    return {
+        "result_text": answer,
+        "cost": cost,
+        # None when no event was parsed at all: that is no evidence, and the
+        # forbidden-command check has to fail closed on it.
+        "tool_calls": tool_calls if saw_event else None,
+        "json": final,
+    }
 
 
 def _parse_opencode_ndjson(stdout: str) -> dict[str, Any]:
@@ -362,10 +529,19 @@ def run_claude_prompt(
         model,
         "--permission-mode",
         permission,
+        # `acceptEdits` still stops Bash, and a headless session has nobody to
+        # ask. The grant is the same list the fixture writes into its own
+        # .claude/settings.json -- the settings file alone is not read by `-p`,
+        # so the rules are repeated where the runtime honours them.
+        "--allowedTools",
+        *claude_allowed_commands(),
         "--max-turns",
         _max_turns(),
         "--output-format",
-        "json",
+        "stream-json",
+        # stream-json requires --verbose with -p; it is what records the tool
+        # calls the agent actually ran.
+        "--verbose",
     ]
     if bypass:
         cmd.append("--dangerously-skip-permissions")
@@ -382,15 +558,12 @@ def run_claude_prompt(
     for extra in add_dirs or []:
         cmd.extend(["--add-dir", str(extra)])
     result = _run(cmd, project_root, env=env)
+    result.update(_parse_claude_stream(result["stdout"]))
     result["runtime"] = "claude"
     result["model"] = model
     result["mode"] = mode
-    result["json"] = _parse_claude_json(result["stdout"])
-    result["result_text"] = (
-        result["json"].get("result")
-        if isinstance(result["json"], dict)
-        else None
-    ) or result["stdout"]
+    if not result.get("result_text"):
+        result["result_text"] = result["stdout"]
     return result
 
 
@@ -548,6 +721,343 @@ def init_git_repo(project_root: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=project_root, check=True)
     subprocess.run(["git", "config", "user.email", "eval@ai-specs.local"], cwd=project_root, check=True)
     subprocess.run(["git", "config", "user.name", "eval"], cwd=project_root, check=True)
+
+
+# --- Assertion primitives -------------------------------------------------
+# Each one raises AssertionError with the scenario label, so the live module
+# and the unit tests observe the same messages. Pure tree/git inspection: no
+# agent, no network.
+
+# Active change folder per artifact mode: `assert_active_change_gone` accepts
+# True (today's openspec behavior) or the mode string.
+ACTIVE_CHANGE_TREES = {"openspec": ("openspec", "changes"), "odd": ("odd", "changes")}
+
+
+def glob_exists(root: Path, pattern: str) -> bool:
+    return any(root.glob(pattern))
+
+
+def path_matches_any(path: str, patterns: list[str]) -> bool:
+    return any(fnmatch.fnmatch(path, pat) for pat in patterns)
+
+
+def current_branch(root: Path) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return proc.stdout.strip()
+
+
+def assert_forbidden_path_globs(changed: list[str], patterns: list[str], *, label: str = "scenario") -> None:
+    for path in changed:
+        if path_matches_any(path, patterns):
+            raise AssertionError(f"{label}: forbidden path modified: {path}")
+
+
+def assert_required_path_globs(
+    root: Path, patterns: list[str], changed: list[str], *, label: str = "scenario"
+) -> None:
+    for required in patterns:
+        if not glob_exists(root, required):
+            raise AssertionError(f"{label}: missing {required}; changed={changed}")
+
+
+def assert_required_any_path_globs(
+    root: Path, groups: list[list[str]], changed: list[str], *, label: str = "scenario"
+) -> None:
+    for group in groups:
+        if not any(glob_exists(root, pat) for pat in group):
+            raise AssertionError(f"{label}: expected any of {group}; changed={changed}")
+
+
+def assert_required_changed_globs(
+    root: Path, changed: list[str], patterns: list[str], *, label: str = "scenario"
+) -> None:
+    for pattern in patterns:
+        if not (
+            any(path_matches_any(path, [pattern]) for path in changed)
+            or glob_exists(root, pattern)
+        ):
+            raise AssertionError(
+                f"{label}: expected change matching {pattern}; changed={changed}"
+            )
+
+
+def assert_absent_path_globs(root: Path, patterns: list[str], *, label: str = "scenario") -> None:
+    """Negative half of `required_path_globs`: no matching path may exist."""
+    for pattern in patterns:
+        hits = sorted(str(p.relative_to(root)) for p in root.glob(pattern))
+        if hits:
+            raise AssertionError(
+                f"{label}: expected no path matching {pattern}; found {hits}"
+            )
+
+
+def assert_required_content(root: Path, rules: list[dict[str, Any]], *, label: str = "scenario") -> None:
+    for rule in rules:
+        path = root / rule["path"]
+        if not path.is_file():
+            raise AssertionError(f"{label}: missing {rule['path']}")
+        text = path.read_text(encoding="utf-8", errors="replace").lower()
+        needles = [str(n).lower() for n in rule.get("contains_any", [])]
+        if not any(n in text for n in needles):
+            raise AssertionError(f"{label}: {rule['path']} missing any of {needles}")
+
+
+def assert_forbidden_content(root: Path, rules: list[dict[str, Any]], *, label: str = "scenario") -> None:
+    for rule in rules:
+        path = root / rule["path"]
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace").lower()
+        for needle in rule.get("contains_any", []):
+            if str(needle).lower() in text:
+                raise AssertionError(
+                    f"{label}: {rule['path']} must not contain {needle!r}"
+                )
+
+
+def assert_transcript(
+    transcript: str,
+    *,
+    all_of: list[str] | None = None,
+    one_of: list[str] | None = None,
+    any_of: list[str] | None = None,
+    label: str = "scenario",
+) -> None:
+    """Transcript assertions are always enforced; a case that does not want
+    them simply omits the key. They used to be skipped whenever
+    `required_content` was present, which made "asked before merging"
+    ungradable."""
+    text = transcript.lower()
+    for needle in [str(n).lower() for n in all_of or []]:
+        if needle not in text:
+            raise AssertionError(f"{label}: transcript missing required {needle!r}")
+    needles = [str(n).lower() for n in one_of or []]
+    if needles and not any(needle in text for needle in needles):
+        raise AssertionError(f"{label}: transcript missing any of {needles!r}")
+    for needle in [str(n).lower() for n in any_of or []]:
+        if needle not in text:
+            raise AssertionError(f"{label}: transcript missing required {needle!r}")
+
+
+def _walk_tool_inputs(node: Any, out: list[str]) -> None:
+    if isinstance(node, dict):
+        for key in ("input", "arguments"):
+            holder = node.get(key)
+            if isinstance(holder, dict):
+                command = holder.get("command") or holder.get("cmd")
+                if isinstance(command, str) and command.strip():
+                    out.append(command)
+        for value in node.values():
+            _walk_tool_inputs(value, out)
+    elif isinstance(node, list):
+        for value in node:
+            _walk_tool_inputs(value, out)
+
+
+def _has_tool_event(node: Any) -> bool:
+    """True when this payload contains a tool-call record of any shape.
+
+    A final-result object is parseable JSON too, so "parsed a document" is not
+    evidence that the runtime reported its tool calls.
+    """
+    if isinstance(node, dict):
+        for key in ("type", "kind", "role"):
+            value = node.get(key)
+            if isinstance(value, str) and "tool" in value.lower():
+                return True
+        return any(_has_tool_event(value) for value in node.values())
+    if isinstance(node, list):
+        return any(_has_tool_event(value) for value in node)
+    return False
+
+
+def collect_executed_commands(result: dict[str, Any]) -> list[str] | None:
+    """The command strings the runtime recorded as tool calls.
+
+    Returns None when the runtime exposed no structured record, which is what
+    makes the forbidden-command check fail closed. Reading the agent's final
+    prose instead was the original defect: an agent could run a prohibited
+    merge and then answer without quoting it, and the case still passed.
+    """
+    recorded = result.get("tool_calls")
+    if isinstance(recorded, list):
+        # Runtimes that parse their stream (claude) hand over the records
+        # directly; an empty list means "ran no tool", not "no evidence".
+        return [str(command) for command in recorded]
+    texts: list[str] = []
+    payload = result.get("json")
+    if isinstance(payload, dict):
+        texts.append(json.dumps(payload))
+    stdout = result.get("stdout") or ""
+    texts.extend(line for line in stdout.splitlines() if line.strip().startswith("{"))
+
+    found: list[str] = []
+    saw_event = False
+    saw_tool_event = False
+    for text in texts:
+        try:
+            event = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        saw_event = True
+        saw_tool_event = saw_tool_event or _has_tool_event(event)
+        _walk_tool_inputs(event, found)
+    # No tool event means no evidence: fail closed rather than report "no
+    # forbidden command ran" from a payload that never carried tool calls.
+    return found if saw_event and saw_tool_event else None
+
+
+def assert_no_forbidden_commands(
+    executed: list[str] | None, commands: list[str], *, label: str = "scenario"
+) -> None:
+    """No forbidden command may have been executed by the agent.
+
+    Graded against the runtime's tool-call records, never against the answer: a
+    transcript match both misses a real merge and fires when the agent merely
+    says it will not merge. When the runtime exposes no record the check fails
+    closed rather than passing on absence of evidence.
+    """
+    if not commands:
+        return
+    if executed is None:
+        raise AssertionError(
+            f"{label}: cannot prove no forbidden command ran — this runtime "
+            f"recorded no tool-call evidence (wanted to exclude {commands!r})"
+        )
+    for command in commands:
+        needle = str(command).lower()
+        for line in executed:
+            if needle in line.lower():
+                raise AssertionError(
+                    f"{label}: agent executed forbidden command {command!r} ({line.strip()!r})"
+                )
+
+
+def git_config_get(root: Path, key: str) -> str | None:
+    proc = subprocess.run(
+        ["git", "-C", str(root), "config", "--get", key],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip()
+
+
+def assert_git_config(
+    root: Path,
+    expected: dict[str, Any],
+    *,
+    branch: str | None = None,
+    label: str = "scenario",
+) -> None:
+    """Read each key with `git config --get`; `<branch>` is substituted with
+    the fixture's actual branch name. Missing key or different value fails."""
+    if not expected:
+        return
+    name = branch or current_branch(root)
+    for raw_key, want in expected.items():
+        key = str(raw_key).replace("<branch>", name)
+        got = git_config_get(root, key)
+        if got != str(want):
+            raise AssertionError(
+                f"{label}: git config {key} expected {str(want)!r}, got {got!r}"
+            )
+
+
+TRAILER_ITEM_RANGE = (1, 6)
+
+
+def assert_commit_trailer(root: Path, trailer: str, *, label: str = "scenario") -> None:
+    """At least one commit body carries `<trailer> N (<reason>)`, N in 1..6.
+
+    The range is every commit reachable from HEAD (the fixture records no base
+    ref), read through `git log --format=%B`."""
+    prefix = str(trailer).strip()
+    lo, hi = TRAILER_ITEM_RANGE
+    pattern = re.compile(
+        rf"(?im)^[ \t]*{re.escape(prefix)}[ \t]+([{lo}-{hi}])[ \t]+\(.+\)[ \t]*$"
+    )
+    proc = subprocess.run(
+        ["git", "-C", str(root), "log", "--format=%B"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    if not pattern.search(proc.stdout):
+        raise AssertionError(
+            f"{label}: no commit carries {prefix!r} item {lo}-{hi} with a reason"
+        )
+
+
+def active_change_dir(root: Path, slug: str, mode: Any = True) -> Path:
+    """`<mode tree>/changes/<slug>`: True keeps the openspec behavior."""
+    name = "openspec" if mode is True else str(mode)
+    tree = ACTIVE_CHANGE_TREES.get(name)
+    if tree is None:
+        raise ValueError(
+            f"unknown assert_active_change_gone mode {mode!r}: expected true, 'openspec' or 'odd'"
+        )
+    return root.joinpath(*tree) / slug
+
+
+def assert_active_change_gone(
+    root: Path, slug: str, mode: Any = True, *, label: str = "scenario"
+) -> None:
+    active = active_change_dir(root, slug, mode)
+    if active.exists():
+        raise AssertionError(
+            f"{label}: active change folder still present at {active}"
+        )
+
+
+def assert_scenario_outputs(
+    root: Path,
+    meta: dict[str, Any],
+    result: dict[str, Any],
+    changed: list[str],
+    *,
+    label: str = "scenario",
+) -> None:
+    """Run every `scenario.toml` assertion key in one place, so the live module
+    and the primitive tests observe the same contract."""
+    assert_forbidden_path_globs(changed, meta.get("forbidden_path_globs", []), label=label)
+    assert_required_path_globs(root, meta.get("required_path_globs", []), changed, label=label)
+    assert_required_any_path_globs(
+        root, meta.get("required_any_path_globs", []), changed, label=label
+    )
+    assert_required_changed_globs(
+        root, changed, meta.get("required_changed_globs", []), label=label
+    )
+    assert_absent_path_globs(root, meta.get("required_absent_path_globs", []), label=label)
+    assert_required_content(root, meta.get("required_content", []), label=label)
+    assert_forbidden_content(root, meta.get("forbidden_content", []), label=label)
+    transcript = result.get("result_text") or result.get("stdout") or ""
+    assert_transcript(
+        transcript,
+        all_of=meta.get("required_transcript_all", []),
+        one_of=meta.get("required_transcript_one_of", []),
+        any_of=meta.get("required_transcript_any", []),
+        label=label,
+    )
+    assert_no_forbidden_commands(
+        collect_executed_commands(result), meta.get("forbidden_commands", []), label=label
+    )
+    assert_git_config(root, meta.get("required_git_config", {}), label=label)
+    trailer = meta.get("required_commit_trailer")
+    if trailer:
+        assert_commit_trailer(root, str(trailer), label=label)
+    gone = meta.get("assert_active_change_gone")
+    if gone:
+        assert_active_change_gone(
+            root, str(meta.get("slug", "signup-validation")), gone, label=label
+        )
 
 
 # Markers that mean a forbidden phrase appears only as a counter-example /

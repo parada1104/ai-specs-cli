@@ -1,0 +1,76 @@
+# Third assurance layer (plan-build-openspec-odd-align S13/P7). The gate has
+# three: the CLI verb, the skill that obeys it, and this workflow that runs
+# the verb on every pull request even when no agent is watching.
+#
+# Grades the PR head tree with a base-branch evaluator; candidate/ is data.
+#
+# Being a *required* status check is a repository setting, not a file in this
+# repo: the owner applies it once with `gh api` against
+# `repos/<owner>/<repo>/branches/development/protection/required_status_checks`
+# (see catalog/recipes/plan-build-flow/README.md for the exact command). The
+# published check context is this job's name, `pr-gate`.
+#
+# This grades committed state only, so the archive commit must be pushed for
+# the check to pass.
+name: pr-gate
+
+on:
+  pull_request_target:
+    branches: [development]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: trusted/go.mod
+      - run: go build -o dist/ai-specs ./cmd/ai-specs
+        working-directory: trusted
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          fetch-depth: 0
+      # actions/checkout leaves HEAD detached, so the gate cannot derive the
+      # change from the branch: the explicit change is mandatory here. --base
+      # pins the diff the objective refutations grade against: without it a CI
+      # shallow clone has no base to resolve and the refutations degrade to
+      # none.
+      - name: Grade the candidate with the trusted evaluator
+        id: grade
+        run: |
+          trusted/dist/ai-specs gates premerge \
+            --root "$GITHUB_WORKSPACE/candidate" \
+            --change "${GITHUB_HEAD_REF}" \
+            --base "$BASE_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      # pull_request_target grades the base revision, so this job's own check
+      # lands there. Publish the verdict on the head revision the PR protects.
+      - name: Publish the pr-gate status on the pull request head
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          OUTCOME: ${{ steps.grade.outcome }}
+        run: |
+          case "$OUTCOME" in
+            success) state=success ;;
+            failure) state=failure ;;
+            *) state=error ;;
+          esac
+          gh api -X POST "repos/${{ github.repository }}/statuses/$HEAD_SHA" \
+            -f state="$state" -f context=pr-gate \
+            -f description="pr-gate: $OUTCOME"

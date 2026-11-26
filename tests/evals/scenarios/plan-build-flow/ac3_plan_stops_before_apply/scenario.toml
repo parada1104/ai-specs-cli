@@ -3,8 +3,8 @@ recipe_id = "plan-build-flow"
 prompt_file = "prompt.txt"
 mode = "plan"
 ac = "AC3"
-tier = "standard"
-description = "Ambient plan mode: natural implement request yields tasks+spec without production edits"
+fixture_mode = "openspec"
+description = "Ambient plan mode: a natural implement request that alters an observable rule derives the plan plus its delta, with no production edit"
 forbidden_path_globs = ["src/**", "lib/**", "catalog/**"]
 required_path_globs = [
   "openspec/changes/*/tasks.md",

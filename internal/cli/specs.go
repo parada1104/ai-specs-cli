@@ -15,6 +15,7 @@ import (
 	"io"
 	"strings"
 
+	"ai-specs.dev/ai-specs/internal/planbuild"
 	"ai-specs.dev/ai-specs/internal/specs"
 )
 
@@ -29,14 +30,18 @@ Run 'ai-specs specs promote --help' for full options.
 
 const specsPromoteUsage = `Usage: ai-specs specs promote <slug> --root <planning-root> [--allow-removed]
 
-Compose openspec/changes/<slug>/specs/<domain>/spec.md deltas into
-openspec/specs/<domain>/spec.md: ADDED requirements are appended, MODIFIED
+Compose change delta specs into canonical specs. The source and canonical roots
+follow the repository's resolved execution mode: openspec mode reads
+openspec/changes/<slug>/specs/<domain>/spec.md and writes
+openspec/specs/<domain>/spec.md, while odd mode reads
+odd/changes/<slug>/specs/<domain>/spec.md and writes
+odd/specs/<domain>/spec.md. ADDED requirements are appended, MODIFIED
 requirements replace the canonical block with the exact same name, and unrelated
 canonical requirements and sections survive. A rerun after an interruption is a
 no-op.
 
 Arguments:
-  <slug>              Change slug under openspec/changes/
+  <slug>              Change slug under the mode's changes tree
 
 Options:
   --root <path>       Resolved planning root (never the process cwd; a subrepo
@@ -111,7 +116,7 @@ func runSpecsPromote(args []string, stdout, stderr io.Writer) int {
 		return usageError("ERROR: missing required option: --root")
 	}
 
-	report := specs.PromoteChange(root, slug, allowRemoved)
+	report := specs.PromoteChangeForMode(root, slug, planbuild.ResolveRepo(root), allowRemoved)
 	if len(report.Blockers) > 0 {
 		fmt.Fprintln(stderr, "spec-promotion: BLOCKED")
 		for _, blocker := range report.Blockers {

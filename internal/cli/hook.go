@@ -1,7 +1,7 @@
 package cli
 
 // Native `ai-specs hook field|normalize-path` (GO-20 U2e, unit U-F2a): the JSON
-// helpers plan-build-gate.sh calls instead of python3. Fail-open by contract:
+// helpers the retired gate hosts called instead of python3. Fail-open by contract:
 // normalize-path prints nothing and exits 0 whenever the python original exited
 // 0 without output; only usage errors exit 2.
 

@@ -1,9 +1,10 @@
 # Runtime hooks
 
 Recipes can ship **agent-runtime lifecycle hooks** via `[[provides.hooks]]`.
-`ai-specs sync` distributes one portable script to every enabled harness in its
-native runtime-hook format. The author writes the script once; the product owns
-the per-harness adapters.
+`ai-specs sync` distributes one hook to every enabled harness in its native
+runtime-hook format. A hook is either a script the product materializes or, for
+the recipes the CLI serves, a command bound to the installed CLI. Either way the
+author writes the decision once and the product owns the per-harness adapters.
 
 > Distinct from the sync-time `[[hooks]]` table (`event = "on-sync"`), which runs
 > *during* `ai-specs sync` materialization. Runtime hooks fire while the coding
@@ -31,7 +32,7 @@ One contract for all harnesses. A buggy guard must never wedge all work.
 
 The product owns a fixed set of abstract events mapped to each harness's native
 event. This map is the single source of truth used by every renderer
-(`lib/_internal/hooks-render.py`).
+(`internal/sync/hooksrender.go`).
 
 | abstract | claude | cursor | opencode | pi | omp |
 |----------|--------|--------|----------|-----|-----|
@@ -48,15 +49,15 @@ it.
 
 | harness | wiring | block signal |
 |---------|--------|--------------|
-| **claude** | script wired directly into a managed block in `.claude/settings.json` | script `exit 2` (native) |
+| **claude** | the hook command wired directly into a managed block in `.claude/settings.json` | `exit 2` (native) |
 | **cursor** | generated shell wrapper in `.cursor/hooks/<recipe>-<hook>.sh`, referenced by `.cursor/hooks.json` | wrapper emits `{"permission":"deny", ...}` (snake_case) on `exit 2` |
 | **opencode** | generated TS plugin `.opencode/plugin/<recipe>-<hook>.ts` | `throw` on `exit 2` |
 | **pi** | generated TS extension `.pi/extensions/<recipe>-<hook>.ts` (imports `@earendil-works/pi-coding-agent`) | `return { block: true, reason }` on `exit 2` |
 | **omp** | generated TS extension `.omp/extensions/<recipe>-<hook>.ts` (imports `@oh-my-pi/pi-coding-agent`) | `return { block: true, reason }` on `exit 2` |
 
-Only **Claude** natively honors the normalized contract, so it gets the script
+Only **Claude** natively honors the normalized contract, so it gets the command
 wired directly. Every other harness decides through a different channel, so sync
-generates a thin **adapter** that runs the script with the normalized event on
+generates a thin **adapter** that runs that command with the normalized event on
 stdin and translates `exit 2` into that harness's native decision.
 
 ### Known gaps
@@ -75,49 +76,68 @@ stdin and translates `exit 2` into that harness's native decision.
 - **OpenCode** `session-start`/`stop` are observe-only; there is no blocking
   session hook.
 
-## Script materialization
+## Where the hook logic lives
 
-The hook script is materialized once to a harness-neutral path under the project
-and made executable:
+Two layouts, decided by the recipe:
 
-```
-ai-specs/recipes/<recipe-id>/hooks/<script>
-```
+- **CLI-served** (every recipe that ships a gate today: `worktree-flow`'s
+  `worktree-gate`, `trello-mcp-workflow`'s `tracker-card-gate` and
+  `plan-build-flow`'s `plan-build-gate`). Nothing is materialized. Every
+  harness's wiring carries a shell **command** that resolves the CLI — the
+  install that ran sync at `dist/ai-specs` first, then `ai-specs` on `PATH` —
+  and `exec`s the verb. A missing CLI exits `0` (fail open) with one stderr
+  warning, and doctor reports the install as an ERROR.
+- **Materialized script** (any other recipe). The script is copied once to a
+  harness-neutral path under the project, made executable, and every harness's
+  wiring references that single copy:
 
-Every harness's wiring references this single copy.
+  ```
+  ai-specs/recipes/<recipe-id>/hooks/<script>
+  ```
+
+A project synced from a custom CLI home is pinned to that install: the rendered
+command names the absolute `dist/ai-specs` path of the install that ran sync, and
+only a later sync (after the CLI is reinstalled) rewrites it.
 
 ## Config flow
 
 Tunable values declared in the recipe `[config.*]` (overridable per-project in
 `[recipes.<id>.config]`) reach the rendered hook as **environment variables**.
 For example, `worktree-flow` exposes `WORKTREE_GATE_PROTECTED` (space-separated
-protected branch names) to its `worktree-gate.sh` hook.
+protected branch names) to its `worktree-gate` hook as a rendered env entry.
 
-Some hooks also use a sync-stamped constant in the rendered script for values
-that should not be overwritten by env export order. `worktree-flow` uses this
-for `gate_mode`: `ai-specs sync` stamps the resolved mode into
-`worktree-gate.sh`, while `WORKTREE_GATE_MODE` remains a one-shot process
-override at dispatch time. `trello-mcp-workflow` likewise stamps
-`__TRACKER_CARD_GATE_MODE__` (default `warn`) and `__TRACKER_CLI_HOME__`
-into `tracker-card-gate.sh`; `TRACKER_CARD_GATE_MODE` is the one-shot env
-override. The ledger `ledger_mode` is not stamped: the checkpoint hosts read it
-from `ai-specs/ai-specs.toml` at runtime (falling back to `gate_mode`), and
-`TRACKER_LEDGER_MODE` is the one-shot override.
+A CLI-served hook stamps nothing into the wiring: the verb reads the resolved
+values from the **per-project sync snapshot**
+(`cache/projects/<key>/runtime.toml`), which is the run-time config source, never
+`ai-specs.toml` (S2). That is why a `gate_mode` edit takes effect on the next
+sync and why a hook cannot disagree with the manifest it was synced from.
 
-## Gate implementation and launcher (worktree-flow)
+- `worktree-flow`: the snapshot's `[worktree_gate]` table carries `gate_mode`,
+  `gate_scope`, `repo_topology`, `protected`, `worktrees_dir` and
+  `integration_branch`; `WORKTREE_GATE_MODE` remains a one-shot process override.
+- `trello-mcp-workflow`: `[tracker_gate].gate_mode` carries the legacy hint
+  (default `warn`), and `TRACKER_CARD_GATE_MODE` is the one-shot env override.
+  The ledger `ledger_mode` is not stamped: the checkpoint hosts read it from
+  `ai-specs/ai-specs.toml` at runtime (falling back to `gate_mode`), and
+  `TRACKER_LEDGER_MODE` is the one-shot override.
+- `plan-build-flow`: reads no policy from the snapshot; its rule is the change
+  folder itself.
 
-`worktree-flow`'s `worktree-gate.sh` is a **thin launcher** (bash 3.2 only) that
-resolves the gate implementation and `exec`s it, so stdin and the exit code pass
-through untouched. The only implementation is a single zero-dependency Go
-binary. `gate_impl` accepts `auto | go` only; both use the worktree-gate route provided
-by the CLI and fail open if that route is unavailable (`ai-specs doctor` reports ERROR).
+## Gate implementation (worktree-flow)
+
+There is no launcher. `worktree-flow`'s hooks are CLI-served: the rendered
+command `exec`s `ai-specs worktree-gate --hook <id>`, and the verb resolves the
+event exactly as the retired thin launcher did, so stdin and the exit code pass
+through untouched. `gate_impl` accepts `auto | go` only; both use the same
+`worktree-gate` route in the installed CLI and fail open if that route is
+unavailable (`ai-specs doctor` reports ERROR).
 
 Resolution order (first hit wins):
 
 1. An executable `WORKTREE_GATE_BIN` override; with `WORKTREE_GATE_VERIFY=1`,
    an override that fails `--selftest` is ignored.
-2. The `worktree-gate` route in `${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs`.
-3. If the CLI route is unavailable, warn on stderr and exit `0` (fail open).
+2. The installed CLI that ran sync (`dist/ai-specs`), then `ai-specs` on `PATH`.
+3. If no CLI is available, warn on stderr and exit `0` (fail open).
    Use `ai-specs doctor` to diagnose the install; upgrade an old or failing
    CLI with `ai-specs upgrade`, or reinstall via `install.sh` if it is missing
    or not executable.
@@ -130,12 +150,10 @@ cache are ignored, and there are no separate gate assets or checksum trust root.
 the previous CLI release and run `ai-specs sync`. `gate_impl = auto` with an
 unavailable CLI route is a doctor ERROR, not a silent fallback.
 
-Because every renderer references only `hook["script_path"]`, all five harnesses
-keep working without re-render churn: the launcher materializes at the unchanged
-path `ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh`, and the Cursor
-wrapper maps exit `2` → `{"permission":"deny"}` exactly as before (the binary's
-empty stdout does not degrade the deny decision — the gate message travels on
-stderr).
+Because every renderer emits the same CLI command, all five harnesses keep
+working without re-render churn, and the Cursor wrapper maps exit `2` →
+`{"permission":"deny"}` exactly as before (the CLI's empty stdout does not
+degrade the deny decision — the gate message travels on stderr).
 
 ### Workspace context model
 
@@ -145,15 +163,14 @@ them:
 | Context | Producer | Meaning | Fallback |
 |---------|----------|---------|----------|
 | Event cwd | Runtime adapter + normalized event | Directory whose repository/worktree context the gate evaluates | Gate process cwd when the event value is unusable |
-| Project root for launcher lookup | Generated adapter | Root used to find the materialized launcher | No process-cwd substitution |
+| Project root for the CLI hook | Generated adapter | Root exported to the hook as `AI_SPECS_PROJECT_ROOT` so the verb reads this project's snapshot | No process-cwd substitution |
 | Process cwd | Actual hook child process | Fallback context when the event cwd is unusable | The OS/runtime process cwd |
 
-- **Adapter launcher paths are module-derived.** The generated OpenCode plugin
-  and Pi/OMP extensions resolve the materialized launcher at runtime from
-  `import.meta.url` (`../../` from `.opencode/plugin`, `.pi/extensions`, or
-  `.omp/extensions` up to the project root), so a relocated extension keeps
-  working from any process cwd. No generated adapter emits a relative `SCRIPT`
-  or a sync-time machine-specific absolute path.
+- **Adapters carry a command, not a path.** The generated OpenCode plugin and
+  Pi/OMP extensions export `AI_SPECS_PROJECT_ROOT` from `import.meta.url`
+  (`../../` from `.opencode/plugin`, `.pi/extensions`, or `.omp/extensions` up to
+  the project root) and spawn the hook command through `sh -c`. No generated
+  adapter emits a relative `SCRIPT`, a script path, or a hardcoded project path.
 - **OpenCode validates the explicit directory.** `directory` is outer-trimmed
   and accepted only as a string, absolute, existing directory; the one
   normalized value drives both the event `cwd` and the child `spawnSync` cwd.
@@ -198,7 +215,7 @@ block are preserved.
 | Recipe | Path hook id | Shell hook id | Shell heuristic |
 |--------|--------------|---------------|-----------------|
 | `worktree-flow` | `worktree-gate` | `worktree-gate-shell` | shell writes into protected main |
-| `trello-mcp-workflow` | `tracker-card-gate` | `tracker-card-gate-shell` | `gh pr create` (archive-close is graded by the shell host's direct mode) |
+| `trello-mcp-workflow` | `tracker-card-gate` | `tracker-card-gate-shell` | `gh pr create` (archive-close is graded by the verb's direct mode) |
 
 Both share one script per recipe with two `[[provides.hooks]]` ids so
 Cursor's file-write skip does not swallow shell coverage. Neither gate
@@ -206,33 +223,33 @@ intercepts MCP tool calls.
 
 ## Ledger checkpoints (tracker lifecycle)
 
-`plan-build-flow` and `trello-mcp-workflow` path/shell hooks, plus
-`tracker-card-gate.sh`'s direct host mode, are **acquisition + JSON bridges** to one
-Go predicate. They invoke `ai-specs worktree-gate --ledger --checkpoint <name>`
-through the installed `dist/ai-specs`, not through the project-local pin, the
-cache, or `WORKTREE_GATE_BIN`. Plan Build uses `AI_SPECS_HOME` (default
-`$HOME/.ai-specs`); the Tracker host uses the CLI home stamped by sync. Go
-resolves the effective ledger mode. Neither host compiles or downloads a binary.
-Tracker verdicts are advisory and exit `0`; when a checkpoint reaches the
-Tracker grader but the CLI is missing or does not recognize `worktree-gate`,
-the host warns and still exits `0`. Plan Build can exit `2` for a blocking
-verdict or when an old CLI cannot grade the checkpoint.
+The `ai-specs plan-build-gate` and `ai-specs tracker-card-gate` verbs, plus the
+Tracker gate's direct host mode, are the hosts of one Go predicate: each calls
+`worktree-gate --ledger --checkpoint <name>` in process inside the installed
+CLI, not through the project-local pin, the cache, or `WORKTREE_GATE_BIN`. Both
+rendered hook commands pin the sync-time install
+(`<sync-home>/dist/ai-specs <verb>`) instead of re-reading the agent's
+environment, and Go resolves the effective ledger mode. Neither host compiles or
+downloads a binary. Tracker verdicts are advisory and exit `0`: a rendered
+tracker hook whose CLI is missing exits `0` without grading, and the verb itself
+only exits `2` for a direct-mode usage error. Plan Build blocks: it exits `2` for
+a work-start block verdict and for its own missing-plan refusal.
 
 The domain is Tracker, not a provider. One pure Go grader compares neutral
 expectations against neutral observations; a provider recipe extends that domain
 by declaring a `[config.reconcile]` **adapter** mapping in the project manifest,
 while `ledger_mode` / `gate_mode` stay Tracker-domain policy. The tracker
-lifecycle host is `tracker-card-gate.sh` invoked directly
+lifecycle host is `ai-specs tracker-card-gate` invoked directly
 (`--root <root> --checkpoint pre-merge|archive-close`); `ai-specs gates premerge`
 is Plan Build's artifact-only guardian and never invokes the ledger.
 
 | Checkpoint | Host |
 |---|---|
-| `work-start` | `plan-build-flow` `plan-build-gate.sh` (before the SDD/proposal phase and before the first production write; no change folder required; resolves the witness recipe id through the stamped bridge) |
-| `apply-start` | `trello-mcp-workflow` `tracker-card-gate.sh`, path kind |
-| `pr-review` | `trello-mcp-workflow` `tracker-card-gate.sh`, shell `gh pr create` |
-| `pre-merge` | `tracker-card-gate.sh --root <root> --checkpoint pre-merge` |
-| `archive-close` | `tracker-card-gate.sh --root <root> --checkpoint archive-close` |
+| `work-start` | `plan-build-flow` `ai-specs plan-build-gate` hook, path kind (before the SDD/proposal phase and before the first production write; no change folder required; resolves the witness-bound recipe id in process) |
+| `apply-start` | `trello-mcp-workflow` `tracker-card-gate` hook, path kind |
+| `pr-review` | `trello-mcp-workflow` `tracker-card-gate` hook, shell `gh pr create` |
+| `pre-merge` | `ai-specs tracker-card-gate --root <root> --checkpoint pre-merge` |
+| `archive-close` | `ai-specs tracker-card-gate --root <root> --checkpoint archive-close` |
 
 The `pre-merge` and `archive-close` lifecycle is Plan Build-independent: the host
 needs **no `openspec/` tree**, and `--stage pre-merge|pre-archive` remains a
@@ -271,8 +288,8 @@ worktree cleanup. Both write only `<git-common-dir>/ai-specs/ledger/state.json`,
 perform no provider MCP/API call and no network I/O, and are never reached from a
 grade path. Opening is therefore **not** agent-only.
 
-**Evidence sides.** `tracker-card-gate.sh` (pre-tool-use hook and direct host
-mode) builds its
+**Evidence sides.** `ai-specs tracker-card-gate` (pre-tool-use hook and direct
+host mode) builds its
 `--evidence` file through the native `ai-specs tracker evidence` verb — acquisition only
 (`## Tracker` / `tracker.none` / local Git facts; no `gh`, no MCP, no network).
 `local` is the ledger's own store snapshot, `code` is the change's `card_id`, `git`
@@ -293,15 +310,14 @@ host. Recording the exemption is the explicit human/agent
 honored at every checkpoint as allow/exempt and is not a conflict; removing the file
 does not revoke it (a human adjudicates with `--decide`).
 
-The CLI home is stamped at sync (`__TRACKER_CLI_HOME__`); the tracker gate runs
-`<home>/dist/ai-specs tracker slug|evidence` for evidence acquisition and
-`<home>/dist/ai-specs tracker classify` for the stdin command classifier (the hook
-carries no python3). The legacy
-`__TRACKER_LIB_INTERNAL__` stamp remains a materializer placeholder the tracker
-gate no longer reads (the plan-build gate still uses that seam to resolve the
-witness-bound recipe id). An empty or absent CLI-home stamp, or a missing
-non-executable binary, skips the evidence file (fail open), exactly like a missing
-binary; the plan-build gate leaves the recipe id unresolved.
+Sync stamps the CLI home that served it into the rendered hook command, which
+execs `<sync-home>/dist/ai-specs tracker-card-gate`; the verb does its evidence
+acquisition (`tracker slug|evidence`) and stdin classification in process, so
+the hook carries no python3. `ai-specs` on PATH is the fallback only when that
+install's binary is gone, and a missing binary skips the evidence file and
+exits `0`. The legacy `__TRACKER_LIB_INTERNAL__` stamp remains a materializer
+placeholder that no gate reads any more: both verbs resolve the witness-bound
+recipe id in process.
 
 Without the CLI the tracker gate also cannot classify the hook event, so it exits 0
 without grading `apply-start` or `pr-review`. This is the accepted U-F2b behavior
@@ -328,29 +344,44 @@ checkpoints still grading. The runtime brief and generated agent files gain no
 dormancy line. No host performs a provider MCP/API create or update; `always`
 blocks until a human supplies the item. Path hosts never block `openspec/**`.
 
-**VCS-boundary close (`post-merge`).** Independent of the tracker gate hook,
-`worktree-flow` installs a managed `.git/hooks/post-merge` trigger (materialized
-with `condition = "not_exists"`). At a merge boundary it invokes the verified
-worktree cleanup launcher, which closes the matching open item at `archive-close`
-— matched on the Git common dir + branch, ignoring any stored change slug —
-**before** removing a provably merged worktree or local branch. The close is
+**VCS-boundary close (`post-merge` and `post-checkout`).** Independent of the
+tracker gate hook, `worktree-flow` installs a managed `.git/hooks/post-merge`
+trigger: a short `sh`
+script that proves the installed CLI serves `worktree-cleanup` (`--help`) and then
+`exec`s the verb, which sync ALWAYS regenerates (it is not an
+override, so a hand-written hook is replaced). At a merge boundary the verb
+closes the matching open item at `archive-close` — matched on the Git common dir
++ branch, ignoring any stored change slug — **before** removing a provably
+merged worktree or local branch. The close is
 idempotent and never reopens a closed row (D17). The hook is fail-open for the
 already-sealed merge outcome (failures go to stderr and it exits `0`), while the
 destructive cleanup fails closed: a close that cannot be persisted preserves the
-candidate. The trigger is workflow-agnostic (no SDD/ODD/OpenSpec and no provider
+candidate. The one skew case the hook reports itself is an installed CLI older
+than the verb: it removes nothing and prints a single actionable line
+(`post-merge: … does not serve 'worktree-cleanup'; reinstall a current ai-specs,
+then run: ai-specs sync`) on stderr, then exits `0`. A second managed trigger, `.git/hooks/post-checkout`, covers the merge that never
+happens locally: a pull request squashed or merged on the hosting provider lands
+as `git checkout <integration>` (or `git switch`) after a fetch, which
+`post-merge` never sees. It runs the same verb with `--if-integration`, which
+compares the primary checkout's branch with the snapshot's `integration_branch`:
+on a match it runs the pass, otherwise it prints one line
+(`worktree-cleanup: current branch is X, not the integration branch Y; skipping
+the cleanup pass.`) and exits `0`. The comparison lives in Go, so the hook still
+carries no policy. `ai-specs sync` deliberately runs no cleanup: it runs
+unattended in every project and must never delete worktrees. The trigger is workflow-agnostic (no SDD/ODD/OpenSpec and no provider
 call), and the direct tracker host
-(`tracker-card-gate.sh --root <root> --checkpoint archive-close`) remains the
-fallback when the hook is absent. The hook carries the project's configured
-`worktrees_dir`, `integration_branch`, and `repo_topology` stamped at sync, so
-cleanup never silently falls back to `.worktrees`/current HEAD. The stamped
-topology is the CLI-resolved `[project].repo_topology` value (the deprecated
+(`ai-specs tracker-card-gate --root <root> --checkpoint archive-close`) remains
+the fallback when the hook is absent. The hook carries **no** config: the verb
+reads `worktrees_dir`, `integration_branch` and `repo_topology` from the
+per-project sync snapshot, so cleanup never silently falls back to
+`.worktrees`/current HEAD. The recorded topology is the CLI-resolved
+`[project].repo_topology` value (the deprecated
 `recipes.worktree-flow.config.repo_topology` alias is read only when the project
-field is absent) and the `__WORKTREE_REPO_TOPOLOGY__` token contract is
-unchanged.
+field is absent).
 
 ## Shell write-bypass coverage (worktree-flow)
 
-`worktree-flow`'s `worktree-gate.sh` also registers a second matcher
+`worktree-flow`'s gate also registers a second matcher
 (`worktree-gate-shell`, matcher `Bash|Shell|Execute|Terminal`) that
 heuristically detects shell commands (redirects, `tee`, `sed -i`/`perl -i`,
 `cp`/`mv`, interpreter `-c`/heredoc bodies calling `write_text`/`open(...,'w')`

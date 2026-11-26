@@ -44,13 +44,17 @@ const trackerEvidenceUsage = `Usage: ai-specs tracker evidence <root> <slug> <ou
 
 Write the local ledger evidence JSON to <outfile>: local and remote stay empty,
 code is the change's ## Tracker card_id (blank under tracker.none), and git is
-that same id only when a pr: is recorded. An empty <slug> means no scope; a slug
-that is not a plain single path segment exits 1 with "invalid change slug". On
-any error the command exits 1 and writes nothing. <outfile> is created mode 0600.
+that same id only when a pr: is recorded. The change's ## Tracker section is read
+from <root>/openspec/changes/<slug>/ first and, when no OpenSpec change exists,
+from the branch's ODD plan <root>/odd/tasks/<feature>.md. An empty <slug> means no
+scope; a slug that is not a plain single path segment exits 1 with "invalid
+change slug". On any error the command exits 1 and writes nothing. <outfile> is
+created mode 0600.
 
 Arguments:
   <root>              Resolved planning root
-  <slug>              Change slug under openspec/changes/ (may be empty)
+  <slug>              Change slug under openspec/changes/ (may be empty; the ODD
+                      plan of the branch is the fallback source)
   <outfile>           Destination file for the evidence JSON
 
 Options:

@@ -7,6 +7,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0] — 2026-11-26
+
+### Upgrade notes
+Run `ai-specs sync` in each project. The CLI now serves every recipe runtime
+piece, so the next sync **removes** the files it used to materialize:
+
+- `ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh` (a lock-recorded copy
+  is pruned; a copy with no record is left in place and `ai-specs doctor` reports
+  it as a stale launcher with `rm <path> && ai-specs sync`);
+- `ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh` (removed
+  even when you edited it, with one notice — it is not a user-owned surface);
+- `ai-specs/recipes/vault-canonical-store/bin/vault-fs-mcp.sh`;
+- every `ai-specs/recipes/<id>/README.md` written by an earlier sync, and any
+  recipe directory that removal leaves empty.
+
+What replaces them is the CLI itself, reached from the hook wiring sync renders:
+`ai-specs worktree-gate --hook <id>`, `ai-specs worktree-cleanup`,
+`ai-specs mcp vault-fs`, `ai-specs tracker-card-gate` and
+`ai-specs plan-build-gate`. Recipe docs stay in the installed CLI's catalog
+(`catalog/recipes/<id>/README.md`); `ai-specs recipe init <id>` prints the
+recipe's init brief.
+
+Two cases need a decision:
+
+- **A hand-written `[mcp.vault-canonical]` in `ai-specs.toml` that points at the
+  old wrapper.** Sync keeps `vault-fs-mcp.sh` and its lock record while any
+  manifest string still mentions it, and prints how to migrate: replace the
+  entry with `command = "ai-specs"` and `args = ["mcp", "vault-fs"]`, then run
+  `ai-specs sync` again to retire the script.
+- **A project synced from a custom CLI home** is pinned to that install: the
+  rendered hook commands name its absolute `dist/ai-specs`, so reinstall there
+  and run `ai-specs sync` to re-pin. A hook whose CLI is gone exits `0` (fail
+  open) with one stderr warning.
+
+Hook policy now comes from the per-project sync snapshot
+(`cache/projects/<key>/runtime.toml`), not from `ai-specs.toml`: a `gate_mode`,
+`gate_scope`, `repo_topology`, `worktrees_dir` or `integration_branch` edit takes
+effect on the next sync. `.git/hooks/post-merge` is regenerated on every sync as
+one `exec ai-specs worktree-cleanup` line — it is no longer an override, so a
+hand-written hook there is replaced.
+`.git/hooks/post-checkout` follows the same rule with one difference: a hook that
+is not managed by ai-specs is **preserved** (with a one-line notice), because that
+hook was never ours to claim. `--refresh-gates` still refreshes a
+materialized hook after backing up its previous bytes, but it no longer owns any
+gate hook: it neither rewrites nor removes a stale launcher.
+
+### Added
+- **Provider-independent cleanup triggers.** `.git/hooks/post-checkout` runs
+  `ai-specs worktree-cleanup --if-integration`, so a pull request merged or
+  squashed on the hosting provider cleans up and closes its tracker-ledger row
+  when the integration branch is checked out after a fetch — a boundary
+  `post-merge` never sees. Both generated hooks probe the verb (the
+  `post-checkout` one also the option) and print one actionable line instead of
+  doing nothing when the installed CLI is older than the hook that calls it.
+- **The tracker ledger fills itself in.** `apply-start` binds the provider card the
+  change evidence names — `openspec/changes/<slug>` first, then the branch's ODD
+  plan `odd/tasks/<feature>.md` — so both planning modes register automatically.
+  A change document that exists without a `## Tracker` section gets a strong
+  advisory naming the file, and a grade that refuses to produce a verdict is
+  reported instead of disappearing.
+- **`ai-specs worktree-cleanup`** — the post-merge cleanup sequence (merged
+  worktree removal, remote branch deletion plus verification, local branch
+  removal, then the base fast-forward) reads the sync snapshot and fails closed
+  (exit 2, nothing deleted) when the project has no snapshot.
+- **`ai-specs mcp vault-fs`** — serves the vault filesystem MCP with the same
+  `CANONICAL_VAULT_PATH` validation and the same pinned `npx` package as the
+  retired wrapper. The generated MCP entry is `command: ai-specs`.
+- **`ai-specs tracker-card-gate`** — the Tracker gate in both modes: the
+  pre-tool-use hook and the direct `--root <root> --checkpoint
+  pre-merge|archive-close [slug]` host.
+- **`ai-specs plan-build-gate`** — refuses production writes until the active
+  change folder holds a plan (`tasks.md`), and answers `--help` and usage errors
+  in argv like every other verb.
+- Doctor reports a stale materialized gate launcher, and the retired cleanup
+  override, as advisory WARNs with copy-pasteable fixes.
+
+### Changed
+- **The merge strategy is the caller's choice.** The provider merge skills no
+  longer hardcode `--squash`, and the generated brief says when `git branch -d`
+  suffices and when a squash or a rebase needs `-D`.
+- **The plan-build execution mode is declared config.** `[recipes.plan-build-flow.config]
+mode` now belongs to the recipe schema (`auto | odd | openspec`, absent means
+`auto`), so a project manifest that declares it is honoured without being
+reported as `unknown config key 'mode' (ignored)`, and
+`ai-specs recipe configure --set mode=odd` can set it.
+- **Every recipe runtime piece is CLI-served.** Sync renders a shell command
+  bound to the install that ran sync (`dist/ai-specs` first, `ai-specs` on `PATH`
+  second), and writes no `.sh` file and no recipe `README.md` into the project.
+  Only configuration overrides remain under `ai-specs/recipes/<id>/overrides/`,
+  such as the Trello card templates.
+- Doctor's gate-provenance check no longer asks about the three CLI-served gate
+  scripts: a file at one of those paths is stale, which the `worktree-gate`
+  check owns. Its other messages are unchanged.
+
+### Fixed
+- **The tracker-ledger grade is pure again.** Grading no longer persists a
+  conflict snapshot, matching the documented contract that no grade of any
+  checkpoint writes store state; the conflict still reaches the verdict.
+- **`tracker evidence` keeps its contract.** An explicitly empty slug means "no
+  scope" again, and a slug that names no change yields no evidence instead of
+  returning the branch's other card.
+- **A worktree-cleanup scope that looks like an option is a usage error.**
+  `ai-specs worktree-cleanup --dry-run --submodule` used to consume `--submodule`
+  as the scope value and run a real cleanup; `--dry-run` now never mutates.
+- **`plan-build-gate` reads the changes directory literally.** A checkout whose
+  path contains `[` or `*` no longer makes the gate treat a glob as the plan
+  lookup, which refused every production write.
+
 ## [0.26.2] — 2026-11-22
 
 First published release of the 0.26 line. The `v0.26.0` and `v0.26.1` tags exist

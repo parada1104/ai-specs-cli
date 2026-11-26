@@ -221,6 +221,15 @@ _ledger_grade() {
   fi
   if [ "$active" = 1 ] && [ "$decision" != allow ]; then
     echo "${prefix}: ${decision} at ${checkpoint} — ${reason:-no primary item} (Tracker advisory)." >&2
+    return 0
+  fi
+  # A missing row is not silent even when warn mode allows it (S5): name the
+  # checkpoint and identity, and the way to settle it.
+  if [ "$active" = 1 ] && [ "$decision" = allow ] && [ "$reason" = needs-item ]; then
+    local identity
+    identity="$(printf '%s' "$out" | "$bin" tracker field identity.change 2>/dev/null)"
+    [ -n "$identity" ] || identity="$(printf '%s' "$out" | "$bin" tracker field identity.branch 2>/dev/null)"
+    echo "${prefix}: needs-item at ${checkpoint} for ${identity:-this branch} — link or create the tracker item, or record the exemption (Tracker advisory)." >&2
   fi
   return 0
 }

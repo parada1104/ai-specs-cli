@@ -8,6 +8,17 @@ import (
 	"ai-specs.dev/ai-specs/internal/schema"
 )
 
+// cliServedGateScripts lists the hook scripts the CLI serves instead of
+// materializing them (worktree-gate since T2, tracker-card-gate since T6,
+// plan-build-gate since T7). A file at one of those paths is a stale
+// pre-migration copy, which checkWorktreeGate reports; provenance is not a
+// meaningful question for bytes sync no longer owns.
+var cliServedGateScripts = map[string]bool{
+	"worktree-gate.sh":     true,
+	"tracker-card-gate.sh": true,
+	"plan-build-gate.sh":   true,
+}
+
 // checkGateProvenance is doctor._check_gate_provenance.
 //
 // Warns when a materialized gate's current bytes differ from its recorded
@@ -52,6 +63,9 @@ func (d *Doctor) checkGateProvenance() {
 		}
 		seen := make(map[string]bool)
 		for _, hook := range recipe.RuntimeHooks {
+			if cliServedGateScripts[filepath.Base(hook.Script)] {
+				continue
+			}
 			rel := "ai-specs/recipes/" + rid + "/hooks/" + filepath.Base(hook.Script)
 			if seen[rel] {
 				continue

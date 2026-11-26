@@ -15,32 +15,54 @@ import (
 	"strings"
 
 	"ai-specs.dev/ai-specs/internal/gates"
+	"ai-specs.dev/ai-specs/internal/planbuild"
 )
 
 // gatesUsage is the family's own usage, printed on stdout for --help/-h/help and
 // on stderr after the bare `gates` (same shape as the specs/skills families).
 const gatesUsage = `Usage: ai-specs gates <subcommand> [args]
 Subcommands:
-  premerge <slug> --root <planning-root> [--tier light|standard|full]
+  premerge <slug> --root <planning-root> [--tier none|light|standard] [--change <name>] [--base <ref>]
                              Check the archived artifacts and staged evidence
 Run 'ai-specs gates premerge --help' for full options.
 `
 
-const gatesPremergeUsage = `Usage: ai-specs gates premerge <slug> --root <planning-root> [--tier light|standard|full] [--stage pre-merge|pre-archive]
+const gatesPremergeUsage = `Usage: ai-specs gates premerge <slug> --root <planning-root> [--tier none|light|standard] [--stage pre-merge|pre-archive] [--change <name>] [--base <ref>]
 
-Check the pre-merge archive/artifact gates for one change: tier minimum files,
-staged verification evidence, and (Standard/Full) canonical spec promotion
-parity. Read-only: nothing is written, and canonical specs are never composed.
+In ` + "odd" + ` mode the change comes from the current branch (odd/tasks/<change>.md):
+<slug> is accepted and ignored, the plan and the promotion parity of its deltas
+are validated, and no OpenSpec archive or tier minimum is required. The mode is
+resolved from the project manifest, exactly as the pre-tool-use gate resolves it.
+
+Check the pre-merge archive/artifact gates for one change: the plan grammar,
+staged verification evidence, and canonical spec promotion parity whenever the
+change carries a delta.
+Read-only: nothing is written, and canonical specs are never composed.
 
 Arguments:
-  <slug>              Change slug under openspec/changes/
+  <slug>              Change slug under openspec/changes/. Optional when
+                      --change is given or the branch resolves the change.
 
 Options:
   --root <path>       Resolved planning root (never the process cwd; a subrepo
                       request passes the proven superproject root). Required.
-  --tier <tier>       Planning depth: light, standard or full (default: infer
-                      from the tasks.md Depth: line)
-  --stage <stage>     Enforcement stage: pre-merge or pre-archive
+  --change <name>     Explicit change override, for CI and detached HEAD. A
+                      positional <slug> wins over it. Without either, the change
+                      is the folder paired by the branch, or the only active one.
+  --base <ref>        Ref the branch is diffed against by the objective
+                      refutations (R-a, R-b) of a none change. Default: the
+                      project's [recipes.git-pr-flow.config] base_branch, tried
+                      as origin/<base>, <base>, then main or master. CI passes
+                      the pull request's base sha here.
+  --tier <tier>       Coherence assertion, never a choice: the tier is derived
+                      from the artifacts (none without a plan, light with a plan
+                      alone, standard with a plan and a delta) and a value that
+                      contradicts them blocks. The former full tier was removed:
+                      declaring it blocks with a migration message pointing at
+                      standard.
+  --stage <stage>     Enforcement stage: pre-merge or pre-archive. pre-archive
+                      is an openspec stage; odd mode archives with 'changes
+                      archive' and grades it with pre-merge
                       (default: pre-merge)
   --help, -h          Show this help
 `
@@ -70,9 +92,13 @@ func runGatesDispatch(args []string, stdout, stderr io.Writer) int {
 // --stage) and the Python main()'s reporting.
 func runGatesPremerge(args []string, stdout, stderr io.Writer) int {
 	slug := ""
+	positional := false
+	override := ""
+	changeFlag := false
 	root := ""
 	var tier *string
 	stage := "pre-merge"
+	var baseValue *string
 	usageError := func(message string) int {
 		fmt.Fprintln(stderr, message)
 		fmt.Fprintln(stderr, "Run 'ai-specs gates premerge --help' for usage.")
@@ -115,41 +141,125 @@ func runGatesPremerge(args []string, stdout, stderr io.Writer) int {
 			stage = args[i]
 		case strings.HasPrefix(arg, "--stage="):
 			stage = strings.TrimPrefix(arg, "--stage=")
+		case arg == "--change":
+			if i+1 >= len(args) {
+				return usageError("ERROR: --change requires a value")
+			}
+			changeFlag = true
+			i++
+			override = args[i]
+		case strings.HasPrefix(arg, "--change="):
+			changeFlag = true
+			override = strings.TrimPrefix(arg, "--change=")
+		case arg == "--base":
+			if i+1 >= len(args) {
+				return usageError("ERROR: --base requires a value")
+			}
+			i++
+			value := args[i]
+			baseValue = &value
+		case strings.HasPrefix(arg, "--base="):
+			value := strings.TrimPrefix(arg, "--base=")
+			baseValue = &value
 		case strings.HasPrefix(arg, "-"):
 			return usageError("ERROR: unknown flag: " + arg)
-		case slug == "":
-			slug = arg
 		default:
-			return usageError("ERROR: unexpected positional argument: " + arg)
+			if positional {
+				return usageError("ERROR: unexpected positional argument: " + arg)
+			}
+			// An empty argument is an explicit value, not an omitted one (F2):
+			// silently treating it as absent would grade the only active change.
+			if arg == "" {
+				return usageError("ERROR: empty change argument: name a change or omit the argument entirely")
+			}
+			positional = true
+			slug = arg
 		}
 	}
+	if changeFlag && override == "" {
+		return usageError("ERROR: --change requires a non-empty value")
+	}
 
-	if slug == "" {
+	// D': the positional slug wins silently over --change, which is the general
+	// override; with neither, the mode's change ladder resolves the change. The
+	// missing-argument error stays exactly as it was when resolution fails.
+	change := slug
+	source := "positional"
+	if change == "" && override != "" {
+		change = override
+		source = "override"
+	}
+	if change == "" && root != "" {
+		if resolved, err := planbuild.ResolveChange(root, planbuild.ResolveRepo(root), planbuild.Branch(root), ""); err == nil {
+			change = resolved
+			source = "resolved"
+		}
+	}
+	if change == "" {
 		return usageError("ERROR: missing required argument: <slug>")
 	}
+	// The verdict prints, and the guardian grades, the normalized change: a
+	// branch-shaped override (CI passes GITHUB_HEAD_REF) keeps its last segment.
+	change = planbuild.NormalizeChange(change)
 	if root == "" {
 		return usageError("ERROR: missing required option: --root")
 	}
-	if tier != nil && *tier != gates.TierLight && *tier != gates.TierStandard && *tier != gates.TierFull {
-		return choiceError("--tier", *tier, gates.TierLight, gates.TierStandard, gates.TierFull)
+	if tier != nil && *tier != gates.TierNone && *tier != gates.TierLight &&
+		*tier != gates.TierStandard && *tier != gates.TierFull {
+		return choiceError("--tier", *tier, gates.TierNone, gates.TierLight, gates.TierStandard)
 	}
 	if stage != "pre-merge" && stage != "pre-archive" {
 		return choiceError("--stage", stage, "pre-merge", "pre-archive")
 	}
 
+	mode := planbuild.ResolveRepo(root)
+	// pre-archive is an openspec stage: it grades openspec/changes/<slug>/, a tree
+	// odd mode does not use, and running it there blocked every odd change (T18).
+	if stage == "pre-archive" && mode == planbuild.ModeOdd {
+		return usageError("ERROR: --stage pre-archive is an openspec stage: odd mode archives " +
+			"with 'ai-specs changes archive' and grades the result with 'gates premerge'")
+	}
+	// In odd mode a positional slug is accepted and ignored: the change comes from
+	// the branch unless an override named one.
+	if stage == "pre-merge" && mode == planbuild.ModeOdd && source == "positional" {
+		change, _ = planbuild.ChangeFromBranch(planbuild.Branch(root))
+	}
+	// The graded change becomes a path inside the planning tree, so a name that is
+	// not a single segment is a usage error, never a folder to grade (R5).
+	if change != "" && !planbuild.ValidChangeName(change) {
+		return usageError(fmt.Sprintf(
+			"ERROR: invalid change name: %s (expected a single path segment)", change))
+	}
+
 	var result gates.Result
-	if stage == "pre-archive" {
-		result = gates.CheckPrearchive(root, slug, tier)
-	} else {
-		result = gates.CheckPremerge(root, slug, tier)
+	switch {
+	case stage == "pre-archive":
+		result = gates.CheckPrearchive(root, change, tier, baseValue)
+	case mode == planbuild.ModeOdd:
+		result = gates.CheckPremergeOdd(root, change, baseValue)
+	default:
+		result = gates.CheckPremerge(root, change, tier, baseValue)
+	}
+	// A refutation that could not be applied is said out loud, never silently
+	// skipped, and never turned into a blocker: the verdict alone decides the exit.
+	note := func() {
+		for _, text := range result.Notes {
+			fmt.Fprintf(stderr, "premerge-guardian: NOTE: %s\n", text)
+		}
 	}
 	if result.OK {
-		fmt.Fprintf(stdout, "premerge-guardian: OK (%s)\n", result.Tier)
+		if source == "positional" {
+			fmt.Fprintf(stdout, "premerge-guardian: OK (%s)\n", result.Tier)
+		} else {
+			fmt.Fprintf(stdout, "premerge-guardian: OK (%s, change %s)\n", result.Tier, change)
+		}
+		note()
 		return 0
 	}
 	fmt.Fprintln(stderr, "premerge-guardian: BLOCKED")
 	for _, blocker := range result.Blockers {
 		fmt.Fprintf(stderr, "  - %s\n", blocker)
 	}
+	note()
 	return 1
 }

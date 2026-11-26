@@ -27,6 +27,15 @@ RUNTIME_COMMAND_DIRS = {
     "omp": ".omp/commands",
 }
 
+# Execution modes the plan-build recipe resolves from its manifest config.
+MODES = ("odd", "openspec")
+# The branch and base ref a seeded fixture repo works on, exposed to the runner:
+# required_git_config substitutes <branch>, required_commit_trailer needs a range.
+# The branch's last segment is the change ODD pairs the plan with, so it matches
+# the default slug `signup-validation`.
+FIXTURE_BRANCH = "feat/signup-validation"
+FIXTURE_BASE_REF = "development"
+
 
 def recipe_version(catalog_root: Path, recipe_id: str) -> str:
     text = (catalog_root / "recipes" / recipe_id / "recipe.toml").read_text()
@@ -36,6 +45,15 @@ def recipe_version(catalog_root: Path, recipe_id: str) -> str:
     return match.group(1)
 
 
+def _with_mode(extra_recipes: str, mode: str) -> str:
+    """Insert the recipe's `mode` config without defining its table twice."""
+    header = "[recipes.plan-build-flow.config]"
+    line = f'mode = "{mode}"'
+    if header not in extra_recipes:
+        return f"\n{header}\n{line}\n" + extra_recipes
+    return extra_recipes.replace(header, f"{header}\n{line}", 1)
+
+
 def write_manifest(
     root: Path,
     *,
@@ -43,13 +61,18 @@ def write_manifest(
     version: str,
     extra_recipes: str = "",
     agents: list[str] | None = None,
+    mode: str = "openspec",
 ) -> Path:
+    if mode not in MODES:
+        raise ValueError(f"mode must be one of {MODES}: {mode!r}")
     ai_specs = root / "ai-specs"
     ai_specs.mkdir(parents=True, exist_ok=True)
     (ai_specs / "skills").mkdir(exist_ok=True)
     (ai_specs / "commands").mkdir(exist_ok=True)
     enabled = agents or ["claude"]
     agents_lit = "[" + ", ".join(f"'{a}'" for a in enabled) + "]"
+    if recipe_id == "plan-build-flow":
+        extra_recipes = _with_mode(extra_recipes, mode)
     manifest = ai_specs / "ai-specs.toml"
     manifest.write_text(
         "[project]\nname = 'eval-fixture'\n\n"
@@ -131,7 +154,10 @@ def setup_runtime_skills(
             "# Eval fixture\n\n"
             f"Enabled recipe: `{recipe_id}` (skill `{skill_id}`).\n\n"
             "## Workflow\n\n"
-            "- Classify change depth (full/standard/light) before production edits.\n"
+            "- The change tier is derived from the artifacts the branch carries "
+            "(none / light / standard): never declared and never estimated from size.\n"
+            "- none: no plan, no delta, no change folder; light: a plan alone, or a "
+            "delta alone; standard: a plan and a delta.\n"
             "- Write planning artifacts, present the plan, wait for authorization.\n"
             "- Do not implement production code during planning.\n"
             "- Follow the bound VCS merge-workflow skill for PR/MR merge and cleanup.\n"
@@ -203,30 +229,52 @@ def seed_authorized_plan(
     *,
     slug: str = "signup-validation",
     tier: str = "standard",
+    mode: str = "openspec",
 ) -> Path:
-    """Seed a reviewable plan folder so build/archive scenarios start authorized."""
-    change = root / "openspec" / "changes" / slug
-    change.mkdir(parents=True, exist_ok=True)
-    (change / "tasks.md").write_text(
-        f"# Tasks: {slug}\n\n"
-        f"Depth: {tier}\n\n"
-        "## Intent\n\n"
-        "Add email/password validation to src/forms/signup.py.\n\n"
-        "## Tasks\n\n"
-        "- [ ] Reject empty email and password\n"
-        "- [ ] Reject emails without '@'\n"
-        "- [ ] Keep return shape as a dict on success\n"
+    """Seed an authorized plan so build/archive scenarios start from a valid one.
+
+    The plan carries the graded grammar (`## Specs` / `## Tasks` / `## Verification`
+    / `## Log`) and no declared tier: the tier is derived from these artifacts.
+    `tier` is kept for callers and only decides whether a delta is seeded (light).
+    """
+    if mode not in MODES:
+        raise ValueError(f"mode must be one of {MODES}: {mode!r}")
+    if mode == "odd":
+        change = root / "odd" / "changes" / slug
+        plan_path = root / "odd" / "tasks" / f"{slug}.md"
+    else:
+        change = root / "openspec" / "changes" / slug
+        plan_path = change / "tasks.md"
+    request = (
+        "Necesito implementar validación de input en el formulario de signup "
+        "(src/forms/signup.py)."
     )
-    if tier in {"standard", "full"}:
-        spec = change / "specs" / "signup-validation" / "spec.md"
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text(
+        f"# {slug}\n\n"
+        f"Plan and delta for email/password validation in `src/forms/signup.py`.\n\n"
+        "## Specs\n\n"
+        f'- **S1.** Reject an empty email or password — *"{request}"*\n'
+        f'- **S2.** Reject an email without `@` — *"{request}"*\n\n'
+        "## Tasks\n\n"
+        "| ID | Spec | Tarea | Ruta | Commit |\n"
+        "|----|------|-------|------|--------|\n"
+        "| T1 | S1, S2 | Validate signup inputs and test the rejection paths "
+        "| worker | pending |\n\n"
+        "## Verification\n\n"
+        "- **S1: PASS** — `./src/forms/signup.py`, exit 0\n"
+        "- **S2: PASS** — `./src/forms/signup.py`, exit 0\n\n"
+        "## Log\n\n"
+        f"- **L1** — {request}\n"
+    )
+    if tier != "light":
+        spec = change / "specs" / "forms" / "spec.md"
         spec.parent.mkdir(parents=True, exist_ok=True)
         spec.write_text(
-            "# Spec: signup validation\n\n"
-            "## Requirement: Validate signup inputs\n\n"
-            "signup() SHALL reject empty email/password and emails without '@'.\n"
+            "## ADDED Requirements\n\n"
+            "### Requirement: Validate signup inputs\n\n"
+            "signup() SHALL reject an empty email or password and an email without `@`.\n"
         )
-    if tier == "full":
-        (change / "design.md").write_text("# Design\n\nInline validation in signup().\n")
     return change
 
 def seed_monorepo_apps(
@@ -258,6 +306,24 @@ def _git(repo: Path, *args: str) -> str:
         capture_output=True,
         text=True,
     ).stdout
+
+
+def seed_fixture_branch(
+    root: Path,
+    *,
+    branch: str = FIXTURE_BRANCH,
+    base_ref: str = FIXTURE_BASE_REF,
+) -> tuple[str, str]:
+    """Put a committed fixture repo on `branch` over `base_ref`; return both.
+
+    Call after the baseline commit: `base_ref` is created at that commit and the
+    working branch checks out over it, so a scenario's commits form
+    `<base_ref>..HEAD` for `required_commit_trailer` and `branch.<branch>.*`
+    reads work for `required_git_config`.
+    """
+    _git(root, "branch", "-f", base_ref, "HEAD")
+    _git(root, "checkout", "-q", "-B", branch)
+    return branch, base_ref
 
 
 def _make_bare_submodule_source(sources_dir: Path, *, label: str) -> Path:

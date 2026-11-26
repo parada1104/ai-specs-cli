@@ -1,0 +1,12 @@
+id = "ac_mode_odd_artifacts"
+recipe_id = "plan-build-flow"
+prompt_file = "prompt.txt"
+mode = "plan"
+fixture_mode = "odd"
+slug = "signup-validation"
+description = "In an odd project every artifact lands under odd/ and nothing under openspec/"
+required_path_globs = [
+  "odd/tasks/signup-validation.md",
+  "odd/changes/signup-validation/specs/forms/spec.md",
+]
+required_absent_path_globs = ["openspec/**"]

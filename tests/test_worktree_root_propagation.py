@@ -8,7 +8,7 @@ prove, with a temporary Git main checkout plus a linked worktree:
 1. ``ai-specs sync <worktree>`` with the CLI invoked from an unrelated cwd
    treats the explicit worktree path as the project root: every derived
    artifact (AGENTS.md, ai-specs/.gitignore, ai-specs/.ai-specs.lock, the
-   materialized worktree-flow launcher/legacy/docs/overrides) lands **only**
+   CLI-served hook wiring and the project-cache snapshot) lands **only**
    under the worktree, and the Git **common root** (the main checkout) is
    byte-for-byte untouched.
 
@@ -57,9 +57,7 @@ DERIVED_IN_WORKTREE = (
     "AGENTS.md",
     "ai-specs/.gitignore",
     "ai-specs/.ai-specs.lock",
-    "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh",
-    "ai-specs/recipes/worktree-flow/README.md",
-    "ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh",
+    ".claude/settings.json",
 )
 
 
@@ -68,7 +66,7 @@ def _git(cwd: Path, *args: str) -> None:
                    capture_output=True, text=True)
 
 
-def _scratch_ai_specs_home() -> tuple[Path, Path]:
+def _scratch_ai_specs_home() -> tuple[Path, tempfile.TemporaryDirectory]:
     """Symlink-farm AI_SPECS_HOME over this checkout (cache excluded).
 
     Mirrors the pattern in tests/test_sync_output_verbosity.py so recipe
@@ -163,16 +161,19 @@ class WorktreeRootPropagationSyncTests(unittest.TestCase):
                          "sync with explicit worktree path must NOT touch the "
                          "Git common root / main checkout")
 
-    def test_sync_stamps_launcher_and_builds_gate_into_scratch_cache(self):
+    def test_sync_wires_the_cli_hook_and_builds_no_gate_binary(self):
         wt = self._worktree()
         proc = self._init_and_sync(wt)
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
-        hook = (wt / "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh").read_text()
-        self.assertNotIn("__WORKTREE_GATE_IMPL__", hook)
-        self.assertIn('cli_bin="${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs"', hook)
-        self.assertIn('stamped_gate_mode="always"', hook)
-        self.assertIn('dist/ai-specs', hook)
+        # The gate is CLI-served: the rendered hook carries the CLI command,
+        # no launcher is written, and no separate gate binary is acquired.
+        self.assertFalse(
+            (wt / "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh").exists(),
+            "the gate launcher is never materialized")
+        settings = (wt / ".claude/settings.json").read_text()
+        self.assertIn("worktree-gate --hook", settings)
+        self.assertIn("dist/ai-specs", settings)
         self.assertFalse((self.home / "cache" / "bin" / "worktree-gate").exists(),
                          "sync must not acquire a separate gate binary")
 

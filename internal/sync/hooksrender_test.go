@@ -169,6 +169,19 @@ func TestSyncPruneRefusalKeepsWiringAndLock(t *testing.T) {
 			const launcher = recipe + "hooks/plan-build-gate.sh"
 			const lockRel = "ai-specs/.ai-specs.lock"
 			lockPath := filepath.Join(project, lockRel)
+			// T7 retired the plan-build launcher, so sync no longer writes it: seed
+			// the copy an older sync materialized and the record that owns it.
+			launcherBody := "#!/bin/sh\nexit 0\n"
+			spineWrite(t, filepath.Join(project, launcher), launcherBody, 0o755)
+			seed, err := lock.LoadLock(lockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lock.SetGateBaseline(seed, launcher, lock.Sha256Bytes([]byte(launcherBody)),
+				strPtr("plan-build-flow"), strPtr("hooks/plan-build-gate.sh"))
+			if err := lock.WriteLock(lockPath, seed); err != nil {
+				t.Fatal(err)
+			}
 			lockBytes, err := os.ReadFile(lockPath)
 			if err != nil {
 				t.Fatal(err)
@@ -229,7 +242,10 @@ func TestSyncPruneRefusalKeepsWiringAndLock(t *testing.T) {
 				t.Fatalf("refusal rc=%d, stderr=%q, stdout=%q; want rc=1 and %q", rc, stderr, out, wantError)
 			}
 			after, afterModes := hooksSnapshot(t, project)
-			for _, rel := range []string{recipe + "README.md", ".claude/settings.json", lockRel} {
+			// The recipe README is no longer materialized (T5/S1), so the managed
+			// artifacts this snapshot must still see live outside the recipe tree
+			// (the blocked-leaf variant replaces the gate launcher with a directory).
+			for _, rel := range []string{".claude/settings.json", lockRel} {
 				if before[rel] == "" {
 					t.Errorf("%s missing from fixture", rel)
 				}

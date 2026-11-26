@@ -232,7 +232,7 @@ func planRecipeSkillOrphans(recipeRoot, catalogDir string, enabled []materialize
 }
 
 // planRecipeArtifactPrune uses managed ownership, not the skill-hash recipes table.
-func planRecipeArtifactPrune(root string, enabledIDs []string, hooks []any) (func() error, error) {
+func planRecipeArtifactPrune(root string, enabledIDs []string, hooks []any) (func(io.Writer) error, error) {
 	lockPath := filepath.Join(root, "ai-specs", ".ai-specs.lock")
 	lk, err := lock.LoadLock(lockPath)
 	if err != nil {
@@ -277,7 +277,9 @@ func planRecipeArtifactPrune(root string, enabledIDs []string, hooks []any) (fun
 			stale = append(stale, rel)
 		}
 	}
-	return func() error { return applyRecipeArtifactPrune(root, lockPath, doomed, stale, recipeDir, enabled) }, nil
+	return func(out io.Writer) error {
+		return applyRecipeArtifactPrune(root, lockPath, doomed, stale, recipeDir, enabled, out)
+	}, nil
 }
 
 // recipeRetired reports whether the record names a recipe the manifest no
@@ -297,7 +299,20 @@ func managedTargetAbsent(root, rel string) bool {
 	return os.IsNotExist(err)
 }
 
-func applyRecipeArtifactPrune(root, lockPath string, doomed, stale []string, recipeDir func(string, map[string]any) string, enabled map[string]bool) error {
+func applyRecipeArtifactPrune(root, lockPath string, doomed, stale []string, recipeDir func(string, map[string]any) string, enabled map[string]bool, out io.Writer) error {
+	// Retirement is unconditional and runs before the early return: the cleanup
+	// override is not a managed template, a recipe README is no longer a project
+	// artifact, and the vault MCP wrapper is served by `ai-specs mcp vault-fs`,
+	// so no plan ever lists any of them (T3/T4/T5, S1/S5).
+	if err := retireWorktreeCleanupOverride(root, lockPath, out); err != nil {
+		return err
+	}
+	if err := retireRecipeREADMEDocs(root, lockPath, out); err != nil {
+		return err
+	}
+	if err := retireVaultMCPScript(root, lockPath, out); err != nil {
+		return err
+	}
 	if len(doomed) == 0 && len(stale) == 0 {
 		return nil
 	}
@@ -318,19 +333,18 @@ func applyRecipeArtifactPrune(root, lockPath string, doomed, stale []string, rec
 		if err := projectWriteGuard(root, path, false); err != nil {
 			return err
 		}
+		if label, modified := retiredGateLauncherModified(lk.Managed[rel], rel, path); modified {
+			// A user-edited gate launcher cannot be preserved: the CLI serves the
+			// gate now, so the file would be dead weight. Say so once.
+			fmt.Fprintf(out, "  ✓ removed user-modified %s %s (ai-specs now serves it from the CLI)\n", label, rel)
+		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		// Sweep only emptied parents. Overrides and other untracked contents
 		// keep their directories, even when the recipe has been disabled.
-		for parent, base := filepath.Dir(path), filepath.Join(root, dir); shared.TemplatePathContained(base, parent); parent = filepath.Dir(parent) {
-			err := os.Remove(parent)
-			if errors.Is(err, syscall.ENOTEMPTY) || errors.Is(err, syscall.EEXIST) {
-				break
-			}
-			if err != nil && !os.IsNotExist(err) {
-				return err
-			}
+		if err := removeEmptiedParents(filepath.Join(root, dir), path); err != nil {
+			return err
 		}
 		delete(lk.Managed, rel)
 		changed = true
@@ -347,6 +361,35 @@ func applyRecipeArtifactPrune(root, lockPath string, doomed, stale []string, rec
 		return lock.WriteLock(lockPath, lk)
 	}
 	return nil
+}
+
+// retiredGateLaunchers labels the hook scripts the CLI now serves, keyed by
+// their materialized path (cli-served-recipes: F1 worktree-gate, F2
+// tracker-card-gate, F3 plan-build-gate).
+var retiredGateLaunchers = map[string]string{
+	shared.HookScriptRelPath("worktree-flow", worktreeGateLauncherScript):  "worktree-gate launcher",
+	shared.HookScriptRelPath("trello-mcp-workflow", trackerCardGateScript): "tracker-card-gate launcher",
+	shared.HookScriptRelPath("plan-build-flow", planBuildGateScript):       "plan-build-gate launcher",
+}
+
+// retiredGateLauncherModified reports whether rel is one of the retired gate
+// launchers the CLI now serves, with bytes differing from the recorded baseline:
+// a copy the user edited and that sync is about to remove. The label names it in
+// the notice.
+func retiredGateLauncherModified(record map[string]any, rel, path string) (string, bool) {
+	label, retired := retiredGateLaunchers[rel]
+	if !retired {
+		return "", false
+	}
+	if kind, _ := record["kind"].(string); kind != "gate" {
+		return "", false
+	}
+	recorded, _ := record["sha256"].(string)
+	if recorded == "" {
+		return "", false
+	}
+	current, err := lock.Sha256OfFile(path)
+	return label, err == nil && current != recorded
 }
 
 // orphanScopePrefix mirrors Python _APPLY_SCOPE_MESSAGE_PREFIX. The in-project
@@ -377,6 +420,22 @@ func applyRecipeSkillOrphans(in OrphanCleanupInput, remove func(path string) err
 				return err
 			}
 			fmt.Fprintf(out, "  ✓ removed orphaned %s%s/skills/%s\n", orphanScopePrefix("recipe_skills"), recipe, skill)
+		}
+	}
+	return nil
+}
+
+// removeEmptiedParents removes the parents of path that became empty, never
+// climbing above base, so a directory still holding untracked contents (an
+// overrides tree) survives. An absent parent is fine.
+func removeEmptiedParents(base, path string) error {
+	for parent := filepath.Dir(path); shared.TemplatePathContained(base, parent); parent = filepath.Dir(parent) {
+		err := os.Remove(parent)
+		if errors.Is(err, syscall.ENOTEMPTY) || errors.Is(err, syscall.EEXIST) {
+			return nil
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return err
 		}
 	}
 	return nil

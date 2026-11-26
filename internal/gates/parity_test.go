@@ -38,7 +38,7 @@ func parityActive(t *testing.T, root, slug, delta, tier string, evidence *string
 	t.Helper()
 	folder := filepath.Join(root, "openspec", "changes", slug)
 	mkdirAll(t, folder)
-	writeFile(t, filepath.Join(folder, "tasks.md"), "Depth: "+tier+"\n")
+	writeFile(t, filepath.Join(folder, "tasks.md"), planOrFixture("Depth: "+tier+"\n"))
 	writeFile(t, filepath.Join(folder, "proposal.md"), "# proposal\n")
 	writeFile(t, filepath.Join(folder, "specs", "capability", "spec.md"), delta)
 	if evidence != nil {
@@ -128,21 +128,6 @@ func TestPremergePassesForAPromotedStandardChange(t *testing.T) {
 	}
 }
 
-func TestPremergePassesForAPromotedFullChange(t *testing.T) {
-	root := parityRepo(t)
-	evidence := "## Verify evidence\n- Verdict: PASS\n- Command: ./tests/run.sh\n" +
-		"- Exit: 0\n- Date: 2026-08-07\n- Commit: 1234567\n" +
-		"- ready_for_archive: true\n\n" +
-		"## Success-criteria mapping\n- Criterion 1: PASS — criterion one\n"
-	promote(t, root, "merged-full", promotedDelta)
-	archived := parityArchive(t, root, "merged-full", promotedDelta, "full", repoString(evidence))
-	writeFile(t, filepath.Join(archived, "proposal.md"),
-		"# proposal\n\n## Success Criteria\n\n- first criterion\n")
-	if result := CheckPremerge(root, "merged-full", tierOpt("full")); !result.OK {
-		t.Fatalf("promoted full archive = %+v, want OK", result)
-	}
-}
-
 func TestUnresolvedDeltaBlocksEvenWithAConformingReport(t *testing.T) {
 	root := parityRepo(t)
 	parityActive(t, root, "unresolved", unresolvedDelta, "standard", repoString(standardReport))
@@ -181,7 +166,7 @@ func TestLightChangeWithoutSpecsIsUnaffected(t *testing.T) {
 	root := parityRepo(t)
 	folder := filepath.Join(root, "openspec", "changes", "light-change")
 	mkdirAll(t, folder)
-	writeFile(t, filepath.Join(folder, "tasks.md"), "Depth: light\n")
+	writeFile(t, filepath.Join(folder, "tasks.md"), planOrFixture("Depth: light\n"))
 	writeFile(t, filepath.Join(folder, "proposal.md"), "# proposal\n")
 
 	if result := CheckPrearchive(root, "light-change", tierOpt("light")); !result.OK {

@@ -6,6 +6,22 @@ import (
 	"testing"
 )
 
+// The archive folder name never decides the grammar, but the folder must hold
+// something of the change: an empty one proves nothing (R2).
+func TestEmptyArchiveFolderDoesNotSatisfyTheRequirement(t *testing.T) {
+	for _, name := range []string{"2026-01-02-empty-change", "empty-change"} {
+		t.Run(name, func(t *testing.T) {
+			root := newRepo(t)
+			mkdirAll(t, filepath.Join(root, "openspec", "changes", "archive", name))
+			result := CheckPremerge(root, "empty-change", tierOpt("light"))
+			if result.OK {
+				t.Fatal("an empty archive folder must not satisfy the requirement")
+			}
+			assertBlockerContains(t, result, "is empty: an archive must hold the change's plan (tasks.md) or its delta")
+		})
+	}
+}
+
 func TestPassesWhenArchivedWithCanonicalDatedName(t *testing.T) {
 	root := newRepo(t)
 	slug := "dated-change"
@@ -159,8 +175,12 @@ func TestBlocksWhenArchiveRootIsASymlink(t *testing.T) {
 	assertBlockerContains(t, result, "archive root", "symlink")
 }
 
+// The missing-archive rule is pinned on a change that exists: an active folder
+// with no archive at all still blocks and names both accepted forms. A change
+// with no artifact at all is the `none` declaration of S16 (refute_test.go).
 func TestMissingArchiveNamesBothAcceptedForms(t *testing.T) {
 	root := newRepo(t)
+	activeWith(t, root, "nowhere", "Depth: light\n", archiveOpts{})
 	result := CheckPremerge(root, "nowhere", tierOpt("light"))
 	if result.OK {
 		t.Fatal("expected a missing-archive blocker")

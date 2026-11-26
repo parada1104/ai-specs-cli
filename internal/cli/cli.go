@@ -53,6 +53,9 @@ const (
 	routeRecipeInitVerb                     // native: `recipe init`, port of lib/recipe-init.sh (GO-20 U7-2)
 	routeSpecs                              // native: the `specs` family remainder — usage/help/unknown (GO-20 U2e U-A)
 	routeSpecsPromote                       // native: `specs promote`, port of lib/_internal/spec_promotion.py (GO-20 U2e U-A)
+	routeChanges                            // native: the `changes` family remainder — usage/help/unknown (I5/P4)
+	routeChangesArchive                     // native: `changes archive`, the mechanical pre-merge archive (I5/P4)
+	routeChangesStart                       // native: `changes start --none`, the local no-plan declaration (T14/S19)
 	routeGates                              // native: the `gates` family remainder — usage/help/unknown (GO-20 U2e U-B)
 	routeGatesPremerge                      // native: `gates premerge`, port of lib/_internal/premerge_guardian.py (GO-20 U2e U-B)
 	routeTracker                            // native: the `tracker` family remainder — usage/help/unknown (GO-20 U2e U-C)
@@ -61,9 +64,13 @@ const (
 	routeTrackerField                       // native: `tracker field`, JSON value reader for the hook helpers (GO-20 U2e U-F)
 	routeTrackerClassify                    // native: `tracker classify`, the hook event classifier (GO-20 U2e U-F2b)
 	routeHook                               // native: the `hook` family remainder — usage/help/unknown (GO-20 U2e U-F2a)
-	routeHookField                          // native: `hook field`, JSON value reader for plan-build-gate.sh (GO-20 U2e U-F2a)
+	routeHookField                          // native: `hook field`, JSON value reader for the gate hosts (GO-20 U2e U-F2a)
 	routeHookNormalizePath                  // native: `hook normalize-path`, canonical hook target (GO-20 U2e U-F2a)
 	routeWorktreeGate                       // direct passthrough to the importable worktree-gate runner
+	routeWorktreeCleanup                    // native: `worktree-cleanup`, the CLI-served post-merge cleanup (T3)
+	routeMCPVaultFS                         // native: `mcp vault-fs`, the CLI-served vault filesystem MCP server (T4)
+	routeTrackerCardGate                    // native: `tracker-card-gate`, the CLI-served Tracker card gate (T6)
+	routePlanBuildGate                      // native: `plan-build-gate`, the CLI-served planning gate (T7)
 	routeUnknown                            // unknown command: usage error, exit 2
 )
 
@@ -104,14 +111,17 @@ var native = map[string]route{
 	"hub":                 {kind: routeHub},
 	// init is native for the classic path and delegates the wizard to the shim
 	// itself (odd/tasks/go-20-u4-init.md S6).
-	"init":          {kind: routeInit},
-	"version":       {kind: routeVersion},
-	"-v":            {kind: routeVersion},
-	"--version":     {kind: routeVersion},
-	"help":          {kind: routeHelp},
-	"-h":            {kind: routeHelp},
-	"--help":        {kind: routeHelp},
-	"worktree-gate": {kind: routeWorktreeGate},
+	"init":              {kind: routeInit},
+	"version":           {kind: routeVersion},
+	"-v":                {kind: routeVersion},
+	"--version":         {kind: routeVersion},
+	"help":              {kind: routeHelp},
+	"-h":                {kind: routeHelp},
+	"--help":            {kind: routeHelp},
+	"worktree-gate":     {kind: routeWorktreeGate},
+	"tracker-card-gate": {kind: routeTrackerCardGate},
+	"plan-build-gate":   {kind: routePlanBuildGate},
+	"worktree-cleanup":  {kind: routeWorktreeCleanup},
 }
 
 // Route resolves the dispatcher decision for args. Bare invocation (no args)
@@ -189,6 +199,19 @@ func Route(args []string) route {
 		}
 		return route{kind: routeSpecs}
 	}
+	// `changes archive` (I5/P4) and `changes start` (T14/S19) are the family's
+	// verbs; the root dispatcher has no `archive` or `start` of its own, and
+	// every remaining arm of the family (bare `changes`, `--help|-h|help`,
+	// unknown subcommands) resolves to the native family remainder.
+	if args[0] == "changes" {
+		if len(args) > 1 && args[1] == "archive" {
+			return route{kind: routeChangesArchive}
+		}
+		if len(args) > 1 && args[1] == "start" {
+			return route{kind: routeChangesStart}
+		}
+		return route{kind: routeChanges}
+	}
 	// `gates premerge` (GO-20 U2e U-B) is the family's only verb; the root
 	// dispatcher has no `premerge` of its own, and every remaining arm of the
 	// family (bare `gates`, `--help|-h|help`, unknown subcommands) resolves to
@@ -198,6 +221,15 @@ func Route(args []string) route {
 			return route{kind: routeGatesPremerge}
 		}
 		return route{kind: routeGates}
+	}
+	// `mcp vault-fs` (T4/S5) is the family's only verb: it serves the vault
+	// filesystem MCP server the recipe used to materialize as a script. Every
+	// other arm of the family stays an unknown command.
+	if args[0] == "mcp" {
+		if len(args) > 1 && args[1] == "vault-fs" {
+			return route{kind: routeMCPVaultFS}
+		}
+		return route{kind: routeUnknown}
 	}
 	// `tracker slug` and `tracker evidence` (GO-20 U2e U-C) are the family's only
 	// verbs; every remaining arm (bare `tracker`, `--help|-h|help`, unknown
@@ -240,7 +272,24 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 		if data, err := os.ReadFile(filepath.Join(home, "VERSION")); err == nil {
 			version = strings.TrimRight(string(data), "\r\n")
 		}
+		if _, hookMode := worktreeGateHookRequest(args[1:]); hookMode {
+			return runWorktreeGateHook(home, stdin, stdout, stderr, version)
+		}
 		return runner.Run(args[1:], stdin, stdout, stderr, version)
+	case routeWorktreeCleanup:
+		return runWorktreeCleanup(home, args[1:], stdout, stderr)
+	case routeTrackerCardGate:
+		// Hook mode takes no arguments; the direct host mode takes its own
+		// (--root/--checkpoint/--stage) and is selected from the same verb.
+		return runTrackerCardGate(home, args[1:], stdin, stdout, stderr)
+	case routePlanBuildGate:
+		// Pre-tool-use hook only: one event on stdin, no arguments, like the
+		// script it replaces.
+		return runPlanBuildGate(args[1:], stdin, stdout, stderr)
+	case routeMCPVaultFS:
+		// args[0]=mcp, args[1]=vault-fs: the verb parses no arguments, like the
+		// script it replaces.
+		return runVaultFSMCP(stdin, stdout, stderr)
 	case routeVersion:
 		if len(args) > 1 {
 			fmt.Fprintf(stderr, "ERROR: unexpected positional argument: %s\n", args[1])
@@ -346,6 +395,15 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 	case routeSpecsPromote:
 		// args[0]=specs, args[1]=promote: the verb's own grammar sees args[2:].
 		return runSpecsPromote(args[2:], stdout, stderr)
+	case routeChanges:
+		// args[0]=changes: the family remainder sees the subcommand slot.
+		return runChangesDispatch(args[1:], stdout, stderr)
+	case routeChangesArchive:
+		// args[0]=changes, args[1]=archive: the verb's own grammar sees args[2:].
+		return runChangesArchive(args[2:], stdout, stderr)
+	case routeChangesStart:
+		// args[0]=changes, args[1]=start: the verb's own grammar sees args[2:].
+		return runChangesStart(args[2:], stdout, stderr)
 	case routeGates:
 		// args[0]=gates: the family remainder sees the subcommand slot.
 		return runGatesDispatch(args[1:], stdout, stderr)

@@ -147,7 +147,10 @@ func BuildRecipeMCP(catalogDir string, recipeIDs []string, manifestMCP *mcpObj, 
 		for _, preset := range recipe.presets {
 			existing, present := merged.get(preset.id)
 			if !present {
-				merged.set(preset.id, mcpShallowCopy(preset.config))
+				// A CLI-served preset (T4/S5) renders as the verb, keeping its env
+				// and timeout; the manifest still wins when it already declares the
+				// server, so a project override survives.
+				merged.set(preset.id, mcpShallowCopy(vaultMCPPresetConfig(rid, preset.id, preset.config)))
 				continue
 			}
 			manifestCfg, isObj := existing.(*mcpObj)

@@ -1,0 +1,3 @@
+Corregí el texto del docstring de src/forms/signup.py a
+«Sign-up form handler (no validation yet)».
+Es un one-liner y no quiero ceremonia: nada de plan ni de carpeta de change.

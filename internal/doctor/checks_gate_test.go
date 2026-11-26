@@ -40,20 +40,23 @@ func TestCheckWorktreeGateNotInPlay(t *testing.T) {
 	})
 }
 
-func TestCheckWorktreeGateWarnsForLegacyLauncher(t *testing.T) {
+func TestCheckWorktreeGateWarnsForStaleLauncher(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		launcher   string
 		wantLegacy bool
 	}{
 		{
+			// Any surviving copy is stale: sync stopped materializing the
+			// launcher in T2, so its bytes say nothing about provenance.
 			name:       "old launcher",
 			launcher:   "bin=\"$home/cache/bin/worktree-gate/$stamped_gate_version/$_goos-$_goarch/worktree-gate\"\n# WORKTREE_GATE_VERIFY=1\nstamped_gate_impl=\"go\"\n",
 			wantLegacy: true,
 		},
 		{
-			name:     "new launcher",
-			launcher: "cli_bin=\"${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs\"\nexec \"$cli_bin\" worktree-gate\n",
+			name:       "new launcher",
+			launcher:   "cli_bin=\"${AI_SPECS_HOME:-$HOME/.ai-specs}/dist/ai-specs\"\nexec \"$cli_bin\" worktree-gate\n",
+			wantLegacy: true,
 		},
 		{name: "no launcher"},
 	} {
@@ -69,7 +72,7 @@ func TestCheckWorktreeGateWarnsForLegacyLauncher(t *testing.T) {
 			d.checkWorktreeGate()
 			if tc.wantLegacy {
 				assertChecks(t, d, []Check{
-					{WARN, "worktree-gate", "materialized worktree-gate.sh still resolves the retired separate gate binary", "run ai-specs sync (or ai-specs sync --refresh-gates if the file was customized and preserved)"},
+					{WARN, "worktree-gate", "retired ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh launcher is still present; the CLI serves `ai-specs worktree-gate` now", "rm ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh && ai-specs sync"},
 					{OK, "worktree-gate", fmt.Sprintf("CLI at %s serves worktree-gate; selftest passed", installedCLIPath(d.Home)), ""},
 				})
 			} else {
@@ -85,8 +88,10 @@ func TestCheckWorktreeGateWarnsForRetiredCleanupOverride(t *testing.T) {
 		body string
 		want bool
 	}{
+		// Any surviving copy is a project that has not synced since the
+		// migration: sync removes it, the CLI serves the verb (T3/S1).
 		{"old override", `bin="$home/cache/bin/worktree-gate/1/linux-amd64/worktree-gate"` + "\n", true},
-		{"new override", `exec "$cli_bin" worktree-gate --cleanup` + "\n", false},
+		{"new override", `exec "$cli_bin" worktree-gate --cleanup` + "\n", true},
 		{"absent", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,8 +106,8 @@ func TestCheckWorktreeGateWarnsForRetiredCleanupOverride(t *testing.T) {
 			want := []Check{}
 			if tc.want {
 				want = append(want, Check{WARN, "worktree-gate",
-					"preserved worktree-cleanup.sh override still resolves the retired separate gate binary",
-					"delete ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh and run ai-specs sync (a preserved customized override is not refreshed by --refresh-gates)"})
+					"retired worktree-cleanup.sh override is still present; the CLI serves `ai-specs worktree-cleanup` now",
+					"run ai-specs sync (it removes the override, including a customized copy)"})
 			}
 			want = append(want, Check{OK, "worktree-gate", fmt.Sprintf("CLI at %s serves worktree-gate; selftest passed", installedCLIPath(d.Home)), ""})
 			assertChecks(t, d, want)

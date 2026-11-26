@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import sys
 
+import hashlib
 import os
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -236,50 +238,93 @@ class TestSyncAgentNoAgentsStillEnsuresWorkspace(unittest.TestCase):
 
 
 class TestSyncPreservesUserEditedRecipeDoc(unittest.TestCase):
-    """D4' — recipe docs must follow the lock-tracked preservation policy."""
+    """D4' upgrade path: an older sync's recipe README copy is retired (S1).
 
-    def test_user_edited_recipe_doc_survives_resync(self):
+    A fresh project proves nothing about a copy an OLDER sync materialized, so
+    the upgrade fixture seeds the state that sync left behind: the README on
+    disk plus a lock record ai-specs wrote. A user-edited copy is removed with
+    one notice; a managed one is removed silently. Sync never keeps an editable
+    copy in the project, because the catalog serves the doc.
+    """
+
+    RECIPE = "git-pr-flow"
+    README = Path("ai-specs") / "recipes" / "git-pr-flow" / "README.md"
+    NOTICE = ("  \u2713 removed user-modified recipe README "
+              "ai-specs/recipes/git-pr-flow/README.md "
+              "(ai-specs keeps recipe docs in its catalog)")
+    OLD_BYTES = b"# old recipe readme\n"
+
+    def _synced_project(self, tmp: str) -> Path:
+        workspace = Path(tmp) / "prj"
+        workspace.mkdir()
+        proc = _run("init", str(workspace))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        (workspace / "ai-specs" / "ai-specs.toml").write_text(
+            "[project]\n"
+            "name = 'preserve-doc-fixture'\n\n"
+            "[agents]\n"
+            "enabled = ['claude']\n\n"
+            "[recipes.git-pr-flow]\n"
+            "enabled = true\n"
+            "version = '1.3.0'\n"
+            "[recipes.git-pr-flow.config]\n"
+            "base_branch = 'development'\n",
+            encoding="utf-8",
+        )
+        first = _run("sync", str(workspace))
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertFalse((workspace / self.README).exists(),
+                         "sanity: a fresh sync materializes no recipe doc")
+        return workspace
+
+    def _seed_older_sync(self, workspace: Path, on_disk: bytes) -> None:
+        """Recreate an older sync's README copy plus its managed lock record."""
+        readme = workspace / self.README
+        readme.parent.mkdir(parents=True, exist_ok=True)
+        readme.write_bytes(on_disk)
+        lock = workspace / "ai-specs" / ".ai-specs.lock"
+        lock.write_text(
+            lock.read_text(encoding="utf-8")
+            + f'\n[managed."{self.README.as_posix()}"]\n'
+            + f'sha256 = "{hashlib.sha256(self.OLD_BYTES).hexdigest()}"\n'
+            + 'recipe = "git-pr-flow"\nsource = "README.md"\n'
+            + 'kind = "doc"\npolicy = "auto"\n',
+            encoding="utf-8",
+        )
+
+    def _managed(self, workspace: Path) -> dict:
+        lock = workspace / "ai-specs" / ".ai-specs.lock"
+        return tomllib.loads(lock.read_text(encoding="utf-8")).get("managed", {})
+
+    def test_upgrade_removes_a_user_edited_recipe_doc_with_one_notice(self):
         with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp) / "prj"
-            workspace.mkdir()
-            proc = _run("init", str(workspace))
-            self.assertEqual(proc.returncode, 0, proc.stderr)
-            (workspace / "ai-specs" / "ai-specs.toml").write_text(
-                "[project]\n"
-                "name = 'preserve-doc-fixture'\n\n"
-                "[agents]\n"
-                "enabled = ['claude']\n\n"
-                "[recipes.git-pr-flow]\n"
-                "enabled = true\n"
-                "version = '1.3.0'\n"
-                "[recipes.git-pr-flow.config]\n"
-                "base_branch = 'development'\n",
-                encoding="utf-8",
-            )
-
-            first = _run("sync", str(workspace))
-            self.assertEqual(first.returncode, 0, first.stderr)
-
-            doc = workspace / "ai-specs" / "recipes" / "git-pr-flow" / "README.md"
-            self.assertTrue(doc.is_file(), "recipe doc must materialize on first sync")
-
-            original = doc.read_text(encoding="utf-8")
-            doc.write_text(original + "\n<!-- user edit: local note -->\n", encoding="utf-8")
+            workspace = self._synced_project(tmp)
+            sibling = workspace / "ai-specs" / "recipes" / self.RECIPE / "notes.md"
+            sibling.parent.mkdir(parents=True, exist_ok=True)
+            sibling.write_text("keep me\n", encoding="utf-8")
+            # The recorded sha256 differs from the bytes on disk: the user edited it.
+            self._seed_older_sync(workspace, b"# my own notes\n")
 
             second = _run("sync", str(workspace))
             self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertFalse((workspace / self.README).exists(),
+                             "S1: the project keeps no editable copy")
+            self.assertIn(self.NOTICE, second.stderr)
+            self.assertNotIn(self.README.as_posix(), self._managed(workspace))
+            self.assertEqual(sibling.read_text(encoding="utf-8"), "keep me\n",
+                             "a sibling file is not disturbed")
 
-            self.assertIn(
-                "<!-- user edit: local note -->",
-                doc.read_text(encoding="utf-8"),
-                "user-edited recipe doc must not be clobbered by re-sync (D4')",
-            )
-            combined = second.stdout + second.stderr
-            self.assertIn(
-                "README.md",
-                combined,
-                "sync output must mention the preserved doc",
-            )
+    def test_upgrade_removes_a_managed_recipe_doc_silently(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._synced_project(tmp)
+            # Recorded bytes match the file: ai-specs still owns the copy.
+            self._seed_older_sync(workspace, self.OLD_BYTES)
+
+            second = _run("sync", str(workspace))
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertFalse((workspace / self.README).exists())
+            self.assertNotIn("removed user-modified recipe README", second.stderr)
+            self.assertNotIn(self.README.as_posix(), self._managed(workspace))
 
 
 if __name__ == "__main__":

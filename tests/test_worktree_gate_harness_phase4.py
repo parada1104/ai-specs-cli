@@ -4,20 +4,21 @@ Tasks 4.1-4.4: prove that the thin launcher (Phase 3) changed nothing in how
 the five harnesses consume the gate:
 
 - 4.1  the renderer emits the same bytes for the same resolved-hooks document
-       for claude, cursor, opencode, pi and omp (script_path stability): pinned
-       by running `ai-specs sync` twice in fresh projects and asserting identical
-       bytes, plus asserting every artifact references the launcher's
-       materialized path. The renderer's own byte contract is additionally
-       frozen in internal/sync (`hooksrender_test.go`); these tests own the
-       end-to-end artifact set a synced project really gets.
+       for claude, cursor, opencode, pi and omp (command stability): pinned by
+       running `ai-specs sync` twice in fresh projects and asserting identical
+       bytes, plus asserting every artifact wires the CLI verb and no artifact
+       references a materialized script. The renderer's own byte contract is
+       additionally frozen in internal/sync (`hooksrender_test.go`); these tests
+       own the end-to-end artifact set a synced project really gets.
 - 4.2  the Cursor wrapper still maps exit 2 -> {"permission":"deny"} through
-       the launcher, and the binary's empty stdout does not degrade the deny
+       the CLI, and the binary's empty stdout does not degrade the deny
        decision: the gate message travels on stderr (inherited by the Cursor
        hook process), while stdout stays empty and the deny JSON stays valid.
-- 4.3  spawnSync(SCRIPT, ...) semantics hold for opencode/pi/omp: the launcher
-       must be directly executable (shebang + mode 0755) with no shell.
-- 4.4  live smoke through the real launcher: blocked write on a protected
-       branch, allowed write inside a linked worktree.
+       The wrapper reads the sync-time snapshot through its AI_SPECS_HOME.
+- 4.3  spawnSync(COMMAND, ...) semantics hold for opencode/pi/omp: the shell
+       command the renderer emits runs without a materialized script.
+- 4.4  live smoke through the real catalog launcher: blocked write on a
+       protected branch, allowed write inside a linked worktree.
 
 The Go binary is required for live launcher smoke. Missing-binary
 scenarios fail open with one warning and never exec a planted legacy
@@ -56,8 +57,10 @@ ARTIFACTS = {
 
 # The resolved hook entries the sync pipeline produces for worktree-flow are the
 # ones the shipped recipe declares ([[provides.hooks]] worktree-gate and
-# worktree-gate-shell); sync renders them into the five harness artifacts.
+# worktree-gate-shell). sync renders them as a CLI command; the retired
+# launcher path below must appear in no rendered artifact.
 MATERIALIZED_SCRIPT = "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh"
+CLI_VERB = "worktree-gate --hook"
 
 
 def _recipe_version() -> str:
@@ -149,25 +152,24 @@ class HookRenderByteStabilityTests(unittest.TestCase):
         return _synced_project(Path(tmp.name))
 
     def test_renderer_output_is_byte_identical_to_preexisting_shape(self):
-        # The launcher is transport-only, so every harness artifact must keep
-        # referencing the same materialized script_path and the renderer must
-        # stay deterministic for the same synced project. The
-        # stabilize-workspace-context change replaced the relative
-        # ``const SCRIPT = "..."`` with a runtime module-derived declaration
-        # for opencode/pi/omp; the pinned fragments below assert THAT shape, so
-        # a regression to a relative or machine-specific SCRIPT breaks here.
+        # Every harness artifact wires the CLI verb and resolves the installed
+        # CLI (`dist/ai-specs` first, PATH second); the renderer must stay
+        # deterministic for the same synced project and must never reference a
+        # materialized launcher again.
         expected_fragments = {
-            "claude": MATERIALIZED_SCRIPT,
-            "cursor": MATERIALIZED_SCRIPT,   # wrapper embeds script=...
-            "opencode": f'const SCRIPT = fileURLToPath(new URL("../../{MATERIALIZED_SCRIPT}", import.meta.url));',
-            "pi": f'const SCRIPT = fileURLToPath(new URL("../../{MATERIALIZED_SCRIPT}", import.meta.url));',
-            "omp": f'const SCRIPT = fileURLToPath(new URL("../../{MATERIALIZED_SCRIPT}", import.meta.url));',
+            "claude": CLI_VERB,
+            "cursor": CLI_VERB,              # wrapper embeds the same command
+            "opencode": f'exec \\"$cli\\" {CLI_VERB}',
+            "pi": f'exec \\"$cli\\" {CLI_VERB}',
+            "omp": f'exec \\"$cli\\" {CLI_VERB}',
         }
         project, home = self._project()
         for agent in AGENTS:
             with self.subTest(agent=agent):
                 text = _artifact(project, agent).read_text(encoding="utf-8")
                 self.assertIn(expected_fragments[agent], text)
+                self.assertIn("dist/ai-specs", text)
+                self.assertNotIn("worktree-gate.sh", text)
 
         first = {agent: _artifact(project, agent).read_bytes() for agent in AGENTS}
         _sync(project, home)
@@ -175,15 +177,15 @@ class HookRenderByteStabilityTests(unittest.TestCase):
         self.assertEqual(first, second,
                          "a re-sync must not change the rendered artifacts")
 
-    def test_all_five_harness_artifacts_reference_the_materialized_path(self):
-        # Spec scenario "Materialized path is unchanged for every harness":
-        # every rendered artifact references the same script_path — the
-        # launcher — with no re-render churn.
+    def test_all_five_harness_artifacts_reference_the_cli_verb(self):
+        # Spec scenario "every harness gets the same wiring": every rendered
+        # artifact invokes the CLI verb and none references a script path.
         project, _ = self._project()
         for agent in AGENTS:
             with self.subTest(agent=agent):
                 text = _artifact(project, agent).read_text(encoding="utf-8")
-                self.assertIn("worktree-gate.sh", text)
+                self.assertIn(CLI_VERB, text)
+                self.assertNotIn("worktree-gate.sh", text)
 
 
 class CursorLauncherWrapperTests(unittest.TestCase):
@@ -203,18 +205,22 @@ class CursorLauncherWrapperTests(unittest.TestCase):
         _git(self.repo, "add", "-A")
         _git(self.repo, "commit", "-qm", "init")
         _git(self.repo, "checkout", "-q", "-B", "main")
-        # sync materialized the launcher; install the CLI at its configured
-        # AI_SPECS_HOME location for the live launcher checks.
-        _install_binary_in(self.project)
+        # The wrapper resolves the CLI from AI_SPECS_HOME and the gate policy
+        # from that home's per-project snapshot, so the CLI is installed into
+        # the same home the project was synced with.
+        install_cli(self.home)
 
     def _wrapper(self) -> Path:
         return self.project / ".cursor" / "hooks" / "worktree-flow-worktree-gate-shell.sh"
 
     def _wrapper_env(self) -> dict:
         env = _launcher_env(self.project)
+        # Point the wrapper at the sync home: it holds both the installed CLI
+        # and the runtime snapshot the gate reads (S2).
+        env["AI_SPECS_HOME"] = str(self.home)
         # The wrapper references $CURSOR_PROJECT_DIR; provide it explicitly so
         # the wrapper runs outside a real Cursor process. cwd = project root
-        # so the launcher resolves the project pin from $PWD.
+        # so the gate resolves the project root from $PWD.
         env["CURSOR_PROJECT_DIR"] = str(self.project)
         return env
 

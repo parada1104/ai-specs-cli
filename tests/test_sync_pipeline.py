@@ -2692,16 +2692,16 @@ class RuntimeHookSyncPipelineTests(unittest.TestCase):
             result = invoke(workspace, "sync", cli_home=home)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-            # Materialized script at the harness-neutral path, executable.
+            # CLI-served: no launcher is materialized at the harness-neutral path.
             script = workspace / "ai-specs" / "recipes" / "worktree-flow" / "hooks" / "worktree-gate.sh"
-            self.assertTrue(script.is_file(), "hook script must materialize")
-            self.assertTrue(os.access(script, os.X_OK), "hook script must be executable")
+            self.assertFalse(script.exists(), "the launcher is CLI-served, not materialized")
 
-            # Claude: managed PreToolUse entry wiring the script directly.
+            # Claude: managed PreToolUse entry wiring the CLI command.
             settings = json.loads((workspace / ".claude" / "settings.json").read_text())
             pre = settings["hooks"]["PreToolUse"]
             cmds = json.dumps(pre)
-            self.assertIn("ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh", cmds)
+            self.assertIn("worktree-gate --hook", cmds)
+            self.assertNotIn("hooks/worktree-gate.sh", cmds)
 
             # OpenCode + Pi: generated shims.
             self.assertTrue(
@@ -2850,8 +2850,13 @@ class TestVcsDropRemediations(unittest.TestCase):
 
 
 class GateRefreshCliTests(unittest.TestCase):
-    """4.3 — E2E: `ai-specs sync --refresh-gates` refreshes a customized gate
-    after a cache-only immutable backup, while ordinary sync preserves it."""
+    """The retired gate launcher is no longer a refresh target.
+
+    `--refresh-gates` still means "replace a customized CLI-rendered hook after
+    a cache-only immutable backup", but every gate hook is CLI-served now, so a
+    stale launcher left by an older install is unowned: sync and a refresh both
+    keep its bytes and doctor names the fix (`rm` + sync).
+    """
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="gate-refresh-")
@@ -2867,7 +2872,7 @@ class GateRefreshCliTests(unittest.TestCase):
         rel_key = hashlib.sha256(rel_path.encode("utf-8")).hexdigest()
         return cache_project_dir(self.workspace, self.home) / "backups" / rel_key / f"{content_sha}.sh"
 
-    def test_ordinary_sync_preserves_customized_gate_refresh_flag_updates(self):
+    def test_ordinary_sync_never_materializes_the_gate_launcher(self):
         result = invoke(self.workspace, "init", cli_home=self.home)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         (self.workspace / "ai-specs" / "ai-specs.toml").write_text(
@@ -2880,31 +2885,23 @@ class GateRefreshCliTests(unittest.TestCase):
                            extra_env={"AI_SPECS_GATE_OFFLINE": "1"})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         gate = self.workspace / "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh"
-        self.assertTrue(gate.is_file(), "gate launcher must materialize")
-        rendered = gate.read_bytes()
+        self.assertFalse(gate.exists(), "the gate launcher is CLI-served")
 
-        # Customize; ordinary sync must preserve with a warning.
-        gate.write_bytes(b"# customized gate\n")
-        proc = run_cli_env(self.workspace, "sync", home=self.home, tmpdir=self.base,
-                           extra_env={"AI_SPECS_GATE_OFFLINE": "1"})
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(gate.read_bytes(), b"# customized gate\n")
-        self.assertIn("user-modified", proc.stderr + proc.stdout)
-
-        # Explicit refresh replaces and backs up the exact pre-refresh bytes.
-        proc = run_cli_env(self.workspace, "sync", "--refresh-gates",
-                           home=self.home, tmpdir=self.base,
-                           extra_env={"AI_SPECS_GATE_OFFLINE": "1"})
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(gate.read_bytes(), rendered,
-                         "refresh must restore the CLI-rendered gate bytes")
+        # A stale launcher from an older install is unowned: neither an ordinary
+        # sync nor --refresh-gates rewrites or removes it, and no backup is cut.
+        gate.parent.mkdir(parents=True, exist_ok=True)
+        gate.write_bytes(b"# customized stale gate\n")
+        for args in (("sync",), ("sync", "--refresh-gates")):
+            proc = run_cli_env(self.workspace, *args, home=self.home, tmpdir=self.base,
+                               extra_env={"AI_SPECS_GATE_OFFLINE": "1"})
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(gate.read_bytes(), b"# customized stale gate\n")
         rel = "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh"
         backup = self._gate_backup_path(
             rel,
-            hashlib.sha256(b"# customized gate\n").hexdigest(),
+            hashlib.sha256(b"# customized stale gate\n").hexdigest(),
         )
-        self.assertTrue(backup.is_file(), f"immutable backup missing at {backup}")
-        self.assertEqual(backup.read_bytes(), b"# customized gate\n")
+        self.assertFalse(backup.exists(), "the retired launcher is not a refresh target")
 
 
 class FanOutDriftTests(unittest.TestCase):

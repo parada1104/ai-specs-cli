@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"ai-specs.dev/ai-specs/internal/planbuild"
 )
 
 type domainSource struct {
@@ -58,11 +60,11 @@ func deltaSpecs(folder string) ([]domainSource, []string) {
 // activeDomainCollisions names the other active changes that declare a delta for
 // the same domains. Pure discovery: the caller applies the result before any
 // write, so a collision aborts the whole promotion.
-func activeDomainCollisions(root, slug string, domains map[string]bool) []string {
+func activeDomainCollisions(changesBase, slug string, domains map[string]bool) []string {
 	if len(domains) == 0 {
 		return nil
 	}
-	changes := filepath.Join(root, "openspec", "changes")
+	changes := changesBase
 	entries, err := os.ReadDir(changes)
 	if err != nil {
 		return nil // ReadDir sorts by name, like the Python sorted(iterdir())
@@ -87,13 +89,13 @@ func activeDomainCollisions(root, slug string, domains map[string]bool) []string
 	return blockers
 }
 
-// planDomains composes every delta of one change folder without writing.
-func planDomains(root, folder string, allowRemoved bool) ([]DomainPlan, []string) {
+// planDomains composes every delta of one change folder without writing. The
+// canonical tree is the caller's, so the same composer serves both modes.
+func planDomains(folder, specsBase string, allowRemoved bool) ([]DomainPlan, []string) {
 	deltas, blockers := deltaSpecs(folder)
 	if len(deltas) == 0 {
 		return nil, blockers
 	}
-	specsBase := filepath.Join(root, "openspec", "specs")
 	var plans []DomainPlan
 	for _, pair := range deltas {
 		canonical, err := canonicalTarget(specsBase, pair.domain)
@@ -141,7 +143,14 @@ func planDomains(root, folder string, allowRemoved bool) ([]DomainPlan, []string
 // another active change declares a delta for the same domain, so a blocked
 // promotion leaves the canonical tree byte-identical.
 func PromoteChange(root, slug string, allowRemoved bool) PromotionReport {
-	planning, err := planningRoot(root)
+	return PromoteChangeForMode(root, slug, planbuild.ModeOpenspec, allowRemoved)
+}
+
+// PromoteChangeForMode is PromoteChange with the roots of the resolved execution
+// mode (S7): the composer, its blockers, its collision rule and its idempotence
+// are mode-independent, and only the source and canonical trees move.
+func PromoteChangeForMode(root, slug, mode string, allowRemoved bool) PromotionReport {
+	planning, err := planningRootFor(root, mode)
 	if err != nil {
 		return PromotionReport{Root: root, Slug: slug, Blockers: []string{err.Error()}}
 	}
@@ -149,22 +158,35 @@ func PromoteChange(root, slug string, allowRemoved bool) PromotionReport {
 		return PromotionReport{Root: root, Slug: slug, Blockers: []string{err.Error()}}
 	}
 
-	folder := filepath.Join(planning, "openspec", "changes", slug)
+	changesBase := planbuild.ChangesBase(planning, mode)
+	folder := filepath.Join(changesBase, slug)
 	report := PromotionReport{Root: planning, Slug: slug, Folder: folder}
+	if mode == planbuild.ModeOdd && !isDir(folder) && oddTaskOnly(planning, slug) {
+		// A task-only ODD change carries no delta and no change folder, so
+		// promotion has nothing to do and raises nothing.
+		return report
+	}
 	if isSymlink(folder) || !isDir(folder) {
 		report.Blockers = append(report.Blockers,
-			fmt.Sprintf("active change folder missing at openspec/changes/%s/ — the promoter runs "+
-				"before archive-tail while the change folder is still active", slug))
+			fmt.Sprintf("active change folder missing at %s/%s/ — the promoter runs "+
+				"before archive-tail while the change folder is still active",
+				changesLabel(mode), slug))
+		return report
+	}
+	if mode == planbuild.ModeOdd && !SourceContained(folder, changesBase) {
+		// A symlinked odd/changes would feed the composer from the other tree.
+		report.Blockers = append(report.Blockers, fmt.Sprintf(
+			"refusing to read change folder %s: it resolves outside %s", folder, changesBase))
 		return report
 	}
 
-	plans, blockers := planDomains(planning, folder, allowRemoved)
+	plans, blockers := planDomains(folder, planbuild.SpecsBase(planning, mode), allowRemoved)
 	report.Plans = plans
 	domains := make(map[string]bool, len(plans))
 	for _, plan := range plans {
 		domains[plan.Domain] = true
 	}
-	report.Blockers = append(activeDomainCollisions(planning, slug, domains), blockers...)
+	report.Blockers = append(activeDomainCollisions(changesBase, slug, domains), blockers...)
 	if len(report.Blockers) > 0 {
 		return report
 	}
@@ -180,19 +202,107 @@ func PromoteChange(root, slug string, allowRemoved bool) PromotionReport {
 	return report
 }
 
+// canonicalLabel is the repository-relative canonical tree the mode writes.
+func canonicalLabel(mode string) string {
+	if mode == planbuild.ModeOdd {
+		return "odd/specs"
+	}
+	return "openspec/specs"
+}
+
+// changesLabel is the repository-relative change tree the mode reads, used in
+// messages so a blocker names the tree the reader actually has.
+func changesLabel(mode string) string {
+	if mode == planbuild.ModeOdd {
+		return "odd/changes"
+	}
+	return "openspec/changes"
+}
+
+// modeStep is the tail of a parity blocker: odd has no archive step.
+func modeStep(mode string) string {
+	if mode == planbuild.ModeOdd {
+		return "merge"
+	}
+	return "archive"
+}
+
+// SourceContained reports whether the change folder is reached through real
+// directories: a symlinked odd/ or odd/changes/ would feed the gate or the
+// composer from the other planning tree.
+func SourceContained(folder, changesBase string) bool {
+	base, err := filepath.Abs(changesBase)
+	if err != nil {
+		return false
+	}
+	return !isSymlink(filepath.Dir(base)) && PathContained(changesBase, folder)
+}
+
+// PathContained is the one containment predicate: the real path of path stays
+// inside root and no component from root down to path is a symlink. It is
+// SourceContained's predicate generalized to a destination that does not exist
+// yet, so the archive write and the parity read agree on what "contained" means.
+func PathContained(root, path string) bool {
+	// Absolute first: a relative root must grade exactly like the absolute one,
+	// independently of the process working directory.
+	base, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	target, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(base, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	current := base
+	if isSymlink(current) {
+		return false
+	}
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		if isSymlink(current) {
+			return false
+		}
+	}
+	return true
+}
+
+// oddTaskOnly reports the paired ODD plan of a change that kept no change folder.
+func oddTaskOnly(root, change string) bool {
+	return planbuild.PlanIsValid(root, change)
+}
+
 // CheckFolderParity is the read-only half the Plan Build guardian uses: blockers
 // when a delta is unpromoted or cannot be composed. A change with no specs/
-// deltas is a no-op.
+// deltas is a no-op. The canonical root follows the resolved mode, so odd deltas
+// are compared against odd/specs and never against the OpenSpec tree.
+// CheckFolderParity is the OpenSpec guardian's entry point: it always compares
+// against openspec/specs, so an explicit pre-archive keeps its own tree even in
+// an odd-mode repository.
 func CheckFolderParity(root, folder string) []string {
-	plans, blockers := planDomains(root, folder, false)
+	return CheckFolderParityForMode(root, folder, planbuild.ModeOpenspec)
+}
+
+// CheckFolderParityForMode is the parity check against a mode the caller already
+// resolved, so a caller that knows the mode (the pre-merge gate) reads one tree
+// instead of resolving again.
+func CheckFolderParityForMode(root, folder, mode string) []string {
+	plans, blockers := planDomains(folder, planbuild.SpecsBase(root, mode), false)
 	for _, plan := range plans {
 		if len(plan.Composition.Pending) == 0 {
 			continue
 		}
 		blockers = append(blockers, fmt.Sprintf(
-			"specs/%s/spec.md is not promoted into openspec/specs/%s/spec.md (%s); run "+
-				"`ai-specs specs promote <slug> --root <root>` before archive",
-			plan.Domain, plan.Domain, strings.Join(plan.Composition.Pending, ", ")))
+			"specs/%s/spec.md is not promoted into %s/%s/spec.md (%s); run "+
+				"`ai-specs specs promote <slug> --root <root>` before %s",
+			plan.Domain, canonicalLabel(mode), plan.Domain,
+			strings.Join(plan.Composition.Pending, ", "), modeStep(mode)))
 	}
 	return blockers
 }

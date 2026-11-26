@@ -9,6 +9,10 @@ import (
 	"strings"
 )
 
+// gateLauncherRel is the retired materialized gate launcher. Since T2 sync
+// renders a CLI command instead, so a surviving file is stale by definition.
+const gateLauncherRel = "ai-specs/recipes/worktree-flow/hooks/worktree-gate.sh"
+
 // checkWorktreeGate verifies the installed CLI's worktree-gate route. The
 // check retains its legacy roster id and fail-open ERROR posture.
 func (d *Doctor) checkWorktreeGate() {
@@ -38,7 +42,7 @@ func (d *Doctor) checkWorktreeGate() {
 		implRaw, _ = cfg.Get("gate_impl")
 	}
 	impl := pyStrOr(implRaw, "auto")
-	launcher := filepath.Join(d.Root, "ai-specs", "recipes", "worktree-flow", "hooks", "worktree-gate.sh")
+	launcher := filepath.Join(d.Root, filepath.FromSlash(gateLauncherRel))
 	stampedImpl := ""
 	if isFile(launcher) {
 		if raw, err := os.ReadFile(launcher); err == nil {
@@ -64,23 +68,19 @@ func (d *Doctor) checkWorktreeGate() {
 		return
 	}
 	if isFile(launcher) {
-		if raw, err := os.ReadFile(launcher); err == nil &&
-			strings.Contains(string(raw), "cache/bin/worktree-gate/") &&
-			!strings.Contains(string(raw), "dist/ai-specs") {
-			d.add(WARN, "worktree-gate",
-				"materialized worktree-gate.sh still resolves the retired separate gate binary",
-				"run ai-specs sync (or ai-specs sync --refresh-gates if the file was customized and preserved)")
-		}
+		// The launcher is CLI-served since cli-served-recipes T2: sync never
+		// materializes it. Any surviving copy is a project that has not synced
+		// since the migration, so the advisory names the telemetry-free fix and
+		// never promises a --refresh-gates rewrite (it is not a sync target).
+		d.add(WARN, "worktree-gate",
+			"retired "+gateLauncherRel+" launcher is still present; the CLI serves `ai-specs worktree-gate` now",
+			"rm "+gateLauncherRel+" && ai-specs sync")
 	}
 	override := filepath.Join(d.Root, "ai-specs", "recipes", "worktree-flow", "overrides", "bin", "worktree-cleanup.sh")
 	if isFile(override) {
-		if raw, err := os.ReadFile(override); err == nil &&
-			strings.Contains(string(raw), "cache/bin/worktree-gate") &&
-			!strings.Contains(string(raw), "dist/ai-specs") {
-			d.add(WARN, "worktree-gate",
-				"preserved worktree-cleanup.sh override still resolves the retired separate gate binary",
-				"delete ai-specs/recipes/worktree-flow/overrides/bin/worktree-cleanup.sh and run ai-specs sync (a preserved customized override is not refreshed by --refresh-gates)")
-		}
+		d.add(WARN, "worktree-gate",
+			"retired worktree-cleanup.sh override is still present; the CLI serves `ai-specs worktree-cleanup` now",
+			"run ai-specs sync (it removes the override, including a customized copy)")
 	}
 
 	binary := installedCLIPath(d.Home)
