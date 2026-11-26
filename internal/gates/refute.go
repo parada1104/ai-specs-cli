@@ -16,6 +16,7 @@ package gates
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -165,10 +166,18 @@ func WriteRefutations(repoRoot, mode, change, target string) []string {
 	if nothingToGrade(repoRoot, mode, change, diff) {
 		return blockers
 	}
-	blockers = append(blockers, sizeRefutation(repoRoot, base, diff, diffText)...)
-	blockers = append(blockers, contractRefutation(repoRoot, diffText)...)
+	blockers = append(blockers, sizeRefutation(repoRoot, mode, change, base, diff, diffText)...)
+	blockers = append(blockers, contractRefutation(repoRoot, mode, change, diffText)...)
 	blockers = append(blockers, planEvidenceRefutation(repoRoot, mode, change)...)
 	return blockers
+}
+
+// HighRiskRefutation is R2 alone, for the canonical-spec caller that already
+// answered R1 with its delta.
+func HighRiskRefutation(repoRoot, mode, change, target string) []string {
+	base := BaseRef(repoRoot, nil)
+	diff, _ := planbuild.DiffEntries(repoRoot, base)
+	return highRiskRefutation(repoRoot, mode, change, base, diff, "R2", target)
 }
 
 // CanonicalSpecRefusal is R1's message body for a hand write to a canonical
@@ -246,18 +255,18 @@ func productPath(rel string) bool {
 
 // sizeRefutation is R3: the diff exceeds a size or module threshold the project
 // declares. An unconfigured threshold proves nothing, so it never refuses.
-func sizeRefutation(repoRoot, base string, diff []planbuild.DiffEntry, diffText string) []string {
+func sizeRefutation(repoRoot, mode, change, base string, diff []planbuild.DiffEntry, diffText string) []string {
 	maxLines, hasLines := projectInt(repoRoot, base, "max_diff_lines")
 	maxModules, hasModules := projectInt(repoRoot, base, "max_changed_modules")
 	if !hasLines && !hasModules {
 		return nil
 	}
 	removed, added := diffSides(diffText)
-	if hasLines && len(removed)+len(added) > maxLines {
+	if hasLines && len(removed)+len(added) > maxLines &&
+		!strings.Contains(changeRecord(repoRoot, mode, change), "R3") {
 		return []string{fmt.Sprintf("R3: the branch changes %d diff lines, over the project's "+
-			"max_diff_lines = %d declared in ai-specs/ai-specs.toml. Split the change, write the "+
-			"plan/delta that justifies it, record an exemption decision, or escalate.",
-			len(removed)+len(added), maxLines)}
+			"max_diff_lines = %d declared in ai-specs/ai-specs.toml. Split the change. %s",
+			len(removed)+len(added), maxLines, changeExit(change, "R3"))}
 	}
 	if hasModules {
 		modules := map[string]bool{}
@@ -266,11 +275,10 @@ func sizeRefutation(repoRoot, base string, diff []planbuild.DiffEntry, diffText 
 				modules[module] = true
 			}
 		}
-		if len(modules) > maxModules {
+		if len(modules) > maxModules && !strings.Contains(changeRecord(repoRoot, mode, change), "R3") {
 			return []string{fmt.Sprintf("R3: the branch touches %d modules, over the project's "+
-				"max_changed_modules = %d declared in ai-specs/ai-specs.toml. Split the change, write "+
-				"the plan/delta that justifies it, record an exemption decision, or escalate.",
-				len(modules), maxModules)}
+				"max_changed_modules = %d declared in ai-specs/ai-specs.toml. Split the change. %s",
+				len(modules), maxModules, changeExit(change, "R3"))}
 		}
 	}
 	return nil
@@ -305,17 +313,20 @@ func projectInt(root, base, key string) (int, bool) {
 // that no tracked file of the working tree still declares, which is a contract
 // others consume. It tracks the file each hunk belongs to so a prose assignment
 // outside a .toml is never read as a config key.
-func contractRefutation(repoRoot, diffText string) []string {
-	current := ""
+func contractRefutation(repoRoot, mode, change, diffText string) []string {
+	onToml := false
 	added := ""
 	var flags, keys []string
 	for _, line := range strings.Split(diffText, "\n") {
 		switch {
 		case strings.HasPrefix(line, "+++ "):
-			current = strings.TrimPrefix(line[4:], "b/")
+			onToml = onToml || strings.HasSuffix(line, ".toml")
 			continue
-		case strings.HasPrefix(line, "--- "), strings.HasPrefix(line, "@@"),
-			strings.HasPrefix(line, "diff "), strings.HasPrefix(line, "index "),
+		case strings.HasPrefix(line, "--- "):
+			// A whole-file deletion carries `+++ /dev/null`, so both sides count.
+			onToml = strings.HasSuffix(line, ".toml")
+			continue
+		case strings.HasPrefix(line, "@@"), strings.HasPrefix(line, "index "),
 			strings.HasPrefix(line, "\\"):
 			continue
 		case strings.HasPrefix(line, "+"):
@@ -323,7 +334,7 @@ func contractRefutation(repoRoot, diffText string) []string {
 		case strings.HasPrefix(line, "-"):
 			content := line[1:]
 			flags = append(flags, declaredFlags(content)...)
-			if strings.HasSuffix(current, ".toml") {
+			if onToml {
 				if match := tomlKeyRe.FindStringSubmatch(content); match != nil {
 					keys = append(keys, match[1])
 				}
@@ -331,22 +342,49 @@ func contractRefutation(repoRoot, diffText string) []string {
 		}
 	}
 	for _, flag := range flags {
-		if strings.Contains(added, flag) || planbuild.WorktreeContains(repoRoot, flag) {
+		if strings.Contains(added, flag) || planbuild.WorktreeContains(repoRoot, flag) ||
+			strings.Contains(changeRecord(repoRoot, mode, change), flag) {
 			continue
 		}
 		return []string{fmt.Sprintf("R4: the branch removes the public flag `%s`, a contract others "+
-			"already consume. Record the decision: write the plan or delta that declares the flag change "+
-			"and its migration, record an exemption decision, or escalate.", flag)}
+			"already consume. %s", flag, changeExit(change, "R4", flag))}
 	}
 	for _, key := range keys {
-		if strings.Contains(added, key) || planbuild.WorktreeContains(repoRoot, key) {
+		if strings.Contains(added, key) || planbuild.WorktreeContains(repoRoot, key) ||
+			strings.Contains(changeRecord(repoRoot, mode, change), key) {
 			continue
 		}
 		return []string{fmt.Sprintf("R4: the branch removes the config key `%s`, a contract others "+
-			"already consume. Record the decision: write the plan or delta that declares the config change "+
-			"and its migration, record an exemption decision, or escalate.", key)}
+			"already consume. %s", key, changeExit(change, "R4", key))}
 	}
 	return nil
+}
+
+// changeExit names the exits R3 and R4 actually honour: the plan or a delta of
+// the paired change naming the rule or the removed token, or no removal at all.
+func changeExit(change string, tokens ...string) string {
+	if change == "" {
+		return "The branch pairs no change, so no plan or delta can declare it: restore the previous state."
+	}
+	return fmt.Sprintf("Write the plan or a delta of `%s` naming `%s`, or restore the previous state.",
+		change, strings.Join(tokens, "` or `"))
+}
+
+// changeRecord is the text of the paired change's plan and its deltas: the one
+// record whose naming of a rule or token satisfies a refusal.
+func changeRecord(repoRoot, mode, change string) string {
+	if change == "" {
+		return ""
+	}
+	record := readText(planbuild.TasksPath(repoRoot, mode, change))
+	specs := filepath.Join(planbuild.ChangeFolder(repoRoot, mode, change), "specs")
+	_ = filepath.WalkDir(specs, func(path string, entry fs.DirEntry, err error) error {
+		if err == nil && !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
+			record += readText(path)
+		}
+		return nil
+	})
+	return record
 }
 
 // flagRegistrationRe matches the constructs that declare a CLI flag, so a removed
@@ -357,6 +395,10 @@ var flagRegistrationRe = regexp.MustCompile(`\b(?:p?flag\.\w+|Flags\(\)\.\w+|Fla
 // a help line, or a flag registration, never a comment that merely names the flag.
 func declaredFlags(line string) []string {
 	trimmed := strings.TrimSpace(line)
+	// A commented-out registration is not a declaration.
+	if trimmed != "" && strings.ContainsAny(trimmed[:1], "/#*") {
+		return nil
+	}
 	declared := strings.HasPrefix(trimmed, "case ") || strings.HasPrefix(trimmed, "--") ||
 		flagRegistrationRe.MatchString(trimmed)
 	if !declared {

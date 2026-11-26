@@ -557,3 +557,56 @@ func TestCheckPrearchiveBlocksACanonicalSpecEditWithoutADelta(t *testing.T) {
 	}
 	assertBlockerContains(t, result, "R-a:")
 }
+
+// R4 grades a whole-file deletion too: `+++ /dev/null` names no .toml, so the
+// removed keys come from the old-side `--- a/<path>.toml` header.
+func TestWriteRefutationsReportAKeyOfADeletedConfigFile(t *testing.T) {
+	root := writeRepo(t, map[string]string{"src/config.toml": "[cap]\nold_key = \"x\"\n"})
+	gitRun(t, root, "rm", "-q", "src/config.toml")
+	gitRun(t, root, "commit", "-q", "-m", "refactor: drop the config")
+	blockers := WriteRefutations(root, planbuild.ModeOpenspec, "thing", "src/app.go")
+	if len(blockers) != 1 || !strings.Contains(blockers[0], "R4") || !strings.Contains(blockers[0], "old_key") {
+		t.Fatalf("WriteRefutations = %q, want one R4 blocker naming the deleted key", blockers)
+	}
+}
+
+// A commented-out registration is not a declaration, so removing it is no change.
+func TestWriteRefutationsIgnoreACommentedOutRegistration(t *testing.T) {
+	root := writeRepo(t, map[string]string{
+		"src/cli.go": "package src\n\n// flag.String(\"--old-flag\", \"\", \"helper\") was retired\n/*\n" +
+			" * flag.String(\"--old-flag\", \"\", \"helper\")\n */\n",
+	})
+	writeFile(t, filepath.Join(root, "src", "cli.go"), "package src\n")
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-q", "-m", "docs: drop the comments")
+	if blockers := WriteRefutations(root, planbuild.ModeOpenspec, "thing", "src/app.go"); len(blockers) != 0 {
+		t.Fatalf("WriteRefutations = %q, want no R4 over a commented-out registration", blockers)
+	}
+}
+
+// The advertised exits are real: a plan naming the token or a delta naming the rule unblocks.
+func TestWriteRefutationsHonourAChangeThatDeclaresTheRefutation(t *testing.T) {
+	root := writeRepo(t, map[string]string{
+		"src/cli.go": "package src\n\nfunc init() {\n\tflag.String(\"--old-flag\", \"\", \"helper\")\n}\n",
+	})
+	writeFile(t, filepath.Join(root, "src", "cli.go"), "package src\n")
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-q", "-m", "refactor: drop the flag")
+	writeFile(t, filepath.Join(root, "openspec", "changes", "thing", "tasks.md"),
+		"## Specs\n\n- **S1.** Retire --old-flag\n\n## Verification\n\n| Spec | Evidence |\n| --- | --- |\n| S1 | Fixture |\n")
+	if blockers := WriteRefutations(root, planbuild.ModeOpenspec, "thing", "src/app.go"); len(blockers) != 0 {
+		t.Fatalf("plan naming the removed flag = %q, want none", blockers)
+	}
+	root = writeRepo(t, map[string]string{
+		"ai-specs/ai-specs.toml": "[recipes.plan-build-flow.config]\nmode = \"openspec\"\n" +
+			"max_diff_lines = 1\n",
+	})
+	writeFile(t, filepath.Join(root, "src", "app.go"), "package src\n\n")
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-q", "-m", "feat: grow the file")
+	writeFile(t, filepath.Join(root, "openspec", "changes", "thing", "specs", "cap", "spec.md"),
+		"## ADDED\n\nR3: the branch exceeds max_diff_lines here.\n")
+	if blockers := WriteRefutations(root, planbuild.ModeOpenspec, "thing", "src/app.go"); len(blockers) != 0 {
+		t.Fatalf("delta naming R3 = %q, want none", blockers)
+	}
+}

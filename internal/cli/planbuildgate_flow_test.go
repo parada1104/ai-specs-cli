@@ -136,6 +136,23 @@ func TestPlanBuildGateWriteFlow(t *testing.T) {
 		}
 	})
 
+	t.Run("R2 grades a canonical spec write that carries its delta", func(t *testing.T) {
+		repo := t.TempDir()
+		flowGit(t, repo, "init", "-b", "main")
+		flowGit(t, repo, "config", "user.email", "flow@example.invalid")
+		flowGit(t, repo, "config", "user.name", "flow")
+		flowWrite(t, repo, "ai-specs/ai-specs.toml",
+			"[recipes.plan-build-flow.config]\nmode = \"odd\"\nhigh_risk_paths = [\"odd/specs/**\"]\n")
+		flowGit(t, repo, "add", "-A")
+		flowGit(t, repo, "commit", "-m", "base")
+		flowGit(t, repo, "checkout", "-b", "feat/thing")
+		flowWrite(t, repo, "odd/changes/thing/specs/cap/spec.md", "# spec\n")
+		stdout, stderr, code := flowRun(t, bin, repo, flowEvent(repo, "odd/specs/cap/spec.md"), "plan-build-gate")
+		if code != 2 || stdout != "" || !strings.Contains(stderr, "R2:") || !strings.Contains(stderr, "odd/specs/cap/spec.md") {
+			t.Fatalf("gate = (%d, %q, %q), want exit 2 naming R2 and the pending target", code, stdout, stderr)
+		}
+	})
+
 	t.Run("a leftover declaration changes nothing", func(t *testing.T) {
 		repo := flowRepo(t, "openspec", nil)
 		flowGit(t, repo, "config", "--local", "branch.feat/thing.aiSpecsCeremony", "none")

@@ -222,9 +222,17 @@ func planBuildGateCanonicalSpec(repoRoot, probeDir, mode, tool, rel string, expl
 	change := ""
 	if name, ok := planbuild.ChangeFromBranch(planbuild.Branch(probeDir)); ok {
 		if planbuild.HasDelta(repoRoot, mode, name) {
+			// A delta answers R1, never R2: the pending target is still graded.
+			blockers := gates.HighRiskRefutation(repoRoot, mode, name, rel)
 			if explain {
-				fmt.Fprintf(stderr, "%s: tier %s; refutations none\n", planBuildGateName,
-					planBuildGateInferredTier(repoRoot, mode, name))
+				fmt.Fprintf(stderr, "%s: tier %s; refutations %s\n", planBuildGateName,
+					planBuildGateInferredTier(repoRoot, mode, name), planBuildGateRules(blockers))
+			}
+			for _, blocker := range blockers {
+				fmt.Fprintf(stderr, "%s: refusing to %s '%s' — %s\n", planBuildGateName, tool, rel, blocker)
+			}
+			if len(blockers) > 0 {
+				return 2
 			}
 			return 0
 		}
