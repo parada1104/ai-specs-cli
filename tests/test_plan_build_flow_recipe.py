@@ -472,6 +472,11 @@ class PlanBuildFlowGoldenContentTests(unittest.TestCase):
             ):
                 with self.subTest(surface=surface, marker=marker):
                     self.assertIn(marker, text)
+            # The author of the change records the trailer; picking the item is
+            # part of the evidence, never a permission the user must grant.
+            with self.subTest(surface=surface, rule="ownership"):
+                self.assertIn("The change's author records the trailer", text)
+                self.assertIn("never a permission the user has to grant", text)
 
     def test_skill_has_ambient_auto_invoke(self):
         skill = CATALOG / RECIPE_ID / "skills" / "plan-build-flow" / "SKILL.md"

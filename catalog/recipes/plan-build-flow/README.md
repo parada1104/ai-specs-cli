@@ -222,9 +222,13 @@ requires `## Log` with `L1`; light keeps it optional.
   already consume (public API, CLI flags, config formats, exports, mirrored
   prompts; adding a flag or a command is not); 4 concurrency; 5 delivery or
   environment (installers, release, CI, deploy, dependencies); 6 no test would
-  catch a regression in what changes. No diff computable means no refutation, so a
-  shallow clone never blocks every small change: `gates premerge --base <ref>`
-  pins the ref, and CI passes the pull request's base sha.
+  catch a regression in what changes. The change's author records the trailer:
+  choosing the item is part of the change's evidence, exactly like naming its
+  artifacts, and never a permission the user has to grant first — a blocked
+  agent picks the item that actually applies and closes the change with it.
+  No diff computable means no refutation, so a shallow clone never blocks every
+  small change: `gates premerge --base <ref>` pins the ref, and CI passes the
+  pull request's base sha.
 - **`gates premerge` flags:** `--tier none|light|standard` is a coherence
   assertion, never a choice; a value that contradicts the derived tier blocks
   naming the derived tier and both exits, and `--tier full` blocks with the

@@ -559,7 +559,10 @@ refutes it, graded at the pre-merge guardian and in CI, never at the gate:
   already consume (public API, CLI flags, config formats, exports, mirrored
   prompts — adding a flag or a command is not); 4 concurrency; 5 delivery or
   environment (installers, release, CI, deploy, dependencies); 6 no test would
-  catch a regression in what changes.
+  catch a regression in what changes. The change's author records the trailer:
+  choosing the item is part of the change's evidence, exactly like naming its
+  artifacts, and never a permission the user has to grant first — a blocked
+  agent picks the item that actually applies and closes the change with it.
 
 No diff computable means no refutation: without a base ref, in a shallow clone
 or outside a repository, the guardian refutes nothing rather than blocking every
