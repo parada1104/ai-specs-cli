@@ -49,7 +49,7 @@ workflow_rules = [
     "Use a PR-based merge workflow; all changes to `{config.base_branch}` go through a pull request.",
     "VCS/PR provider: GitHub (gh CLI). Use gh for all PR operations.",
     "Do not push directly to `{config.base_branch}`; always open a PR from a feature branch.",
-    "After a merged PR, remove the feature worktree and delete the local branch (`git branch -D` after squash); delete the remote branch if it still exists.",
+    "After a merged PR, remove the feature worktree and delete the local branch (`git branch -d`, or `-D` after a squash or a rebase); delete the remote branch if it still exists.",
     "After a merged PR, sync `{config.base_branch}` in the main worktree before further work: `git checkout {config.base_branch}` then `git pull --ff-only`.",
 ]
 

@@ -163,14 +163,19 @@ ai-specs tracker-card-gate --root <planning-root> --checkpoint pre-merge <slug>
 ```
 
    Merge only after explicit user approval, required checks/review, and
-   pinning the approved SHA:
+   pinning the approved SHA. The merge strategy is the user's choice: ask the
+   user which one to use (merge commit, squash, rebase, or fast-forward where
+   the provider allows it) and pass exactly that, never a strategy you picked
+   yourself:
 
 ```bash
+# <strategy>: omit it for a merge commit, or add --squash / --rebase, whichever the user chose
+
 # Feature head — remove source branch
-glab mr merge <mr-number> --squash --yes --remove-source-branch --sha $APPROVED_SHA
+glab mr merge <mr-number> <strategy> --yes --remove-source-branch --sha $APPROVED_SHA
 
 # Protected head — never pass --remove-source-branch
-glab mr merge <mr-number> --squash --yes --sha $APPROVED_SHA
+glab mr merge <mr-number> <strategy> --yes --sha $APPROVED_SHA
 ```
 
 > **Note**: The `--sha` flag ensures that only the reviewed commit is merged. If the branch was updated between approval and merge, the command will fail, preventing unreviewed commits from being merged.
@@ -198,14 +203,14 @@ Manual fallback only if the script is unavailable:
 
 ```bash
 git worktree remove <absolute-path-to-worktree>
-git branch -D <branch-name>
+git branch -d <branch-name>
 ```
 
-> **Note**: `git branch -D` (capital D) is required because `glab mr merge --squash`
-> rewrites history — the feature branch commits are not ancestors of the target
-> branch, so `git branch -d` would refuse with "not fully merged". Force-delete
-> is safe here because the MR was already merged. Stop without deleting if the
-> worktree is dirty.
+> **Note**: `git branch -d` works after a merge commit or a fast-forward, which
+> leave the feature commits as ancestors of the target. A squash or a rebase
+> rewrites them, so `-d` would refuse with "not fully merged" and `git branch -D`
+> (capital D) is required. Force-delete is safe there because the MR was already
+> merged. Stop without deleting if the worktree is dirty.
 
 ## Guardrails
 

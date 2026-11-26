@@ -18,7 +18,7 @@
      },
      {
       "key": null,
-      "text": "After a merged PR, remove the feature worktree and delete the local branch (`git branch -D` after squash); delete the remote branch if it still exists."
+      "text": "After a merged PR, remove the feature worktree and delete the local branch (`git branch -d`, or `-D` after a squash or a rebase); delete the remote branch if it still exists."
      },
      {
       "key": null,
@@ -128,7 +128,7 @@
      },
      {
       "key": null,
-      "text": "After a merged PR, remove the feature worktree and delete the local branch (`git branch -D` after squash); delete the remote branch if it still exists."
+      "text": "After a merged PR, remove the feature worktree and delete the local branch (`git branch -d`, or `-D` after a squash or a rebase); delete the remote branch if it still exists."
      },
      {
       "key": null,
@@ -238,7 +238,7 @@
      },
      {
       "key": null,
-      "text": "After a merged MR, remove the feature worktree and delete the local branch (`git branch -D` after squash); delete the remote branch if it still exists."
+      "text": "After a merged MR, remove the feature worktree and delete the local branch (`git branch -d`, or `-D` after a squash or a rebase); delete the remote branch if it still exists."
      },
      {
       "key": null,

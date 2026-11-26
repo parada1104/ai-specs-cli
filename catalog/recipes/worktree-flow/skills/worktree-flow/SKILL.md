@@ -207,8 +207,10 @@ The launcher is conservative by design:
 ### Manual fallback
 
 Only if the script is unavailable: from the main repo root, `git worktree
-remove <path>`, then `git branch -D <branch>` after squash/rebase merges.
-Stop without deleting if the worktree is dirty.
+remove <path>`, then `git branch -d <branch>`. After a squash or a rebase the
+commits are rewritten, so `-d` refuses with "not fully merged" and
+`git branch -D` is required — the same fallback the script uses. Stop without
+deleting if the worktree is dirty.
 
 This honors the project rule: never revert or discard changes you did not make.
 
