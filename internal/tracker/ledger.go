@@ -7,7 +7,9 @@ package tracker
 // grades. `recipe_id` and `_git_common_dir` stay in internal/doctor.
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -248,7 +250,11 @@ type ChangeDocument struct {
 // branch-level.
 func ResolveChangeDocument(root, slug string) (ChangeDocument, error) {
 	doc := ChangeDocument{Fields: map[string]string{}}
-	if slug == "" {
+	// An explicit slug scopes the lookup to that change. Only an empty slug is
+	// discovery, and only discovery may fall through to the branch's ODD plan, so
+	// an unknown slug never returns another change's card.
+	explicit := slug != ""
+	if !explicit {
 		slug = ChangeSlug(root)
 	}
 	if slug != "" {
@@ -271,6 +277,9 @@ func ResolveChangeDocument(root, slug string) (ChangeDocument, error) {
 			})
 		}
 	}
+	if explicit {
+		return doc, nil
+	}
 	feature, ok := planbuild.ChangeFromBranch(planbuild.Branch(root))
 	if !ok {
 		return doc, nil
@@ -280,16 +289,24 @@ func ResolveChangeDocument(root, slug string) (ChangeDocument, error) {
 
 // resolveDocuments fills doc from the first candidate that carries a ## Tracker
 // section, else names the first candidate that exists. The fields are still the
-// ones ParseSection extracts, so the graded values never diverge.
+// ones ParseSection extracts, so the graded values never diverge. A candidate
+// that exists but cannot be read is an error: treating it as absent would drop a
+// real card silently (R3-003).
 func resolveDocuments(doc ChangeDocument, paths []string) (ChangeDocument, error) {
 	for _, path := range paths {
 		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() {
-			continue
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return doc, fmt.Errorf("%s: %v", path, err)
+		}
+		if !info.Mode().IsRegular() {
+			return doc, fmt.Errorf("%s: not a regular file", path)
 		}
 		raw, err := os.ReadFile(path)
 		if err != nil {
-			continue
+			return doc, fmt.Errorf("%s: %v", path, err)
 		}
 		if !utf8.Valid(raw) {
 			return doc, fmt.Errorf("%s: invalid UTF-8", path)
@@ -345,8 +362,16 @@ func ResolveProviderItem(root, slug string) (ProviderItem, bool, error) {
 // EvidencePayload mirrors ledger_bridge.evidence_payload: local and remote stay
 // empty, code is the change's card_id (blank under tracker.none) and git is that
 // same id only when a pr: is recorded. Parse and decode errors propagate.
+//
+// An explicitly empty slug means NO scope and yields empty evidence, exactly as
+// before the ODD port (R1-003): discovery belongs to ResolveChangeDocument and
+// ResolveProviderItem, so an unscoped caller never inherits an inferred change's
+// card.
 func EvidencePayload(root, slug string) (Evidence, error) {
 	empty := Evidence{}
+	if slug == "" {
+		return empty, nil
+	}
 	fields, _, err := trackerFields(root, slug)
 	if err != nil {
 		return empty, err

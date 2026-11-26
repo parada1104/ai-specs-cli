@@ -145,7 +145,7 @@ func materializeRecipeArtifacts(req materializeArtifactRequest) ([]any, error) {
 	}
 	// Always regenerated when declared: the hook holds no policy, only the verb.
 	if postMerge {
-		if err := materializeWorktreePostMergeHook(req.ProjectRoot); err != nil {
+		if err := materializeWorktreePostMergeHook(req.ProjectRoot, req.Stderr); err != nil {
 			return nil, err
 		}
 	}
