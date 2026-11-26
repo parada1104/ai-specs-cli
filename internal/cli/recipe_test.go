@@ -358,6 +358,10 @@ func TestRecipeListMissingPathDeviation(t *testing.T) {
 func TestRecipeListFallsBackToBinaryInstallRoot(t *testing.T) {
 	installRoot := t.TempDir()
 	recipeSeedCatalog(t, installRoot, "root-recipe")
+	// An install root is a home: ResolveHome only trusts the binary's parent
+	// directory when it carries the VERSION marker every verb reads, and falls
+	// back to the default install otherwise.
+	skillsWriteFile(t, filepath.Join(installRoot, "VERSION"), "0.0.0-fixture\n")
 	// The binary need not exist: ResolveHome stops at the first non-symlink
 	// and returns the parent of its directory, like bin/ai-specs's own loop.
 	exePath := filepath.Join(installRoot, "bin", "ai-specs")
@@ -389,6 +393,10 @@ func TestRecipeListFallsBackToBinaryInstallRoot(t *testing.T) {
 
 	// The divergence pin: binary outside any root that has a catalogue →
 	// empty listing, exit 0 — never the repo's own catalogue through lib/.
+	// HOME is pinned to an empty directory so "outside any root" really means
+	// nothing anywhere: ResolveHome otherwise falls back to the default
+	// install at $HOME/.ai-specs, which on a developer machine exists.
+	t.Setenv("HOME", t.TempDir())
 	stdout.Reset()
 	stderr.Reset()
 	outdoorExe := filepath.Join(t.TempDir(), "bin", "ai-specs")

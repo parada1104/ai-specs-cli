@@ -17,6 +17,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"ai-specs.dev/ai-specs/internal/home"
 )
 
 // newFakeBinaryInstall builds the post-flip layout: the checkout at
@@ -303,5 +305,29 @@ func TestDetectBinaryEntryUnderSymlinkedHome(t *testing.T) {
 	}
 	if inst.Kind != KindBinary {
 		t.Fatalf("kind=%v, want KindBinary (T9: EvalSymlinks(LocalBin) vs unresolved BinaryPath)", inst.Kind)
+	}
+}
+
+// TestDetectAcceptsTheHomeResolvedFromTheInstalledEntry pins the seam between
+// the installer and the updater. install.sh leaves NO AI_SPECS_HOME behind: the
+// entry is a real file in ~/.local/bin while the data home stays ~/.ai-specs, so
+// the CLI must resolve the home itself. Before the resolver verified that guess,
+// env.Home was ~/.local and Detect refused every upgrade with
+// "AI_SPECS_HOME (~/.local) does not match the expected global path".
+func TestDetectAcceptsTheHomeResolvedFromTheInstalledEntry(t *testing.T) {
+	f := newFakeBinaryInstall(t, "1.0.0")
+	env := f.env()
+	env.Home = home.ResolveHome(env.Executable, "")
+
+	var errb bytes.Buffer
+	inst, code, ok := Detect(env, &errb)
+	if !ok || code != 0 {
+		t.Fatalf("a fresh install without AI_SPECS_HOME must be accepted: ok=%v code=%d stderr=%q", ok, code, errb.String())
+	}
+	if want := filepath.Join(env.UserHome, ".ai-specs"); inst.Home != want {
+		t.Errorf("resolved home = %q, want %q", inst.Home, want)
+	}
+	if inst.Kind != KindBinary {
+		t.Errorf("Kind = %v, want KindBinary", inst.Kind)
 	}
 }
