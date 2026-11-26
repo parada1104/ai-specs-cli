@@ -260,3 +260,13 @@ OpenSpec modes, with a missing entry no longer silent. Worktree
 - **L14** — those five findings are fixed in `change/cleanup-review-fixes` before
   the release, so the shipped hook never clobbers a user hook and `tracker
   evidence` keeps its documented contract.
+- **L15 release incident (mine, caught by the release workflow)** — the tag
+  `v0.27.0` triggered `release-binaries.yml`, whose `go test` step failed:
+  `TestRecipeConfigureDifferentialAgainstScript` compares against frozen goldens
+  that embed the version the frozen run reported
+  (`preflight.cli_version.installed`), so the bump to 0.27.0 made three suites
+  fail and the release published no assets. `./tests/validate.sh` passed on the
+  branch because it ran BEFORE the bump: a version bump has to be validated too,
+  which the release ritual did not say. The 22 literals are refreshed here; the
+  underlying fragility (every bump silently breaks three suites) belongs to the
+  follow-up unit that normalises the version in the comparison.
