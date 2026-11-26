@@ -155,8 +155,7 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 		change = name
 	}
 	// S16: a worktree with no plan, no delta and no product-path divergence is not a
-	// change, so it owes no ledger row, no tier and no refutation, wherever it writes.
-	// The ledger checkpoint is a pending decision, not a tier, so it still comes first.
+	// change, so its diff owes no refutation; R2 still grades the pending target.
 	tool := target.Tool
 	if tool == "" {
 		tool = "edit"
@@ -166,16 +165,10 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 	if planBuildGateProduction(rel) && !planBuildGateGradeLedger(repoRoot, stderr) {
 		return 2
 	}
-	if planBuildGateWorkstream(repoRoot, mode, change) {
-		if explain {
-			fmt.Fprintf(stderr, "%s: tier %s; refutations %s\n", planBuildGateName,
-				planBuildGateInferredTier(repoRoot, mode, change), planBuildGateRules(nil))
-		}
-		return 0
-	}
 	// The tier is inferred, never required: no plan, declaration or authorization
 	// is a precondition, and only a proven refutation refuses.
-	blockers := gates.WriteRefutations(repoRoot, mode, change, rel)
+	blockers := gates.WriteRefutations(repoRoot, mode, change, rel,
+		planBuildGateWorkstream(repoRoot, mode, change))
 	if explain {
 		fmt.Fprintf(stderr, "%s: tier %s; refutations %s\n", planBuildGateName,
 			planBuildGateInferredTier(repoRoot, mode, change), planBuildGateRules(blockers))

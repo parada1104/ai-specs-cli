@@ -137,7 +137,7 @@ func Refutations(repoRoot, mode, change string, base *string) (blockers, notes [
 // claim: R1 and R2, each named with the fact that proves it and the exits that
 // resolve it. They are the guardian's R-a/R-b. No refutation fires without a
 // fact, so an empty worktree is never blocked.
-func WriteRefutations(repoRoot, mode, change, target string) []string {
+func WriteRefutations(repoRoot, mode, change, target string, workstream bool) []string {
 	base := BaseRef(repoRoot, nil)
 	var diff []planbuild.DiffEntry
 	if base != "" {
@@ -145,14 +145,17 @@ func WriteRefutations(repoRoot, mode, change, target string) []string {
 			diff = entries
 		}
 	}
-	var blockers []string
-	// R1 also reads the diff: a canonical spec the branch already changed with
-	// no delta this change contributes is a promotion bypass even when the
-	// pending write targets something else.
+	// R2 grades the pending target on every write, in or out of the production
+	// scope: a project-declared high-risk path owes its evidence wherever it lives.
+	blockers := highRiskRefutation(repoRoot, mode, change, base, diff, "R2", target)
+	// R1 also reads the diff, but only for a change: a workstream (S16) has no
+	// artifact and no product divergence, so its diff owes no refutation.
+	if workstream {
+		return blockers
+	}
 	if change != "" && !planbuild.HasDelta(repoRoot, mode, change) {
 		blockers = append(blockers, canonicalSpecRefutation(repoRoot, mode, change, diff, "R1")...)
 	}
-	blockers = append(blockers, highRiskRefutation(repoRoot, mode, change, base, diff, "R2", target)...)
 	return blockers
 }
 

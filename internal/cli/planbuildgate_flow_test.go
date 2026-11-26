@@ -202,3 +202,24 @@ func TestPlanBuildGateGradesADeclaredHighRiskTargetOutsideProduction(t *testing.
 		t.Fatalf("gate = (%d, %q), want exit 2 naming R2 and the pending target", code, stderr)
 	}
 }
+
+// R2 survives the S16 exemption: a workstream that writes a declared high-risk
+// path still owes its evidence.
+func TestPlanBuildGateGradesADeclaredHighRiskTargetInAWorkstream(t *testing.T) {
+	bin, _ := smokeSetup(t)
+	repo := t.TempDir()
+	flowGit(t, repo, "init", "-b", "main")
+	flowGit(t, repo, "config", "user.email", "flow@example.invalid")
+	flowGit(t, repo, "config", "user.name", "flow")
+	flowWrite(t, repo, "ai-specs/ai-specs.toml", "[recipes.plan-build-flow]\nenabled = true\n\n"+
+		"[recipes.plan-build-flow.config]\nmode = \"odd\"\nhigh_risk_paths = [\"docs/**\"]\n")
+	flowWrite(t, repo, "README.md", "x\n")
+	flowGit(t, repo, "add", "-A")
+	flowGit(t, repo, "commit", "-m", "base")
+	flowGit(t, repo, "checkout", "-b", "feat/thing")
+
+	_, stderr, code := flowRun(t, bin, repo, flowEvent(repo, "docs/deploy.md"), "plan-build-gate")
+	if code != 2 || !strings.Contains(stderr, "R2") {
+		t.Fatalf("gate = (%d, %q), want exit 2 naming R2 for the workstream target", code, stderr)
+	}
+}
