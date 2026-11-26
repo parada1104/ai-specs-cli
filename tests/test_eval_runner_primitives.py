@@ -319,9 +319,13 @@ class ClaudeStreamToolCaptureTests(_Fixture):
             assert_no_forbidden_commands(executed, ["git merge", "gh pr merge"])
         self.assertIn("git merge", str(ctx.exception))
 
-    def test_keeps_the_result_text_and_the_cost(self) -> None:
+    def test_grades_the_final_answer_not_the_narration(self) -> None:
+        # R1-001: narration from an earlier turn must never satisfy a
+        # transcript assertion. The answer graded is the runtime's final
+        # result, as it was before the tool-call capture.
         result = self._result(CLAUDE_STREAM_JSON)
-        self.assertIn("Archiving signup-validation now.", result["result_text"])
+        self.assertEqual("Archived. Want me to merge?", result["result_text"])
+        self.assertNotIn("Archiving signup-validation now.", result["result_text"])
         self.assertEqual(0.1234, result["cost"])
         self.assertEqual("success", result["json"]["subtype"])
 

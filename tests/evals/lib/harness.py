@@ -442,8 +442,12 @@ def _parse_claude_stream(stdout: str) -> dict[str, Any]:
     usage = final.get("usage")
     if cost is None and isinstance(usage, dict):
         cost = usage.get("total_cost_usd")
+    # The graded transcript is the runtime's final answer, never the
+    # concatenation of narration: an earlier "I will confirm ..." would
+    # otherwise satisfy a case that must prove the agent asked at the end.
+    answer = str(final.get("result") or "") or (texts[-1] if texts else "")
     return {
-        "result_text": "".join(texts) or str(final.get("result") or ""),
+        "result_text": answer,
         "cost": cost,
         # None when no event was parsed at all: that is no evidence, and the
         # forbidden-command check has to fail closed on it.
