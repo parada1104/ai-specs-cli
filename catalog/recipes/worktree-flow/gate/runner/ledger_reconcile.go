@@ -219,10 +219,11 @@ func corroboratedClosedItemID(ident ledger.Identity, observedID string) string {
 	if observedID == "" || !ident.Available() || ident.CommonDir == "" {
 		return ""
 	}
-	view, _, err := ledger.LedgersAt(ident.CommonDir).Load()
+	file, _, err := ledger.LedgerAt(ident.CommonDir).Load()
 	if err != nil {
 		return ""
 	}
+	view := file.View()
 	matches := 0
 	for _, item := range view.ClosedItems() {
 		if item.ItemID != observedID {

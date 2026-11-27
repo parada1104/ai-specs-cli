@@ -10,17 +10,16 @@ import (
 	"time"
 )
 
-// The split authority (S3): every verb writes the ledger that owns its row.
+// The section authority (L14): each capability writes only its own section, and one
+// atomic rename makes the write all-or-nothing.
 
-// TestCloseLandsInTheWorktreeLedgerOnly pins S3(a): a close is the lifecycle's
-// decision, so it lands in ledgers/worktree.json and the tracker ledger is left
-// byte-identical.
-func TestCloseLandsInTheWorktreeLedgerOnly(t *testing.T) {
-	path := ledgerPath(t)
-	locs := openFixture("card-1").write(t, path)
-	trackerBefore := rawBytes(t, locs.Tracker.Path)
+// TestCloseLandsInTheWorktreeSectionOnly pins that a close is the lifecycle's
+// decision: the worktree section gains it, the tracker section is unchanged.
+func TestCloseLandsInTheWorktreeSectionOnly(t *testing.T) {
+	loc := openFixture("card-1").write(t, ledgerPath(t))
+	trackerBefore := mustMarshal(t, loadFile(t, loc).Tracker)
 
-	out, err := ApplyWrite(locs, ApplyWriteRequest{
+	out, err := ApplyWrite(loc, ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointPreMerge,
 		Request:    WriteRequest{Kind: WriteClose},
@@ -32,39 +31,34 @@ func TestCloseLandsInTheWorktreeLedgerOnly(t *testing.T) {
 		t.Fatalf("close = %+v, want applied", out)
 	}
 
-	if got := rawBytes(t, locs.Tracker.Path); string(got) != string(trackerBefore) {
-		t.Fatalf("the close rewrote the tracker ledger:\nbefore=%s\nafter=%s", trackerBefore, got)
+	file := loadFile(t, loc)
+	if got := mustMarshal(t, file.Tracker); got != trackerBefore {
+		t.Fatalf("the close changed the tracker section:\nbefore=%s\nafter=%s", trackerBefore, got)
 	}
-	worktree := string(rawBytes(t, locs.Worktree.Path))
-	for _, want := range []string{`"status": "closed"`, `"kind": "close"`, `"checkpoint": "pre-merge"`} {
-		if !strings.Contains(worktree, want) {
-			t.Fatalf("the worktree ledger does not carry %s:\n%s", want, worktree)
-		}
+	row := file.Worktree.Items[0]
+	if row.Status != StatusClosed {
+		t.Fatalf("status = %q, want closed", row.Status)
 	}
-	if strings.Contains(string(trackerBefore), `"kind": "close"`) {
-		t.Fatalf("the tracker ledger carries a close decision: %s", trackerBefore)
-	}
-	if _, ok := loadView(t, locs).LatestClosed(ident("").Key()); !ok {
-		t.Fatal("the closed row is not visible to the read")
+	last := row.Decisions[len(row.Decisions)-1]
+	if last.Kind != DecisionClose || last.Checkpoint != CheckpointPreMerge {
+		t.Fatalf("last worktree decision = %+v, want close at pre-merge", last)
 	}
 }
 
-// TestDecisionsLandInTheTrackerLedgerOnly pins S3(c): a binding, an opt-out and
-// an adjudication are the tracker's decisions, written to ledgers/tracker.json
-// with the worktree ledger left byte-identical.
-func TestDecisionsLandInTheTrackerLedgerOnly(t *testing.T) {
-	path := ledgerPath(t)
-	locs := openFixture("card-1").write(t, path)
+// TestDecisionsLandInTheTrackerSectionOnly pins that a binding, an opt-out and an
+// adjudication are the tracker's decisions: the worktree section is unchanged.
+func TestDecisionsLandInTheTrackerSectionOnly(t *testing.T) {
+	loc := openFixture("card-1").write(t, ledgerPath(t))
 	key := ident("").Key()
-	worktreeBefore := rawBytes(t, locs.Worktree.Path)
+	worktreeBefore := mustMarshal(t, loadFile(t, loc).Worktree)
 	unchanged := func(step string) {
 		t.Helper()
-		if got := string(rawBytes(t, locs.Worktree.Path)); got != string(worktreeBefore) {
-			t.Fatalf("%s rewrote the worktree ledger:\nbefore=%s\nafter=%s", step, worktreeBefore, got)
+		if got := mustMarshal(t, loadFile(t, loc).Worktree); got != worktreeBefore {
+			t.Fatalf("%s changed the worktree section:\nbefore=%s\nafter=%s", step, worktreeBefore, got)
 		}
 	}
 
-	if _, err := ApplyWrite(locs, ApplyWriteRequest{
+	if _, err := ApplyWrite(loc, ApplyWriteRequest{
 		Identity: ident(""), Checkpoint: CheckpointApplyStart, ProviderID: "trello-mcp-workflow",
 		Request: WriteRequest{Kind: WriteLink, ItemID: "card-1", URL: "https://example.invalid/c/1"},
 	}, vtNow); err != nil {
@@ -72,21 +66,21 @@ func TestDecisionsLandInTheTrackerLedgerOnly(t *testing.T) {
 	}
 	unchanged("link")
 
-	if _, err := PersistDecision(locs, key, DecisionRequest{
+	if _, err := PersistDecision(loc, key, DecisionRequest{
 		Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "continue",
 	}, vtNow); err != nil {
 		t.Fatalf("opt-out: %v", err)
 	}
 	unchanged("opt-out")
 
-	if _, err := PersistDecision(locs, key, DecisionRequest{
+	if _, err := PersistDecision(loc, key, DecisionRequest{
 		Checkpoint: CheckpointPreMerge, Kind: DecisionAdjudicate, Choice: "local",
 	}, vtNow); err != nil {
 		t.Fatalf("adjudicate: %v", err)
 	}
 	unchanged("adjudication")
 
-	item, err := loadView(t, locs).Primary(key)
+	item, err := loadView(t, loc).Primary(key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,193 +94,181 @@ func TestDecisionsLandInTheTrackerLedgerOnly(t *testing.T) {
 		}
 	}
 	if kinds[DecisionClose] != 0 {
-		t.Fatalf("the tracker row carries a close decision: %+v", item.Decisions)
+		t.Fatalf("the tracker section carries a close decision: %+v", item.Decisions)
 	}
-	// The worktree row holds the lifecycle only: no binding, no opt-out, no
-	// adjudication reaches it.
-	for _, row := range loadView(t, locs).Worktree.Items {
-		if len(row.Decisions) != 0 {
-			t.Fatalf("worktree row %q carries tracker decisions: %+v", row.ID, row.Decisions)
+}
+
+// TestCorruptLedgerIsUnevaluableAndWritesNothing pins the corruption contract on one
+// file: a corrupt ledger is unevaluable, and a write fails closed leaving the bytes
+// exactly as found (never "empty and writable").
+func TestCorruptLedgerIsUnevaluableAndWritesNothing(t *testing.T) {
+	loc := StoreAt(ledgerPath(t))
+	if err := os.MkdirAll(filepath.Dir(loc.Path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(loc.Path, []byte(`{"v":2,"worktree":{"items":[`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := rawBytes(t, loc.Path)
+
+	_, _, err := loc.Load()
+	var corrupt *StoreCorruptError
+	if !errors.As(err, &corrupt) {
+		t.Fatalf("Load error = %v, want a *StoreCorruptError", err)
+	}
+	if _, err := ApplyWrite(loc, ApplyWriteRequest{
+		Identity: ident(""), Checkpoint: CheckpointApplyStart, Request: WriteRequest{Kind: WriteOpen},
+	}, vtNow); err == nil {
+		t.Fatal("a write over a corrupt ledger succeeded")
+	}
+	if got := rawBytes(t, loc.Path); string(got) != string(before) {
+		t.Fatalf("the corrupt ledger was rewritten:\nbefore=%s\nafter=%s", before, got)
+	}
+
+	// A read error that is not "absent" is corruption, never an empty ledger.
+	blocked := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := StoreAt(filepath.Join(blocked, "state.json")).Load(); !errors.As(err, &corrupt) {
+		t.Fatalf("an unreadable path read as an empty ledger: %v", err)
+	}
+}
+
+// TestMigrationNormalisesEachSectionFromItsOwnFields pins the migration shape: a v1
+// row gives the worktree section its lifecycle and the tracker section its record,
+// and a disagreement in a tracker field never changes the worktree share.
+func TestMigrationNormalisesEachSectionFromItsOwnFields(t *testing.T) {
+	loc := StoreAt(ledgerPath(t))
+	history := closedHistory(3)
+	writeLegacyFixture(t, loc.Path, history)
+
+	file := legacyAsLedger(history)
+	if len(file.Worktree.Items) != 3 || len(file.Tracker.Items) != 3 {
+		t.Fatalf("sections = %d/%d rows, want 3/3", len(file.Worktree.Items), len(file.Tracker.Items))
+	}
+	for i, row := range history.Items {
+		if file.Worktree.Items[i].ID != row.ID || file.Worktree.Items[i].Status != row.Status {
+			t.Fatalf("worktree row %d = %+v, want the v1 row's id and status", i, file.Worktree.Items[i])
+		}
+		if len(file.Worktree.Items[i].Decisions) != 1 || file.Worktree.Items[i].Decisions[0].Kind != DecisionClose {
+			t.Fatalf("worktree row %d decisions = %+v, want only the close", i, file.Worktree.Items[i].Decisions)
+		}
+		for _, d := range file.Tracker.Items[i].Decisions {
+			if d.Kind == DecisionClose {
+				t.Fatalf("the tracker row carries a close: %+v", file.Tracker.Items[i].Decisions)
+			}
 		}
 	}
 }
 
-// TestCorruptWorktreeLedgerStillLetsTheTrackerAnswer pins the isolation PR-1
-// delivers: a corrupt worktree ledger is reported, the tracker ledger still
-// answers its own rows and opt-outs, and the grade reports unevaluable instead
-// of silently allowing with unknown lifecycle state.
-func TestCorruptWorktreeLedgerStillLetsTheTrackerAnswer(t *testing.T) {
-	root := t.TempDir()
-	key := ident("").Key()
-	tracker := Store{V: StoreVersion, OptOuts: []ScopedOptOut{{
-		Key: key, Checkpoint: CheckpointApplyStart, Scope: ScopeLifecycle,
-		Choice: "continue", At: t0.Format(time.RFC3339),
-	}}}
-	locs := LedgersAt(root)
-	if _, err := locs.Tracker.Save(tracker); err != nil {
-		t.Fatalf("save tracker: %v", err)
+// TestPreSplitLedgerIsBackedUpOnceAndRewrittenAsV2 pins the migration write: the v1
+// bytes are kept as a one-shot backup, and the file becomes v2 exactly once.
+func TestPreSplitLedgerIsBackedUpOnceAndRewrittenAsV2(t *testing.T) {
+	loc := StoreAt(ledgerPath(t))
+	legacyBytes := writeLegacyFixture(t, loc.Path, closedHistory(3))
+
+	file := loadFile(t, loc)
+	if len(file.Worktree.Items) != 3 {
+		t.Fatalf("worktree rows = %d, want the 3 migrated rows", len(file.Worktree.Items))
 	}
-	if err := os.MkdirAll(filepath.Dir(locs.Worktree.Path), 0o755); err != nil {
-		t.Fatal(err)
+	if file.V != LedgerVersion {
+		t.Fatalf("loaded version = %d, want %d in memory", file.V, LedgerVersion)
 	}
-	if err := os.WriteFile(locs.Worktree.Path, []byte(`{"v":1,"items":[`), 0o600); err != nil {
-		t.Fatal(err)
+	if _, err := loc.Save(file); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if got := rawBytes(t, loc.Path+".v1-backup"); string(got) != string(legacyBytes) {
+		t.Fatal("the one-shot backup does not hold the predecessor bytes")
+	}
+	// The file is v2 now and keeps both sections.
+	var onDisk struct {
+		V        int `json:"v"`
+		Worktree struct {
+			Items []WorktreeItem `json:"items"`
+		} `json:"worktree"`
+		Tracker struct {
+			Items []Item `json:"items"`
+		} `json:"tracker"`
+	}
+	if err := json.Unmarshal(rawBytes(t, loc.Path), &onDisk); err != nil {
+		t.Fatalf("decode the written ledger: %v", err)
+	}
+	if onDisk.V != LedgerVersion || len(onDisk.Worktree.Items) != 3 || len(onDisk.Tracker.Items) != 3 {
+		t.Fatalf("written ledger = v%d %d/%d rows, want v2 with 3/3", onDisk.V, len(onDisk.Worktree.Items), len(onDisk.Tracker.Items))
 	}
 
-	view, _, err := locs.Load()
-	if err == nil {
-		t.Fatal("a corrupt worktree ledger must be reported")
+	// Changing the source bytes between attempts must not replace the backup.
+	writeLegacyFixture(t, loc.Path, closedHistory(1))
+	if _, err := loc.Save(file); err != nil {
+		t.Fatalf("second Save: %v", err)
 	}
-	if !view.HasScopedOptOut(key, CheckpointApplyStart) ||
-		!view.HasScopedOptOut(key, CheckpointPreMerge) {
-		t.Fatal("the tracker ledger did not answer its own opt-out")
-	}
-	if len(view.Tracker.OptOuts) != 1 {
-		t.Fatalf("tracker opt_outs = %+v, want the stored one", view.Tracker.OptOuts)
-	}
-	if _, perr := view.Primary(key); perr == nil {
-		t.Fatal("a corrupt worktree ledger cannot select a primary")
-	}
-
-	// The corrupt file is reported at grading time as infrastructure, never as a
-	// silent allow and never repaired.
-	got := Grade(Input{
-		Checkpoint: CheckpointApplyStart, Mode: ModeAlways, Binding: boundBinding(),
-		Identity: availIdentity(), View: view, StoreErr: err, Now: vtNow,
-	})
-	assertVerdict(t, "corrupt worktree ledger", got, vWant{DecisionUnevaluable, ReasonStoreCorrupt, 0, SeverityError, true})
-	if raw := string(rawBytes(t, locs.Worktree.Path)); raw != `{"v":1,"items":[` {
-		t.Fatalf("the corrupt worktree ledger was rewritten: %s", raw)
+	if got := rawBytes(t, loc.Path+".v1-backup"); string(got) != string(legacyBytes) {
+		t.Fatal("the one-shot backup was replaced on a later write")
 	}
 }
 
-// TestEachLedgerAbsorbsOnlyItsOwnShare pins the migration honesty (S11/L8): a
-// disagreement in a field a ledger does not own is not a shadow for it. The same
-// pre-split change is a shadow for exactly the ledger that owns the field.
-func TestEachLedgerAbsorbsOnlyItsOwnShare(t *testing.T) {
+// TestNextWriteCarriesMigratedRows pins that the absorbed rows are part of the file
+// after the first write, so the divergence heals instead of recurring.
+func TestNextWriteCarriesMigratedRows(t *testing.T) {
 	root := t.TempDir()
-	history := closedHistory(14)
+	writeLegacyFixture(t, TrackerStorePath(root), closedHistory(2))
+	loc := LedgerAt(root)
 
-	// Both split ledgers already hold their own share of every historical row.
-	if _, err := WorktreeLocation(root).SaveWorktree(
-		WorktreeStore{V: StoreVersion, Items: worktreeRows(history)}); err != nil {
-		t.Fatalf("save worktree: %v", err)
-	}
-	if _, err := TrackerLocation(root).Save(trackerRows(history)); err != nil {
-		t.Fatalf("save tracker: %v", err)
-	}
-
-	// An older binary changes a tracker-owned field on one historical row.
-	trackerOnly := closedHistory(14)
-	trackerOnly.Items[0].ItemID = "card-changed"
-	seedLegacy(t, root, trackerOnly)
-
-	_, worktreeReport, err := WorktreeLocation(root).LoadWorktree()
-	if err != nil {
-		t.Fatalf("LoadWorktree: %v", err)
-	}
-	if worktreeReport.Shadowed != 0 || worktreeReport.Absorbed != 0 {
-		t.Fatalf("worktree report = %+v, want no shadow: item_id is not its field", worktreeReport)
-	}
-	_, trackerReport, err := TrackerLocation(root).Load()
+	file, report, err := loc.Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if trackerReport.Shadowed != 1 {
-		t.Fatalf("tracker shadowed = %d, want the 1 row it owns", trackerReport.Shadowed)
+	if report.Absorbed != 2 || len(file.Worktree.Items) != 2 {
+		t.Fatalf("absorbed = %d, rows = %d, want 2 and 2", report.Absorbed, len(file.Worktree.Items))
 	}
-
-	// An older binary changes a worktree-owned field instead.
-	statusOnly := closedHistory(14)
-	statusOnly.Items[0].Status = StatusOpen
-	seedLegacy(t, root, statusOnly)
-
-	_, worktreeReport, err = WorktreeLocation(root).LoadWorktree()
+	if _, err := PersistDecision(loc, ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/fresh"}.Key(), DecisionRequest{
+		Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "local",
+	}, time.Now()); err != nil {
+		t.Fatalf("PersistDecision: %v", err)
+	}
+	reloaded, report, err := loc.Load()
 	if err != nil {
-		t.Fatalf("LoadWorktree: %v", err)
+		t.Fatalf("reload: %v", err)
 	}
-	if worktreeReport.Shadowed != 1 {
-		t.Fatalf("worktree shadowed = %d, want the 1 row it owns", worktreeReport.Shadowed)
+	if report.Absorbed != 0 || len(reloaded.Worktree.Items) != 2 || len(reloaded.Tracker.OptOuts) != 1 {
+		t.Fatalf("after the write: absorbed = %d, rows = %d, opt_outs = %d, want 0/2/1",
+			report.Absorbed, len(reloaded.Worktree.Items), len(reloaded.Tracker.OptOuts))
 	}
-	_, trackerReport, err = TrackerLocation(root).Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if trackerReport.Shadowed != 0 {
-		t.Fatalf("tracker report = %+v, want no shadow: status is not its field", trackerReport)
+	if file := fileBytes(t, TrackerStorePath(root)); !strings.Contains(file, `"v": 1`) {
+		t.Fatalf("the T5 predecessor was rewritten: %s", file)
 	}
 }
 
-// TestPreSplitLedgerStaysByteIdenticalAndBacksUpOnce pins S11 for the worktree
-// ledger: the pre-split file is never rewritten, and the one-shot backup is kept.
-func TestPreSplitLedgerStaysByteIdenticalAndBacksUpOnce(t *testing.T) {
-	root := t.TempDir()
-	legacy, legacyBytes := seedLegacy(t, root, closedHistory(3))
+// TestPlanSectionIsDeclaredWithoutARow pins the third section: the shape exists and
+// stays empty, and no separate plan file is created.
+func TestPlanSectionIsDeclaredWithoutARow(t *testing.T) {
+	loc := StoreAt(ledgerPath(t))
+	if _, err := loc.Save(EmptyLedger()); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	var onDisk struct {
+		Plan struct {
+			Items []json.RawMessage `json:"items"`
+		} `json:"plan"`
+	}
+	if err := json.Unmarshal(rawBytes(t, loc.Path), &onDisk); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if onDisk.Plan.Items == nil || len(onDisk.Plan.Items) != 0 {
+		t.Fatalf("plan section = %+v, want an empty items list", onDisk.Plan)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(loc.Path), "..", "ledgers", "plan.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a plan ledger file was created")
+	}
+}
 
-	worktree, report, err := WorktreeLocation(root).LoadWorktree()
+// mustMarshal renders one section for a before/after comparison.
+func mustMarshal(t *testing.T, value any) string {
+	t.Helper()
+	data, err := json.Marshal(value)
 	if err != nil {
-		t.Fatalf("LoadWorktree: %v", err)
+		t.Fatal(err)
 	}
-	// With no split file yet, the pre-split file is the answer: its rows are not
-	// "missing" from anything, so nothing is absorbed and nothing is reported.
-	if len(worktree.Items) != 3 || report.Absorbed != 0 {
-		t.Fatalf("worktree = %d rows (absorbed %d), want the 3 historical rows and no report", len(worktree.Items), report.Absorbed)
-	}
-	if _, err := WorktreeLocation(root).SaveWorktree(worktree); err != nil {
-		t.Fatalf("SaveWorktree: %v", err)
-	}
-	if got := rawBytes(t, legacy); string(got) != string(legacyBytes) {
-		t.Fatalf("the pre-split store was rewritten:\nbefore=%s\nafter=%s", legacyBytes, got)
-	}
-	backup := rawBytes(t, legacy+".v1-backup")
-	if string(backup) != string(legacyBytes) {
-		t.Fatal("the one-shot backup does not match the pre-split store")
-	}
-	// A second write keeps the original backup.
-	if _, err := WorktreeLocation(root).SaveWorktree(worktree); err != nil {
-		t.Fatalf("second SaveWorktree: %v", err)
-	}
-	if got := rawBytes(t, legacy+".v1-backup"); string(got) != string(legacyBytes) {
-		t.Fatal("the one-shot backup was replaced by a later write")
-	}
-
-	// Each split row carries only its own share.
-	var rows []WorktreeItem
-	if err := json.Unmarshal(itemsOf(t, WorktreeStorePath(root)), &rows); err != nil {
-		t.Fatalf("decode the split worktree rows: %v", err)
-	}
-	want := worktreeRows(closedHistory(3))
-	if len(rows) != len(want) {
-		t.Fatalf("rows = %d, want %d", len(rows), len(want))
-	}
-	for i := range want {
-		if !sameJSON(rows[i], want[i]) {
-			t.Fatalf("row %d is not the worktree share:\n got %+v\nwant %+v", i, rows[i], want[i])
-		}
-	}
-}
-
-// worktreeRows is the worktree ledger's share of a pre-split store.
-func worktreeRows(legacy LegacyStore) []WorktreeItem {
-	var rows []WorktreeItem
-	for _, row := range legacy.Items {
-		rows = append(rows, worktreeShare(row))
-	}
-	return rows
-}
-
-// TestPlanLocationIsDeclaredWithoutAStore pins the third location: it is named
-// beside the other two and carries no store yet, so nothing can write it.
-func TestPlanLocationIsDeclaredWithoutAStore(t *testing.T) {
-	root := "/repo/.git"
-	want := filepath.Join(root, "ai-specs", "ledgers", "plan.json")
-	if got := PlanLocation(root).Path; got != want {
-		t.Fatalf("PlanLocation path = %q, want %q", got, want)
-	}
-	if got := PlanLocation(root).Legacy; got != StorePath(root) {
-		t.Fatalf("PlanLocation legacy = %q, want the pre-split %q", got, StorePath(root))
-	}
-	if _, err := os.Stat(want); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("naming the plan location created %s", want)
-	}
+	return string(data)
 }

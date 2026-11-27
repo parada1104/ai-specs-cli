@@ -569,37 +569,32 @@ func TestRemoteDeletionFailureLeavesLocalBranchForRetry(t *testing.T) {
 
 // --- Flow-agnostic VCS close (T3) -------------------------------------------
 
-// readCleanupLedger loads the ledger pair the cleanup path writes, failing the
-// test on error.
+// readCleanupLedger loads the ledger file the cleanup path writes.
 func readCleanupLedger(t *testing.T, path string) ledger.View {
 	t.Helper()
-	view, _, err := ledger.LedgersAtStore(path).Load()
+	file, _, err := ledger.StoreAt(path).Load()
 	if err != nil {
 		t.Fatalf("Load(%s): %v", path, err)
 	}
-	return view
+	return file.View()
 }
 
-// cleanupLedgerBytes is the exact bytes of the ledger pair cleanup can write, with
-// a marker for an absent file, so a dry run is proven not to touch either.
+// cleanupLedgerBytes is the exact bytes of the ledger file cleanup can write, with a
+// marker for its absence, so a dry run is proven not to touch it.
 func cleanupLedgerBytes(t *testing.T, path string) string {
 	t.Helper()
-	locs := ledger.LedgersAtStore(path)
-	read := func(p string) string {
-		data, err := os.ReadFile(p)
-		if os.IsNotExist(err) {
-			return "<absent>"
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(data)
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "<absent>"
 	}
-	return "worktree=" + read(locs.Worktree.Path) + "\ntracker=" + read(locs.Tracker.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
-// seedCleanupLegacyLedger writes the open row as an older ai-specs would: only the
-// pre-split single store, with the status column cleanup must hand forward.
+// seedCleanupLegacyLedger writes the open row as an older ai-specs would: only the v1
+// predecessor, with the status column cleanup must hand forward.
 func seedCleanupLegacyLedger(t *testing.T, root, branch, change string) string {
 	t.Helper()
 	common := RealPath(gitCommon(root))
@@ -608,7 +603,7 @@ func seedCleanupLegacyLedger(t *testing.T, root, branch, change string) string {
 		t.Fatal(err)
 	}
 	stamp := time.Now().UTC().Format(time.RFC3339)
-	legacy := ledger.LegacyStore{V: ledger.StoreVersion, Items: []ledger.LegacyItem{{
+	legacy := ledger.LegacyStore{V: 1, Items: []ledger.LegacyItem{{
 		Status: ledger.StatusOpen,
 		Item: ledger.Item{
 			ID:         ledger.NewItemID(ledger.ItemIdentity{CommonDir: common, Branch: branch, Change: change}.Key(), stamp),
@@ -624,31 +619,28 @@ func seedCleanupLegacyLedger(t *testing.T, root, branch, change string) string {
 	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return ledger.TrackerStorePath(common)
+	return path
 }
 
-// seedCleanupLedger writes one open row to each ledger — the lifecycle row the
-// close owns and the tracker row it records — whose identity includes a change
-// slug, mirroring the real binding. Cleanup only has common dir + branch.
+// seedCleanupLedger writes one open row to each section — the lifecycle row the close
+// owns and the tracker record it joins with — with a change slug in its identity,
+// mirroring the real binding. Cleanup only has common dir + branch.
 func seedCleanupLedger(t *testing.T, root, branch, change string) string {
 	t.Helper()
 	common := RealPath(gitCommon(root))
-	path := ledger.TrackerStorePath(common)
+	path := ledger.StorePath(common)
 	ident := ledger.ItemIdentity{CommonDir: common, Branch: branch, Change: change}
 	stamp := time.Now().UTC().Format(time.RFC3339)
 	id := ledger.NewItemID(ident.Key(), stamp)
-	worktree := ledger.WorktreeStore{V: ledger.StoreVersion, Items: []ledger.WorktreeItem{{
+	file := ledger.EmptyLedger()
+	file.Worktree.Items = append(file.Worktree.Items, ledger.WorktreeItem{
 		ID: id, Identity: ident, Status: ledger.StatusOpen, Decisions: []ledger.WorktreeDecision{},
-	}}}
-	tracker := ledger.Store{V: ledger.StoreVersion, Items: []ledger.Item{{
+	})
+	file.Tracker.Items = append(file.Tracker.Items, ledger.Item{
 		ID: id, Identity: ident, ProviderID: "test-recipe",
 		Decisions: []ledger.Decision{{At: stamp, Kind: ledger.DecisionOpen}},
-	}}}
-	locs := ledger.LedgersAtStore(path)
-	if _, err := locs.Worktree.SaveWorktree(worktree); err != nil {
-		t.Fatalf("SaveWorktree: %v", err)
-	}
-	if _, err := locs.Tracker.Save(tracker); err != nil {
+	})
+	if _, err := ledger.StoreAt(path).Save(file); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	return path
@@ -682,7 +674,7 @@ func assertCleanupItemClosedAtArchiveClose(t *testing.T, path, branch string) {
 }
 
 // TestCleanupReportsTheMigrationItPerformed pins L12.7: the close's own report is
-// printed, not discarded, when the row is handed forward from an older store.
+// printed, not discarded, when the row is handed forward from a predecessor.
 func TestCleanupReportsTheMigrationItPerformed(t *testing.T) {
 	root := makeCleanupRepo(t)
 	wt := addCleanupWorktree(t, root, "feat-ledger-migrate")
@@ -692,14 +684,19 @@ func TestCleanupReportsTheMigrationItPerformed(t *testing.T) {
 	cleanupGitTest(t, wt, "add", ".")
 	cleanupGitTest(t, wt, "commit", "-qm", "migrate")
 	cleanupGitTest(t, root, "merge", "-q", "--no-ff", "-m", "merge migrate", "feat-ledger-migrate")
-	path := seedCleanupLegacyLedger(t, root, "feat-ledger-migrate", "migrate-change")
-	// A worktree ledger already exists, so the legacy row is handed forward and the
-	// close has to report that it was.
+	// The v1 predecessor holds the open row; the v2 ledger file exists but empty, so
+	// the close has to hand the row forward and report that it did.
 	common := RealPath(gitCommon(root))
-	if err := os.MkdirAll(filepath.Dir(ledger.WorktreeStorePath(common)), 0o755); err != nil {
+	seedCleanupLegacyPredecessor(t, root, "feat-ledger-migrate", "migrate-change")
+	path := ledger.StorePath(common)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(ledger.WorktreeStorePath(common), []byte(`{"v":1,"items":[]}`+"\n"), 0o600); err != nil {
+	data, err := json.MarshalIndent(ledger.EmptyLedger(), "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -710,13 +707,42 @@ func TestCleanupReportsTheMigrationItPerformed(t *testing.T) {
 	}
 	for _, want := range []string{
 		"closed ledger item for feat-ledger-migrate",
-		"ledger row(s) written to the pre-split store",
+		"ledger row(s) from",
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("cleanup output does not carry %q:\n%s", want, stdout.String())
 		}
 	}
 	assertCleanupItemClosedAtArchiveClose(t, path, "feat-ledger-migrate")
+}
+
+// seedCleanupLegacyPredecessor writes the open row to T5's mixed tracker file, the
+// predecessor a v2 ledger file absorbs on read.
+func seedCleanupLegacyPredecessor(t *testing.T, root, branch, change string) string {
+	t.Helper()
+	common := RealPath(gitCommon(root))
+	path := ledger.TrackerStorePath(common)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Now().UTC().Format(time.RFC3339)
+	legacy := ledger.LegacyStore{V: 1, Items: []ledger.LegacyItem{{
+		Status: ledger.StatusOpen,
+		Item: ledger.Item{
+			ID:         ledger.NewItemID(ledger.ItemIdentity{CommonDir: common, Branch: branch, Change: change}.Key(), stamp),
+			Identity:   ledger.ItemIdentity{CommonDir: common, Branch: branch, Change: change},
+			ProviderID: "test-recipe",
+			Decisions:  []ledger.Decision{{At: stamp, Kind: ledger.DecisionOpen}},
+		},
+	}}}
+	data, err := json.MarshalIndent(legacy, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // TestCleanupReportsAFailedBackup pins the other warning the close's report carries:
@@ -734,15 +760,19 @@ func TestCleanupReportsAFailedBackup(t *testing.T) {
 	cleanupGitTest(t, wt, "add", ".")
 	cleanupGitTest(t, wt, "commit", "-qm", "backup")
 	cleanupGitTest(t, root, "merge", "-q", "--no-ff", "-m", "merge backup", "feat-ledger-backup")
-	seedCleanupLegacyLedger(t, root, "feat-ledger-backup", "backup-change")
+	seedCleanupLegacyPredecessor(t, root, "feat-ledger-backup", "backup-change")
 	common := RealPath(gitCommon(root))
-	if err := os.MkdirAll(filepath.Dir(ledger.WorktreeStorePath(common)), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(ledger.StorePath(common)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(ledger.WorktreeStorePath(common), []byte(`{"v":1,"items":[]}`+"\n"), 0o600); err != nil {
+	empty, err := json.MarshalIndent(ledger.EmptyLedger(), "", "  ")
+	if err != nil {
 		t.Fatal(err)
 	}
-	legacyDir := filepath.Dir(ledger.StorePath(common))
+	if err := os.WriteFile(ledger.StorePath(common), append(empty, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacyDir := filepath.Dir(ledger.TrackerStorePath(common))
 	if err := os.Chmod(legacyDir, 0o500); err != nil {
 		t.Fatal(err)
 	}
@@ -753,7 +783,7 @@ func TestCleanupReportsAFailedBackup(t *testing.T) {
 	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
 		t.Fatalf("cleanup exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "could not write the one-shot backup") {
+	if !strings.Contains(stdout.String(), "could not write a one-shot backup") {
 		t.Fatalf("cleanup discarded the failed-backup warning:\n%s", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "closed ledger item for feat-ledger-backup") {
@@ -832,9 +862,9 @@ func TestCleanupPreservesCandidateWhenLedgerStoreIsUnevaluable(t *testing.T) {
 	cleanupGitTest(t, wt, "add", ".")
 	cleanupGitTest(t, wt, "commit", "-qm", "corrupt")
 	cleanupGitTest(t, root, "merge", "-q", "--no-ff", "-m", "merge corrupt", "feat-ledger-corrupt")
-	// The close reads the worktree ledger, so that is the file whose corruption
-	// must fail closed: cleanup never removes a candidate it cannot close.
-	path := ledger.WorktreeStorePath(RealPath(gitCommon(root)))
+	// The close reads the ledger file, so that is the file whose corruption must
+	// fail closed: cleanup never removes a candidate it cannot close.
+	path := ledger.StorePath(RealPath(gitCommon(root)))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}

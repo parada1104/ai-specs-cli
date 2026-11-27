@@ -31,9 +31,8 @@ type WorktreeDecision struct {
 	Kind       string `json:"kind"`
 }
 
-// WorktreeStore is the worktree ledger: one version and the lifecycle rows.
+// WorktreeStore is the worktree section: the lifecycle rows.
 type WorktreeStore struct {
-	V     int            `json:"v"`
 	Items []WorktreeItem `json:"items"`
 }
 
@@ -139,46 +138,6 @@ func worktreeShare(row LegacyItem) WorktreeItem {
 	return share
 }
 
-// absorbWorktree takes this ledger's share of a pre-split source: the rows it does
-// not have at all, and the close decisions a row it already has is missing. A
-// close is never dropped from its source until this file holds it (L11), so a
-// close is merged rather than reported as a shadow. Only the fields this ledger
-// owns are compared, so a disagreement in a tracker field is not a shadow here.
-//
-// A source row with no status and no close carries no lifecycle at all — that is
-// what this build's own normalised tracker.json looks like — and is skipped, so it
-// cannot shadow a closed worktree row.
-func absorbWorktree(split *WorktreeStore, legacy LegacyStore) merge {
-	seen := make(map[string]int, len(split.Items))
-	for i, item := range split.Items {
-		seen[item.ID] = i
-	}
-	var result merge
-	for _, row := range legacy.Items {
-		share := worktreeShare(row)
-		if share.Status == "" && len(share.Decisions) == 0 {
-			continue
-		}
-		at, ok := seen[share.ID]
-		if !ok {
-			seen[share.ID] = len(split.Items)
-			split.Items = append(split.Items, share)
-			result.absorbed++
-			if len(share.Decisions) > 0 {
-				result.carried = true
-			}
-			continue
-		}
-		if added := mergeCloses(&split.Items[at], share.Decisions); added > 0 {
-			result.carried = true
-		}
-		if split.Items[at].Status != share.Status {
-			result.shadowed++
-		}
-	}
-	return result
-}
-
 // mergeCloses appends the close decisions a row does not have yet, in the source's
 // order, and reports how many it appended. A close already present is never
 // duplicated or rewritten.
@@ -232,53 +191,4 @@ func trackerDecisions(decisions []Decision) []Decision {
 		}
 	}
 	return out
-}
-
-// absorbTracker takes this ledger's share of the pre-split rows the split file
-// lacks, by row id, and the scoped opt-outs it lacks, and counts the rows both
-// files have with different content. Only the fields this ledger owns are
-// compared, so a disagreement in the lifecycle status is not a shadow here.
-func absorbTracker(split *Store, legacy LegacyStore) merge {
-	seen := make(map[string]int, len(split.Items))
-	for i, item := range split.Items {
-		seen[item.ID] = i
-	}
-	var result merge
-	for _, row := range legacy.Items {
-		share := trackerShare(row)
-		if at, ok := seen[share.ID]; ok {
-			// Compare the split row's share too, so the two sides are normalised
-			// the same way and a formatting difference is never a shadow.
-			if !sameJSON(trackerShare(LegacyItem{Item: split.Items[at]}), share) {
-				result.shadowed++
-			}
-			continue
-		}
-		seen[share.ID] = len(split.Items)
-		split.Items = append(split.Items, share)
-		result.absorbed++
-	}
-	seenOptOut := make(map[string]int, len(split.OptOuts))
-	for i, optOut := range split.OptOuts {
-		seenOptOut[optOutKey(optOut)] = i
-	}
-	for _, optOut := range legacy.OptOuts {
-		key := optOutKey(optOut)
-		if _, ok := seenOptOut[key]; ok {
-			continue
-		}
-		seenOptOut[key] = len(split.OptOuts)
-		split.OptOuts = append(split.OptOuts, optOut)
-		result.absorbed++
-	}
-	return result
-}
-
-// sameJSON reports whether two ledger rows carry the same content. A row the
-// split ledger wrote before an older ai-specs touched it is not rewritten in
-// place: the split ledger's version answers and the difference is reported.
-func sameJSON(a, b any) bool {
-	left, errLeft := json.Marshal(a)
-	right, errRight := json.Marshal(b)
-	return errLeft == nil && errRight == nil && left != nil && string(left) == string(right)
 }

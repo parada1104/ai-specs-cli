@@ -55,26 +55,22 @@ func bindTrackerLedger(t *testing.T, common, branch string, withItem bool) {
 	if err := os.WriteFile(witness, body, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// One row per ledger (S3): the open lifecycle in the worktree ledger, the
-	// provider record and its open decision in the tracker ledger, joined by the
-	// id both rows carry.
-	locs := ledger.LedgersAt(common)
-	worktree := ledger.WorktreeStore{V: ledger.StoreVersion, Items: []ledger.WorktreeItem{}}
-	tracker := ledger.Store{V: ledger.StoreVersion, Items: []ledger.Item{}}
+	// One ledger file, one section per capability (L14): the open lifecycle in the
+	// worktree section, the provider record and its open decision in the tracker
+	// section, joined by the id both rows carry.
+	path := ledger.StorePath(common)
+	file := ledger.EmptyLedger()
 	if withItem {
 		stamp := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)
 		ident := ledger.ItemIdentity{CommonDir: common, Branch: branch}
 		id := ledger.NewItemID(ident.Key(), stamp)
-		worktree.Items = append(worktree.Items, ledger.WorktreeItem{
+		file.Worktree.Items = append(file.Worktree.Items, ledger.WorktreeItem{
 			ID: id, Identity: ident, Status: ledger.StatusOpen, Decisions: []ledger.WorktreeDecision{}})
-		tracker.Items = append(tracker.Items, ledger.Item{
+		file.Tracker.Items = append(file.Tracker.Items, ledger.Item{
 			ID: id, Identity: ident, ItemID: "card-1", ProviderID: "trello-mcp-workflow",
 			Decisions: []ledger.Decision{{At: stamp, Kind: ledger.DecisionOpen}}})
 	}
-	if _, err := locs.Worktree.SaveWorktree(worktree); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := locs.Tracker.Save(tracker); err != nil {
+	if _, err := ledger.StoreAt(path).Save(file); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -118,14 +114,14 @@ func trackerBlockedMessage(checkpoint, reason string) string {
 		" (Tracker advisory: reported, not enforced).\n"
 }
 
-// trackerLoadStore reads the ledger store the fixture bound.
+// trackerLoadStore reads the tracker section of the ledger the fixture bound.
 func trackerLoadStore(t *testing.T, common string) ledger.Store {
 	t.Helper()
-	store, _, err := ledger.TrackerLocation(common).Load()
+	file, _, err := ledger.LedgerAt(common).Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return store
+	return file.Tracker
 }
 
 // trackerWriteCard writes one change's ## Tracker card onto disk.
@@ -357,11 +353,9 @@ func TestTrackerCardGateApplyStartDormantWritesNothing(t *testing.T) {
 	if code != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("gate = (%d, %q, %q), want silence", code, stdout, stderr)
 	}
-	// A dormant grade writes neither ledger: check every file it could create.
-	for _, path := range []string{ledger.TrackerStorePath(common), ledger.WorktreeStorePath(common)} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("dormant grade wrote %s: %v", path, err)
-		}
+	// A dormant grade writes no ledger at all.
+	if _, err := os.Stat(ledger.StorePath(common)); !os.IsNotExist(err) {
+		t.Fatalf("dormant grade wrote a ledger: %v", err)
 	}
 }
 

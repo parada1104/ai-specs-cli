@@ -22,72 +22,71 @@ func ident(change string) ItemIdentity {
 	return ItemIdentity{CommonDir: "/repo/.git", Branch: "change/tracker-ledger-foundation", Change: change}
 }
 
-// fixture is the pair of ledgers a test seeds the way the pre-split store was
-// seeded before the split: one open row per ledger, a close that only the
-// worktree ledger records, and the two read back together as the composed View.
+// fixture is one ledger file a test seeds: an open row in the worktree section and
+// the tracker record it joins with, read back through the composed View (L14).
 type fixture struct {
-	Tracker  Store
-	Worktree WorktreeStore
+	File LedgerFile
 }
 
-func newFixture() *fixture { return &fixture{} }
+func newFixture() *fixture { return &fixture{File: EmptyLedger()} }
 
-// openItem appends one open row to each ledger, exactly as ApplyWrite's open
-// verb does: identity and status in the worktree ledger, the provider record and
-// the open decision in the tracker.
+// openItem appends one open row to each section, exactly as ApplyWrite's open verb
+// does: identity and status in the worktree section, the provider record and the
+// open decision in the tracker section.
 func (f *fixture) openItem(id ItemIdentity, providerID string, at time.Time) Item {
 	stamp := at.UTC().Format(time.RFC3339)
 	rowID := f.view().uniqueItemID(id, stamp)
-	f.Worktree.Items = append(f.Worktree.Items,
+	f.File.Worktree.Items = append(f.File.Worktree.Items,
 		WorktreeItem{ID: rowID, Identity: id, Status: StatusOpen, Decisions: []WorktreeDecision{}})
 	item := Item{ID: rowID, Identity: id, ProviderID: providerID,
 		Decisions: []Decision{{At: stamp, Kind: DecisionOpen}}}
-	f.Tracker.Items = append(f.Tracker.Items, item)
+	f.File.Tracker.Items = append(f.File.Tracker.Items, item)
 	return item
 }
 
-// closeItem closes the row in the worktree ledger: that is where the lifecycle
+// closeItem closes the row in the worktree section: that is where the lifecycle
 // lives, so the close decision never reaches the tracker row.
 func (f *fixture) closeItem(id string, d Decision) error {
 	at := d.At
 	if at == "" {
 		at = t0.UTC().Format(time.RFC3339)
 	}
-	return f.Worktree.closeItem(id, at, d.Checkpoint)
+	return f.File.Worktree.closeItem(id, at, d.Checkpoint)
 }
 
-// view composes the two ledgers into the read-only contract.
-func (f *fixture) view() View { return View{Worktree: f.Worktree, Tracker: f.Tracker} }
+// view composes the sections into the read-only contract.
+func (f *fixture) view() View { return f.File.View() }
 
-// write stores both ledgers at the explicit locations a test names: the tracker
-// file path and its worktree sibling.
-func (f *fixture) write(t *testing.T, path string) Ledgers {
+// write stores the file at the path a test names and returns its location.
+func (f *fixture) write(t *testing.T, path string) StoreLocation {
 	t.Helper()
-	locs := LedgersAtStore(path)
-	if _, err := locs.Worktree.SaveWorktree(f.Worktree); err != nil {
-		t.Fatalf("save worktree ledger: %v", err)
+	loc := StoreAt(path)
+	if _, err := loc.Save(f.File); err != nil {
+		t.Fatalf("save ledger: %v", err)
 	}
-	if _, err := locs.Tracker.Save(f.Tracker); err != nil {
-		t.Fatalf("save tracker ledger: %v", err)
-	}
-	return locs
+	return loc
 }
 
-// ledgerPath is a fresh tracker ledger path under a temp git common dir; its
-// worktree sibling lives beside it.
+// ledgerPath is a fresh ledger file path under a temp git common dir.
 func ledgerPath(t *testing.T) string {
 	t.Helper()
-	return TrackerStorePath(filepath.Join(t.TempDir(), ".git"))
+	return StorePath(filepath.Join(t.TempDir(), ".git"))
 }
 
-// loadView reads a ledger pair back as the composed View.
-func loadView(t *testing.T, locs Ledgers) View {
+// loadView reads the ledger file back as the composed View.
+func loadView(t *testing.T, loc StoreLocation) View {
 	t.Helper()
-	view, _, err := locs.Load()
+	return loadFile(t, loc).View()
+}
+
+// loadFile reads the ledger file, failing the test on error.
+func loadFile(t *testing.T, loc StoreLocation) LedgerFile {
+	t.Helper()
+	file, _, err := loc.Load()
 	if err != nil {
-		t.Fatalf("load ledgers: %v", err)
+		t.Fatalf("load ledger: %v", err)
 	}
-	return view
+	return file
 }
 
 // TestStorePathDesignAuthority pins A3: the store is a single JSON object under
@@ -102,16 +101,16 @@ func TestStorePathDesignAuthority(t *testing.T) {
 // TestLoadStoreMissingIsEmpty pins "a missing file reads as an empty item set":
 // a fresh clone or unsynced checkout is not an error and never a synthesized item.
 func TestLoadStoreMissingIsEmpty(t *testing.T) {
-	path := StorePath(filepath.Join(t.TempDir(), ".git"))
-	store, err := LoadStore(path)
+	loc := StoreAt(StorePath(filepath.Join(t.TempDir(), ".git")))
+	file, _, err := loc.Load()
 	if err != nil {
-		t.Fatalf("missing store must not error: %v", err)
+		t.Fatalf("missing ledger must not error: %v", err)
 	}
-	if len(store.Items) != 0 {
-		t.Fatalf("missing store items = %d, want 0", len(store.Items))
+	if len(file.Tracker.Items) != 0 || len(file.Worktree.Items) != 0 {
+		t.Fatalf("sections = %d/%d rows, want 0/0", len(file.Tracker.Items), len(file.Worktree.Items))
 	}
-	if store.V != StoreVersion {
-		t.Fatalf("store version = %d, want %d", store.V, StoreVersion)
+	if file.V != LedgerVersion {
+		t.Fatalf("version = %d, want %d", file.V, LedgerVersion)
 	}
 }
 
@@ -128,7 +127,7 @@ func TestLoadStoreCorruptIsUnevaluable(t *testing.T) {
 	}{
 		{"invalid json", `{"v":1,"items":[`},
 		{"not an object", `[]`},
-		{"unknown version", `{"v":2,"items":[]}`},
+		{"unknown version", `{"v":3,"items":[]}`},
 		{"empty file", ``},
 	}
 	for _, tc := range cases {
@@ -137,7 +136,7 @@ func TestLoadStoreCorruptIsUnevaluable(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			store, err := LoadStore(path)
+			file, _, err := StoreAt(path).Load()
 			var corrupt *StoreCorruptError
 			if !errors.As(err, &corrupt) {
 				t.Fatalf("error = %v, want *StoreCorruptError", err)
@@ -145,8 +144,8 @@ func TestLoadStoreCorruptIsUnevaluable(t *testing.T) {
 			if corrupt.Path != path {
 				t.Fatalf("corrupt path = %q, want %q", corrupt.Path, path)
 			}
-			if len(store.Items) != 0 {
-				t.Fatalf("corrupt store must not synthesize items: %+v", store.Items)
+			if len(file.Tracker.Items) != 0 || len(file.Worktree.Items) != 0 {
+				t.Fatalf("corrupt ledger must not synthesize rows: %+v", file)
 			}
 			// The corrupt file is left exactly as found: never repaired silently.
 			after, readErr := os.ReadFile(path)
@@ -169,7 +168,8 @@ func TestSaveStoreAtomicRenameLeavesNoTempResidue(t *testing.T) {
 
 	f := newFixture()
 	f.openItem(ident("tracker-ledger-foundation"), "trello-mcp-workflow", t0)
-	if err := SaveStore(path, f.Tracker); err != nil {
+	loc := StoreAt(path)
+	if _, err := loc.Save(f.File); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
@@ -181,32 +181,25 @@ func TestSaveStoreAtomicRenameLeavesNoTempResidue(t *testing.T) {
 		t.Fatalf("temp residue after save: %v", matches)
 	}
 
-	loaded, err := LoadStore(path)
-	if err != nil {
-		t.Fatalf("reload: %v", err)
+	loaded := loadFile(t, loc)
+	if len(loaded.Tracker.Items) != 1 {
+		t.Fatalf("round-trip items = %d, want 1", len(loaded.Tracker.Items))
 	}
-	if len(loaded.Items) != 1 {
-		t.Fatalf("round-trip items = %d, want 1", len(loaded.Items))
-	}
-	if loaded.Items[0].ProviderID != "trello-mcp-workflow" {
-		t.Fatalf("round-trip provider id = %q", loaded.Items[0].ProviderID)
+	if loaded.Tracker.Items[0].ProviderID != "trello-mcp-workflow" {
+		t.Fatalf("round-trip provider id = %q", loaded.Tracker.Items[0].ProviderID)
 	}
 
 	// A later save replaces the file rather than appending to it.
-	if err := SaveStore(path, Store{}); err != nil {
+	if _, err := loc.Save(EmptyLedger()); err != nil {
 		t.Fatal(err)
 	}
-	replaced, err := LoadStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(replaced.Items) != 0 {
-		t.Fatalf("second save must replace, got %d items", len(replaced.Items))
+	if replaced := loadFile(t, loc); len(replaced.Tracker.Items) != 0 || len(replaced.Worktree.Items) != 0 {
+		t.Fatalf("second save must replace, got %+v", replaced)
 	}
 
 	// A store with no items still writes a JSON array, not null.
 	empty := filepath.Join(t.TempDir(), ".git", "ai-specs", "ledger", "state.json")
-	if err := SaveStore(empty, Store{}); err != nil {
+	if _, err := StoreAt(empty).Save(EmptyLedger()); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(empty)
@@ -285,10 +278,10 @@ func TestClosedItemIsNeverSelectedOrReopened(t *testing.T) {
 	if _, err := f.view().Primary(id.Key()); !errors.Is(err, ErrNoPrimary) {
 		t.Fatalf("closed item must not be primary (err = %v)", err)
 	}
-	if f.Worktree.Items[0].Status != StatusClosed {
-		t.Fatalf("status = %q, want %q", f.Worktree.Items[0].Status, StatusClosed)
+	if f.File.Worktree.Items[0].Status != StatusClosed {
+		t.Fatalf("status = %q, want %q", f.File.Worktree.Items[0].Status, StatusClosed)
 	}
-	decisions := f.Worktree.Items[0].Decisions
+	decisions := f.File.Worktree.Items[0].Decisions
 	if len(decisions) == 0 || decisions[len(decisions)-1].Kind != DecisionClose {
 		t.Fatalf("close decision missing: %+v", decisions)
 	}
@@ -312,7 +305,7 @@ func TestLatestClosedReportsLatestClosedRowWithoutPrimary(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, ok := f.view().LatestClosed(id.Key())
-	if !ok || got.ID != first.ID || f.Worktree.Items[0].Status != StatusClosed {
+	if !ok || got.ID != first.ID || f.File.Worktree.Items[0].Status != StatusClosed {
 		t.Fatalf("LatestClosed = %+v/%v, want the closed row %q", got, ok, first.ID)
 	}
 	if _, err := f.view().Primary(id.Key()); !errors.Is(err, ErrNoPrimary) {
@@ -363,14 +356,14 @@ func TestReusedBranchOpensNewItemD17(t *testing.T) {
 	if primary.ID != reopened.ID {
 		t.Fatalf("primary = %q, want the new item %q", primary.ID, reopened.ID)
 	}
-	if len(f.Tracker.Items) != 2 || f.Worktree.Items[0].Status != StatusClosed {
-		t.Fatalf("closed row must remain: %+v", f.Tracker.Items)
+	if len(f.File.Tracker.Items) != 2 || f.File.Worktree.Items[0].Status != StatusClosed {
+		t.Fatalf("closed row must remain: %+v", f.File.Tracker.Items)
 	}
 
 	// Same branch and same change identity is also a new row, not a reopen.
 	same := f.openItem(old, "trello-mcp-workflow", t0.Add(2*time.Hour))
-	if same.ID == closed.ID || f.Worktree.Items[0].Status != StatusClosed {
-		t.Fatalf("closed item was reopened: %+v", f.Tracker.Items)
+	if same.ID == closed.ID || f.File.Worktree.Items[0].Status != StatusClosed {
+		t.Fatalf("closed item was reopened: %+v", f.File.Tracker.Items)
 	}
 	if _, err := f.view().Primary(old.Key()); err != nil {
 		t.Fatalf("the fresh same-key row must be primary: %v", err)
@@ -390,8 +383,8 @@ func TestSameSecondOpenItemIDsStayUnique(t *testing.T) {
 	if fresh.ID == closed.ID {
 		t.Fatalf("same-second open reused ID %q", fresh.ID)
 	}
-	if len(f.Tracker.Items) != 2 || f.Worktree.Items[0].Status != StatusClosed || f.Worktree.Items[1].Status != StatusOpen {
-		t.Fatalf("store rows = %+v, want closed then open", f.Tracker.Items)
+	if len(f.File.Tracker.Items) != 2 || f.File.Worktree.Items[0].Status != StatusClosed || f.File.Worktree.Items[1].Status != StatusOpen {
+		t.Fatalf("store rows = %+v, want closed then open", f.File.Tracker.Items)
 	}
 }
 
@@ -454,12 +447,12 @@ func TestItemCoreFieldsAreProviderNeutral(t *testing.T) {
 	}
 
 	path := StorePath(filepath.Join(t.TempDir(), ".git"))
-	if err := SaveStore(path, Store{Items: []Item{item}}); err != nil {
+	if _, err := StoreAt(path).Save(LedgerFile{V: LedgerVersion, Tracker: Store{Items: []Item{item}}}); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := LoadStore(path)
-	if err != nil {
-		t.Fatal(err)
+	loaded := loadFile(t, StoreAt(path)).Tracker
+	if len(loaded.Items) != 1 {
+		t.Fatalf("round-trip items = %d, want 1", len(loaded.Items))
 	}
 	var got, wantProvider map[string]any
 	if err := json.Unmarshal(loaded.Items[0].Provider, &got); err != nil {
@@ -488,11 +481,11 @@ func TestDecisionsAreAppendOnly(t *testing.T) {
 	kinds := []string{DecisionAdjudicate, DecisionOptOut, DecisionLink}
 	for i, kind := range kinds {
 		d := Decision{At: fmt.Sprintf("2026-09-13T0%d:00:00Z", i+1), Checkpoint: "pr-review", Kind: kind}
-		if err := f.Tracker.AppendDecision(item.ID, d); err != nil {
+		if err := f.File.Tracker.AppendDecision(item.ID, d); err != nil {
 			t.Fatalf("append %s: %v", kind, err)
 		}
 	}
-	got := f.Tracker.Items[0].Decisions
+	got := f.File.Tracker.Items[0].Decisions
 	if len(got) != len(before)+len(kinds) {
 		t.Fatalf("decisions = %d, want %d", len(got), len(before)+len(kinds))
 	}
@@ -507,13 +500,13 @@ func TestDecisionsAreAppendOnly(t *testing.T) {
 		}
 	}
 
-	if err := f.Tracker.AppendDecision(item.ID, Decision{At: "2026-09-13T05:00:00Z", Kind: "invented"}); !errors.Is(err, ErrUnknownDecisionKind) {
+	if err := f.File.Tracker.AppendDecision(item.ID, Decision{At: "2026-09-13T05:00:00Z", Kind: "invented"}); !errors.Is(err, ErrUnknownDecisionKind) {
 		t.Fatalf("unknown kind error = %v, want ErrUnknownDecisionKind", err)
 	}
-	if len(f.Tracker.Items[0].Decisions) != len(before)+len(kinds) {
+	if len(f.File.Tracker.Items[0].Decisions) != len(before)+len(kinds) {
 		t.Fatal("a rejected decision must not mutate the item")
 	}
-	if err := f.Tracker.AppendDecision("missing-id", Decision{At: "x", Kind: DecisionLink}); err == nil {
+	if err := f.File.Tracker.AppendDecision("missing-id", Decision{At: "x", Kind: DecisionLink}); err == nil {
 		t.Fatal("appending to an unknown item must error")
 	}
 }
@@ -528,7 +521,7 @@ func TestOptOutIsCheckpointScopedD19(t *testing.T) {
 	if f.view().HasOptOut(id.Key(), "apply-start") {
 		t.Fatal("no opt-out recorded yet, want false")
 	}
-	if err := f.Tracker.AppendDecision(item.ID, Decision{At: "2026-09-13T01:00:00Z", Checkpoint: "apply-start", Kind: DecisionOptOut, Choice: "continue"}); err != nil {
+	if err := f.File.Tracker.AppendDecision(item.ID, Decision{At: "2026-09-13T01:00:00Z", Checkpoint: "apply-start", Kind: DecisionOptOut, Choice: "continue"}); err != nil {
 		t.Fatal(err)
 	}
 	if !f.view().HasOptOut(id.Key(), "apply-start") {
@@ -538,7 +531,7 @@ func TestOptOutIsCheckpointScopedD19(t *testing.T) {
 		t.Fatal("opt-out must not carry to pre-merge (D19)")
 	}
 
-	if err := f.Tracker.AppendDecision(item.ID, Decision{At: "2026-09-13T02:00:00Z", Checkpoint: "pre-merge", Kind: DecisionOptOut, Choice: "continue"}); err != nil {
+	if err := f.File.Tracker.AppendDecision(item.ID, Decision{At: "2026-09-13T02:00:00Z", Checkpoint: "pre-merge", Kind: DecisionOptOut, Choice: "continue"}); err != nil {
 		t.Fatal(err)
 	}
 	if !f.view().HasOptOut(id.Key(), "pre-merge") {
@@ -546,7 +539,7 @@ func TestOptOutIsCheckpointScopedD19(t *testing.T) {
 	}
 
 	// A non-opt-out decision at another checkpoint is not an opt-out.
-	if err := f.Tracker.AppendDecision(item.ID, Decision{At: "2026-09-13T03:00:00Z", Checkpoint: "pr-review", Kind: DecisionAdjudicate, Choice: "local"}); err != nil {
+	if err := f.File.Tracker.AppendDecision(item.ID, Decision{At: "2026-09-13T03:00:00Z", Checkpoint: "pr-review", Kind: DecisionAdjudicate, Choice: "local"}); err != nil {
 		t.Fatal(err)
 	}
 	if f.view().HasOptOut(id.Key(), "pr-review") {
@@ -573,11 +566,11 @@ func TestAdvisoryCeilingDoesNotCompact(t *testing.T) {
 	for i := 0; i < MaxItems; i++ {
 		atCeiling.openItem(ItemIdentity{CommonDir: "/repo/.git", Branch: fmt.Sprintf("branch-%d", i)}, "p", t0)
 	}
-	if atCeiling.Tracker.OverCeiling() {
+	if atCeiling.File.Tracker.OverCeiling() {
 		t.Fatalf("exactly %d items is the ceiling, not over it", MaxItems)
 	}
 	atCeiling.openItem(ItemIdentity{CommonDir: "/repo/.git", Branch: "one-more"}, "p", t0)
-	if !atCeiling.Tracker.OverCeiling() {
+	if !atCeiling.File.Tracker.OverCeiling() {
 		t.Fatalf("%d items must be over the advisory ceiling", MaxItems+1)
 	}
 
@@ -596,16 +589,13 @@ func TestAdvisoryCeilingDoesNotCompact(t *testing.T) {
 	for i := 0; i < MaxItems+8; i++ {
 		f.openItem(ItemIdentity{CommonDir: "/repo/.git", Branch: fmt.Sprintf("branch-%d", i)}, "p", t0)
 	}
-	if len(f.Tracker.Items) != MaxItems+8 {
-		t.Fatalf("prepared items = %d", len(f.Tracker.Items))
+	if len(f.File.Tracker.Items) != MaxItems+8 {
+		t.Fatalf("prepared items = %d", len(f.File.Tracker.Items))
 	}
-	if err := SaveStore(path, f.Tracker); err != nil {
+	if _, err := StoreAt(path).Save(f.File); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := LoadStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	loaded := loadFile(t, StoreAt(path)).Tracker
 	if len(loaded.Items) != MaxItems+8 {
 		t.Fatalf("saved rows = %d, want %d (no compaction)", len(loaded.Items), MaxItems+8)
 	}
@@ -634,7 +624,7 @@ func TestAppendDecisionToPrimaryFailsClosed(t *testing.T) {
 	collided := newFixture()
 	collided.openItem(id, "p", t0)
 	collided.openItem(id, "p", t0)
-	if err := SaveStore(path, collided.Tracker); err != nil {
+	if _, err := StoreAt(path).Save(collided.File); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(path)
@@ -655,7 +645,7 @@ func TestAppendDecisionToPrimaryFailsClosed(t *testing.T) {
 	// An unknown kind is rejected before any write.
 	single := newFixture()
 	single.openItem(id, "p", t0)
-	if err := SaveStore(path, single.Tracker); err != nil {
+	if _, err := StoreAt(path).Save(single.File); err != nil {
 		t.Fatal(err)
 	}
 	if err := AppendDecisionToPrimary(path, id.Key(), Decision{At: "x", Kind: "invented"}); !errors.Is(err, ErrUnknownDecisionKind) {
@@ -672,7 +662,7 @@ func TestConcurrentAppendDoesNotLoseDecisions(t *testing.T) {
 
 	f := newFixture()
 	f.openItem(id, "trello-mcp-workflow", t0)
-	if err := SaveStore(path, f.Tracker); err != nil {
+	if _, err := StoreAt(path).Save(f.File); err != nil {
 		t.Fatal(err)
 	}
 
@@ -695,11 +685,9 @@ func TestConcurrentAppendDoesNotLoseDecisions(t *testing.T) {
 	}
 	wg.Wait()
 
-	loaded, err := LoadStore(path)
-	if err != nil {
-		t.Fatalf("store must stay parseable under concurrency: %v", err)
-	}
-	primary, err := singleFileView(loaded).Primary(id.Key())
+	loaded := loadFile(t, StoreAt(path))
+	view := loaded.View()
+	primary, err := view.Primary(id.Key())
 	if err != nil {
 		t.Fatalf("primary after concurrent appends: %v", err)
 	}
@@ -708,7 +696,7 @@ func TestConcurrentAppendDoesNotLoseDecisions(t *testing.T) {
 		t.Fatalf("decisions = %d, want %d: %+v", len(primary.Decisions), len(checkpoints)+1, primary.Decisions)
 	}
 	for _, checkpoint := range checkpoints {
-		if !singleFileView(loaded).HasOptOut(id.Key(), checkpoint) {
+		if !view.HasOptOut(id.Key(), checkpoint) {
 			t.Fatalf("lost decision for checkpoint %s: %+v", checkpoint, primary.Decisions)
 		}
 	}
@@ -740,7 +728,7 @@ func TestCloseBranchItemClosesSingleMatchingOpenItemAcrossChangeSlug(t *testing.
 	opened := f.openItem(stored, "test-recipe", t0)
 	saveWriteStore(t, path, f)
 
-	out, _, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+	out, _, err := CloseBranchItem(StoreAt(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 	if err != nil {
 		t.Fatalf("CloseBranchItem: %v", err)
 	}
@@ -773,7 +761,7 @@ func TestCloseBranchItemAbsentOrClosedIsNoOp(t *testing.T) {
 		saveWriteStore(t, path, newFixture())
 		before := pairBytes(t, path)
 
-		out, _, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+		out, _, err := CloseBranchItem(StoreAt(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 		if err != nil {
 			t.Fatalf("absent close: %v", err)
 		}
@@ -796,7 +784,7 @@ func TestCloseBranchItemAbsentOrClosedIsNoOp(t *testing.T) {
 		saveWriteStore(t, path, f)
 		before := pairBytes(t, path)
 
-		out, _, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+		out, _, err := CloseBranchItem(StoreAt(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 		if err != nil {
 			t.Fatalf("closed close: %v", err)
 		}
@@ -824,7 +812,7 @@ func TestCloseBranchItemMultipleOpenIsCollisionRefused(t *testing.T) {
 	saveWriteStore(t, path, f)
 	before := pairBytes(t, path)
 
-	_, _, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+	_, _, err := CloseBranchItem(StoreAt(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 	if !errors.Is(err, ErrMultipleOpen) {
 		t.Fatalf("error = %v, want ErrMultipleOpen", err)
 	}
@@ -848,7 +836,7 @@ func TestCloseBranchItemTargetsOnlyOpenRowOnReusedBranch(t *testing.T) {
 	fresh := f.openItem(newIdent, "test-recipe", t0.Add(time.Hour))
 	saveWriteStore(t, path, f)
 
-	out, _, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+	out, _, err := CloseBranchItem(StoreAt(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 	if err != nil {
 		t.Fatalf("CloseBranchItem: %v", err)
 	}
@@ -889,7 +877,7 @@ func TestCloseBranchItemRejectsMissingIdentityOrCheckpoint(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, _, err := CloseBranchItem(LedgersAtStore(path), tc.common, tc.branch, tc.checkpt, vtNow); err == nil {
+			if _, _, err := CloseBranchItem(StoreAt(path), tc.common, tc.branch, tc.checkpt, vtNow); err == nil {
 				t.Fatal("invalid close input was accepted")
 			}
 			if before != pairBytes(t, path) {

@@ -3,7 +3,6 @@ package ledger
 import (
 	"bytes"
 	"errors"
-	"sort"
 	"strconv"
 	"time"
 )
@@ -15,10 +14,6 @@ import (
 type View struct {
 	Worktree WorktreeStore
 	Tracker  Store
-	// inheritsClose reports that a file this build is about to overwrite still
-	// carries close decisions the worktree ledger's own file does not hold yet, so
-	// the next tracker write must land them there first (L11).
-	inheritsClose bool
 }
 
 // Primary returns the single open item for key, joined with its tracker record.
@@ -129,16 +124,16 @@ func (v View) item(row WorktreeItem) Item {
 	return item
 }
 
-// joinDecisions merges the two ledgers' decisions for one row in stored order. The
-// sort is stable, so a close recorded in the same second as a tracker decision
-// keeps the position the single store appended it at.
+// joinDecisions merges one row's decisions: the tracker section's in stored order,
+// then the worktree section's close decisions in stored order (L14). The close
+// terminates the row, so it is last by construction — no timestamp sorting, which is
+// what used to print a close before the open it ends.
 func joinDecisions(tracker []Decision, closes []WorktreeDecision) []Decision {
 	joined := make([]Decision, 0, len(tracker)+len(closes))
 	joined = append(joined, tracker...)
 	for _, close := range closes {
 		joined = append(joined, Decision{At: close.At, Checkpoint: close.Checkpoint, Kind: close.Kind})
 	}
-	sort.SliceStable(joined, func(i, j int) bool { return joined[i].At < joined[j].At })
 	return joined
 }
 
@@ -179,30 +174,24 @@ func (v *View) OpenIfAbsent(ident ItemIdentity, providerID string, at time.Time)
 // the tracker already has (L8). A payload that repeats the stored snapshot is not
 // a change, so a bare or identical close leaves the tracker ledger untouched
 // (L12.2).
-func (v *View) recordSnapshot(id, state string, provider []byte) bool {
-	at, ok := v.Tracker.itemAt(id)
-	if !ok {
-		return false
+func (v *View) recordSnapshot(id, state string, provider []byte) {
+	if _, ok := v.Tracker.itemAt(id); !ok {
+		return
 	}
-	row := &v.Tracker.Items[at]
+	// A payload that repeats the stored snapshot changes nothing.
+	at, _ := v.Tracker.itemAt(id)
+	row := v.Tracker.Items[at]
 	canonical := canonicalProvider(provider)
 	snapshot := string(canonical) != "{}"
-	changed := (state != "" && row.State != state) ||
-		(snapshot && !bytes.Equal(canonical, canonicalProvider(row.Provider)))
-	if !changed {
-		return false
+	if !(state != "" && row.State != state) && !(snapshot && !bytes.Equal(canonical, canonicalProvider(row.Provider))) {
+		return
 	}
-	if err := v.Tracker.RecordSnapshot(id, state, provider); err != nil {
-		return false
-	}
-	return true
+	_ = v.Tracker.RecordSnapshot(id, state, provider)
 }
 
 // uniqueItemID returns NewItemID unless that id is already taken by any row of
-// either ledger, in which case it suffixes the stamp input with \x1fN until
-// unique. Ids are unique across both ledgers, not only the one that happens to
-// have rows: after a T5 upgrade the worktree file is empty while the tracker file
-// already holds the row and its id (L11.3).
+// either section, in which case it suffixes the stamp input with \x1fN until
+// unique: ids are unique across sections (L14).
 func (v View) uniqueItemID(ident ItemIdentity, stamp string) string {
 	id := NewItemID(ident.Key(), stamp)
 	for n := 1; v.hasItemID(id); n++ {
@@ -214,26 +203,4 @@ func (v View) uniqueItemID(ident ItemIdentity, stamp string) string {
 // hasItemID reports whether either ledger already uses id.
 func (v View) hasItemID(id string) bool {
 	return v.Worktree.hasItemID(id) || v.Tracker.hasItemID(id)
-}
-
-// withoutCloseDecisions is the tracker ledger's normalised read: a tracker row
-// carries the decisions the tracker owns, never a close (L8). The close is in the
-// worktree ledger, which absorbed it before this runs.
-func withoutCloseDecisions(store Store) Store {
-	for i := range store.Items {
-		store.Items[i].Decisions = trackerDecisions(store.Items[i].Decisions)
-	}
-	return store
-}
-
-// singleFileView reads one pre-split store as a view. It exists only for the two
-// dead writers PR-2 deletes with the monolithic single store: that file carries
-// its own status column, and this type no longer has one, so every row it holds is
-// taken as selectable.
-func singleFileView(store Store) View {
-	worktree := WorktreeStore{V: StoreVersion}
-	for _, item := range store.Items {
-		worktree.Items = append(worktree.Items, WorktreeItem{ID: item.ID, Identity: item.Identity, Status: StatusOpen})
-	}
-	return View{Worktree: worktree, Tracker: store}
 }

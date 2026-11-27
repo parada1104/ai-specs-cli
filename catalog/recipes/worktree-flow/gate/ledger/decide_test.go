@@ -83,13 +83,13 @@ func TestPersistDecisionThenRegradeAllows(t *testing.T) {
 // clears the item's current conflict snapshot (A6), so doctor stops warning.
 func TestPersistDecisionClearsCurrentConflictSnapshot(t *testing.T) {
 	locs := openFixture("local").write(t, ledgerPath(t))
-	path := locs.Tracker.Path
+	path := locs.Path
 	key := ident("").Key()
 	snapshot := Conflict{Sides: Evidence{Local: "local", Remote: "remote"}, RecordedAt: vtNow.Format(time.RFC3339)}
 	if err := PersistConflict(path, key, snapshot); err != nil {
 		t.Fatalf("PersistConflict: %v", err)
 	}
-	item, err := singleFileView(mustLoad(t, path)).Primary(key)
+	item, err := mustLoad(t, path).View().Primary(key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,10 +126,10 @@ func TestPersistDecisionFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	good := openFixture("local").write(t, filepath.Join(dir, "good", ".git", "ai-specs", "ledgers", "tracker.json"))
+	good := openFixture("local").write(t, filepath.Join(dir, "good", ".git", "ai-specs", "ledger", "state.json"))
 	key := ident("").Key()
 
-	corruptPath := filepath.Join(t.TempDir(), "ai-specs", "ledgers", "tracker.json")
+	corruptPath := filepath.Join(t.TempDir(), "ai-specs", "ledger", "state.json")
 	if err := os.MkdirAll(filepath.Dir(corruptPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -140,13 +140,13 @@ func TestPersistDecisionFailsClosed(t *testing.T) {
 	twoOpen := newFixture()
 	twoOpen.openItem(ident(""), "p", t0)
 	twoOpen.openItem(ident(""), "p", t0)
-	twoOpenLocs := twoOpen.write(t, filepath.Join(dir, "two", ".git", "ai-specs", "ledgers", "tracker.json"))
+	twoOpenLocs := twoOpen.write(t, filepath.Join(dir, "two", ".git", "ai-specs", "ledger", "state.json"))
 
-	empty := newFixture().write(t, filepath.Join(dir, "empty", ".git", "ai-specs", "ledgers", "tracker.json"))
+	empty := newFixture().write(t, filepath.Join(dir, "empty", ".git", "ai-specs", "ledger", "state.json"))
 
 	cases := []struct {
 		name string
-		locs Ledgers
+		loc  StoreLocation
 		req  DecisionRequest
 	}{
 		{"no primary item", empty, DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}},
@@ -154,11 +154,11 @@ func TestPersistDecisionFailsClosed(t *testing.T) {
 		{"unknown choice", good, DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "bogus"}},
 		{"unknown kind", good, DecisionRequest{Checkpoint: CheckpointPreMerge, Kind: "bogus", Choice: "local"}},
 		{"two open items", twoOpenLocs, DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}},
-		{"corrupt store", LedgersAtStore(corruptPath), DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}},
-		{"path under a file", LedgersAtStore(filepath.Join(blocker, "state.json")), DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}},
+		{"corrupt store", StoreAt(corruptPath), DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}},
+		{"path under a file", StoreAt(filepath.Join(blocker, "state.json")), DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}},
 	}
 	for _, tc := range cases {
-		if _, err := PersistDecision(tc.locs, key, tc.req, vtNow); err == nil {
+		if _, err := PersistDecision(tc.loc, key, tc.req, vtNow); err == nil {
 			t.Fatalf("%s: PersistDecision succeeded, want a closed failure", tc.name)
 		}
 	}
@@ -209,8 +209,8 @@ func TestPersistWithoutPrimaryStaysClosedForUnrecordableAnswers(t *testing.T) {
 	if _, err := PersistDecision(locs, "", DecisionRequest{Checkpoint: CheckpointPreMerge, Kind: DecisionOptOut, Choice: "continue"}, vtNow); err == nil {
 		t.Fatalf("keyless opt-out succeeded, want a closed failure")
 	}
-	if store := mustLoad(t, locs.Tracker.Path); len(store.OptOuts) != 0 {
-		t.Fatalf("opt_outs = %+v, want nothing recorded for an unrecordable answer", store.OptOuts)
+	if file := mustLoad(t, locs.Path); len(file.Tracker.OptOuts) != 0 {
+		t.Fatalf("opt_outs = %+v, want nothing recorded for an unrecordable answer", file.Tracker.OptOuts)
 	}
 }
 
@@ -220,7 +220,7 @@ func TestPersistConflictFailsClosedForCollision(t *testing.T) {
 	f := newFixture()
 	f.openItem(ident(""), "p", t0)
 	f.openItem(ident(""), "p", t0)
-	path := f.write(t, ledgerPath(t)).Tracker.Path
+	path := f.write(t, ledgerPath(t)).Path
 	if err := PersistConflict(path, ident("").Key(), Conflict{Sides: Evidence{Local: "a", Remote: "b"}}); !errors.Is(err, ErrMultipleOpen) {
 		t.Fatalf("PersistConflict error = %v, want ErrMultipleOpen", err)
 	}
@@ -264,13 +264,13 @@ func TestLegacyOptOutRecordsStayCheckpointScopedOnDisk(t *testing.T) {
 	id := ident("")
 	legacy := newFixture()
 	legacy.openItem(id, "trello-mcp-workflow", t0)
-	legacy.Tracker.Items[0].ItemID = "local"
-	legacy.Tracker.Items[0].Decisions = append(legacy.Tracker.Items[0].Decisions,
+	legacy.File.Tracker.Items[0].ItemID = "local"
+	legacy.File.Tracker.Items[0].Decisions = append(legacy.File.Tracker.Items[0].Decisions,
 		Decision{At: t0.Format(time.RFC3339), Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "continue"})
-	legacy.Tracker.OptOuts = append(legacy.Tracker.OptOuts,
+	legacy.File.Tracker.OptOuts = append(legacy.File.Tracker.OptOuts,
 		ScopedOptOut{Key: id.Key(), Checkpoint: CheckpointApplyStart, Choice: "continue", At: t0.Format(time.RFC3339)})
 	locs := legacy.write(t, ledgerPath(t))
-	path := locs.Tracker.Path
+	path := locs.Path
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -294,12 +294,12 @@ func TestLegacyOptOutRecordsStayCheckpointScopedOnDisk(t *testing.T) {
 	}
 }
 
-// mustLoad loads a store and fails on error.
-func mustLoad(t *testing.T, path string) Store {
+// mustLoad loads the ledger file and fails on error.
+func mustLoad(t *testing.T, path string) LedgerFile {
 	t.Helper()
-	store, err := LoadStore(path)
+	file, _, err := StoreAt(path).Load()
 	if err != nil {
-		t.Fatalf("LoadStore(%s): %v", path, err)
+		t.Fatalf("Load(%s): %v", path, err)
 	}
-	return store
+	return file
 }

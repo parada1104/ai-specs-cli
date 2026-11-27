@@ -10,31 +10,15 @@ import (
 	"time"
 )
 
-// L11: T5's mixed ledgers/tracker.json is the split's immediate predecessor. It
-// still carries each row's status and its close decisions, so it is a migration
-// source for the worktree ledger alongside the pre-split state.json.
+// The T5 migration and the invariants it established, on the one-file design (L14):
+// T5's mixed tracker file is absorbed unconditionally, no row is lost, no source is
+// rewritten, and ids stay unique across sections.
 
-// writeT5Tracker writes a store exactly as T5 left it: the mixed
-// ledgers/tracker.json with status and close decisions on its rows.
-func writeT5Tracker(t *testing.T, path string, store LegacyStore) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	data, err := json.MarshalIndent(store, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := writeAtomic(path, append(data, '\n')); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// t5MixedStore is a T5 tracker.json: an open provider-backed row for the
-// canonical identity, and a closed row whose close decision only exists there.
+// t5MixedStore is a T5 tracker.json: an open provider-backed row for the canonical
+// identity, and a closed row whose close decision only exists there.
 func t5MixedStore() LegacyStore {
 	stamp := t0.Format(time.RFC3339)
-	return LegacyStore{V: StoreVersion, Items: []LegacyItem{
+	return LegacyStore{V: 1, Items: []LegacyItem{
 		{Status: StatusOpen, Item: Item{
 			ID: "t5-open", Identity: ident(""), ItemID: "card-1", ProviderID: "trello-mcp-workflow",
 			Decisions: []Decision{{At: stamp, Kind: DecisionOpen}},
@@ -50,20 +34,15 @@ func t5MixedStore() LegacyStore {
 	}}
 }
 
-// TestUpgradeFromT5MixedTrackerKeepsTheLifecycle is blockers 1 and 2: a repository
-// upgraded straight from T5 has state.json plus a mixed tracker.json and no
-// worktree.json. Its open row must grade, the explicit close must succeed, and
-// both closes must end up in worktree.json.
+// TestUpgradeFromT5MixedTrackerKeepsTheLifecycle is the T5 upgrade regression: a v2
+// file absent, a v1 file and T5's tracker file present, and no row lost.
 func TestUpgradeFromT5MixedTrackerKeepsTheLifecycle(t *testing.T) {
 	root := t.TempDir()
-	seedLegacy(t, root, closedHistory(2))
-	writeT5Tracker(t, TrackerStorePath(root), t5MixedStore())
+	legacyBytes := writeLegacyFixture(t, StorePath(root), closedHistory(2))
+	t5Bytes := writeLegacyFixture(t, TrackerStorePath(root), t5MixedStore())
+	loc := LedgerAt(root)
 
-	locs := LedgersAt(root)
-	view, _, err := locs.Load()
-	if err != nil {
-		t.Fatalf("Load: %v (the T5 tracker row's status was not read)", err)
-	}
+	view := loadView(t, loc)
 	item, err := view.Primary(ident("").Key())
 	if err != nil {
 		t.Fatalf("the T5 open row is not primary: %v", err)
@@ -79,7 +58,7 @@ func TestUpgradeFromT5MixedTrackerKeepsTheLifecycle(t *testing.T) {
 		t.Fatalf("pre-close grade = %q/%q, want allow", grade.Decision, grade.Reason)
 	}
 
-	out, err := ApplyWrite(locs, ApplyWriteRequest{
+	out, err := ApplyWrite(loc, ApplyWriteRequest{
 		Identity: ident(""), Checkpoint: CheckpointArchiveClose, Request: WriteRequest{Kind: WriteClose},
 	}, vtNow)
 	if err != nil {
@@ -89,278 +68,149 @@ func TestUpgradeFromT5MixedTrackerKeepsTheLifecycle(t *testing.T) {
 		t.Fatalf("close = %+v, want applied", out)
 	}
 
-	worktree := string(rawBytes(t, WorktreeStorePath(root)))
-	if !strings.Contains(worktree, `"id": "t5-open"`) || !strings.Contains(worktree, `"status": "closed"`) {
-		t.Fatalf("worktree.json does not hold the closed T5 row:\n%s", worktree)
+	file := loadFile(t, loc)
+	if len(file.Worktree.Items) != 4 {
+		t.Fatalf("worktree rows = %d, want the 2 v1 rows plus the 2 T5 rows", len(file.Worktree.Items))
 	}
-	if !strings.Contains(worktree, `"id": "t5-closed"`) {
-		t.Fatalf("worktree.json does not hold the historical T5 row:\n%s", worktree)
-	}
-	// Four closes: the two state.json history rows, the T5 row that only carried
-	// its close in the mixed tracker file, and the new explicit close.
-	if got := strings.Count(worktree, `"kind": "close"`); got != 4 {
-		t.Fatalf("worktree.json carries %d close decisions, want the 3 inherited and the new one:\n%s", got, worktree)
-	}
-	reloaded := loadView(t, locs)
-	if len(reloaded.Worktree.Items) != 4 {
-		t.Fatalf("worktree rows = %d, want the 2 T5 rows plus the 2 historical ones", len(reloaded.Worktree.Items))
-	}
-}
-
-// TestTrackerWriteRefusesToDropACloseItCannotPlace is blocker 2's refusal half:
-// the T5 tracker.json still carries a close, and the worktree ledger cannot be
-// written, so the tracker write fails closed instead of persisting a normalized
-// tracker file that loses the close.
-func TestTrackerWriteRefusesToDropACloseItCannotPlace(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("a read-only directory cannot be simulated as root")
-	}
-	base := t.TempDir()
-	wtDir := filepath.Join(base, "wt")
-	trDir := filepath.Join(base, "tr")
-	for _, dir := range []string{wtDir, trDir} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
+	closes := 0
+	for _, row := range file.Worktree.Items {
+		for _, d := range row.Decisions {
+			if d.Kind == DecisionClose {
+				closes++
+			}
 		}
 	}
-	// The tracker file carries the close; the worktree file has the row without it.
-	writeT5Tracker(t, filepath.Join(trDir, trackerFileName), t5MixedStore())
-	stale := `{"v":1,"items":[{"id":"t5-closed","identity":{"common_dir":"/repo/.git","branch":"feat/old","change":""},"status":"closed","decisions":[]}]}` + "\n"
-	if err := os.WriteFile(filepath.Join(wtDir, worktreeFileName), []byte(stale), 0o600); err != nil {
-		t.Fatal(err)
+	// The two v1 history closes, the T5 close, and the new close.
+	if closes != 4 {
+		t.Fatalf("close decisions = %d, want the 3 inherited and the new one", closes)
 	}
-	locs := Ledgers{
-		Worktree: StoreLocation{Path: filepath.Join(wtDir, worktreeFileName), Inherit: filepath.Join(trDir, trackerFileName)},
-		Tracker:  StoreLocation{Path: filepath.Join(trDir, trackerFileName)},
-	}
-	before := rawBytes(t, locs.Tracker.Path)
-
-	// The worktree ledger reads fine but cannot be written; the tracker can.
-	if err := os.Chmod(wtDir, 0o500); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	defer os.Chmod(wtDir, 0o755)
-
-	if _, err := PersistDecision(locs, ident("").Key(), DecisionRequest{
-		Checkpoint: CheckpointPreMerge, Kind: DecisionOptOut, Choice: "continue",
-	}, vtNow); err == nil {
-		t.Fatal("the tracker write succeeded and dropped the close it could not place")
-	}
-	if got := rawBytes(t, locs.Tracker.Path); string(got) != string(before) {
-		t.Fatalf("the refused write rewrote tracker.json:\nbefore=%s\nafter=%s", before, got)
-	}
-}
-
-// TestSnapshotCloseDoesNotSurviveAFailedTrackerSave is L12.1's second rule: when a
-// close carries a snapshot, the tracker save is the second file, so a failure there
-// must undo the close in the worktree file rather than leave the close persisted
-// without its snapshot.
-func TestSnapshotCloseDoesNotSurviveAFailedTrackerSave(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("a read-only directory cannot be simulated as root")
-	}
-	base := t.TempDir()
-	wtDir := filepath.Join(base, "wt")
-	trDir := filepath.Join(base, "tr")
-	for _, dir := range []string{wtDir, trDir} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
+	for _, item := range file.Tracker.Items {
+		for _, d := range item.Decisions {
+			if d.Kind == DecisionClose {
+				t.Fatalf("the tracker section carries a close decision: %+v", item.Decisions)
+			}
 		}
 	}
-	locs := Ledgers{
-		Worktree: StoreLocation{Path: filepath.Join(wtDir, worktreeFileName)},
-		Tracker:  StoreLocation{Path: filepath.Join(trDir, trackerFileName)},
+	if got := rawBytes(t, StorePath(root)+".v1-backup"); string(got) != string(legacyBytes) {
+		t.Fatal("the v1 predecessor was not backed up")
 	}
-	var seeded View
-	if _, _, err := seeded.OpenIfAbsent(ident(""), "trello-mcp-workflow", t0); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := locs.Worktree.SaveWorktree(seeded.Worktree); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := locs.Tracker.Save(seeded.Tracker); err != nil {
-		t.Fatal(err)
-	}
-	before := rawBytes(t, locs.Worktree.Path)
-
-	if err := os.Chmod(trDir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chmod(trDir, 0o755)
-
-	if _, err := ApplyWrite(locs, ApplyWriteRequest{
-		Identity: ident(""), Checkpoint: CheckpointArchiveClose,
-		Request: WriteRequest{Kind: WriteClose, State: "done", Provider: []byte(`{"list":"Done"}`)},
-	}, vtNow); err == nil {
-		t.Fatal("the snapshot close succeeded despite the failed tracker save")
-	}
-	if after := rawBytes(t, locs.Worktree.Path); string(after) != string(before) {
-		t.Fatalf("the close survived without its snapshot:\nbefore=%s\nafter=%s", before, after)
+	if got := rawBytes(t, TrackerStorePath(root)); string(got) != string(t5Bytes) {
+		t.Fatal("the T5 predecessor was rewritten")
 	}
 }
 
-// TestT5TrackerFileStillAnswersItsOpenBinding is the supplied regression for
-// blocker 1: T5's mixed tracker.json carries the row's status, so an upgrade whose
-// worktree file does not exist yet must still select and allow the open binding.
+// TestT5TrackerFileStillAnswersItsOpenBinding is the supplied regression: a T5 file
+// holding only an open row must still answer, before any v2 file exists.
 func TestT5TrackerFileStillAnswersItsOpenBinding(t *testing.T) {
 	root := t.TempDir()
-	writeT5Tracker(t, TrackerStorePath(root), t5MixedStore())
+	writeLegacyFixture(t, TrackerStorePath(root), LegacyStore{V: 1, Items: []LegacyItem{
+		{Status: StatusOpen, Item: Item{
+			ID: "t5-open", Identity: ident(""), ItemID: "card-1", ProviderID: "trello-mcp-workflow",
+			Decisions: []Decision{{At: matrixStamp, Kind: DecisionOpen}},
+		}},
+	}})
 
-	view, _, err := LedgersAt(root).Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	view := loadView(t, LedgerAt(root))
 	item, err := view.Primary(ident("").Key())
 	if err != nil {
 		t.Fatalf("the T5 open binding does not answer: %v", err)
 	}
-	if item.ItemID != "card-1" || !item.ProviderBacked() {
-		t.Fatalf("primary = %+v, want the T5 provider-backed binding", item)
+	if item.ItemID != "card-1" {
+		t.Fatalf("primary = %+v, want the T5 binding", item)
 	}
-	got := Grade(Input{
-		Checkpoint: CheckpointApplyStart, Mode: ModeAlways, Binding: boundBinding(),
-		Identity: availIdentity(), View: view, Evidence: consistentEvidence("card-1"), Now: vtNow,
-	})
-	assertVerdict(t, "T5 open binding", got, vWant{DecisionAllow, "", 0, SeverityOK, true})
+	// A tracker-only mutation materialises the lifecycle into the v2 file.
+	if _, err := PersistDecision(LedgerAt(root), ident("").Key(), DecisionRequest{
+		Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "continue",
+	}, vtNow); err != nil {
+		t.Fatalf("PersistDecision: %v", err)
+	}
+	if _, err := loadView(t, LedgerAt(root)).Primary(ident("").Key()); err != nil {
+		t.Fatalf("the migrated binding is not primary after the write: %v", err)
+	}
 }
 
-// TestFailedBindDoesNotLeaveAnOrphan is the supplied regression for L12.1: when the
-// second file of a two-file write cannot be written, the first is restored, so no
-// half mutation survives and the retry is not blocked by an orphan row. The tracker
-// directory is read-only and has no tracker file, so the read succeeds and only the
-// save fails: a directory at the path would make the load fail and prove nothing.
+// TestFailedBindDoesNotLeaveAnOrphan keeps the supplied regression's assertion on one
+// file: a bind that cannot write persists nothing, and the retry is not blocked.
 func TestFailedBindDoesNotLeaveAnOrphan(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("a read-only directory cannot be simulated as root")
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	base := t.TempDir()
-	wtDir := filepath.Join(base, "wt")
-	trDir := filepath.Join(base, "tr")
-	for _, dir := range []string{wtDir, trDir} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	trackerPath := filepath.Join(trDir, trackerFileName)
-	locs := Ledgers{
-		Worktree: StoreLocation{Path: filepath.Join(wtDir, worktreeFileName)},
-		Tracker:  StoreLocation{Path: trackerPath},
-	}
+	loc := StoreAt(filepath.Join(blocker, storeFileName))
 	req := ApplyWriteRequest{
 		Identity: ident(""), Checkpoint: CheckpointApplyStart,
 		Request: WriteRequest{Kind: WriteBind, ItemID: "card-1"},
 	}
-	// The lock file exists, so acquiring it needs no directory write: only the
-	// tracker save itself fails.
-	if err := os.WriteFile(LockPath(trackerPath), nil, 0o644); err != nil {
-		t.Fatal(err)
+	if _, err := ApplyWrite(loc, req, vtNow); err == nil {
+		t.Fatal("the bind succeeded despite the unwritable path")
 	}
-	if err := os.Chmod(trDir, 0o500); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	if _, err := ApplyWrite(locs, req, vtNow); err == nil {
-		os.Chmod(trDir, 0o755)
-		t.Fatal("the bind succeeded despite the failed tracker save")
-	}
-	if err := os.Chmod(trDir, 0o755); err != nil {
-		t.Fatalf("chmod back: %v", err)
-	}
-	if _, err := os.Stat(locs.Worktree.Path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the failed bind left an orphan worktree ledger: %v", err)
+	if _, err := os.ReadFile(loc.Path); err == nil {
+		t.Fatal("the failed bind created a ledger")
 	}
 
-	// The retry after the failure must find no orphan and succeed.
-	if _, err := ApplyWrite(locs, req, vtNow); err != nil {
+	// The retry on a usable path finds no orphan and succeeds.
+	loc = StoreAt(ledgerPath(t))
+	if _, err := ApplyWrite(loc, req, vtNow); err != nil {
 		t.Fatalf("the retry after a restored failure: %v", err)
 	}
-	if _, err := loadView(t, locs).Primary(ident("").Key()); err != nil {
+	if _, err := loadView(t, loc).Primary(ident("").Key()); err != nil {
 		t.Fatalf("the retry did not leave a usable primary: %v", err)
 	}
 }
 
-// TestAliasIndependenceOfTwoOverrides is L12.4: two overrides naming different
-// canonical files in one directory resolve to the same ledger pair and the same
-// lock, so they serialize and never alias.
-func TestAliasIndependenceOfTwoOverrides(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "ai-specs", "ledgers")
-	fromWorktree := LedgersAtStore(filepath.Join(dir, worktreeFileName))
-	fromTracker := LedgersAtStore(filepath.Join(dir, trackerFileName))
-	if fromWorktree.Worktree.Path != fromTracker.Worktree.Path ||
-		fromWorktree.Tracker.Path != fromTracker.Tracker.Path {
-		t.Fatalf("the two overrides resolve to different pairs: %+v vs %+v", fromWorktree, fromTracker)
-	}
-	if fromWorktree.Worktree.Path == fromWorktree.Tracker.Path {
-		t.Fatalf("the pair aliases one file: %q", fromWorktree.Worktree.Path)
-	}
-	if LockPath(fromWorktree.Tracker.Path) != LockPath(fromTracker.Worktree.Path) {
-		t.Fatal("two files of one ledger directory take different locks")
-	}
-}
-
-// TestItemIDsAreUniqueAcrossBothLedgers is blocker 3: T5 bound a row in the same
-// second, in the tracker file, while the worktree file was still empty, so an
-// immediate candidate open must not reuse that id.
-func TestItemIDsAreUniqueAcrossBothLedgers(t *testing.T) {
+// TestItemIDsAreUniqueAcrossSections pins that an id taken in the tracker section is
+// never reused by a fresh worktree row.
+func TestItemIDsAreUniqueAcrossSections(t *testing.T) {
 	root := t.TempDir()
 	id := ident("")
 	stamp := t0.Format(time.RFC3339)
 	taken := NewItemID(id.Key(), stamp)
-	writeT5Tracker(t, TrackerStorePath(root), LegacyStore{V: StoreVersion, Items: []LegacyItem{{
+	writeLegacyFixture(t, TrackerStorePath(root), LegacyStore{V: 1, Items: []LegacyItem{{
 		Status: StatusClosed,
 		Item:   Item{ID: taken, Identity: id, ItemID: "card-old", ProviderID: "trello-mcp-workflow"},
 	}}})
 
-	locs := LedgersAt(root)
-	if _, err := ApplyWrite(locs, ApplyWriteRequest{
+	loc := LedgerAt(root)
+	if _, err := ApplyWrite(loc, ApplyWriteRequest{
 		Identity: id, Checkpoint: CheckpointApplyStart, Request: WriteRequest{Kind: WriteOpen},
 	}, t0); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 
-	view := loadView(t, locs)
-	// One row per ledger shares its id by design (the join key), so a row may
-	// appear at most once in each ledger.
-	counts := map[string]int{}
-	for _, row := range view.Worktree.Items {
-		counts[row.ID]++
-		if counts[row.ID] > 1 {
-			t.Fatalf("duplicate item id %q in the worktree ledger", row.ID)
+	file := loadFile(t, loc)
+	// One row per section shares its id by design (the join key), so a row may appear
+	// at most once in each section.
+	inWorktree := map[string]bool{}
+	for _, row := range file.Worktree.Items {
+		if inWorktree[row.ID] {
+			t.Fatalf("duplicate item id %q in the worktree section", row.ID)
 		}
+		inWorktree[row.ID] = true
 	}
-	for _, item := range view.Tracker.Items {
-		if counts[item.ID] > 1 {
-			t.Fatalf("duplicate item id %q across the ledgers", item.ID)
+	seenTracker := map[string]bool{}
+	for _, item := range file.Tracker.Items {
+		if seenTracker[item.ID] {
+			t.Fatalf("duplicate item id %q in the tracker section", item.ID)
 		}
-		counts[item.ID]++
+		seenTracker[item.ID] = true
 	}
-	primary, err := view.Primary(id.Key())
+	primary, err := file.View().Primary(id.Key())
 	if err != nil {
 		t.Fatalf("the fresh open must be the primary: %v", err)
 	}
 	if primary.ID == taken {
-		t.Fatalf("the fresh open reused the id T5 already took in the tracker file: %q", taken)
-	}
-	if len(view.Worktree.Items) != 2 || len(view.Tracker.Items) != 2 {
-		t.Fatalf("rows = %d worktree / %d tracker, want the historical pair plus the fresh pair",
-			len(view.Worktree.Items), len(view.Tracker.Items))
+		t.Fatalf("the fresh open reused the id the predecessor already took: %q", taken)
 	}
 }
 
-// TestBareCloseDoesNotCreateTheTrackerLedger pins L12.2's other half: a close with
-// no provider payload changes no tracker snapshot, so the tracker ledger is not
-// created at all and the close lands only in the worktree ledger.
-func TestBareCloseDoesNotCreateTheTrackerLedger(t *testing.T) {
-	root := t.TempDir()
-	seedLegacy(t, root, LegacyStore{V: StoreVersion, Items: []LegacyItem{{
-		Status: StatusOpen,
-		Item: Item{
-			ID: "legacy-open", Identity: ident(""), ItemID: "card-1", ProviderID: "trello-mcp-workflow",
-			Decisions: []Decision{{At: t0.Format(time.RFC3339), Kind: DecisionOpen}},
-		},
-	}}})
+// TestBareCloseDoesNotAddATrackerRow pins that a close with no provider payload
+// leaves the tracker section untouched, so the close decision lives only in the
+// worktree section.
+func TestBareCloseDoesNotAddATrackerRow(t *testing.T) {
+	loc := openFixture("card-1").write(t, ledgerPath(t))
+	trackerBefore := mustMarshal(t, loadFile(t, loc).Tracker)
 
-	locs := LedgersAt(root)
-	out, err := ApplyWrite(locs, ApplyWriteRequest{
+	out, err := ApplyWrite(loc, ApplyWriteRequest{
 		Identity: ident(""), Checkpoint: CheckpointArchiveClose, Request: WriteRequest{Kind: WriteClose},
 	}, vtNow)
 	if err != nil {
@@ -369,75 +219,59 @@ func TestBareCloseDoesNotCreateTheTrackerLedger(t *testing.T) {
 	if !out.Applied {
 		t.Fatalf("bare close = %+v, want applied", out)
 	}
-	if _, err := os.Stat(TrackerStorePath(root)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("a bare close created the tracker ledger: %v", err)
+	file := loadFile(t, loc)
+	if got := mustMarshal(t, file.Tracker); got != trackerBefore {
+		t.Fatalf("a bare close changed the tracker section:\nbefore=%s\nafter=%s", trackerBefore, got)
 	}
-	worktree := string(rawBytes(t, WorktreeStorePath(root)))
-	if !strings.Contains(worktree, `"kind": "close"`) || !strings.Contains(worktree, `"status": "closed"`) {
-		t.Fatalf("the close is not in the worktree ledger:\n%s", worktree)
-	}
-}
-
-// TestExplicitStoreNamedWorktreeDoesNotAliasTheTracker is blocker 4: an explicit
-// --store naming the worktree ledger must select the pair in that directory, not
-// map both ledgers onto one file.
-func TestExplicitStoreNamedWorktreeDoesNotAliasTheTracker(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ai-specs", "ledgers", "worktree.json")
-	locs := LedgersAtStore(path)
-	if locs.Worktree.Path != path {
-		t.Fatalf("worktree path = %q, want %q", locs.Worktree.Path, path)
-	}
-	if locs.Tracker.Path == path {
-		t.Fatalf("the tracker ledger aliases %q", path)
-	}
-
-	if _, err := ApplyWrite(locs, ApplyWriteRequest{
-		Identity: ident(""), Checkpoint: CheckpointApplyStart,
-		Request: WriteRequest{Kind: WriteBind, ItemID: "card-1"},
-	}, vtNow); err != nil {
-		t.Fatalf("bind: %v", err)
-	}
-	if _, err := loadView(t, locs).Primary(ident("").Key()); err != nil {
-		t.Fatalf("the bind lost the lifecycle: %v", err)
-	}
-	if _, err := ApplyWrite(locs, ApplyWriteRequest{
-		Identity: ident(""), Checkpoint: CheckpointArchiveClose, Request: WriteRequest{Kind: WriteClose},
-	}, vtNow); err != nil {
-		t.Fatalf("close: %v", err)
-	}
-	if !strings.Contains(string(rawBytes(t, path)), `"kind": "close"`) {
-		t.Fatalf("the close is not in the named worktree ledger:\n%s", rawBytes(t, path))
-	}
-	if strings.Contains(string(rawBytes(t, locs.Tracker.Path)), `"kind": "close"`) {
-		t.Fatalf("the close landed in the tracker ledger too:\n%s", rawBytes(t, locs.Tracker.Path))
+	if row := file.Worktree.Items[0]; row.Status != StatusClosed {
+		t.Fatalf("status = %q, want closed", row.Status)
 	}
 }
 
-// TestCorruptPreSplitStoreStaysUnevaluableAndBindsNothing is blocker 5: a corrupt
-// v1-only store is unevaluable and a bind fails closed, never a synthetic success.
+// TestCorruptPreSplitStoreStaysUnevaluableAndBindsNothing pins that a corrupt v1
+// file is never read as empty and a bind fails closed.
 func TestCorruptPreSplitStoreStaysUnevaluableAndBindsNothing(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Dir(StorePath(root)), 0o755); err != nil {
+	loc := StoreAt(ledgerPath(t))
+	if err := os.MkdirAll(filepath.Dir(loc.Path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(StorePath(root), []byte("not json"), 0o600); err != nil {
+	if err := os.WriteFile(loc.Path, []byte(`{"v":1,"items":[`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
-	locs := LedgersAt(root)
-	_, _, err := locs.Load()
+	_, _, err := loc.Load()
 	var corrupt *StoreCorruptError
 	if !errors.As(err, &corrupt) {
 		t.Fatalf("Load error = %v, want a *StoreCorruptError (unevaluable)", err)
 	}
-	if _, err := ApplyWrite(locs, ApplyWriteRequest{
+	if _, err := ApplyWrite(loc, ApplyWriteRequest{
 		Identity: ident(""), Checkpoint: CheckpointApplyStart, Request: WriteRequest{Kind: WriteOpen},
 	}, vtNow); err == nil {
-		t.Fatal("a bind over a corrupt pre-split store succeeded instead of failing closed")
+		t.Fatal("a bind over a corrupt predecessor succeeded instead of failing closed")
 	}
-	for _, p := range []string{WorktreeStorePath(root), TrackerStorePath(root)} {
-		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("%s was written over a corrupt store", p)
-		}
+	if got := string(rawBytes(t, loc.Path)); !strings.Contains(got, `"items":[`) {
+		t.Fatalf("the corrupt file was rewritten: %s", got)
+	}
+}
+
+// TestSnapshotCloseRecordsTheObservedProviderState pins S1 on one file: a close with
+// a provider payload updates the tracker row's snapshot in the same atomic write.
+func TestSnapshotCloseRecordsTheObservedProviderState(t *testing.T) {
+	loc := openFixture("card-1").write(t, ledgerPath(t))
+	if _, err := ApplyWrite(loc, ApplyWriteRequest{
+		Identity: ident(""), Checkpoint: CheckpointArchiveClose,
+		Request: WriteRequest{Kind: WriteClose, State: "done", Provider: []byte(`{"list":"Done"}`)},
+	}, vtNow); err != nil {
+		t.Fatalf("close with payload: %v", err)
+	}
+	file := loadFile(t, loc)
+	if file.Tracker.Items[0].State != "done" {
+		t.Fatalf("state = %q, want the observed done state", file.Tracker.Items[0].State)
+	}
+	var provider map[string]any
+	if err := json.Unmarshal(file.Tracker.Items[0].Provider, &provider); err != nil {
+		t.Fatal(err)
+	}
+	if provider["list"] != "Done" {
+		t.Fatalf("provider = %v, want list=Done", provider)
 	}
 }

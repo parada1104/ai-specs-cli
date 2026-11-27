@@ -27,7 +27,7 @@ func boundBinding() Binding {
 func openFixture(itemID string) *fixture {
 	f := newFixture()
 	f.openItem(ident(""), "trello-mcp-workflow", t0)
-	f.Tracker.Items[len(f.Tracker.Items)-1].ItemID = itemID
+	f.File.Tracker.Items[len(f.File.Tracker.Items)-1].ItemID = itemID
 	return f
 }
 
@@ -85,7 +85,7 @@ func TestGradePostureMatrixFiveCheckpointsThreeModes(t *testing.T) {
 	twoOpen.openItem(ident(""), "trello-mcp-workflow", t0)
 
 	exempt := openFixture("")
-	exempt.Tracker.Items[0].Exemption = "tracker.none"
+	exempt.File.Tracker.Items[0].Exemption = "tracker.none"
 
 	type scenario struct {
 		name  string
@@ -271,7 +271,7 @@ func TestGradeAlwaysBlocksPreMergeIdentityUnavailable(t *testing.T) {
 func TestGradeClosedOnlyStoreNeedsItemUnlessExplicitlyReported(t *testing.T) {
 	store := newFixture()
 	closed := store.openItem(ident(""), "trello-mcp-workflow", t0)
-	store.Tracker.Items[0].ItemID = "card-1"
+	store.File.Tracker.Items[0].ItemID = "card-1"
 	if err := store.closeItem(closed.ID, Decision{At: "2026-09-13T13:00:00Z", Checkpoint: CheckpointArchiveClose}); err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +308,7 @@ func TestGradeClosedOnlyStoreNeedsItemUnlessExplicitlyReported(t *testing.T) {
 	// An explicit report only makes a closed row selectable, never compliant: a
 	// local-only closed row still reports the missing provider item.
 	localOnly := *store
-	localOnly.Tracker.Items[0].ItemID = ""
+	localOnly.File.Tracker.Items[0].ItemID = ""
 	unlinked, ok := localOnly.view().LatestClosed(availIdentity().Key)
 	if !ok {
 		t.Fatal("LatestClosed found no closed row")
@@ -324,7 +324,7 @@ func TestGradeClosedOnlyStoreNeedsItemUnlessExplicitlyReported(t *testing.T) {
 // opt-out still covers only the checkpoint it was answered for.
 func TestGradeLegacyCheckpointOptOutStaysCheckpointScoped(t *testing.T) {
 	s := openFixture("local")
-	s.Tracker.Items[0].Decisions = append(s.Tracker.Items[0].Decisions,
+	s.File.Tracker.Items[0].Decisions = append(s.File.Tracker.Items[0].Decisions,
 		Decision{At: t0.Format(time.RFC3339), Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "continue"})
 	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), View: s.view(),
 		Evidence: Evidence{Local: "local", Remote: "remote"}, Now: vtNow}
@@ -343,7 +343,7 @@ func TestGradeLegacyCheckpointOptOutStaysCheckpointScoped(t *testing.T) {
 // identity/change, so the later checkpoints do not ask again.
 func TestGradeLifecycleOptOutSuppressesLaterCheckpoints(t *testing.T) {
 	s := openFixture("local")
-	s.Tracker.Items[0].Decisions = append(s.Tracker.Items[0].Decisions,
+	s.File.Tracker.Items[0].Decisions = append(s.File.Tracker.Items[0].Decisions,
 		Decision{At: t0.Format(time.RFC3339), Checkpoint: CheckpointApplyStart, Scope: ScopeLifecycle,
 			Kind: DecisionOptOut, Choice: "continue"})
 	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), View: s.view(),
@@ -364,7 +364,7 @@ func TestGradeScopedOptOutScopeCompatibility(t *testing.T) {
 	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), Now: vtNow}
 
 	legacy := base
-	legacy.View = View{Tracker: Store{V: StoreVersion, OptOuts: []ScopedOptOut{
+	legacy.View = View{Tracker: Store{OptOuts: []ScopedOptOut{
 		{Key: key, Checkpoint: CheckpointApplyStart, Choice: "continue"}}}}
 	legacy.Checkpoint = CheckpointApplyStart
 	assertVerdict(t, "legacy scoped opt-out answers apply-start", Grade(legacy), vWant{DecisionAllow, ReasonOptOut, 0, SeverityOK, true})
@@ -373,7 +373,7 @@ func TestGradeScopedOptOutScopeCompatibility(t *testing.T) {
 	assertVerdict(t, "legacy scoped opt-out does not carry", Grade(laterLegacy), vWant{DecisionAsk, ReasonNeedsItem, 0, SeverityWarn, true})
 
 	lifecycle := base
-	lifecycle.View = View{Tracker: Store{V: StoreVersion, OptOuts: []ScopedOptOut{
+	lifecycle.View = View{Tracker: Store{OptOuts: []ScopedOptOut{
 		{Key: key, Checkpoint: CheckpointApplyStart, Scope: ScopeLifecycle, Choice: "continue"}}}}
 	later := lifecycle
 	later.Checkpoint = CheckpointPreMerge
@@ -408,7 +408,7 @@ func TestGradeLocalOnlyRowIsNotCompliant(t *testing.T) {
 // provider-backed either.
 func TestGradeRowWithoutProviderIDIsNotCompliant(t *testing.T) {
 	s := openFixture("card-1")
-	s.Tracker.Items[0].ProviderID = ""
+	s.File.Tracker.Items[0].ProviderID = ""
 	got := Grade(Input{Checkpoint: CheckpointPreMerge, Mode: ModeAlways, Binding: boundBinding(),
 		Identity: availIdentity(), View: s.view(), Evidence: consistentEvidence("card-1"), Now: vtNow})
 	assertVerdict(t, "missing provider id", got, vWant{DecisionBlock, ReasonNeedsItem, 2, SeverityWarn, true})
@@ -438,7 +438,7 @@ func TestGradeWarnDoctorExposesMissingProviderItem(t *testing.T) {
 // the conflict for that checkpoint and allows the grade.
 func TestGradeAdjudicatedConflictAllows(t *testing.T) {
 	s := openFixture("local")
-	s.Tracker.Items[0].Decisions = append(s.Tracker.Items[0].Decisions,
+	s.File.Tracker.Items[0].Decisions = append(s.File.Tracker.Items[0].Decisions,
 		Decision{At: t0.Format(time.RFC3339), Checkpoint: CheckpointPreMerge, Kind: DecisionAdjudicate, Choice: "local"})
 	got := Grade(Input{Checkpoint: CheckpointPreMerge, Mode: ModeAlways, Binding: boundBinding(), Identity: availIdentity(),
 		View: s.view(), Evidence: Evidence{Local: "local", Remote: "remote"}, Now: vtNow})

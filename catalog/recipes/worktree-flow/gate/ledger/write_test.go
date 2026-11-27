@@ -18,9 +18,8 @@ func writePath(t *testing.T) string {
 	return TrackerStorePath(filepath.Join(t.TempDir(), ".git"))
 }
 
-// saveWriteStore writes a fixture's two ledgers at the tracker path and returns
-// the located ledger set.
-func saveWriteStore(t *testing.T, path string, f *fixture) Ledgers {
+// saveWriteStore writes a fixture's ledger file at path and returns its location.
+func saveWriteStore(t *testing.T, path string, f *fixture) StoreLocation {
 	t.Helper()
 	return f.write(t, path)
 }
@@ -28,7 +27,7 @@ func saveWriteStore(t *testing.T, path string, f *fixture) Ledgers {
 // applyWrite is the terse call helper: one write against the canonical identity.
 func applyWrite(t *testing.T, path, providerID string, req WriteRequest) (WriteOutcome, error) {
 	t.Helper()
-	return ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
+	return ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		ProviderID: providerID,
@@ -36,24 +35,15 @@ func applyWrite(t *testing.T, path, providerID string, req WriteRequest) (WriteO
 	}, vtNow)
 }
 
-// loadWriteView loads the ledger pair at path and fails the test on error.
+// loadWriteView loads the ledger file at path and fails the test on error.
 func loadWriteView(t *testing.T, path string) View {
 	t.Helper()
-	return loadView(t, LedgersAtStore(path))
+	return loadView(t, StoreAt(path))
 }
 
-// pairBytes is the exact bytes of both ledgers at a tracker path, with a marker
-// for a file that is absent: a mutation that must persist nothing has to leave the
-// whole pair untouched, not only the tracker file (L12.6).
+// pairBytes is the exact bytes of the ledger file, with a marker for its absence: a
+// mutation that must persist nothing has to leave the file untouched.
 func pairBytes(t *testing.T, path string) string {
-	t.Helper()
-	locs := LedgersAtStore(path)
-	return "worktree=" + readOrAbsent(t, locs.Worktree.Path) +
-		"\ntracker=" + readOrAbsent(t, locs.Tracker.Path)
-}
-
-// readOrAbsent reads a ledger file, naming its absence instead of failing.
-func readOrAbsent(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -287,7 +277,7 @@ func TestApplyWriteBindWithoutChangeIsBranchLevel(t *testing.T) {
 	path := writePath(t)
 	saveWriteStore(t, path, newFixture())
 
-	out, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
+	out, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -322,7 +312,7 @@ func TestApplyWriteBindWithoutChangeLinksTheSingleSlottedOpenRow(t *testing.T) {
 	f.openItem(ident("existing-slug"), "p", t0)
 	saveWriteStore(t, path, f)
 
-	out, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
+	out, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -359,7 +349,7 @@ func TestApplyWriteBindWithoutChangeRefusesMultipleOpenRows(t *testing.T) {
 	saveWriteStore(t, path, f)
 	before := pairBytes(t, path)
 
-	_, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
+	_, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -380,7 +370,7 @@ func TestApplyWriteBindWithChangeKeepsSlugSemantics(t *testing.T) {
 	path := writePath(t)
 	saveWriteStore(t, path, newFixture())
 
-	if _, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
+	if _, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -393,7 +383,7 @@ func TestApplyWriteBindWithChangeKeepsSlugSemantics(t *testing.T) {
 		t.Fatalf("items = %+v, want one row under the explicit slug", loaded.Tracker.Items)
 	}
 
-	out, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
+	out, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -851,7 +841,7 @@ func TestApplyWriteChangeAmbiguousRefusesWithoutSlug(t *testing.T) {
 	saveWriteStore(t, path, newFixture())
 	before := pairBytes(t, path)
 
-	_, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
+	_, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -864,7 +854,7 @@ func TestApplyWriteChangeAmbiguousRefusesWithoutSlug(t *testing.T) {
 		t.Fatal("a refused write must leave the store byte-identical")
 	}
 
-	if _, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
+	if _, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -882,7 +872,7 @@ func TestApplyWriteChangeAmbiguousRefusesWithoutSlug(t *testing.T) {
 // durable key for an identity Git could not name.
 func TestApplyWriteRefusesUnavailableIdentity(t *testing.T) {
 	path := writePath(t)
-	if _, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
+	if _, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ItemIdentity{},
 		Checkpoint: CheckpointApplyStart,
 		Request:    WriteRequest{Kind: WriteOpen},
@@ -1042,7 +1032,7 @@ func TestApplyWriteConcurrentOpensKeepOnePrimary(t *testing.T) {
 func TestAdjudicateClearsExemption(t *testing.T) {
 	path := writePath(t)
 	f := openFixture("card-1")
-	f.Tracker.Items[0].Exemption = "no tracker for this change"
+	f.File.Tracker.Items[0].Exemption = "no tracker for this change"
 	saveWriteStore(t, path, f)
 	key := ident("").Key()
 
@@ -1055,7 +1045,7 @@ func TestAdjudicateClearsExemption(t *testing.T) {
 		assertVerdict(t, "exempt "+cp, Grade(in), vWant{DecisionAllow, ReasonExempt, 0, SeverityOK, true})
 	}
 
-	if _, err := PersistDecision(LedgersAtStore(path), key, DecisionRequest{
+	if _, err := PersistDecision(StoreAt(path), key, DecisionRequest{
 		Checkpoint: CheckpointApplyStart, Kind: DecisionAdjudicate, Choice: "code",
 	}, vtNow); err != nil {
 		t.Fatalf("adjudicate: %v", err)
@@ -1067,7 +1057,7 @@ func TestAdjudicateClearsExemption(t *testing.T) {
 	if item.Exemption != "" {
 		t.Fatalf("exemption = %q, want cleared by adjudication", item.Exemption)
 	}
-	if _, err := PersistDecision(LedgersAtStore(path), key, DecisionRequest{
+	if _, err := PersistDecision(StoreAt(path), key, DecisionRequest{
 		Checkpoint: CheckpointPreMerge, Kind: DecisionOptOut, Choice: "continue",
 	}, vtNow); err != nil {
 		t.Fatalf("opt-out: %v", err)
