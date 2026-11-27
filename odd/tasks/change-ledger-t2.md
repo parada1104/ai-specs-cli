@@ -173,3 +173,18 @@ The code those tests cover is expected to be replaced by the seam, not extended.
   discriminator does not read *uncommitted* product divergence — is T3's own scope
   ("product-path divergence from the integration base, committed or uncommitted"), so
   it ships there with the shared discriminator.
+- **L9** — **Blocker, needs a decision from Robert.** Two review rounds on T2 each
+  returned `correction_required`, and every finding is answered in the tree:
+  `review-00f522ad421aeb6a` (5 findings, all fixed) and `review-601dd5b074549a01`
+  (3 findings, all fixed). Evidence at this point: `go test ./...` green, the
+  real-flow matrix byte-identical to its pre-correction run, pre-merge guardian green.
+  The correction's *verification* slot cannot be captured: it is a
+  `review.capture-validation` input for `provider_targeted_validator`
+  (`domain: artifact_path_or_stdin`, `--input={{value}}`), and the Pi facade rejects
+  the exact provider binding — `gentle_review_capture` with "collectBinding is missing
+  or stale for current STATUS", `gentle_review_capture_group` with "current STATUS does
+  not offer an exclusively materialize reviewer capture group", and
+  `gentle_review_run` resume with "capture-route-registration-rejected:
+  selector-mismatch". No `approved` receipt is reachable through the facade, and T2
+  does not merge without one. Nothing is lost: `feat/change-ledger-t2` holds the unit,
+  this plan holds its evidence, and both lineages keep their findings on record.
