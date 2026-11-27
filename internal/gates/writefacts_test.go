@@ -57,3 +57,40 @@ func TestWriteFactsOwnsTheWorkstreamFact(t *testing.T) {
 		t.Fatalf("Tier = %q, want %q: a plan and a delta are what make a tier", got, want)
 	}
 }
+
+// The delta R1 asks for is the exit it honours: a branch that promoted the rule
+// and committed the delta behind it is allowed again, and the same branch without
+// the delta is refused.
+func TestWriteVerdictAllowsACommittedCanonicalEditOnceTheDeltaExists(t *testing.T) {
+	root := writeRepo(t, nil)
+	commitPath(t, root, "src/app.go", "feat: product work")
+	commitPath(t, root, "odd/specs/cap/spec.md", "spec: promote the rule")
+
+	refused := WriteFactsFor(root, planbuild.ModeOdd, "thing", "src/app.go").Verdict()
+	if got, want := refused.Rules(), "R1"; got != want {
+		t.Fatalf("Rules() = %q, want %q before the delta", got, want)
+	}
+
+	commitPath(t, root, "odd/changes/thing/specs/cap/spec.md", "docs: the delta behind it")
+	if verdict := WriteFactsFor(root, planbuild.ModeOdd, "thing", "src/app.go").Verdict(); !verdict.Allowed() {
+		t.Fatalf("Verdict = %+v, want the write allowed once the delta exists", verdict)
+	}
+}
+
+// A workstream owes no diff-based evidence: a committed high-risk edit it cannot
+// answer never traps an unrelated later write.
+func TestWriteFactsDoesNotGradeAWorkstreamDiffForHighRisk(t *testing.T) {
+	root := writeRepo(t, map[string]string{
+		"ai-specs/ai-specs.toml": "[recipes.plan-build-flow.config]\nmode = \"odd\"\n" +
+			"high_risk_paths = [\"docs/secret/**\"]\n",
+	})
+	commitPath(t, root, "docs/secret/runbook.md", "docs: a runbook edit")
+
+	facts := WriteFactsFor(root, planbuild.ModeOdd, "thing", "README.md")
+	if !facts.Workstream {
+		t.Fatalf("Facts = %+v, want a workstream", facts)
+	}
+	if verdict := facts.Verdict(); !verdict.Allowed() {
+		t.Fatalf("Verdict = %+v, want no diff-based refutation for a workstream", verdict)
+	}
+}

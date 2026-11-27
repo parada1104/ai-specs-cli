@@ -172,12 +172,13 @@ func (f WriteFacts) canonicalSpecBlockers() []Refutation {
 	if !ok {
 		return nil
 	}
+	// One exit for both triggers: a delta in the tree is what promotion promotes,
+	// whether this branch committed it or is about to. Without it, R1's refusal
+	// could only be answered by writing the delta it already has.
+	if f.HasDelta {
+		return nil
+	}
 	if pending {
-		// The pending write is the fact; a delta in the tree is the exit, whether
-		// or not this branch committed it.
-		if f.HasDelta {
-			return nil
-		}
 		return []Refutation{{Rule: "R1", Message: CanonicalSpecRefusal(f.Mode, f.Change, spec)}}
 	}
 	_, count := firstMatch(f.Diff, func(entry planbuild.DiffEntry) bool { return isCanonicalSpec(entry.Path) })
@@ -217,7 +218,13 @@ func (f WriteFacts) highRiskBlockers() []Refutation {
 		}
 		return false
 	}
-	path, count := firstMatch(f.Diff, func(entry planbuild.DiffEntry) bool { return matches(entry.Path) })
+	// The diff is evidence only for a change: a workstream owes no artifact (S16), so
+	// a committed high-risk edit it cannot answer would trap every later write. The
+	// pending target below is graded either way.
+	path, count := "", 0
+	if !f.Workstream {
+		path, count = firstMatch(f.Diff, func(entry planbuild.DiffEntry) bool { return matches(entry.Path) })
+	}
 	if path == "" && f.Target != "" && matches(f.Target) {
 		path, count = f.Target, 1
 	}
@@ -240,7 +247,7 @@ func (f WriteFacts) highRiskBlockers() []Refutation {
 	plan := f.PlanPath
 	return []Refutation{{Rule: "R2", Message: found + fmt.Sprintf(", but the change `%s` carries no "+
 		"plan — in openspec the plan is where the verification evidence of a high-risk change lives. "+
-		"Write `%s` (tier light) and retry.", f.Change, plan)}}
+		"Write `%s` (tier light), commit it and retry.", f.Change, plan)}}
 }
 
 // highRiskOddExit is the odd-mode exit R2 advertises: the trailer, and the six

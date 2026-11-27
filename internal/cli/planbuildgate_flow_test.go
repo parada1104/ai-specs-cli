@@ -242,3 +242,39 @@ func TestPlanBuildGateGradesADeclaredHighRiskTargetInAWorkstream(t *testing.T) {
 		t.Fatalf("gate = (%d, %q), want exit 2 naming R2 for the workstream target", code, stderr)
 	}
 }
+
+// S16: a non-graded write that was asked to explain says so, so an operator can
+// tell an exempt write from a hook that never evaluated the event.
+func TestPlanBuildGateExplainsANonGradedWrite(t *testing.T) {
+	bin, _ := smokeSetup(t)
+	repo := flowRepo(t, "odd", nil)
+
+	stdout, stderr, code := flowRun(t, bin, repo, flowEvent(repo, "odd/tasks/thing.md"),
+		"plan-build-gate", "--explain")
+	if code != 0 || stdout != "" {
+		t.Fatalf("gate = (%d, %q), want exit 0", code, stdout)
+	}
+	if !strings.Contains(stderr, "not graded") {
+		t.Fatalf("stderr = %q, want the exemption named", stderr)
+	}
+}
+
+// R2 grades a declared high-risk path anywhere it lives, including inside the odd
+// tree, where only the planning folders are exempt.
+func TestPlanBuildGateGradesADeclaredHighRiskPathInTheOddTree(t *testing.T) {
+	bin, _ := smokeSetup(t)
+	repo := t.TempDir()
+	flowGit(t, repo, "init", "-b", "main")
+	flowGit(t, repo, "config", "user.email", "flow@example.invalid")
+	flowGit(t, repo, "config", "user.name", "flow")
+	flowWrite(t, repo, "ai-specs/ai-specs.toml", "[recipes.plan-build-flow]\nenabled = true\n\n"+
+		"[recipes.plan-build-flow.config]\nmode = \"odd\"\nhigh_risk_paths = [\"odd/tools/**\"]\n")
+	flowGit(t, repo, "add", "-A")
+	flowGit(t, repo, "commit", "-m", "base")
+	flowGit(t, repo, "checkout", "-b", "feat/thing")
+
+	_, stderr, code := flowRun(t, bin, repo, flowEvent(repo, "odd/tools/deploy.sh"), "plan-build-gate")
+	if code != 2 || !strings.Contains(stderr, "R2") || !strings.Contains(stderr, "odd/tools/deploy.sh") {
+		t.Fatalf("gate = (%d, %q), want exit 2 naming R2 and the pending target", code, stderr)
+	}
+}

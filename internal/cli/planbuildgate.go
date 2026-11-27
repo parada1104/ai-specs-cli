@@ -9,6 +9,10 @@ package cli
 // the exits that resolve it. A worktree with no artifact and no product-path
 // divergence is nothing to grade: it exits 0, tier none.
 //
+// The facts are collected once (`gates.WriteFactsFor`) and the rules over them are
+// pure (`Verdict`), so this host cannot print a refusal without also knowing the
+// tier and the rules behind it, and no rule decides its own applicability.
+//
 // One mode: a pre-tool-use event on stdin. A production path write (the
 // PLAN_BUILD_GATE_PATHS scope, default src lib catalog) is graded at the
 // `work-start` ledger checkpoint first.
@@ -16,7 +20,9 @@ package cli
 // The canonical spec tree (odd/specs/ or openspec/specs/) is the one protected
 // path in either mode, because promotion is its only writer: a hand write there
 // is refused as R1 unless the paired change carries a delta. Every other write
-// under odd/ and every write under openspec/changes/ stays allowed.
+// under the planning folders (odd/changes/, odd/tasks/, openspec/changes/) stays
+// allowed; the rest of the odd tree is graded, so a project can declare one of its
+// paths high-risk.
 //
 // Exit codes: 0 allows the write, 2 refuses it. Malformed or unrelated input
 // fails open, and an absent or unreadable refutation input never becomes an
@@ -66,13 +72,19 @@ the fact and the exits. No plan, declaration or authorization is required for a
 production write in any mode, and a worktree with no artifact and no product
 change is nothing to grade.
 
+Planning artifacts — openspec/changes/**, odd/changes/** and the plan documents
+under odd/tasks/** — are never graded, and neither is agent configuration, so a
+high-risk pattern that matches only a planning path has no effect. Every other
+write under odd/ is graded, and R2 grades the pending target wherever it lives.
+
 The mode is read from [recipes.plan-build-flow.config] mode in
 ai-specs/ai-specs.toml: "auto" (default), "odd" or "openspec". "auto" resolves
 "odd" when the Gentle AI state directory <git-common-dir>/gentle-ai/ exists, and
 "openspec" otherwise. An explicit mode wins over the inference.
 
 Options:
-  --explain           Also report the inferred tier and the rules that fired
+  --explain           Also report the inferred tier and the rules that fired,
+                      or that the target is not graded at all
   --help, -h          Show this help
 
 Environment:
@@ -129,8 +141,12 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 	// The execution mode is resolved once.
 	mode := planbuild.Resolve(repoRoot, planBuildGateCommonDir(target.Probe))
 	// Machine configuration and planning artifacts are never graded; the canonical
-	// spec tree always is, before the odd-tree exemption below.
+	// spec tree always is, before the change-tree exemption below.
 	if planBuildGateAgentConfig(rel) || !planBuildGateGraded(repoRoot, mode, abs) {
+		if explain {
+			fmt.Fprintf(stderr, "%s: not graded — the target is agent configuration or a "+
+				"planning artifact, so no rule applies\n", planBuildGateName)
+		}
 		return 0
 	}
 	change := ""
@@ -162,17 +178,26 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 	return 0
 }
 
-// planBuildGateGraded reports whether the write is graded at all. Planning
-// artifacts are never graded; the canonical spec tree always is, in either mode,
-// because promotion is its only writer.
+// planBuildGateGraded reports whether the write is graded at all. The change trees
+// and the plan documents are planning artifacts and are never graded; the canonical
+// spec tree always is, in either mode, because promotion is its only writer. The
+// rest of the odd tree is graded, so a project that declares one of its paths
+// high-risk is graded too.
 func planBuildGateGraded(repoRoot, mode, abs string) bool {
 	if planBuildGateUnder(planbuild.SpecsBase(repoRoot, mode), abs) {
 		return true
 	}
-	if planBuildGateUnder(filepath.Join(repoRoot, "openspec", "changes"), abs) {
-		return false
+	planning := []string{
+		filepath.Join(repoRoot, "openspec", "changes"),
+		filepath.Join(repoRoot, "odd", "changes"),
+		filepath.Join(repoRoot, "odd", "tasks"),
 	}
-	return !(mode == planbuild.ModeOdd && planBuildGateUnder(filepath.Join(repoRoot, "odd"), abs))
+	for _, folder := range planning {
+		if planBuildGateUnder(folder, abs) {
+			return false
+		}
+	}
+	return true
 }
 
 // planBuildGateCommonDir resolves git's common directory against the probe

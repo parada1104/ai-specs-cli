@@ -144,3 +144,18 @@ expectations from the old control flow:
   and `TestWriteRefutationsGradeAHighRiskTargetInAWorkstream`.
 
 The code those tests cover is expected to be replaced by the seam, not extended.
+- **L7** — Native review `review-00f522ad421aeb6a` (risk + reliability, tier high by
+  escalation item 3) returned `correction_required` with four blockers and one
+  critical, all answered in one bounded correction (plan: 180 diff lines). R1-001 and
+  R3-001 were one defect: the diff-based R1 never read `HasDelta`, so a branch that had
+  promoted its rule and committed the delta behind it was refused forever — both
+  triggers now share that one exit. R1-002: R2 graded a workstream's diff, so a
+  committed high-risk edit a workstream cannot answer trapped every later write; the
+  S16 fact now covers both diff-based rules and the pending target stays graded.
+  R1-003: the whole odd tree was exempt, so a declared high-risk path inside it was
+  invisible — only the planning folders (odd/changes, odd/tasks, openspec/changes) are
+  exempt now. R1-004/R3-003: `--explain` was silent on an exempt write — it now reports
+  that the target is not graded. R3-002 (non-blocking, recorded): the openspec R2 exit
+  now says the plan must be committed, because only a plan this diff contributes counts.
+  Evidence: four new tests, `go test ./...` green, and the real-flow matrix is
+  byte-identical to the pre-correction run.
