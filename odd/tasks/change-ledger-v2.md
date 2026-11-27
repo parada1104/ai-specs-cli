@@ -207,6 +207,17 @@ each unit's own delta lives in its own change folder.
     lost and can even mask the real error of a bind. This verb is where they surface,
     once and per ledger.
   - deps: T1, T2, T3, T5, T6. PR size ~700.
+  - carried from T6b's independent review (Cody, `eb85ee36`, non-blocking):
+    (a) `changes workstream --end` and `--reason` print the store note twice on stderr — once
+    from the read that decides the refusal and once from the write — so the notes need one
+    owner per invocation, which is this verb's "once and per ledger" rule;
+    (b) a directory with no git now answers with a new message (the plan port cannot name a
+    checkout there), and `status` must render that case deliberately instead of inheriting
+    whatever the workstream verb prints;
+    (c) reading the plan section can write: the creation token is written into the admin
+    directory the first time a checkout is named, even by a read-only call. `status` is
+    read-only by contract, so the token must be minted only on a write (or the read must
+    tolerate its absence) before this verb ships.
 - T8 — `changes next` plus postures: `advise` by default, `require` per project and
   checkpoint (S5, S10).
   route: worker. commit: none.
@@ -225,6 +236,15 @@ each unit's own delta lives in its own change folder.
     its notice repeats on every invocation. Report it once, name the ledger that owns
     the row, and say which file wins.
   - deps: T7. PR size ~400.
+  - carried from T6b's independent review (Cody, `eb85ee36`, non-blocking):
+    (a) the gate pays roughly 20-60 ms more per call since the plan section is read through
+    the full ledger load (rev-parse calls for the checkout identity plus the file read);
+    measure it on the hook path before adding the posture checks, and memoize the identity
+    per invocation if the budget is tight;
+    (b) `.ai-specs/` is ignored only in this repository's own `.gitignore`; a consumer
+    project still sees the plan predecessor and its one-shot copies as untracked files until
+    the managed ignore block that `sync` renders covers them (T11/T12 when the docs and the
+    release land).
 - T9 — Tracker reconciliation: `always|ask|off` per provider and the decision menu
   on disagreement (S6, S7).
   route: worker. commit: none.
