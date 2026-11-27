@@ -431,3 +431,24 @@ plan, design and audit live in `odd/tasks/change-ledger-v2.md` and
   - **Do not touch MEDIO-1.** v2 overwriting `state.json` means an installed 0.28.0 can no
     longer read it: that is Robert's compatibility decision, not mine. Current state stays
     and the options are described to him.
+- **L18** — L17 answered in `860a0c77`. Every finding fixed with its own RED test against
+  `161c0d70`, and MEDIO-1 left untouched by instruction. Parent-verified evidence, not
+  only the writer's: gate module 401 tests with `-count=1`; root `go build`/`go vet` clean;
+  `internal/cli` ledger and tracker-card tests; `ledger_cleanup_flow.sh` 7/7; `gofmt` and
+  `-race` clean; the **full** Python suite at 1933 tests with one failure, one skip and two
+  expected failures — identical to the base, and that failure is the pre-existing
+  `test_skill_never_recommends_delete_branch`; plus a parent-run probe of Cody's exact
+  ALTO-1 scenario (v1 open card-A, T5 closed card-B with `[open,link,link,close]`) where
+  grade finds no primary, the latest closed row carries card-B with that history, the
+  extra close reports `already-closed`, and the T5 file stays byte-identical.
+  Deliberate consequence of «the newest form wins», stated for the reviewer rather than
+  discovered later: a row 0.28.0 closed that T5 left open stays open, because T5 wrote
+  later. **MEDIO-1 remains open and is Robert's**: v2 lives at `ledger/state.json`, so an
+  installed 0.28.0 stops reading the ledger after the first v2 write — `bind` exits 2
+  without damage, `grade` falls to `unevaluable` with exit 0 under its inherited
+  fail-open, and `worktree-cleanup` stops removing merged worktrees. Two options:
+  (a) keep it, accepting that a repository still running the old binary loses automatic
+  cleanup until it upgrades, or (b) let v2 live at a new path (e.g. `ledger/ledger.json`)
+  and treat `state.json` as a read-only predecessor, exactly as T5 did, which preserves
+  the «never rewrite an older binary's file» rule at the cost of carrying a retired file
+  as a read-only source until it is dropped.
