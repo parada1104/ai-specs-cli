@@ -16,23 +16,26 @@ plan, design and audit live in `odd/tasks/change-ledger-v2.md` and
 ## Tasks
 
 - T4.1 — The generated pi/omp extension relays the advisory a hook writes on
-  stderr with exit 0: one visible line, best effort, and the blocking path
-  (`res.status === 2`) unchanged. Template: `internal/sync/hooksrender.go`,
-  `hooksRenderPiExt` (shared by pi and omp). Specs: S13. route: inline.
-  commit: 7af06bf1.
+  stderr with exit 0: one visible message carrying the whole block, best effort,
+  and the blocking path (`res.status === 2`) unchanged. Template:
+  `internal/sync/hooksrender.go`, `hooksRenderPiExt` (shared by pi and omp).
+  Specs: S13. route: inline. commit: 7af06bf1 + correction below (L8).
 - T4.2 — Tests: the RED that pins the relay in the rendered wrapper for both
-  adapters, plus the producer contract the wrapper consumes (`plan-build-gate
+  adapters, the producer contract the wrapper consumes (`plan-build-gate
   --explain` writes an advisory on stderr with exit 0, already pinned by T2's
-  flow matrix). Specs: S13. route: inline. commit: 7af06bf1.
+  flow matrix), and an executable test that drives the generated adapters with
+  Node type stripping so the relayed content and the decision are proven rather
+  than inferred from template text. Specs: S13. route: inline. commit: 7af06bf1.
 - T4.3 — Validation: focused suites, real flow with the built binary (render a
-  project and inspect the generated wrapper for pi and omp), and the RED
-  baseline. Specs: S13, S15. route: inline. commit: 7af06bf1.
+  project, execute the generated wrapper for pi and omp), the RED baseline, and
+  the real six-line Tracker advisory replayed through both generated adapters.
+  Specs: S13, S15. route: inline. commit: 7af06bf1.
 
 ## Verification
 
 | Spec | Evidence |
 | --- | --- |
-| S13 | (a) the rendered `.pi/extensions/worktree-flow-worktree-gate.ts` and `.omp/extensions/worktree-flow-worktree-gate.ts` contain the advisory relay (`res.status === 0`, `customType: "ai-specs-advisory"`, `display: true`) and cut a multi-line message to one line; (b) `res.status === 2` still returns `block: true` with `res.stderr`, so an advisory is never read as a block; (c) `plan-build-gate --explain` really does produce that advisory: exit 0 with the line on stderr; (d) the relay is best effort — a failing `sendMessage` cannot change the hook's decision. |
+| S13 | (a) the rendered `.pi/extensions/worktree-flow-worktree-gate.ts` and `.omp/extensions/worktree-flow-worktree-gate.ts` relay the hook's exit-0 stderr as one visible message (`res.status === 0`, `customType: "ai-specs-advisory"`, `display: true`) carrying **every** line — a real `tracker-card-gate` ask advisory is six lines with the actionable one last, so selecting a line relays the preamble and drops the advice; proven by executing both generated adapters (`TestPiAndOmpRelayTheWholeTrackerAdvisory`); (b) `res.status === 2` still returns `block: true` with `res.stderr`, so an advisory is never read as a block; (c) `plan-build-gate --explain` really does produce that advisory: exit 0 with the line on stderr; (d) the relay is best effort — a failing `sendMessage` cannot change the hook's decision. |
 | S15 | One PR for the unit, well under ~1000 lines, with the real-flow check and the RED in `## Log`. |
 
 ## Log
@@ -92,3 +95,34 @@ plan, design and audit live in `odd/tasks/change-ledger-v2.md` and
   binary: `plan-build-gate --explain` on a scratch odd-mode repo, feature branch,
   no plan → rc 0, empty stdout, `plan-build-gate: tier none; refutations none` on
   stderr, which is exactly the line the wrapper now relays.
+- **L8** — Correction, caught by the independent verifier before merge. The first
+  candidate relayed **one selected line** (first non-empty, trimmed) and was
+  wrong for the producer it exists for: a real
+  `TRACKER_LEDGER_MODE=ask ai-specs tracker-card-gate` run exits 0 with six
+  stderr lines — four evidence lines, a choices line, and the actionable
+  `tracker-card-gate: apply-start needs a decision but no terminal is
+  available…` **last**. Selecting the first line relayed
+  `local: (unavailable)` and dropped the advice, and any unrelated diagnostic
+  printed before an advisory displaced it. Inside the wrapper an advisory and a
+  diagnostic are indistinguishable on exit 0, so the only rule that cannot lose
+  the message is: relay the whole trimmed block as **one** visible message.
+  Applied: `const advisory = res.status === 0 ? (res.stderr || "").trim() : "";`.
+  Consequences, recorded on purpose: an exit-0 diagnostic is now visible too
+  (the spec defines no advisory marker, so nothing can separate them), and the
+  cost of noise is paid once per hook call, not per line.
+  Tests: `TestPiWrapperRelaysAnExitZeroAdvisory` now pins the exact emitted line
+  and forbids the line-selecting form; the new
+  `internal/sync/hooksadvisory_node_test.go` (`TestPiAndOmpRelayTheWholeTrackerAdvisory`)
+  executes both generated adapters with Node type stripping against the real
+  six-line shape, asserting the full advisory on exit 0 with a refusing
+  `sendMessage`, and the untouched block on exit 2. RED proven for the real rule:
+  with the line-selecting template restored, that test fails on the content
+  mismatch; with the fix it passes.
+  Validation on the corrected candidate: `go test ./...` clean; the built binary
+  re-rendered the scratch project; replaying the exact six-line Tracker stderr
+  through both generated adapters produced one visible `ai-specs-advisory` with
+  all six lines for pi and omp, decision still allow with a throwing
+  `sendMessage`.
+  The frozen oracle moved again by the same mechanical method (16 bodies, one
+  block each), so its diff against the pre-T4 baseline is still confined to this
+  one template block.
