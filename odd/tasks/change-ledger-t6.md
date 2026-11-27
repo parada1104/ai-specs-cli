@@ -358,3 +358,20 @@ plan, design and audit live in `odd/tasks/change-ledger-v2.md` and
   scenario's per-capability assertions. `ledgers/{worktree,plan}.json` becomes its own
   future unit with an explicit `ai-specs ledger migrate` verb and preconditions; nothing in
   T6a may create or read those files as primary state.
+- **L15** — L14 applied, with three consequences settled here so they are not
+  re-litigated. (1) The `plan` section is emitted as `{"items":[]}` — shape only, no
+  location, no writer, no migration — because L14 declares the layout and T6b fills it;
+  the key must not be omitted and later invented. (2) The pair-specific regressions of L11
+  (refusing to drop a close «it cannot place», alias independence, the per-directory lock,
+  the two-file rollback) become vacuous on one file: a single atomic rename cannot place a
+  row in a file it does not own. Their **intent** is preserved as one-file assertions (no
+  close decision in the tracker section, ids unique across sections, a failed write
+  persists nothing) and the mechanisms are dropped rather than kept as dead tests
+  asserting a deleted design. (3) The verification row that read «a corrupt ledger leaves
+  the others answering» no longer has a subject: with one file there is no «others». It is
+  replaced by «a corrupt file is unevaluable and every write fails closed with the file
+  left byte-identical» — the neighbouring contract, pinned by test.
+  Delivery: the whole T6a change exceeds the reviewable size in one commit, so it ships as
+  an ordered pair of PRs — the first carries the v2 single-file production change plus the
+  full gate-suite adaptation (green), the second carries the scenario's per-section
+  assertions, the `internal/cli` seeds and the three real-store probes as its evidence.
