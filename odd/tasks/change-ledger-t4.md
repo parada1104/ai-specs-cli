@@ -19,14 +19,14 @@ plan, design and audit live in `odd/tasks/change-ledger-v2.md` and
   stderr with exit 0: one visible line, best effort, and the blocking path
   (`res.status === 2`) unchanged. Template: `internal/sync/hooksrender.go`,
   `hooksRenderPiExt` (shared by pi and omp). Specs: S13. route: inline.
-  commit: pending.
+  commit: 7af06bf1.
 - T4.2 — Tests: the RED that pins the relay in the rendered wrapper for both
   adapters, plus the producer contract the wrapper consumes (`plan-build-gate
   --explain` writes an advisory on stderr with exit 0, already pinned by T2's
-  flow matrix). Specs: S13. route: inline. commit: pending.
+  flow matrix). Specs: S13. route: inline. commit: 7af06bf1.
 - T4.3 — Validation: focused suites, real flow with the built binary (render a
   project and inspect the generated wrapper for pi and omp), and the RED
-  baseline. Specs: S13, S15. route: inline. commit: pending.
+  baseline. Specs: S13, S15. route: inline. commit: 7af06bf1.
 
 ## Verification
 
