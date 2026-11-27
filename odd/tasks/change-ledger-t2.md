@@ -32,31 +32,40 @@ deltas live in `odd/tasks/change-ledger-v2.md` and `odd/tasks/change-ledger-v2/`
 
 ## Tasks
 
-- T2 — The write gate infers the tier and refuses only on a proven refutation.
-  route: worker. commit: pending.  - scope: `internal/cli/planbuildgate.go` (drop the plan/ceremony requirement in
-    OpenSpec mode; a worktree with no artifact and no product-path divergence is
-    nothing to grade), the refutations R1 and R2 (R3-R5 belong to T8, L4),
-    `internal/planbuild/ceremony.go` + `changes start --none` become inert with a
-    deprecation notice, and the messages lose every "go ask permission" line.
-  - tests: one real-flow scenario in a temp repo over the audit matrix — ODD with
-    no plan → 0; OpenSpec with no plan → 0; audit worktree with no divergence → 0;
-    R1 (canonical spec written by hand without its delta) → 2 naming R1; R2 (a
-    project-declared high-risk target) → 2 naming R2; a leftover
-    `aiSpecsCeremony = none` changes nothing; a fresh `start --none` warns and exits
-    0.
-  - RED: today the OpenSpec no-plan write exits 2 and the declaration is a
-    precondition.
-  - risks: this removes a guard. Mitigation: every refusal is now fact-based and
-    the merge guardian is untouched.
+- T2.1 — One fact collection and pure rules: the `Facts()`/`Verdict()` seam in
+  `internal/gates`, with the CLI reduced to collection plus one print path.
+  Specs: S1, S2, S16. route: inline. commit: pending.
+  - scope: new `internal/gates/writefacts.go` holding `WriteFacts` (mode, change,
+    target, production, diff entries, declared high-risk patterns, plan/delta
+    presence, risk trailer, workstream) and `Verdict()` as pure R1/R2 rules over
+    it; `internal/cli/planbuildgate.go` keeps only event parsing, the non-graded
+    scope (agent config, planning artifacts), the work-start ledger and one print
+    path for both the refusal and `--explain`. `WriteRefutations`,
+    `HighRiskRefutation` and `CanonicalSpecRefusal` disappear: no rule reads the
+    position of a `return` and no caller keeps a second copy of the S16 fact.
+  - tests: the four-round tests stay as the RED baseline and keep their
+    expectations; two seam-contract tests are added — the same verdict is what
+    `--explain` reports and what the refusal prints (no path can print one and
+    skip the other), and the workstream fact is computed by the fact layer, so a
+    caller cannot pass it in.
+  - RED: today no fact collection exists, `WriteRefutations` takes `workstream` as
+    a caller-supplied argument, and the explain line is emitted on two separate
+    paths of the CLI.
+  - risks: this touches the refusal path of a hook. Mitigation: the matrix in
+    `planbuildgate_flow_test.go` is unchanged and stays the acceptance test.
+- T2.2 — Validate T2 against the released baseline and the real hook flow.
+  Specs: S1, S2, S9, S16. route: inline. commit: pending.
+- T2.3 — Native review, PR and merge, then `ai-specs sync`.
+  Specs: S3. route: inline. commit: pending.
 
 ## Verification
 
 | Spec | Evidence |
 | --- | --- |
 | S1 | Branch binary on temp repos: OpenSpec production write with no plan → exit 0, silent; the released baseline `366049b3` build refuses it (exit 2) with the retired "write …/tasks.md and retry / run changes start --none" text. ODD with no plan → 0 on both. `go test ./...` green. |
-| S2 | R1: hand write to `odd/specs/widget/spec.md` without a delta → exit 2 naming R1, the missing delta path and `ai-specs specs promote` (baseline refuses with the old wording). R4: a removed `case "--old-flag":` arm under a product path → exit 2 naming R4 and the exits (baseline 0); the same removal as a prose mention → exit 0, which is the false refusal the native review found. |
+| S2 | Seam first: `--explain` on a refused write prints `plan-build-gate: tier none; refutations R1` before the refusal, both read from the one `Verdict` (baseline rejects `--explain` as an unexpected argument, and the pre-seam code refused before reaching its explain line — that was the RED). R1: hand write to `odd/specs/cap/spec.md` with no delta → exit 2 naming R1, `odd/changes/thing/specs/` and `ai-specs specs promote` (baseline refuses with the old wording). R2: `docs/deploy.md` under a declared `high_risk_paths` → exit 2 naming R2, the path and the `Risk: item N` exit (baseline 0). R3–R5 moved to T8 (L4). |
 | S9 | Fresh `changes start --none --root .` → exit 0 with one deprecation line and **no** git config write (`git config --get` unset); the baseline build writes `branch.main.aiSpecsCeremony none`. A pre-existing `aiSpecsCeremony = none` → silent, no notice, no behaviour change. |
-| S16 | An ODD repo with `max_diff_lines = 1`, a documentation-only diff and no artifact → exit 0 on both binaries: the diff-based refutations are skipped for nothing-to-grade while R1 still refuses a hand write. Note for T3: the production set is `lib catalog bin src`, so this repository's `internal/` work is not product divergence — the centralised discriminator must own that fact. |
+| S16 | An ODD repo with a documentation-only diff and no artifact → exit 0 on both binaries: the diff-based refutations are skipped for nothing-to-grade while R1 still refuses a hand write. In the branch binary the same worktree answers `--explain` with `tier none; refutations none`, and a worktree that adds a product path is graded again (a worktree that adds `src/` *and* a canonical spec edit is refused as R1 — the discriminator is conservative). Note for T3: the production set is `lib catalog bin src`, so this repository's `internal/` work is not product divergence — the centralised discriminator must own that fact. |
 | S3 | Plan only (`light`), no delta folder — see L2. Commits `a0427330` (plan), `96c7a8ee` (gate), `57c8a5fb` (review correction); pre-merge guardian green on the branch. |
 
 Native review `review-891597c96a64468e` (risk + reliability, tier high by escalation item 3):
@@ -102,6 +111,13 @@ diff-based refutations, and `--explain` reports the tier on the allowed canonica
   contract" decided by the shape of a line; refusals advertising exits nothing honoured;
   and the explanation emitted at the end of one path. Full record:
   `odd/tasks/change-ledger-v2/t2-review-escalation.md`.
+- **L6** — Seam implemented as decided in L5, three commits: `T2.1` the factor
+  (`internal/gates/writefacts.go` + the CLI reduced to one print path), `T2.2`
+  validation evidence, `T2.3` review and merge. The old helper functions
+  (`WriteRefutations`, `HighRiskRefutation`, `CanonicalSpecRefusal`, the CLI's
+  `planBuildGateWorkstream`/`planBuildGateInferredTier`/`planBuildGateRules`) are
+  deleted rather than extended, because each of them held a copy of one of the
+  five root causes.
 
 ## Redesign shape (L5)
 
