@@ -325,23 +325,26 @@ plan, design and audit live in `odd/tasks/change-ledger-v2.md` and
   name>`) x every operation (grade, open, bind, close), asserting invariant M and that the
   pre-split file is byte-identical. That matrix is the deliverable: it is what makes the
   next review cheap, and its absence is why two verification rounds still found holes.
-- **L14** — Delivery decision, Robert, 2026-11-27: **logical split in one file; physical
-  separation later.** Three verification rounds kept producing new defects of one class —
-  the combinatorial surface of layouts x entry points x operations x odd filesystems on a
-  two-file migration — so the split stays (S3: one ledger per capability, conversing, not
-  mixing state) and the file separation goes, which S14 allows: «cada ledger con su propio
-  archivo está bien siempre que todo pase por el entrypoint» makes the layout a preference,
-  not a contract.
+- **L14** — Decision: **logical split in one file; physical separation later.** Chosen by
+  Cody on 2026-11-27 as a technical decision inside the architecture Robert fixed
+  (S14 says the layout is not a contract: «cada ledger con su propio archivo está bien
+  siempre que todo pase por el entrypoint del CLI»; Robert's rule — one ledger per
+  capability, no mixed state, everything through the CLI entrypoint — holds with
+  per-capability sections and separated writers), after three verification rounds kept
+  producing new defects of one class: the combinatorial surface of layouts x entry points
+  x operations x odd filesystems on a two-file migration.
   **Layout.** One file, `<common>/ai-specs/ledger/state.json`, `{"v":2,"worktree":{"items":
   […]}, "tracker":{"items":[…],"opt_outs":[…]}, "plan":{"items":[…]}}`. Each capability
   writes only its own section, so no capability can write another's row.
-  **Migration, on read, never two halves.** A v1 file at that path is normalized into
-  sections in memory (worktree share and tracker share, the same functions that already
-  exist), a one-shot atomic backup of the v1 bytes is kept, and the first write rewrites the
-  file as v2. T5's `ledgers/tracker.json` stays a **read-only** source for the rows the v2
-  file lacks, is never rewritten, and reports what it contributed. Only `fs.ErrNotExist`
-  means absent: any other read error is corruption, the ledger is unevaluable, and writes
-  fail closed — a symlink loop or a permission error can never become «empty and writable».
+  **Migration, on read, never two halves.** T5 already ships `ledgers/tracker.json` in
+  `development` with no release behind it, so both predecessor sources are absorbed
+  **unconditionally**, not as a one-release window: a v1 file at the v2 path is normalized
+  into sections in memory (worktree share and tracker share, the same functions that already
+  exist), T5's `ledgers/tracker.json` contributes the rows the v2 file lacks, a one-shot
+  atomic backup of every source is kept, and the first write rewrites the v2 file. No row
+  may be dropped and no source is ever rewritten. Only `fs.ErrNotExist` means absent: any
+  other read error is corruption, the ledger is unevaluable, and writes fail closed — a
+  symlink loop or a permission error can never become «empty and writable».
   **Deleted with the pair machinery**: `Inherit`, the two-location `Ledgers`, the pair save
   with its best-effort rollback, the per-directory lock, and `--store`'s derived sibling.
   `--store` names THE file; one atomic rename per write; the lock is `<store>.lock`, the
