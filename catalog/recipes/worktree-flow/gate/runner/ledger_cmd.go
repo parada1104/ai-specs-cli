@@ -150,9 +150,14 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 		storeReport.Note(stderr, "worktree-gate")
 	}
 	if opts.write != "" || opts.decide != "" {
-		// A backup that cannot be written is reported, never silent. The copies are
-		// one-shot, so this is a no-op once they exist.
-		loc.Backup().Note(stderr, "worktree-gate")
+		// A predecessor that cannot be backed up must not be replaced: the write fails
+		// closed here, before anything is persisted (L17 MEDIO-2).
+		backup := loc.Backup()
+		if backup.BackupFailed != nil {
+			backup.Note(stderr, "worktree-gate")
+			fmt.Fprintf(stderr, "worktree-gate: ledger write refused: the predecessor backup failed\n")
+			return 2
+		}
 	}
 
 	// The effective mode is the explicit --ledger-mode when given (an explicit

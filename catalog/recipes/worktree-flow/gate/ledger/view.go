@@ -132,7 +132,10 @@ func joinDecisions(tracker []Decision, closes []WorktreeDecision) []Decision {
 	joined := make([]Decision, 0, len(tracker)+len(closes))
 	joined = append(joined, tracker...)
 	for _, close := range closes {
-		joined = append(joined, Decision{At: close.At, Checkpoint: close.Checkpoint, Kind: close.Kind})
+		joined = append(joined, Decision{
+			At: close.At, Checkpoint: close.Checkpoint, Scope: close.Scope, Kind: close.Kind,
+			Choice: close.Choice, Note: close.Note,
+		})
 	}
 	return joined
 }

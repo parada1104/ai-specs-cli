@@ -610,8 +610,9 @@ func AppendDecisionToPrimary(path, key string, d Decision) error {
 
 // withStoreLock serializes read-modify-write access to the ledger file with a
 // BOUNDED non-blocking acquisition: 5 attempts with a 20 ms backoff, then
-// ErrLockTimeout (~100 ms cap, DW3). The lock file keeps T5's name, so two versions
-// of the binary exclude each other.
+// ErrLockTimeout (~100 ms cap, DW3). The lock is "<store>.lock", the name 0.28.0
+// already takes for the same file, so an installed 0.28.0 and this build exclude each
+// other. T5 needs no exclusion: it writes ledgers/tracker.json, never this file.
 func withStoreLock(path string, fn func() error) error {
 	lockPath := LockPath(path)
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {

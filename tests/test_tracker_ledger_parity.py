@@ -31,9 +31,18 @@ PLAN_BUILD_GATE = (
 
 STAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:?\d{2})$")
 LEDGER_ALLOWED_NAMES = frozenset(
-    {"witness.json", "state.json", "state.json.lock", "state.json.v1-backup"}
+    {
+        "witness.json",
+        "state.json",
+        "state.json.lock",
+        "state.json.v1-backup",
+        # A predecessor that grew keeps the fresh bytes under a name of its own.
+        "state.json.v1-backup.1",
+        "state.json.v1-backup.2",
+    }
 )
-LEDGERS_ALLOWED_NAMES = frozenset({"tracker.json", "tracker.json.lock"})
+# T6a never writes this directory: it is T5's read-only migration source.
+LEDGERS_ALLOWED_NAMES = frozenset({"tracker.json", "tracker.json.lock", "tracker.json.v1-backup"})
 
 # Every design test-table row this corpus must pin, as (label prefix, row name).
 DESIGN_ROWS = {
@@ -185,7 +194,7 @@ def case_steps(case: dict) -> list[dict]:
 
 
 def run_step(root: Path, repo: Path, case: dict, step: dict,
-             binary: Path) -> tuple[subprocess.CompletedProcess, dict]:
+             binary: Path) -> tuple[subprocess.CompletedProcess, dict | None]:
     cmd = [
         str(binary), "--ledger",
         "--checkpoint", step["checkpoint"],
@@ -212,26 +221,39 @@ def run_step(root: Path, repo: Path, case: dict, step: dict,
 
 
 def tracker_store_path(ledger_dir: Path) -> Path:
+    """T5's read-only migration source. T6a never writes it."""
     return ledger_dir.parent / "ledgers" / "tracker.json"
+
+
+def ledger_sections(ledger_dir: Path) -> tuple[list[dict], list[dict]]:
+    """The (worktree, tracker) rows of the ledger file in whatever shape it is.
+
+    A v2 file has one section per capability (L14); a predecessor is still v1 and its
+    rows are both capabilities at once, which is what the migration reads.
+    """
+    data = json.loads((ledger_dir / "state.json").read_text())
+    if data.get("v") == 2:
+        worktree = data.get("worktree") or {}
+        tracker = data.get("tracker") or {}
+        return worktree.get("items") or [], tracker.get("items") or []
+    items = data.get("items") or []
+    return items, items
 
 
 def assert_store_pin(test: unittest.TestCase, ledger_dir: Path, pin: dict) -> None:
     """Pin store-level invariants the verdict JSON cannot express."""
-    # Read the split store; a case that never landed a write still answers from
-    # the pre-split fallback, exactly like the CLI's one-release double read.
-    store_file = tracker_store_path(ledger_dir)
-    if not store_file.exists():
-        store_file = ledger_dir / "state.json"
-    data = json.loads(store_file.read_text())
-    items = data.get("items", [])
-    test.assertEqual(len(items), pin["items"], f"items = {items}")
-    test.assertEqual(len({item["id"] for item in items}), pin["unique_ids"],
-                     f"item ids are not unique: {items}")
-    test.assertEqual(sum(1 for item in items if item["status"] == "open"), pin["open_items"])
+    # The rows live in one file with a section per capability: the lifecycle (status)
+    # in the worktree section, the record (provider fields, exemption) in the tracker
+    # section, joined by id.
+    worktree_rows, tracker_rows = ledger_sections(ledger_dir)
+    test.assertEqual(len(tracker_rows), pin["items"], f"rows = {tracker_rows}")
+    test.assertEqual(len({item["id"] for item in tracker_rows}), pin["unique_ids"],
+                     f"item ids are not unique: {tracker_rows}")
+    test.assertEqual(sum(1 for item in worktree_rows if item["status"] == "open"), pin["open_items"])
     if "exemption" in pin:
-        test.assertIn(pin["exemption"], [item["exemption"] for item in items])
+        test.assertIn(pin["exemption"], [item["exemption"] for item in tracker_rows])
     if "change" in pin:
-        test.assertIn(pin["change"], [item["identity"]["change"] for item in items])
+        test.assertIn(pin["change"], [item["identity"]["change"] for item in tracker_rows])
 
 
 def normalize(value):

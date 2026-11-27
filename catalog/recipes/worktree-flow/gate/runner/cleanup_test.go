@@ -745,9 +745,9 @@ func seedCleanupLegacyPredecessor(t *testing.T, root, branch, change string) str
 	return path
 }
 
-// TestCleanupReportsAFailedBackup pins the other warning the close's report carries:
-// a one-shot backup of the pre-split store that cannot be written is printed, and
-// the close still happens because the source is untouched.
+// TestCleanupReportsAFailedBackup pins MEDIO-2: a predecessor backup that cannot be
+// written is reported and the write fails closed, so a merged worktree is preserved
+// rather than losing the row it could not back up.
 func TestCleanupReportsAFailedBackup(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("a read-only directory cannot be simulated as root")
@@ -780,14 +780,17 @@ func TestCleanupReportsAFailedBackup(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	cfg := newCleanupConfig(root, ".worktrees", "main", "main", "standalone", false, nil)
-	if code := runCleanup(root, cfg, &stdout, &stderr); code != 0 {
-		t.Fatalf("cleanup exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	if code := runCleanup(root, cfg, &stdout, &stderr); code == 0 {
+		t.Fatalf("cleanup succeeded although the predecessor backup failed: stdout=%s", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "could not write a one-shot backup") {
-		t.Fatalf("cleanup discarded the failed-backup warning:\n%s", stdout.String())
+	if !strings.Contains(stderr.String(), "without a predecessor backup") {
+		t.Fatalf("cleanup discarded the failed-backup warning:\n%s", stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "closed ledger item for feat-ledger-backup") {
-		t.Fatalf("the close did not happen despite the untouched source:\n%s", stdout.String())
+	if _, err := os.Stat(wt); err != nil {
+		t.Fatalf("the candidate was removed although the close failed closed: %v", err)
+	}
+	if strings.Contains(stdout.String(), "closed ledger item for feat-ledger-backup") {
+		t.Fatalf("the close was reported although the write failed closed:\n%s", stdout.String())
 	}
 }
 

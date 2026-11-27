@@ -23,12 +23,16 @@ type WorktreeItem struct {
 // Key is the row's identity key.
 func (i WorktreeItem) Key() string { return i.Identity.Key() }
 
-// WorktreeDecision is one lifecycle entry: only a close reaches this ledger, so
-// the entry carries the audit trail and nothing else.
+// WorktreeDecision is one lifecycle entry: only a close reaches this section, so the
+// entry carries its audit trail. The choice, note and scope a source recorded are
+// carried too: a close that a human annotated must not lose its words (L17).
 type WorktreeDecision struct {
 	At         string `json:"at"`
 	Checkpoint string `json:"checkpoint"`
+	Scope      string `json:"scope,omitempty"`
 	Kind       string `json:"kind"`
+	Choice     string `json:"choice"`
+	Note       string `json:"note"`
 }
 
 // WorktreeStore is the worktree section: the lifecycle rows.
@@ -132,7 +136,9 @@ func worktreeShare(row LegacyItem) WorktreeItem {
 	}
 	for _, d := range row.Decisions {
 		if d.Kind == DecisionClose {
-			share.Decisions = append(share.Decisions, WorktreeDecision{At: d.At, Checkpoint: d.Checkpoint, Kind: d.Kind})
+			share.Decisions = append(share.Decisions, WorktreeDecision{
+				At: d.At, Checkpoint: d.Checkpoint, Scope: d.Scope, Kind: d.Kind, Choice: d.Choice, Note: d.Note,
+			})
 		}
 	}
 	return share

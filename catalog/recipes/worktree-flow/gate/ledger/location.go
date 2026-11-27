@@ -125,7 +125,7 @@ func (r StoreReport) Note(w io.Writer, prefix string) {
 			prefix, r.LegacyRows, r.LegacyUnreadable)
 	}
 	if r.BackupFailed != nil {
-		fmt.Fprintf(w, "%s: could not write a one-shot backup of a predecessor ledger (%v); those files are untouched, so no row is lost\n",
+		fmt.Fprintf(w, "%s: could not write a backup of a predecessor ledger (%v); the ledger was not written, so nothing was replaced\n",
 			prefix, r.BackupFailed)
 	}
 }
@@ -142,22 +142,31 @@ func (l StoreLocation) Load() (LedgerFile, StoreReport, error) {
 
 	switch err := statExact(l.Path); {
 	case err == nil:
-		file, isV1, err := readLedgerFile(l.Path)
+		file, stale, err := readLedgerFile(l.Path)
 		if err != nil {
 			return EmptyLedger(), report, err
 		}
-		if isV1 {
+		if stale == nil {
+			// Already v2: its own version answers, and a source only adds what it lacks.
+			l.absorbMigration(&file, &report)
+			settleCloses(&file)
+			return file, report, nil
+		}
+		// Path is still v1, so it is a stale predecessor: 0.28.0 wrote it and T5 never
+		// did. T5's mixed tracker file is the newest superset, so it is the base and
+		// the v1 file only contributes the rows it lacks (L17 ALTO-1).
+		base := EmptyLedger()
+		l.absorbMigration(&base, &report)
+		if added := mergeLegacyMissing(&base, *stale); added > 0 {
+			report.Absorbed += added
 			report.LegacyRows = l.Path
 		}
-		if err := l.absorbMigration(&file, &report); err != nil {
-			return EmptyLedger(), report, err
-		}
-		return file, report, nil
+		settleCloses(&base)
+		return base, report, nil
 	case errors.Is(err, fs.ErrNotExist):
 		file := EmptyLedger()
-		if err := l.absorbMigration(&file, &report); err != nil {
-			return EmptyLedger(), report, err
-		}
+		l.absorbMigration(&file, &report)
+		settleCloses(&file)
 		return file, report, nil
 	default:
 		return EmptyLedger(), report, &StoreCorruptError{Path: l.Path, Err: err}
@@ -166,35 +175,46 @@ func (l StoreLocation) Load() (LedgerFile, StoreReport, error) {
 
 // absorbMigration merges T5's mixed tracker file into the sections. A source that is
 // absent contributes nothing; any other error is corruption.
-func (l StoreLocation) absorbMigration(file *LedgerFile, report *StoreReport) error {
+func (l StoreLocation) absorbMigration(file *LedgerFile, report *StoreReport) {
 	if l.Migration == "" || l.Migration == l.Path {
-		return nil
+		return
 	}
 	switch err := statExact(l.Migration); {
 	case errors.Is(err, fs.ErrNotExist):
-		return nil
+		return
 	case err != nil:
-		return &StoreCorruptError{Path: l.Migration, Err: err}
+		report.LegacyUnreadable = err
+		report.LegacyRows = l.Migration
+		return
 	}
 	data, err := os.ReadFile(l.Migration)
 	if err != nil {
-		return &StoreCorruptError{Path: l.Migration, Err: err}
+		// A source that cannot be read is reported, never fatal: this build never
+		// writes it, so the ledger's own answer stands (L17 MEDIO-3).
+		report.LegacyUnreadable = err
+		report.LegacyRows = l.Migration
+		return
 	}
 	legacy, err := decodeLegacy(data, l.Migration)
 	if err != nil {
-		return err
+		report.LegacyUnreadable = err
+		report.LegacyRows = l.Migration
+		return
 	}
 	absorbed, shadowed := mergeLegacy(file, legacy)
 	report.Absorbed += absorbed
 	report.Shadowed += shadowed
 	report.LegacyRows = l.Migration
-	return nil
 }
 
-// Save writes the whole file atomically, after keeping a one-shot copy of every
-// predecessor source it is about to supersede. One rename is the transaction.
+// Save writes the whole file atomically, after keeping a copy of every predecessor it
+// is about to supersede. A copy that cannot be written fails the save closed: a
+// predecessor with no backup must never be replaced (L17 MEDIO-2).
 func (l StoreLocation) Save(file LedgerFile) (StoreReport, error) {
 	report := StoreReport{BackupFailed: errors.Join(l.backupPredecessor(l.Path), l.backupPredecessor(l.Migration))}
+	if report.BackupFailed != nil {
+		return report, fmt.Errorf("ledger: refusing to write %s without a predecessor backup: %w", l.Path, report.BackupFailed)
+	}
 	data, err := encodeLedgerFile(file)
 	if err != nil {
 		return report, err
@@ -208,15 +228,13 @@ func (l StoreLocation) Backup() StoreReport {
 	return StoreReport{BackupFailed: errors.Join(l.backupPredecessor(l.Path), l.backupPredecessor(l.Migration))}
 }
 
-// backupPredecessor keeps one copy of a v1 predecessor as <path>.v1-backup. A v2
-// file is not a predecessor, so it is not copied; an existing backup is never
-// replaced, and a missing source has nothing to copy.
+// backupPredecessor keeps a copy of the bytes a v1 predecessor actually holds: an
+// earlier backup is reused only when it holds exactly these bytes, otherwise the copy
+// gets a name of its own, so a predecessor that grew is never replaced under a stale
+// copy (L17 MEDIO-2). A v2 file is not a predecessor and is not copied; a missing
+// source has nothing to copy.
 func (l StoreLocation) backupPredecessor(path string) error {
 	if path == "" {
-		return nil
-	}
-	backup := path + ".v1-backup"
-	if _, err := os.Stat(backup); err == nil {
 		return nil
 	}
 	switch err := statExact(path); {
@@ -232,7 +250,22 @@ func (l StoreLocation) backupPredecessor(path string) error {
 	if !isV1(data) {
 		return nil
 	}
-	return writeAtomic(backup, data)
+	for n := 0; ; n++ {
+		name := path + ".v1-backup"
+		if n > 0 {
+			name = fmt.Sprintf("%s.v1-backup.%d", path, n)
+		}
+		existing, err := os.ReadFile(name)
+		if errors.Is(err, fs.ErrNotExist) {
+			return writeAtomic(name, data)
+		}
+		if err != nil {
+			return err
+		}
+		if string(existing) == string(data) {
+			return nil
+		}
+	}
 }
 
 // LegacyStore is the pre-split single store (v1), the shape both predecessor files
@@ -250,27 +283,29 @@ type LegacyItem struct {
 	Item
 }
 
-// readLedgerFile decodes Path, reporting whether it was a v1 predecessor.
-func readLedgerFile(path string) (LedgerFile, bool, error) {
+// readLedgerFile decodes Path. A v1 predecessor is returned as the store it is, so the
+// caller can decide how much of it is still current: only a v2 file has a version of
+// its own that answers.
+func readLedgerFile(path string) (LedgerFile, *LegacyStore, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return EmptyLedger(), false, &StoreCorruptError{Path: path, Err: err}
+		return EmptyLedger(), nil, &StoreCorruptError{Path: path, Err: err}
 	}
 	if isV1(data) {
 		legacy, err := decodeLegacy(data, path)
 		if err != nil {
-			return EmptyLedger(), false, err
+			return EmptyLedger(), nil, err
 		}
-		return legacyAsLedger(legacy), true, nil
+		return legacyAsLedger(legacy), &legacy, nil
 	}
 	var file LedgerFile
 	if err := json.Unmarshal(data, &file); err != nil {
-		return EmptyLedger(), false, &StoreCorruptError{Path: path, Err: err}
+		return EmptyLedger(), nil, &StoreCorruptError{Path: path, Err: err}
 	}
 	if file.V != LedgerVersion {
-		return EmptyLedger(), false, &StoreCorruptError{Path: path, Err: fmt.Errorf("unsupported ledger version %d", file.V)}
+		return EmptyLedger(), nil, &StoreCorruptError{Path: path, Err: fmt.Errorf("unsupported ledger version %d", file.V)}
 	}
-	return file, false, nil
+	return file, nil, nil
 }
 
 // isV1 reports whether the bytes are a v1 predecessor store. Anything that is not a
@@ -324,8 +359,10 @@ func mergeLegacy(file *LedgerFile, legacy LegacyStore) (absorbed, shadowed int) 
 
 	for _, row := range legacy.Items {
 		// Absorbed counts source rows, not per-section edits: one row that gives both
-		// sections something is one row "part of this answer".
+		// sections something is one row "part of this answer". Shadowed likewise counts
+		// a row once, however many of its fields disagree (L17).
 		contributed := false
+		differs := false
 		share := worktreeShare(row)
 		if share.Status == "" && len(share.Decisions) == 0 {
 			// A source row with no lifecycle at all (a normalised tracker file) has
@@ -335,7 +372,7 @@ func mergeLegacy(file *LedgerFile, legacy LegacyStore) (absorbed, shadowed int) 
 				contributed = true
 			}
 			if worktree.Items[at].Status != share.Status {
-				shadowed++
+				differs = true
 			}
 		} else {
 			seenWorktree[share.ID] = len(worktree.Items)
@@ -348,7 +385,7 @@ func mergeLegacy(file *LedgerFile, legacy LegacyStore) (absorbed, shadowed int) 
 			// The ledger file's version answers; a disagreement in what the source
 			// recorded is reported so nobody assumes the two agree.
 			if !sameRecord(tracker.Items[at], record) {
-				shadowed++
+				differs = true
 			}
 		} else {
 			seenTracker[record.ID] = len(tracker.Items)
@@ -357,6 +394,9 @@ func mergeLegacy(file *LedgerFile, legacy LegacyStore) (absorbed, shadowed int) 
 		}
 		if contributed {
 			absorbed++
+		}
+		if differs {
+			shadowed++
 		}
 	}
 
@@ -382,6 +422,46 @@ func sameRecord(a, b Item) bool {
 	left, errLeft := json.Marshal(a)
 	right, errRight := json.Marshal(b)
 	return errLeft == nil && errRight == nil && string(left) == string(right)
+}
+
+// mergeLegacyMissing merges only the rows the sections do not already have. It is what
+// a stale v1 file contributes when T5's newer tracker file is the base (L17 ALTO-1): it
+// never overrides a newer status, card or close.
+func mergeLegacyMissing(file *LedgerFile, legacy LegacyStore) (absorbed int) {
+	seenWorktree := make(map[string]bool, len(file.Worktree.Items))
+	for _, row := range file.Worktree.Items {
+		seenWorktree[row.ID] = true
+	}
+	seenTracker := make(map[string]bool, len(file.Tracker.Items))
+	for _, item := range file.Tracker.Items {
+		seenTracker[item.ID] = true
+	}
+	for _, row := range legacy.Items {
+		if share := worktreeShare(row); !seenWorktree[share.ID] && (share.Status != "" || len(share.Decisions) > 0) {
+			seenWorktree[share.ID] = true
+			file.Worktree.Items = append(file.Worktree.Items, share)
+			absorbed++
+		}
+		record := trackerShare(row)
+		if !seenTracker[record.ID] {
+			seenTracker[record.ID] = true
+			file.Tracker.Items = append(file.Tracker.Items, record)
+		}
+	}
+	return absorbed
+}
+
+// settleCloses makes every row that carries a close closed: a close is terminal (D17),
+// whatever order the sources were merged in (L17 ALTO-2).
+func settleCloses(file *LedgerFile) {
+	for i := range file.Worktree.Items {
+		for _, d := range file.Worktree.Items[i].Decisions {
+			if d.Kind == DecisionClose {
+				file.Worktree.Items[i].Status = StatusClosed
+				break
+			}
+		}
+	}
 }
 
 // encodeLedgerFile renders a file with every section present, so a fresh ledger

@@ -475,15 +475,26 @@ func TestOlderBinaryRowsAreAbsorbedAndCarried(t *testing.T) {
 	}
 }
 
-// TestUnreadableSourceIsCorruptionNotSilence pins L14: only fs.ErrNotExist means
-// absent. An unreadable predecessor makes the ledger unevaluable instead of being
-// skipped as if it held nothing.
-func TestUnreadableSourceIsCorruptionNotSilence(t *testing.T) {
+// TestUnreadableSourceIsReportedNotFatal pins L17 MEDIO-3, which supersedes L14's
+// stricter reading for a *migration source*: an unreadable predecessor is reported and
+// the ledger file answers. The ledger file itself keeps the strict rule — only
+// fs.ErrNotExist means absent — which the corrupt-ledger tests pin.
+func TestUnreadableSourceIsReportedNotFatal(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("a read-only directory cannot be simulated as root")
 	}
 	root := t.TempDir()
-	seedV2(t, StorePath(root), EmptyLedger())
+	stamp := t0.Format(time.RFC3339)
+	file := EmptyLedger()
+	file.Worktree.Items = append(file.Worktree.Items, WorktreeItem{
+		ID: "row", Identity: ident(""), Status: StatusOpen,
+		Decisions: []WorktreeDecision{{At: stamp, Kind: DecisionOpen}},
+	})
+	file.Tracker.Items = append(file.Tracker.Items, Item{
+		ID: "row", Identity: ident(""), ItemID: "card-1", ProviderID: "trello-mcp-workflow",
+		Decisions: []Decision{{At: stamp, Kind: DecisionOpen}},
+	})
+	seedV2(t, StorePath(root), file)
 	seedT5(t, root, closedHistory(2))
 	t5Dir := filepath.Dir(TrackerStorePath(root))
 	if err := os.Chmod(t5Dir, 0o000); err != nil {
@@ -491,16 +502,21 @@ func TestUnreadableSourceIsCorruptionNotSilence(t *testing.T) {
 	}
 	defer os.Chmod(t5Dir, 0o755)
 
-	_, _, err := LedgerAt(root).Load()
-	var corrupt *StoreCorruptError
-	if !errors.As(err, &corrupt) {
-		t.Fatalf("error = %v, want a *StoreCorruptError", err)
+	loaded, report, err := LedgerAt(root).Load()
+	if err != nil {
+		t.Fatalf("Load: %v, want the ledger to answer despite the unreadable source", err)
+	}
+	if report.LegacyUnreadable == nil {
+		t.Fatal("the unreadable migration source was not reported")
+	}
+	if _, err := loaded.View().Primary(ident("").Key()); err != nil {
+		t.Fatalf("the ledger does not answer its own row: %v", err)
 	}
 }
 
-// TestFailedBackupIsReportedWithoutBlockingTheWrite pins the safety net: a copy that
-// cannot be written is reported, and the write still succeeds where it lives.
-func TestFailedBackupIsReportedWithoutBlockingTheWrite(t *testing.T) {
+// TestFailedBackupFailsClosedWithATruthfulMessage pins MEDIO-2: the write refuses, and
+// the message says only what is true (nothing was replaced).
+func TestFailedBackupFailsClosedWithATruthfulMessage(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("a read-only directory cannot be simulated as root")
 	}
@@ -512,17 +528,23 @@ func TestFailedBackupIsReportedWithoutBlockingTheWrite(t *testing.T) {
 	}
 	defer os.Chmod(t5Dir, 0o755)
 
-	// The ledger file lives in another directory, so its own write succeeds while the
-	// T5 backup cannot be written.
 	report, err := LedgerAt(root).Save(EmptyLedger())
-	if err != nil {
-		t.Fatalf("Save: %v, want the write to succeed where it lives", err)
+	if err == nil {
+		t.Fatal("Save wrote the ledger although the predecessor backup failed")
 	}
 	if report.BackupFailed == nil {
 		t.Fatal("a backup that could not be written was not reported")
 	}
-	if _, err := os.Stat(TrackerStorePath(root) + ".v1-backup"); err == nil {
-		t.Fatal("a backup appeared in a directory that could not be written")
+	if _, err := os.Stat(StorePath(root)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the ledger was written without a backup: %v", err)
+	}
+	var note strings.Builder
+	report.Note(&note, "worktree-gate")
+	if strings.Contains(note.String(), "no row is lost") || strings.Contains(note.String(), "untouched") {
+		t.Fatalf("the failed-backup message claims something false: %q", note.String())
+	}
+	if !strings.Contains(note.String(), "was not written") {
+		t.Fatalf("the message does not say the ledger was not written: %q", note.String())
 	}
 }
 
