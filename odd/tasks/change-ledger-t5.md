@@ -212,3 +212,27 @@ one-version v1→v2 double read (S11, S14). Master plan, design and audit live i
   limitation of a one-version double read), R2-contract-test-broad-patterns
   (substring matching), and the dead `PersistConflict`/`AppendDecisionToPrimary`
   writers T6 removes.
+- **L10 — The Python suites and the whole-suite picture.** Two suites pinned the
+  pre-split layout and failed after the split, so they were moved to the
+  authoritative file without weakening a single assertion: the parity corpus
+  (`tests/test_tracker_ledger_parity.py`) still seeds `ledger/state.json` — that is
+  what exercises the fallback — and now pins from `ledgers/tracker.json`, reading
+  the seeded file only when no split store exists (the CLI's own double read), with
+  residue allow-lists for both directories (`state.json.v1-backup` included, since
+  the one-shot backup is by design); `tests/test_worktree_cleanup.py` reads the
+  closed item from the split store and adds the assertion it lacked — after cleanup
+  closes it, the pre-split `state.json` is byte-identical to what the fixture
+  seeded. RED before the edit: 12 parity failures and 1 cleanup failure; GREEN
+  after: `test_tracker*.py` 70 ok, `test_worktree_cleanup*.py` 43 ok,
+  `test_ledger_mode_config.py` 18 ok, `test_doctor_tracker_card.py` 21 ok.
+  Whole picture: `go vet` + `go test -count=1` green in both Go modules;
+  `python3 -m unittest discover -s tests -p 'test_*.py'` = 1933 tests, 1 failure,
+  1 skipped, 2 expected failures, where the only failure
+  (`test_git_pr_flow_recipe…test_skill_never_recommends_delete_branch`, a skill-text
+  phrase) fails **identically on the untouched base tree** and this branch has zero
+  diff lines in that skill and that test — pre-existing. `./tests/run.sh` cannot
+  complete because `tests/parity/run.py` fails 28/35 fixtures with the
+  `/private<TEMP>` normalization; that too is identical on the base tree
+  (`git archive 2204f43f` → `base/`, `python3 tests/parity/run.py` → «fixtures: 35,
+  failing: 28»), so the runner aborts before its unittest leg and the suites above
+  were run directly.
