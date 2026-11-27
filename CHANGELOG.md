@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] — 2026-11-27
+
+### Added
+- `ai-specs changes workstream --root <root> [--reason <text> | --end] [--json]`
+  reports whether a worktree is a change or a workstream, and records the
+  explicit decision for the case the facts cannot separate (an audit, an
+  exploration, a spike, a review). A workstream owes no plan, no tier, no tracker
+  item and no archive. The declaration lives in `.ai-specs/plan-ledger.jsonl`, is
+  append-only, is refused when the worktree carries a plan or a delta, and
+  `--end` returns the worktree to the facts.
+
+### Changed
+- The write gate infers the change tier from the artifacts the change carries
+  (no plan and no delta = `none`, either one = `light`, both = `standard`) and
+  refuses only a proven refutation: a canonical-spec edit without a delta (R1),
+  or a declared high-risk path without its evidence (R2). A worktree that is not
+  a change is classified from facts — product-path divergence, committed or not
+  yet committed — instead of from a declaration.
+- `ai-specs changes start --none` is deprecated and records nothing the gate
+  reads. It still runs for one version and points at `changes workstream`.
+
+### Fixed
+- The gate now sees a product file the branch never added, so an untracked
+  product change can no longer be mistaken for a workstream.
+
 ## [0.27.1] — 2026-11-26
 
 ### Upgrade notes
