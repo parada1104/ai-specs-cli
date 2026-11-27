@@ -350,7 +350,7 @@ func TestLedgerEmptyStoreAskOptOutPersistsAndAllows(t *testing.T) {
 		t.Fatalf("post-decision = %v/%v, want allow/opt-out", post["decision"], post["reason"])
 	}
 
-	store, err := ledger.LoadTrackerStore(storePath)
+	store, err := ledger.StoreAt(storePath).Load()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -527,7 +527,7 @@ func TestLedgerConflictReachesVerdictAndDecideClearsIt(t *testing.T) {
 // recordedConflict reads the primary item's current conflict snapshot, if any.
 func recordedConflict(t *testing.T, storePath, key string) *ledger.Conflict {
 	t.Helper()
-	store, err := ledger.LoadTrackerStore(storePath)
+	store, err := ledger.StoreAt(storePath).Load()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -635,7 +635,7 @@ func TestLedgerWriteOpenThenIdempotentRetryViaCLI(t *testing.T) {
 	if side["applied"] != false || side["reason"] != "already-open" {
 		t.Fatalf("retried open sidecar = %v, want applied=false/already-open", side)
 	}
-	store, err := ledger.LoadTrackerStore(storePath)
+	store, err := ledger.StoreAt(storePath).Load()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -689,7 +689,7 @@ func TestLedgerWriteBindSeedsOpenLinkViaCLI(t *testing.T) {
 		t.Fatal("an idempotent bind retry must leave the store byte-identical")
 	}
 
-	store, err := ledger.LoadTrackerStore(storePath)
+	store, err := ledger.StoreAt(storePath).Load()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -736,7 +736,7 @@ func TestLedgerWriteBindIsBranchLevelForAChangeAmbiguousIdentityViaCLI(t *testin
 	if side, ok := out["write"].(map[string]any); !ok || side["kind"] != "bind" || side["applied"] != true {
 		t.Fatalf("ambiguous branch bind sidecar = %v, want bind/applied", out["write"])
 	}
-	store, err := ledger.LoadTrackerStore(storePath)
+	store, err := ledger.StoreAt(storePath).Load()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -763,7 +763,7 @@ func TestLedgerWriteBindIsBranchLevelForAChangeAmbiguousIdentityViaCLI(t *testin
 	if code != 0 {
 		t.Fatalf("explicit-slug bind exit = %d, want 0; stderr: %s", code, stderr)
 	}
-	store, err = ledger.LoadTrackerStore(storePath)
+	store, err = ledger.StoreAt(storePath).Load()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -846,7 +846,7 @@ func TestLedgerWriteCloseWithSnapshotThenRetryViaCLI(t *testing.T) {
 	if side["applied"] != false || side["reason"] != "already-closed" {
 		t.Fatalf("close retry sidecar = %v, want applied=false/already-closed", side)
 	}
-	store, err := ledger.LoadTrackerStore(storePath)
+	store, err := ledger.StoreAt(storePath).Load()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -951,7 +951,7 @@ func TestLedgerWriteLinkPersistsNativeFieldsViaCLI(t *testing.T) {
 	if side := decodeLedgerOut(t, stdout)["write"].(map[string]any); side["applied"] != true {
 		t.Fatalf("link sidecar = %v, want applied", side)
 	}
-	store, err := ledger.LoadTrackerStore(storePath)
+	store, err := ledger.StoreAt(storePath).Load()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1056,7 +1056,7 @@ func TestLedgerWriteExemptHonoredAtEveryCheckpointViaCLI(t *testing.T) {
 		t.Fatalf("exempt sidecar = %v, want applied", side)
 	}
 
-	store, err := ledger.LoadTrackerStore(storePath)
+	store, err := ledger.StoreAt(storePath).Load()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1105,7 +1105,7 @@ func TestLedgerWriteChangeAmbiguousRefusesViaCLI(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("explicit-slug write exit = %d, want 0; stderr: %s", code, stderr)
 	}
-	store, err := ledger.LoadTrackerStore(storePath)
+	store, err := ledger.StoreAt(storePath).Load()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1142,7 +1142,7 @@ func TestLedgerWriteUsesTheOwnerProjectRootOrCwd(t *testing.T) {
 		t.Fatalf("project-root write sidecar = %v, want applied", side)
 	}
 
-	store, err := ledger.LoadTrackerStore(storePath)
+	store, err := ledger.StoreAt(storePath).Load()
 	if err != nil {
 		t.Fatal(err)
 	}

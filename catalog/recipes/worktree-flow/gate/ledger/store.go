@@ -330,7 +330,7 @@ type ApplyWriteRequest struct {
 // ApplyWrite performs one machine write under the bounded store lock and reports
 // whether the store changed. Every failure persists nothing (L6): the caller maps
 // any error to stderr plus exit 2.
-func ApplyWrite(storePath string, req ApplyWriteRequest, now time.Time) (WriteOutcome, error) {
+func ApplyWrite(loc StoreLocation, req ApplyWriteRequest, now time.Time) (WriteOutcome, error) {
 	write := req.Request.Normalize()
 	if err := write.Validate(req.Checkpoint); err != nil {
 		return WriteOutcome{}, err
@@ -355,8 +355,8 @@ func ApplyWrite(storePath string, req ApplyWriteRequest, now time.Time) (WriteOu
 	}
 
 	out := WriteOutcome{Kind: write.Kind}
-	err := withStoreLock(storePath, func() error {
-		store, err := LoadTrackerStore(storePath)
+	err := withStoreLock(loc.Path, func() error {
+		store, err := loc.Load()
 		if err != nil {
 			return err
 		}
@@ -368,7 +368,7 @@ func ApplyWrite(storePath string, req ApplyWriteRequest, now time.Time) (WriteOu
 			out.Reason = reason
 			return nil
 		}
-		if err := SaveTrackerStore(storePath, store); err != nil {
+		if err := loc.Save(store); err != nil {
 			return err
 		}
 		out.Applied = true
@@ -535,7 +535,7 @@ func applyLinkToStore(store *Store, item Item, req ApplyWriteRequest, write Writ
 // already closed — and nothing is written. More than one open row is a collision
 // that fails closed rather than guessing (D17). A closed row is never reopened or
 // rewritten.
-func CloseBranchItem(storePath, commonDir, branch, checkpoint string, now time.Time) (WriteOutcome, error) {
+func CloseBranchItem(loc StoreLocation, commonDir, branch, checkpoint string, now time.Time) (WriteOutcome, error) {
 	if !ValidCheckpoint(checkpoint) {
 		return WriteOutcome{}, fmt.Errorf("%w: checkpoint %q", ErrInvalidWrite, checkpoint)
 	}
@@ -546,8 +546,8 @@ func CloseBranchItem(storePath, commonDir, branch, checkpoint string, now time.T
 	}
 
 	out := WriteOutcome{Kind: WriteClose}
-	err := withStoreLock(storePath, func() error {
-		store, err := LoadTrackerStore(storePath)
+	err := withStoreLock(loc.Path, func() error {
+		store, err := loc.Load()
 		if err != nil {
 			return err
 		}
@@ -560,7 +560,7 @@ func CloseBranchItem(storePath, commonDir, branch, checkpoint string, now time.T
 			if err := store.CloseItem(matching[0].ID, Decision{At: rfc3339Stamp(now), Checkpoint: checkpoint}); err != nil {
 				return err
 			}
-			if err := SaveTrackerStore(storePath, store); err != nil {
+			if err := loc.Save(store); err != nil {
 				return err
 			}
 			out.Applied = true

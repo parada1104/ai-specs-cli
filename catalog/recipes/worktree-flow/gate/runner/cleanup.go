@@ -321,7 +321,7 @@ func closeLedgerBeforeRemoval(repoRoot, branch string, cfg cleanupConfig, out io
 	if common == "" {
 		return fmt.Errorf("worktree-cleanup: ledger identity unavailable for %q; refusing removal", branch)
 	}
-	outcome, err := ledger.CloseBranchItem(ledger.TrackerStorePath(common), common, branch, ledger.CheckpointArchiveClose, time.Now())
+	outcome, err := ledger.CloseBranchItem(ledger.TrackerLocation(common), common, branch, ledger.CheckpointArchiveClose, time.Now())
 	if err != nil {
 		return fmt.Errorf("worktree-cleanup: ledger close for %q failed: %w", branch, err)
 	}

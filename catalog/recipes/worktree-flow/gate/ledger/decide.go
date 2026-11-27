@@ -55,7 +55,7 @@ func (r DecisionRequest) Validate() error {
 // records it as a scoped opt-out instead of inventing a tracked item. It
 // otherwise fails closed on a missing key, a collided identity, a corrupt store,
 // or an invalid request, so the CLI can exit 2.
-func PersistDecision(storePath, key string, req DecisionRequest, now time.Time) (Decision, error) {
+func PersistDecision(loc StoreLocation, key string, req DecisionRequest, now time.Time) (Decision, error) {
 	req = req.Normalize()
 	if err := req.Validate(); err != nil {
 		return Decision{}, err
@@ -67,8 +67,8 @@ func PersistDecision(storePath, key string, req DecisionRequest, now time.Time) 
 	}
 	stamp := rfc3339Stamp(now)
 	persisted := newDecision(req, stamp)
-	err := withStoreLock(storePath, func() error {
-		store, err := LoadTrackerStore(storePath)
+	err := withStoreLock(loc.Path, func() error {
+		store, err := loc.Load()
 		if err != nil {
 			return err
 		}
@@ -81,7 +81,7 @@ func PersistDecision(storePath, key string, req DecisionRequest, now time.Time) 
 				Key: key, Checkpoint: persisted.Checkpoint, Scope: persisted.Scope,
 				Choice: persisted.Choice, At: persisted.At,
 			})
-			return SaveTrackerStore(storePath, store)
+			return loc.Save(store)
 		}
 		if err != nil {
 			return err
@@ -95,7 +95,7 @@ func PersistDecision(storePath, key string, req DecisionRequest, now time.Time) 
 			// exemption (DW1): file removal never revokes the store record.
 			clearExemption(&store, item.ID)
 		}
-		return SaveTrackerStore(storePath, store)
+		return loc.Save(store)
 	})
 	if err != nil {
 		return Decision{}, err
@@ -123,7 +123,7 @@ func PersistConflict(storePath, key string, c Conflict) error {
 		return err
 	}
 	return withStoreLock(storePath, func() error {
-		store, err := LoadTrackerStore(storePath)
+		store, err := LoadStore(storePath)
 		if err != nil {
 			return err
 		}
@@ -132,7 +132,7 @@ func PersistConflict(storePath, key string, c Conflict) error {
 			return err
 		}
 		setConflict(&store, item.ID, raw)
-		return SaveTrackerStore(storePath, store)
+		return SaveStore(storePath, store)
 	})
 }
 

@@ -78,9 +78,9 @@ func TestTrackerStoreReadsTheLegacyStoreBeforeTheFirstDecision(t *testing.T) {
 	legacy, _ := seedLegacy(t, root, closedHistory(14))
 	split := TrackerStorePath(root)
 
-	store, err := LoadTrackerStore(split)
+	store, err := TrackerLocation(root).Load()
 	if err != nil {
-		t.Fatalf("LoadTrackerStore: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	if len(store.Items) != 14 {
 		t.Fatalf("items = %d, want the 14 legacy rows", len(store.Items))
@@ -99,7 +99,7 @@ func TestTrackerStoreHandsTheLegacyRowsForwardOnTheFirstDecision(t *testing.T) {
 	split := TrackerStorePath(root)
 	key := ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/fresh"}.Key()
 
-	_, err := PersistDecision(split, key, DecisionRequest{
+	_, err := PersistDecision(TrackerLocation(root), key, DecisionRequest{
 		Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "local",
 	}, time.Now())
 	if err != nil {
@@ -117,9 +117,9 @@ func TestTrackerStoreHandsTheLegacyRowsForwardOnTheFirstDecision(t *testing.T) {
 		t.Fatalf("historical rows are not byte-identical in the split store:\n got %s\nwant %s", got, want)
 	}
 
-	store, err := LoadTrackerStore(split)
+	store, err := TrackerLocation(root).Load()
 	if err != nil {
-		t.Fatalf("LoadTrackerStore: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	if len(store.Items) != 14 {
 		t.Fatalf("items = %d, want the 14 historical rows", len(store.Items))
@@ -150,7 +150,7 @@ func TestTrackerStoreHandsTheLegacyRowsForwardOnTheFirstDecision(t *testing.T) {
 	if err := os.WriteFile(legacy, []byte("\n"), 0o600); err != nil {
 		t.Fatalf("rewrite legacy: %v", err)
 	}
-	if _, err := PersistDecision(split, key+"-2", DecisionRequest{
+	if _, err := PersistDecision(TrackerLocation(root), key+"-2", DecisionRequest{
 		Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "local",
 	}, time.Now()); err != nil {
 		t.Fatalf("second PersistDecision: %v", err)
@@ -165,13 +165,16 @@ func TestTrackerStorePrefersTheSplitFileOverTheLegacyOne(t *testing.T) {
 	root := t.TempDir()
 	seedLegacy(t, root, closedHistory(14))
 	split := TrackerStorePath(root)
-	if err := SaveTrackerStore(split, closedHistory(2)); err != nil {
-		t.Fatalf("SaveTrackerStore: %v", err)
+	if err := TrackerLocation(root).Save(closedHistory(2)); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := os.Stat(split); err != nil {
+		t.Fatalf("split store missing: %v", err)
 	}
 
-	store, err := LoadTrackerStore(split)
+	store, err := TrackerLocation(root).Load()
 	if err != nil {
-		t.Fatalf("LoadTrackerStore: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	if len(store.Items) != 2 {
 		t.Fatalf("items = %d, want the 2 of the split store", len(store.Items))
@@ -189,7 +192,7 @@ func TestTrackerStoreReportsACorruptSplitStoreWithoutResurrectingLegacyRows(t *t
 		t.Fatalf("corrupt split store: %v", err)
 	}
 
-	store, err := LoadTrackerStore(split)
+	store, err := TrackerLocation(root).Load()
 	var corrupt *StoreCorruptError
 	if !errors.As(err, &corrupt) {
 		t.Fatalf("error = %v, want a *StoreCorruptError", err)
@@ -212,7 +215,7 @@ func TestTrackerStoreReportsACorruptLegacyStore(t *testing.T) {
 		t.Fatalf("corrupt legacy store: %v", err)
 	}
 
-	store, err := LoadTrackerStore(TrackerStorePath(root))
+	store, err := TrackerLocation(root).Load()
 	var corrupt *StoreCorruptError
 	if !errors.As(err, &corrupt) {
 		t.Fatalf("error = %v, want a *StoreCorruptError, never an empty store", err)
@@ -230,7 +233,7 @@ func TestExplicitStorePathHasNoLegacyFallback(t *testing.T) {
 	explicit := filepath.Join(root, "state.json")
 	key := ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/explicit"}.Key()
 
-	if _, err := PersistDecision(explicit, key, DecisionRequest{
+	if _, err := PersistDecision(StoreAt(explicit), key, DecisionRequest{
 		Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "local",
 	}, time.Now()); err != nil {
 		t.Fatalf("PersistDecision: %v", err)
@@ -238,13 +241,62 @@ func TestExplicitStorePathHasNoLegacyFallback(t *testing.T) {
 	if _, err := os.Stat(explicit); err != nil {
 		t.Fatalf("explicit store was not written: %v", err)
 	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatalf("read dir: %v", err)
-	}
-	for _, entry := range entries {
-		if filepath.Ext(entry.Name()) == ".backup" {
-			t.Fatalf("explicit store path grew a backup sibling %q", entry.Name())
+	for _, name := range []string{"state.json.v1-backup", StorePath(root) + ".v1-backup"} {
+		if _, err := os.Stat(filepath.Join(root, filepath.Base(name))); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("explicit store path grew the backup sibling %q", name)
 		}
+	}
+	if _, err := os.Stat(StorePath(root)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("an explicit store path wrote the pre-split store")
+	}
+}
+
+// TestExplicitStoreUnderALedgersDirKeepsNoLegacyFallback pins the native finding:
+// an explicitly named file is not a split store just because its directory is
+// called `ledgers`. Nothing may be copied into it from a pre-split sibling, it
+// must not grow the one-shot backup, and a corrupt pre-split sibling must not
+// break it.
+func TestExplicitStoreUnderALedgersDirKeepsNoLegacyFallback(t *testing.T) {
+	key := ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/explicit"}.Key()
+	cases := map[string]func(t *testing.T, root, legacy string){
+		"existing legacy rows": func(t *testing.T, root, legacy string) {
+			seedLegacy(t, root, closedHistory(14))
+		},
+		"corrupt legacy sibling": func(t *testing.T, root, legacy string) {
+			if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+				t.Fatalf("mkdir legacy: %v", err)
+			}
+			if err := os.WriteFile(legacy, []byte("not json"), 0o600); err != nil {
+				t.Fatalf("corrupt legacy: %v", err)
+			}
+		},
+	}
+	for name, seed := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			legacy := StorePath(root)
+			seed(t, root, legacy)
+			explicit := filepath.Join(root, "ai-specs", "ledgers", "tracker.json")
+
+			if _, err := PersistDecision(StoreAt(explicit), key, DecisionRequest{
+				Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "local",
+			}, time.Now()); err != nil {
+				t.Fatalf("PersistDecision: %v", err)
+			}
+
+			store, err := LoadStore(explicit)
+			if err != nil {
+				t.Fatalf("the explicit store was not written: %v", err)
+			}
+			if len(store.Items) != 0 {
+				t.Fatalf("items = %d: pre-split rows were copied into the explicit store", len(store.Items))
+			}
+			if len(store.OptOuts) != 1 {
+				t.Fatalf("opt_outs = %d, want only the decision that landed", len(store.OptOuts))
+			}
+			if _, err := os.Stat(legacy + ".v1-backup"); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("the explicit store path grew the backup %q", legacy+".v1-backup")
+			}
+		})
 	}
 }

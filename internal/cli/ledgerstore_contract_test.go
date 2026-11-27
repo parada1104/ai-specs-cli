@@ -15,7 +15,7 @@ import (
 // opens those paths itself either breaks on the next layout or resurrects rows
 // the CLI already migrated.
 var ledgerStoreAPIs = []string{
-	"LoadTrackerStore(", "SaveTrackerStore(",
+	"TrackerLocation(", "StoreAt(",
 	"TrackerStorePath(", "StorePath(",
 	"LoadStore(", "SaveStore(",
 }

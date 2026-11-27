@@ -15,57 +15,63 @@ func TrackerStorePath(gitCommonDir string) string {
 	return filepath.Join(gitCommonDir, "ai-specs", "ledgers", "tracker.json")
 }
 
-// legacyStorePathFor maps a split store path back to the pre-split single store
-// it replaces: <common>/ai-specs/ledgers/<ledger>.json maps to
-// <common>/ai-specs/ledger/state.json for every ledger in the split directory
-// (S11). A path outside a `ledgers` directory — an explicit --store override —
-// is its own legacy path, so it has no fallback.
-func legacyStorePathFor(storePath string) string {
-	clean := filepath.Clean(storePath)
-	dir := filepath.Dir(clean)
-	if filepath.Base(dir) != "ledgers" || filepath.Base(clean) == "" || filepath.Base(clean) == "." {
-		return clean
-	}
-	return filepath.Join(filepath.Dir(dir), "ledger", "state.json")
+// StoreLocation is one ledger store on disk: Path is the file this build writes,
+// Legacy is the pre-split single store read once for the one-version double read
+// (S11), and an empty Legacy means "no fallback and no backup" — a file that was
+// named explicitly is exactly the file it says, whatever its directory is called.
+type StoreLocation struct {
+	Path   string
+	Legacy string
 }
 
-// LoadTrackerStore reads the split store at storePath and, for one release
-// version, falls back to the pre-split single store when the split file does not
-// exist yet (S11). A corrupt split file is reported and never silently replaced
-// by the older file — history must not come back as live state — and a corrupt
-// fallback is reported rather than read as an empty store.
-func LoadTrackerStore(storePath string) (Store, error) {
-	_, err := os.Stat(storePath)
-	switch {
-	case err == nil:
-		return LoadStore(storePath)
-	case !errors.Is(err, fs.ErrNotExist):
-		return Store{}, &StoreCorruptError{Path: storePath, Err: err}
-	}
-	legacy := legacyStorePathFor(storePath)
-	if legacy == storePath {
+// TrackerLocation is the tracker ledger's location under a repository's common
+// dir: the split store plus the pre-split file it is handed forward from.
+func TrackerLocation(gitCommonDir string) StoreLocation {
+	return StoreLocation{Path: TrackerStorePath(gitCommonDir), Legacy: StorePath(gitCommonDir)}
+}
+
+// StoreAt is an explicitly named store file: no fallback, no backup.
+func StoreAt(path string) StoreLocation { return StoreLocation{Path: path} }
+
+// Load reads the store at the location. A missing Path falls back to Legacy for
+// this release version, unless there is none. A corrupt or unknown-version file
+// — split or legacy — is reported as a *StoreCorruptError and never replaced by
+// the other file: history must not come back as live state, and a corrupt
+// fallback is never read as an empty store.
+func (l StoreLocation) Load() (Store, error) {
+	if l.Path == "" {
 		return Store{V: StoreVersion}, nil
 	}
-	return LoadStore(legacy)
+	_, err := os.Stat(l.Path)
+	switch {
+	case err == nil:
+		return LoadStore(l.Path)
+	case !errors.Is(err, fs.ErrNotExist):
+		return Store{}, &StoreCorruptError{Path: l.Path, Err: err}
+	}
+	if l.Legacy == "" {
+		return Store{V: StoreVersion}, nil
+	}
+	return LoadStore(l.Legacy)
 }
 
-// SaveTrackerStore writes the split store atomically and never rewrites the
+// Save writes the store at the location atomically and never rewrites the
 // pre-split one, so its rows stay readable byte-identically for this release.
 // The first handoff also keeps a one-shot copy of the pre-split store: it is the
 // plan's mitigation for a migration that loses rows. Callers hold the store lock.
-func SaveTrackerStore(storePath string, store Store) error {
-	backupLegacyOnce(storePath)
-	return SaveStore(storePath, store)
+func (l StoreLocation) Save(store Store) error {
+	if l.Legacy != "" {
+		backupLegacyOnce(l.Legacy)
+	}
+	return SaveStore(l.Path, store)
 }
 
-// backupLegacyOnce copies the pre-split store to <state.json>.v1-backup before
-// the first split write, once. Best effort by construction: the pre-split file is
-// never modified in this release, so a failed copy loses nothing.
-func backupLegacyOnce(storePath string) {
-	legacy := legacyStorePathFor(storePath)
-	if legacy == storePath {
-		return
-	}
+// backupLegacyOnce copies the pre-split store to <legacy>.v1-backup before the
+// first split write, once. The copy is atomic, so a partial file is never later
+// mistaken for a complete backup, and an existing backup is never replaced.
+// Best effort by construction: the pre-split file is never modified in this
+// release, so a failed copy loses nothing.
+func backupLegacyOnce(legacy string) {
 	backup := legacy + ".v1-backup"
 	if _, err := os.Stat(backup); err == nil {
 		return
@@ -74,5 +80,5 @@ func backupLegacyOnce(storePath string) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(backup, data, 0o600)
+	_ = writeAtomic(backup, data)
 }

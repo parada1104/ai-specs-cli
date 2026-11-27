@@ -108,7 +108,7 @@ func trackerBlockedMessage(checkpoint, reason string) string {
 // trackerLoadStore reads the ledger store the fixture bound.
 func trackerLoadStore(t *testing.T, common string) ledger.Store {
 	t.Helper()
-	store, err := ledger.LoadTrackerStore(ledger.TrackerStorePath(common))
+	store, err := ledger.TrackerLocation(common).Load()
 	if err != nil {
 		t.Fatal(err)
 	}
