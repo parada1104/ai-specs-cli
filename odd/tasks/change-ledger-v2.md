@@ -99,7 +99,8 @@ each unit's own delta lives in its own change folder.
   - deps: none. PR size ~300.
 - T2 — The decisive fix: the OpenSpec write gate stops requiring a plan, blocks
   only on a proven refutation, and never blocks a worktree without a change
-  (S1, S2, S9, S16).
+  (S1, S2, S9, S16). *(R3-R5 moved to T8 by L11; the unit is redesigned around one
+  facts→verdict seam by L12.)*
   route: worker. commit: none.
   - scope: `internal/cli/planbuildgate.go` (remove the plan/ceremony requirement
     in OpenSpec; treat a worktree with no product-path divergence and no artifact
@@ -191,7 +192,8 @@ each unit's own delta lives in its own change folder.
     human output, `--json`, `--explain`, `--ledger worktree|plan|tracker`,
     `--rebuild`, exit codes 0/2/3; review receipts consumed from gentle-ai
     (referenced by candidate SHA, `unknown` when absent); the human rendering of the
-    `workstream` phase with the facts that decided it.
+    `workstream` phase with the facts that decided it. The seam itself is delivered by
+    T2 (L12): this unit consumes it and extends it to the three ledgers.
   - facts/ledger: all three, read-only.
   - tests: real-flow scenario that walks a temp repo through `workstream → open →
     planned → merged → cleaned` and asserts the reported phase and `next` line at
@@ -203,7 +205,10 @@ each unit's own delta lives in its own change folder.
   checkpoint (S5, S10).
   route: worker. commit: none.
   - scope: transition→posture map, project config for `require` (with
-    per-checkpoint list) and for the R3/R4 thresholds, exit 2 only when opted in.
+    per-checkpoint list) and for the R3/R4 thresholds, exit 2 only when opted in,
+    plus the refutations R3-R5 themselves (L11): the size and module threshold, the
+    removed public contract, and the plan whose `S#` rows carry no evidence, each
+    with the exit it honours.
   - facts/ledger: composition layer only.
   - tests: default project never blocks even with high risk; a project with
     `require = ["merge"]` exits 2 with rule and exits; thresholds override the
@@ -371,3 +376,30 @@ each unit's own delta lives in its own change folder.
   change folder moved out of `odd/changes/` on purpose, so the guardian never owes
   an archive for the redesign as a whole. The deltas for T4–T12 are drafted here
   and each is created with its unit.
+- **L11** — «Nota de Cody: elegí recortar (decisión técnica mía, no de Robert:
+  regístralo así). T2 entrega el tier inferido, R1/R2 y start --none inerte; R3–R5
+  pasan a T8 junto a los umbrales. Actualiza el plan maestro con el movimiento y su
+  motivo, y pasa la revisión nativa al candidato recortado antes del merge.»
+  Movement: T2 keeps S1/S9/S16 and the R1/R2 half of S2; T8 gains the refutations R3
+  (configured size and module threshold), R4 (a removed public contract) and R5 (a
+  plan whose `S#` rows carry no evidence), beside the per-project thresholds and the
+  postures that give them their exit. Motive: all ten severe findings of T2's two
+  review lineages lived in R3–R5, and a refusal whose exit depends on thresholds and
+  recorded decisions belongs to the unit that introduces that configuration.
+- **L12** — «Decisión de Cody (técnica, regístrala así): opción 1, rediseño del seam.
+  Recolectar los hechos una vez y expresar R1/R2 como reglas puras sobre ellos, con
+  --explain y el rechazo derivados del mismo veredicto; es adelantar a T2 el contrato
+  Facts()/Verdict() que el plan pone en T7.» Movement: T2 stops being a patch series
+  over the existing early-return chain and becomes the seam — one fact collection (mode,
+  change, workstream?, tier, pending path, production?, declared high-risk, diff entries,
+  plan/delta presence) and pure rules over it, with the refusal and `--explain` both
+  derived from the same verdict. T7 consumes and extends that seam to the three ledgers
+  instead of introducing it. R3-R5 stay in T8 with the thresholds and decisions that
+  make their exits resolvable. Motive, on record: four review lineages on T2 all closed
+  `escalated` and every severe finding is an instance of five root causes — (1)
+  refutation applicability inferred from the position of a `return` instead of the rule's
+  own preconditions; (2) the S16 "nothing to grade" fact owned by the CLI, so each rule
+  re-implements or forgets it; (3) "public contract" decided by the shape of a line; (4)
+  refusals advertising exits that nothing honoured; (5) the explanation emitted at the end
+  of one path instead of by the decision function. Full record of the four rounds:
+  `odd/tasks/change-ledger-v2/t2-review-escalation.md`.

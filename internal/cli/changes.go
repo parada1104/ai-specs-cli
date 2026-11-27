@@ -38,25 +38,24 @@ Subcommands:
   archive [<change>] --root <planning-root> [--date YYYY-MM-DD] [--change <name>]
                              Move the change folder into the dated archive
   start --none --root <planning-root>
-                             Declare that this branch needs no plan
+                             Deprecated: the tier is inferred from the artifacts
 Run 'ai-specs changes archive --help' for full options.
 Run 'ai-specs changes start --help' for full options.
 `
 
 const changesStartUsage = `Usage: ai-specs changes start --none --root <planning-root>
 
-Declare that the change on the current branch needs no plan. The declaration is
-one entry of this clone's local git config,
-branch.<branch>.aiSpecsCeremony=none: it is never an artifact, never travels
-with the branch and is never committed. The pre-tool-use hook then accepts a
-production write on that branch without a plan.
+Deprecated for one version. The change tier is inferred from the artifacts the
+change already carries (no plan and no delta = none, either one = light, both =
+standard), so a production write no longer needs a plan, a declaration or an
+authorization. This verb records nothing the gate reads and has no effect.
 
-Only the plan requirement of "openspec" mode is relaxed. The odd mode is not
-touched, the ledger work-start checkpoint still runs, and a high-risk path on a
-declared branch is still refused at pre-merge by the objective refutation.
+A worktree that is not a change (an audit, an exploration, a spike) is
+classified from facts, so no declaration is needed. The gate ignores any
+pre-existing branch.<branch>.aiSpecsCeremony value.
 
 Options:
-  --none              Declare this branch ceremony-free. Required.
+  --none              Kept for compatibility. Required.
   --root <path>       Resolved repository root. Required.
   --help, -h          Show this help
 `
@@ -91,9 +90,9 @@ Options:
   --help, -h          Show this help
 `
 
-// runChangesStart is the bash-free declaration verb: it resolves the branch of
-// the repository at --root and writes the local no-plan entry. Re-running it is
-// idempotent and prints the same confirmation.
+// runChangesStart is the deprecated declaration verb: it keeps the argument
+// contract for one version, records nothing the gate reads, and explains the
+// inferred tier and the workstream classification instead.
 func runChangesStart(args []string, stdout, stderr io.Writer) int {
 	none := false
 	root := ""
@@ -133,20 +132,13 @@ func runChangesStart(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stderr, changesStartUsage)
 		return 2
 	}
-	branch := planbuild.Branch(root)
-	if branch == "" {
-		return usageError(fmt.Sprintf("ERROR: cannot resolve the current branch at %s "+
-			"(detached HEAD or not a Git repository); run this from the branch that carries the change", root))
-	}
-	if err := planbuild.DeclareCeremonyNone(root, branch); err != nil {
-		fmt.Fprintf(stderr, "changes start: %s\n", err)
-		return 1
-	}
-	fmt.Fprintf(stdout, "changes start: declared no-plan ceremony for branch '%s' "+
-		"(git config branch.%s.%s none); the declaration is local and never committed\n",
-		branch, branch, planbuild.CeremonyKey)
+	fmt.Fprintln(stderr, changesStartDeprecation)
 	return 0
 }
+
+// changesStartDeprecation is the one-line notice the retired verb prints.
+const changesStartDeprecation = "changes start: deprecated — the tier is inferred from the change's " +
+	"artifacts, so this verb no longer affects any gate, and it records nothing."
 
 // runChangesDispatch is the family remainder: help on stdout, usage on stderr
 // for the bare verb, and the unknown-subcommand pair.

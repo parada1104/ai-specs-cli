@@ -24,7 +24,7 @@ and `odd/tasks/change-ledger-v2/`.
 ## Tasks
 
 - T1 — One shared tier derivation, used by the guardian in both modes; ODD stops
-  reporting `none|odd`. route: worker. commit: pending.
+  reporting `none|odd`. route: worker. commit: 366049b3.
   - scope: new `internal/tier` (the vocabulary and `Derive(hasPlan, hasDelta)`);
     `internal/gates/tiers.go` aliases it; `CheckPremergeOdd` derives the tier from
     the artifacts it already validates; the ODD-only `TierOdd` constant is deleted.
