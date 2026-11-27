@@ -20,22 +20,22 @@ one-version v1→v2 double read (S11, S14). Master plan, design and audit live i
   and writer of `<git-common-dir>/ai-specs/ledger/state.json`, the shape of the
   tracker rows, and which decisions already live there. Produce the map in
   `## Log`, with `path:line` evidence. Specs: S11, S14. route: worker.
-  commit: pending.
+  commit: cd55bc04.
 - T5.2 — Extract the tracker store as the first split store
   (`<git-common-dir>/ai-specs/ledgers/tracker.json`), written only through the
   CLI, keeping the remaining decisions wherever they live today. Specs: S11,
-  S14. route: worker. commit: pending.
+  S14. route: worker. commit: cd55bc04.
 - T5.3 — The one-version double read: a migration reader that reads both v2 and
   `ledger/state.json` v1, prefers v2 when it exists, and hands a v1-only store
   forward on the first decision that lands. The 14 historical rows stay
-  byte-identical. Specs: S11. route: worker. commit: pending.
+  byte-identical. Specs: S11. route: worker. commit: cd55bc04.
 - T5.4 — Tests: a v1 fixture is read and re-written as v2 once a decision lands;
   the 14 rows survive byte-identical as history; corrupting one store leaves the
   others answering; a contract test that no package outside `internal/cli`
-  writes those paths. Specs: S11, S14. route: worker. commit: pending.
+  writes those paths. Specs: S11, S14. route: worker. commit: cd55bc04.
 - T5.5 — Validation: focused suites, `./tests/run.sh` and `./tests/validate.sh`,
   and a real flow over a copy of the real 14-row file (never the original).
-  Specs: S11, S14. route: worker. commit: pending.
+  Specs: S11, S14. route: worker. commit: cd55bc04.
 
 ## Verification
 
