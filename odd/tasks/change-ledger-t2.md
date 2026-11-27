@@ -89,3 +89,42 @@ diff-based refutations, and `--explain` reports the tier on the allowed canonica
   contract, plan whose `S#` rows carry no evidence). A refusal whose exit depends on
   thresholds and recorded decisions belongs with the unit that introduces that
   configuration, so those rules ship with T8 and T2 keeps only what is decisive.
+- **L5** — «Decisión de Cody (técnica, regístrala así): opción 1, rediseño del seam.
+  Recolectar los hechos una vez y expresar R1/R2 como reglas puras sobre ellos, con
+  --explain y el rechazo derivados del mismo veredicto; es adelantar a T2 el contrato
+  Facts()/Verdict() que el plan pone en T7. Actualiza el plan maestro y el de T2 con esa
+  decisión y su motivo (las cuatro rondas y sus cinco causas raíz), conserva la rama
+  feat/change-ledger-t2 y lo útil de sus tests como RED, y guarda el cierre en Engram para
+  que una sesión nueva retome desde ahí. No implementes en esta sesión.»
+  Motive: the four lineages on this unit all closed `escalated`, and every severe finding
+  is an instance of five root causes — refutation applicability inferred from the position
+  of a `return`; the S16 fact owned by the CLI instead of the refutation layer; "public
+  contract" decided by the shape of a line; refusals advertising exits nothing honoured;
+  and the explanation emitted at the end of one path. Full record:
+  `odd/tasks/change-ledger-v2/t2-review-escalation.md`.
+
+## Redesign shape (L5)
+
+One fact collection per write, then pure rules over it. Facts: mode, change, workstream?,
+tier, pending path, production?, declared high-risk, diff entries, plan/delta presence.
+Rules: R1 over the pending path and over the diff (skipped for a workstream), R2 over the
+pending path wherever it lives (never skipped). The refusal and `--explain` are emitted
+from the same verdict, so no path can print one and skip the other.
+
+## Tests as the RED baseline
+
+The 13 commits on `feat/change-ledger-t2` are kept, not squashed: their tests are the RED
+for the seam. Keep them and make them pass against the new shape, without re-deriving the
+expectations from the old control flow:
+
+- `internal/cli/planbuildgate_flow_test.go` — the whole matrix: ODD and OpenSpec with no
+  plan, workstream with no artifact and no divergence, R1 on a hand write to the canonical
+  spec, R2 on the canonical-spec path, R2 outside the production scope, R2 inside a
+  workstream, a leftover declaration, a fresh declaration, and the workstream that carries
+  an inherited canonical-spec edit.
+- `internal/cli/planbuildgate_test.go` — the `--explain` tier lines, the ledger block
+  ordering, and the declaration cases.
+- `internal/gates/refute_test.go` — `TestWriteRefutationsGradeThePendingHighRiskTarget`
+  and `TestWriteRefutationsGradeAHighRiskTargetInAWorkstream`.
+
+The code those tests cover is expected to be replaced by the seam, not extended.
