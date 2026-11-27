@@ -80,7 +80,7 @@ one-version v1→v2 double read (S11, S14). Master plan, design and audit live i
   - a second ledger package already exists as precedent to imitate:
     `internal/planledger/planledger.go`.
 - **L4** — State: the worktree `change-ledger-t5` exists on branch
-  `feat/change-ledger-t5`, based on `development` at `2204f43f` (the T4 merge).
+  `feat/change-ledger-t5`, based on `development` at `2204f43f` (the T4 merge), implemented and corrected in L5-L8.
   Nothing implemented, nothing committed. T5.1 is the first task and it is
   exploration, not code: the map must be written down before the extraction
   starts, because a wrong map here loses the 14 rows.
@@ -143,7 +143,7 @@ one-version v1→v2 double read (S11, S14). Master plan, design and audit live i
   - `go vet ./...` and `go test ./... -count=1` green in both modules
     (`ai-specs.dev/worktree-gate/{ledger,runner,shared}` and the root module,
     including `internal/cli` and the four updated fixture helpers).
-  - New `gate/ledger/location_test.go`: 6 tests covering the split path, the legacy
+  - New `gate/ledger/location_test.go`: 8 tests covering the split path, the legacy
     read before the first decision, the handoff with byte-identical historical rows
     (all 14 still closed, the opt-out only in v2), the split-file preference, a
     corrupt split file that never resurrects v1, a corrupt fallback reported as
@@ -165,3 +165,50 @@ one-version v1→v2 double read (S11, S14). Master plan, design and audit live i
     the witness at `ledger/witness.json`. Not touched on purpose: the canonical
     `openspec/specs/tracker-ledger/spec.md:113` (the promoter owns canonical specs;
     this change's delta carries the new requirement) and `CHANGELOG.md` history.
+- **L8 — Native review and the bounded correction.** Lineage `review-3eeec8276ce92655`
+  (four lenses plus the provider refuter, tier high by `escalate` item 1) returned
+  `correction_required` with two findings of the same defect, both `introduced` and
+  deterministic: R1-001 (BLOCKER) and R3-001 (CRITICAL). The legacy fallback was
+  inferred from the path, so **any** store named inside a directory called
+  `ledgers` was treated as the default split store: an explicit
+  `--store <dir>/ledgers/<name>.json` read and copied the sibling pre-split rows
+  into the requested file, and a corrupt sibling could break an otherwise valid
+  explicit-store operation. Correction in `f5d48ae9`: `StoreLocation{Path, Legacy}`
+  carried by the caller, with `TrackerLocation(common)` (split file plus the
+  one-release fallback) and `StoreAt(path)` (explicit file: no fallback, no
+  backup); `Load`/`Save` moved onto the location, the one-shot backup is written
+  atomically, and `legacyStorePathFor`/`LoadTrackerStore`/`SaveTrackerStore` are
+  deleted, so no path can grant itself a fallback. The mutators, the runner
+  resolution (which now uses `StoreAt` only when `--store` is given), the
+  reconcile read and the cleanup close all take the location; the S14 contract
+  test also guards `TrackerLocation(`/`StoreAt(`; two docs that had been left
+  naming a nonexistent `ledgers/state.json` now name `ledgers/tracker.json`; the
+  vacuous `.backup` extension assertion became the exact `state.json.v1-backup`
+  name, and `TestExplicitStoreUnderALedgersDirKeepsNoLegacyFallback` is the RED
+  probe (`location_test.go:292` "items = 14: pre-split rows were copied into the
+  explicit store" under the restored inference, GREEN after reverting it). The one
+  call site outside the worker's surfaces,
+  `internal/cli/trackercardgate_test.go:111`, was fixed by the parent as
+  `ledger.TrackerLocation(common).Load()`. Evidence after the correction: `go vet`
+  and `go test ./... -count=1` green in both modules, and the real flow re-run with
+  16 checks green, including the explicit `--store` case that no longer inherits
+  the pre-split rows.
+- **L9 — Where T5 stopped (needs the reviewer).** The targeted-validation slot
+  (`review.capture-validation`, `provider_targeted_validator`) refuses the
+  correction: «actual correction is 313 changed lines, exceeding the frozen budget
+  of 200» — the correction's diff against the original candidate is larger than
+  the frozen logical correction budget, so the bounded correction cannot be
+  validated inside this lineage, and a fresh STATUS reoffers the same slot. That is
+  the validation step stuck exactly as in T2, so nothing was pushed, no PR was
+  opened and nothing was merged. Also true of this environment: `gentle-ai-verify`
+  cannot run in a linked worktree (`probesRun: 0`, "unsupported repository:
+  ordinary single-root Git directory required"), so the independent verification is
+  the parent's; and `./tests/validate.sh` fails only in its parity leg (28/35
+  fixtures, the `/private` TMPDIR normalization signature T3 already recorded as
+  pre-existing, identical on a clean base copy). Non-blocking review findings
+  recorded for later work: R3-002 (component-wise path construction escapes the
+  contract guard), R4-rollback-divergence (a rolled-back binary reads only the
+  pre-split store and misses post-handoff decisions — the accepted fix-forward-only
+  limitation of a one-version double read), R2-contract-test-broad-patterns
+  (substring matching), and the dead `PersistConflict`/`AppendDecisionToPrimary`
+  writers T6 removes.
