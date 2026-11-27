@@ -294,3 +294,34 @@ plan, design and audit live in `odd/tasks/change-ledger-v2.md` and
      failure and its retry; alias independence of two overrides; unchanged close stdout
      decision history; bare-close tracker non-creation; and the migration/backup warnings
      the cleanup path currently discards.
+- **L13** — Round-2 blockers, and the reason there are three rounds of them: L11/L12
+  specified *patches* to a migration that was still conditional, so each layout or entry
+  point had its own hole. Reproduced: (a) a default candidate `bind` on a T5 mixed
+  `tracker.json` holding only an open row normalises its status away without creating
+  `worktree.json`, and the next close exits 2; (b) `--store tracker.json` drops real T5
+  closes; (c) `Worktree.json` (case difference) aliases the two ledgers and `STATE.JSON`
+  rewrites the pre-split file; (d) naming `.ledger.lock` makes a fresh override fail or
+  renames the held lock inode. The fix is one invariant plus a matrix, not four patches.
+  **Invariant M (migration completeness).** Before this build writes either ledger file,
+  everything the sources hold is represented across the pair: every status and every
+  close decision present in any readable source is present in `worktree.json`. If that
+  cannot be guaranteed — typically because `worktree.json` cannot be written — the write
+  fails closed and nothing is persisted (L12.1's rollback). A tracker-only mutation still
+  materialises the worktree file when a source holds lifecycle state it does not.
+  **Source symmetry.** The worktree ledger reads its share of `worktree.json`, of the
+  tracker file (whatever shape it has, including T5's mixed one) and of the pre-split
+  `state.json`; the tracker ledger reads `tracker.json` and, for repository-derived or
+  pre-split-named locations, `state.json`. Symmetry is what makes the entry point
+  irrelevant: `--store tracker.json` and a repository-derived run must see the same
+  sources, so (a) and (b) cannot differ.
+  **Naming.** Canonical names match case-insensitively (APFS/HFS+ make `Worktree.json`
+  the same file), so a case variant resolves to the ledger that owns it instead of
+  aliasing; the lock file and `*.tmp.*` names are never accepted as a store and are never
+  renamed or used as a restore target, so the held inode stays the lock.
+  **Proof: a matrix, not an example.** One table-driven test over every layout (only
+  `state.json`; only a T5 tracker file with closes; only a T5 tracker file with a single
+  open row; the pair; the pair plus `state.json`) x every entry point (repository-derived,
+  `--store tracker.json`, `--store worktree.json`, `--store state.json`, `--store <other
+  name>`) x every operation (grade, open, bind, close), asserting invariant M and that the
+  pre-split file is byte-identical. That matrix is the deliverable: it is what makes the
+  next review cheap, and its absence is why two verification rounds still found holes.
