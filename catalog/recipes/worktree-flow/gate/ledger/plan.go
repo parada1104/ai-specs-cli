@@ -62,10 +62,26 @@ func (i PlanIdentity) Key() string {
 	return i.CommonDir + "\x1f" + i.Worktree + "\x1f" + i.Created
 }
 
-// PlanIdentityAt derives the plan key for the checkout containing dir. Unlike the item
+// PlanIdentityAt derives the plan key for the checkout containing dir AND mints its
+// creation token when the admin directory has none. Only the write path may call it: a
+// read that minted a token would make a report a write (T7/L5-6). Unlike the item
 // identity it needs no commit, so a declaration can be recorded before the branch has
 // one; the branch and the path are recorded when git can name them.
 func PlanIdentityAt(dir string, facts Facts) PlanIdentity {
+	return planIdentityAt(dir, facts, true)
+}
+
+// PlanIdentityReadAt is the read form of the same identity: it reads the creation token
+// and never writes one, so a read leaves the git admin directory byte-identical. A
+// checkout that never declared anything has no token, and the key it derives matches no
+// row — which is the honest answer, not a token minted to look like one.
+func PlanIdentityReadAt(dir string, facts Facts) PlanIdentity {
+	return planIdentityAt(dir, facts, false)
+}
+
+// planIdentityAt is the one derivation; mint is the only difference between the write
+// path and every read path.
+func planIdentityAt(dir string, facts Facts, mint bool) PlanIdentity {
 	if facts == nil {
 		facts = localFacts
 	}
@@ -78,7 +94,7 @@ func PlanIdentityAt(dir string, facts Facts) PlanIdentity {
 	return PlanIdentity{
 		CommonDir: common,
 		Worktree:  name,
-		Created:   createdToken(gitDir),
+		Created:   createdToken(gitDir, mint),
 		Root:      realPath(root),
 		Branch:    facts(dir, "symbolic-ref", "--quiet", "--short", "HEAD"),
 	}
@@ -103,16 +119,20 @@ func worktreeAdmin(dir string, facts Facts, common string) (gitDir, name string)
 }
 
 // createdToken is the creation token of one admin directory: read when it exists, and
-// written once when it does not. A token that cannot be written is no identity, so the
-// value is left empty and a declaration fails closed rather than borrowing the name of
-// a worktree that no longer exists.
-func createdToken(adminDir string) string {
+// written once when it does not and mint is set. A read never mints, so it answers ""
+// for a checkout that never declared anything. A token that cannot be written is no
+// identity, so the value is left empty and a declaration fails closed rather than
+// borrowing the name of a worktree that no longer exists.
+func createdToken(adminDir string, mint bool) string {
 	if adminDir == "" {
 		return ""
 	}
 	path := filepath.Join(adminDir, createdTokenFile)
 	if token := readToken(path); token != "" {
 		return token
+	}
+	if !mint {
+		return ""
 	}
 	token := newCreatedToken()
 	if token == "" {

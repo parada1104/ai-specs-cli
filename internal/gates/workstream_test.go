@@ -135,3 +135,18 @@ func TestWriteFactsNamesAnUnreadablePlanLedger(t *testing.T) {
 		t.Fatalf("Notes = %v, want one naming the ledger", verdict.Notes)
 	}
 }
+
+// L5 item 8 (T3 R2): the untracked listing is a fact, so git answering nothing and
+// git not answering at all are different answers. An empty Untracked with no answer
+// behind it must keep the worktree graded — otherwise a failed `git ls-files` reports
+// uncommitted product work as a workstream that owes nothing.
+func TestWriteFactsKeepsAnUnansweredUntrackedListingGraded(t *testing.T) {
+	facts := WriteFacts{Change: "thing", DiffKnown: true}
+	if facts.isWorkstream() {
+		t.Fatalf("facts = %+v, want the worktree graded: no untracked listing was answered", facts)
+	}
+	facts.UntrackedKnown = true
+	if !facts.isWorkstream() {
+		t.Fatalf("facts = %+v, want a workstream once git answered with no divergence", facts)
+	}
+}

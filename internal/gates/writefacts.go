@@ -74,8 +74,11 @@ type WriteFacts struct {
 	DeclaredErr    error
 	// Untracked is the product-path divergence the diff cannot see: a file the
 	// branch never added. It is collected only when nothing else already says
-	// "change", so a graded worktree pays no extra git call.
-	Untracked []string
+	// "change", so a graded worktree pays no extra git call. UntrackedKnown reports
+	// whether git answered that listing at all: an index nobody could read is not an
+	// empty one, so the worktree stays graded instead of passing for a workstream.
+	Untracked      []string
+	UntrackedKnown bool
 	// Workstream reports that this worktree is not a change (S16).
 	Workstream bool
 }
@@ -275,6 +278,7 @@ func (f *WriteFacts) observeWorkstream(repoRoot string) {
 		return
 	}
 	untracked, ok := planbuild.UntrackedPaths(repoRoot)
+	f.UntrackedKnown = ok
 	if !ok {
 		return
 	}
@@ -287,9 +291,9 @@ func (f *WriteFacts) observeWorkstream(repoRoot string) {
 
 // isWorkstream is the S16 fact: a worktree with no artifact, no product-path
 // divergence and no standing declaration is not a change at all. It is
-// conservative — an unpaired branch, an unanswerable diff, any product divergence
-// keeps the worktree graded — and an artifact outranks the declaration, so no
-// recorded decision can hide a plan or a delta.
+// conservative — an unpaired branch, an unanswerable diff, an unanswerable untracked
+// listing, any product divergence keeps the worktree graded — and an artifact outranks
+// the declaration, so no recorded decision can hide a plan or a delta.
 func (f WriteFacts) isWorkstream() bool {
 	if f.Change == "" || f.HasPlan || f.HasDelta {
 		return false
@@ -297,7 +301,7 @@ func (f WriteFacts) isWorkstream() bool {
 	if f.Declared {
 		return true
 	}
-	if !f.DiffKnown {
+	if !f.DiffKnown || !f.UntrackedKnown {
 		return false
 	}
 	for _, entry := range f.Diff {

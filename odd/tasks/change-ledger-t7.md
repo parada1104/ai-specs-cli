@@ -138,3 +138,51 @@ the immediate predecessor and must be read before touching the ledger.
   a scratch probe file — a temporary file in a package the tree compiles will break
   every concurrent build, which is how one Python parity leg reported a false
   `go build failed` during T6b.
+- **L4** — Robert's decision on T7.3, verbatim: «autorizo leer SOLO el paquete
+  gentle-pi (código, solo lectura) para encontrar el comando nativo soportado de
+  lectura de recibos por candidato; NO leas /Users/robert/.gentle-ai (puede tener
+  estado o credenciales). Si encuentras un comando soportado y estable, consúmelo
+  desde Go invocando el binario; si no, review queda unknown con su motivo y T7.3
+  pasa a otra unidad como reserva en el plan maestro. No dependas de formatos
+  privados del disco.» Found (gentle-pi `lib/review-risk-assessment.ts:1-21`,
+  `lib/native-review-cli.ts:2640`): the documented read-only verb
+  `gentle-ai review assess --cwd <repo> --base-ref <full sha> --committed-only --json`,
+  schema `gentle-ai.review-assessment/v1`, with `candidate.consumed` (absent on older
+  binaries, «never defaulted»), `review_due`, `review_due_reason` (`already_reviewed`,
+  `high_risk`, …) and `risk`. Observed on this worktree: `consumed:false`,
+  `review_due:false`, `review_due_reason:passive`. gentle-pi ships the binary inside
+  its own package; ai-specs does not reach into it.
+- **L5** — Design decisions for T7 (parent-owned, binding on the workers):
+  1. Phases, first match wins: `cleaned` (no open worktree row for the work key and a
+     closed one exists) → `merged` (the local merge proof the cleanup already owns holds
+     against a base candidate, AND the work is real: a plan or delta in the tree, or an
+     open worktree row; a fresh branch whose tip is the base tip is not merged) →
+     `planned` (plan or delta) → `open` (a change: not a workstream) → `workstream`.
+     A squash merge the local proof cannot see stays `planned`/`open`; the next line
+     says so instead of guessing.
+  2. Exits: 0 a resolved phase; 2 the facts refuse the requested step (the write
+     verdict carries blockers) — usage errors keep the family's 2 and print no
+     report; 3 a fact the phase needs is `unknown` (no git checkout, no base, diff or
+     untracked listing git could not answer, a ledger section that cannot be read).
+     The review receipt never decides the exit: it is reported, not graded.
+  3. `--ledger worktree|plan|tracker` narrows the human and `--json` report to that
+     capability's facts; the phase and the exit stay the composite's.
+  4. `--explain` prints every fact with its source on stderr.
+  5. `--rebuild` (master-plan scope) is not in this unit's tasks and stays out: a
+     read-only verb that rebuilds is a write, and goes to T8 as a reservation.
+  6. Read-only by contract: status writes no ledger file, no backup and no creation
+     token. The plan identity gets a read form that reads the token and never mints
+     it (T6b note c); only `RecordPlanDecision`'s path mints.
+  7. Receipt (T7.3): `internal/receipts` runs `$GENTLE_AI_BIN`, else `gentle-ai` on
+     PATH, with the L4 argv against the resolved base's full SHA, bounded by a
+     timeout. It relays `consumed`, `review_due`, `review_due_reason` and `risk`
+     verbatim; an absent `consumed`, a missing binary, a non-zero exit, a timeout or
+     an undecodable envelope is `unknown` with its reason. Nothing is inferred from a
+     commit message or a file.
+  8. Every fact carries its source; a fact git cannot answer is `unknown` with its
+     reason, never `false`. The untracked listing gains `UntrackedKnown` (T3 R2).
+  9. Store notes (T7.4): status prints the ledger's `StoreReport` once; `changes
+     workstream --end/--reason` prints it once (the write's report, not the read's
+     too — T6b note a); `tracker-card-gate` relays the note and reports the real
+     error instead of the first stderr line. Outside a git checkout, status reports
+     the checkout as `unknown` and exits 3 (T6b note b).
