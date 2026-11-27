@@ -18,13 +18,22 @@ and `odd/tasks/change-ledger-v2/`.
 - T3.1 — The shared discriminator: one collector, consumed by the write gate and by
   the reporting verb, that classifies a worktree as change or workstream from
   product-path divergence (committed **and uncommitted**) or from an artifact that
-  names a change (plan, delta). Specs: S16. route: inline. commit: pending.
+  names a change (plan, delta). Specs: S16. route: inline. commit: 3231fe0d.
 - T3.2 — `ai-specs changes workstream [--reason <text>] [--end] [--json]`: report the
   facts, or record an explicit append-only decision in the plan ledger for the
   genuinely ambiguous case. Refused when the change carries an artifact. Specs: S16.
-  route: inline. commit: pending.
+  route: inline. commit: 6d244c53.
 - T3.3 — Validation: focused suites, the real-flow matrix with the four T3 scenarios,
-  and the RED baseline. Specs: S16, S3. route: inline. commit: pending.
+  and the RED baseline. Specs: S16, S3. route: inline. commit: 6d244c53.
+
+### Slice boundary
+
+One PR, two commits: `3231fe0d` (discriminator + ledger, with its unit tests) and
+`6d244c53` (verb, flow matrix, help surface, parity normalization). Together they
+are ~250 authored code lines and ~450 test/doc lines, which is past the ~400-line
+slice guidance; the two commits are the review boundary and the code of the two
+halves is not independently deliverable (the verb exists to ask the gate's
+question), so the slice ships whole.
 
 ## Verification
 
@@ -83,3 +92,18 @@ and `odd/tasks/change-ledger-v2/`.
   producto untracked dejaba el worktree como workstream, y una declaración en el
   ledger no cambiaba nada. Los casos de `gates` y los cuatro escenarios de flujo
   fallaban por esas tres razones y pasan desde la implementación.
+- **L12** — Validación observada: `go build ./...` y `go vet ./...` limpios,
+  `go test ./...` verde en todos los paquetes (incluidos `gates`, `cli` y los tests
+  de flujo con el binario construido), y la matriz de flujo real con el binario de
+  la rama en `/private/tmp/change-ledger-v2/t3/flow.sh`: los cinco escenarios de
+  S16 y los tres rechazos (declaración con plan, declaración con delta, `--end`
+  sin declaración) se comportan como el plan exige. El verificador independiente
+  (`gentle-ai-verify`) no está disponible para worktrees enlazados —`probesRun: 0`,
+  «unsupported repository: ordinary single-root Git directory required»—, así que
+  esa evidencia es la del padre, no la de un tercero, y se reporta como tal.
+- **L13** — `./tests/validate.sh` falla en su tramo de paridad en este entorno, y
+  **no por T3**: el mismo arnés sobre una copia limpia de `f37a782d` falla con el
+  mismo conjunto de 19 fixtures y los mismos 38 deltas (`.ai-specs.lock` y los
+  árboles `ai-specs/recipes/**` que el lado Go no materializa), y con `TMPDIR`
+  apuntando a una ruta sin symlink los fallos bajan de 28 a 19 en ambos árboles. El
+  tramo Go de `validate.sh` (build, vet, tests) sí queda verde.
