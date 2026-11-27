@@ -1108,6 +1108,14 @@ func hooksRenderPiExt(h *mcpObj, dir, extImport, adapter, nativeEvent, guardRoot
 		b.WriteString("      try { void Promise.resolve(pi.sendMessage({ customType: \"ai-specs-worktree-gate\", content: res.stdout.trim(), display: false })).catch(() => {}); } catch {}\n")
 		b.WriteString("    }\n")
 	}
+	// S13: a hook that allows the call may still have something to say, and it
+	// writes that on stderr with exit 0. Relay one visible line, best effort, so
+	// an advisory is neither lost nor mistaken for a block.
+	b.WriteString("    const advisory = res.status === 0 ? (res.stderr || \"\").split(\"\\n\").map((l) => l.trim()).find(Boolean) ?? \"\" : \"\";\n")
+	b.WriteString("    if (advisory) {\n")
+	b.WriteString("      // Delivery is best effort: the gate already allowed the edit.\n")
+	b.WriteString("      try { void Promise.resolve(pi.sendMessage({ customType: \"ai-specs-advisory\", content: advisory, display: true })).catch(() => {}); } catch {}\n")
+	b.WriteString("    }\n")
 	b.WriteString("    // any other exit code: fail-open (allow).\n")
 	b.WriteString("  });\n")
 	b.WriteString("}\n")
