@@ -248,3 +248,49 @@ plan, design and audit live in `odd/tasks/change-ledger-v2.md` and
   scenario's fallback keeps its assertion strength. Validation must include the
   upgrade the probe missed: a store pair written by the T5 shape (mixed `tracker.json`
   plus `state.json`), driven through bind, close and grade by the candidate.
+- **L12** — Second batch from the same verification. L11's six blockers stand; these are
+  additional and some are worse, so the correction covers both.
+  1. **A failed two-file write persists half the mutation.** Baseline `bind` fails
+     without saving a row; the candidate fails *after* saving 1 worktree / 0 tracker
+     rows, and the retry dies with «no open item for identity». A lock plus two atomic
+     renames is not a transaction, and it contradicts the "every failure persists
+     nothing" the package documents. Fix: a multi-file save snapshots the pre-write
+     bytes of every file it will touch and restores them if a later save fails,
+     reporting the original error (and any restore failure); the caller still exits
+     non-zero. A snapshot-bearing close gets the same treatment, so the close cannot
+     survive while its snapshot does not.
+  2. **A close must not dirty the tracker and must not vanish from stdout.** A bare
+     explicit close from a valid v1-only store created both files (tracker marked dirty
+     with no snapshot change) and its stdout omitted the close decision baseline
+     returned, because the reported item is built from the tracker record. Fix: the
+     tracker is dirty only when `state`/`provider` actually change; the reported item's
+     `decisions` are the tracker's decisions joined with the worktree row's close
+     decisions in stored order, and the close decision keeps its place in the stdout
+     contract.
+  3. **One lock per directory, not per file.** Two distinct `--store` overrides in one
+     directory share a lifecycle file but take different locks, so they do not exclude
+     each other. Fix: the lock file is canonical for the directory, so every pair in it
+     serializes.
+  4. **`--store` resolves by canonical name.** An override naming `worktree.json`,
+     `tracker.json` or `state.json` maps to the ledger that owns that name and derives
+     the others; it never aliases two ledgers onto one file, and it never rewrites the
+     pre-split file. Any other name keeps T5's meaning (the tracker ledger's file) with
+     the worktree sibling beside it.
+  5. **Scenario step 7 cannot pass.** In a `state.json`-only layout `$TRACKER` and
+     `$LEDGER` are the same file, so the step demands the same close count be both
+     positive and zero. Fix the fallback so each layout asserts one coherent condition,
+     and keep proving the close in the file that owns it.
+  6. **Tests were weakened and must be restored, not adapted.** The historical-row byte
+     comparison became a decoded comparison judged by the production projection (its own
+     oracle): restore a byte-level assertion that does not use the code under test as
+     the judge. The failure, collision, idempotence and cleanup dry-run byte checks
+     snapshot only the tracker file: they must cover the lifecycle file too. The
+     temp-residue test still globs `state.json.tmp.*` instead of the names actually
+     written. The backup-once test does not change the source bytes between attempts, so
+     an overwrite with the same bytes would pass unnoticed. No test may be deleted or
+     loosened to make this pass; the verifier already supplied two ready regression
+     tests for the T5 upgrade and the failed-bind orphan, and both must be in.
+  7. **Not pinned and must now be pinned:** the T5-produced upgrade state; a second-write
+     failure and its retry; alias independence of two overrides; unchanged close stdout
+     decision history; bare-close tracker non-creation; and the migration/backup warnings
+     the cleanup path currently discards.
