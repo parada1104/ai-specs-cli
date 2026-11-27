@@ -253,9 +253,14 @@ EOF
     [ "$rc" -eq 0 ] ||
         fail "(5) tracker-card-gate exited $rc; the Tracker gate is advisory and must exit 0" \
             "$S/apply.err" "$S/apply.out"
-    LEDGER="$P/.git/ai-specs/ledger/state.json"
+    # The store file is an implementation detail, never a contract (S14): read
+    # whichever file the binary under test wrote, so this scenario holds for the
+    # split layout and for an older binary that still writes the pre-split one. A
+    # CLI read verb (`changes status`) replaces this seam when it lands (T7).
+    LEDGER="$P/.git/ai-specs/ledgers/tracker.json"
+    [ -f "$LEDGER" ] || LEDGER="$P/.git/ai-specs/ledger/state.json"
     [ -f "$LEDGER" ] ||
-        fail "(5) apply-start wrote no ledger store at $LEDGER, so the change was never registered" \
+        fail "(5) apply-start wrote no ledger store, so the change was never registered" \
             "$S/apply.err" "$S/apply.out"
     [ "$(grep -c . "$S/apply.err")" = 1 ] ||
         fail "(5) apply-start did not report exactly one actionable line" "$S/apply.err"

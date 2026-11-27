@@ -671,7 +671,7 @@ func TestCloseBranchItemClosesSingleMatchingOpenItemAcrossChangeSlug(t *testing.
 	opened := store.OpenItem(stored, "test-recipe", t0)
 	saveWriteStore(t, path, store)
 
-	out, err := CloseBranchItem(path, "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+	out, err := CloseBranchItem(StoreAt(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 	if err != nil {
 		t.Fatalf("CloseBranchItem: %v", err)
 	}
@@ -704,7 +704,7 @@ func TestCloseBranchItemAbsentOrClosedIsNoOp(t *testing.T) {
 		saveWriteStore(t, path, Store{V: StoreVersion})
 		before := rawBytes(t, path)
 
-		out, err := CloseBranchItem(path, "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+		out, err := CloseBranchItem(StoreAt(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 		if err != nil {
 			t.Fatalf("absent close: %v", err)
 		}
@@ -727,7 +727,7 @@ func TestCloseBranchItemAbsentOrClosedIsNoOp(t *testing.T) {
 		saveWriteStore(t, path, store)
 		before := rawBytes(t, path)
 
-		out, err := CloseBranchItem(path, "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+		out, err := CloseBranchItem(StoreAt(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 		if err != nil {
 			t.Fatalf("closed close: %v", err)
 		}
@@ -755,7 +755,7 @@ func TestCloseBranchItemMultipleOpenIsCollisionRefused(t *testing.T) {
 	saveWriteStore(t, path, store)
 	before := rawBytes(t, path)
 
-	_, err := CloseBranchItem(path, "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+	_, err := CloseBranchItem(StoreAt(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 	if !errors.Is(err, ErrMultipleOpen) {
 		t.Fatalf("error = %v, want ErrMultipleOpen", err)
 	}
@@ -779,7 +779,7 @@ func TestCloseBranchItemTargetsOnlyOpenRowOnReusedBranch(t *testing.T) {
 	fresh := store.OpenItem(newIdent, "test-recipe", t0.Add(time.Hour))
 	saveWriteStore(t, path, store)
 
-	out, err := CloseBranchItem(path, "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+	out, err := CloseBranchItem(StoreAt(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 	if err != nil {
 		t.Fatalf("CloseBranchItem: %v", err)
 	}
@@ -820,7 +820,7 @@ func TestCloseBranchItemRejectsMissingIdentityOrCheckpoint(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := CloseBranchItem(path, tc.common, tc.branch, tc.checkpt, vtNow); err == nil {
+			if _, err := CloseBranchItem(StoreAt(path), tc.common, tc.branch, tc.checkpt, vtNow); err == nil {
 				t.Fatal("invalid close input was accepted")
 			}
 			if string(before) != string(rawBytes(t, path)) {

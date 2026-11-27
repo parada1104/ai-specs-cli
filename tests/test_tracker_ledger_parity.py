@@ -30,7 +30,10 @@ PLAN_BUILD_GATE = (
 )
 
 STAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:?\d{2})$")
-LEDGER_ALLOWED_NAMES = frozenset({"witness.json", "state.json", "state.json.lock"})
+LEDGER_ALLOWED_NAMES = frozenset(
+    {"witness.json", "state.json", "state.json.lock", "state.json.v1-backup"}
+)
+LEDGERS_ALLOWED_NAMES = frozenset({"tracker.json", "tracker.json.lock"})
 
 # Every design test-table row this corpus must pin, as (label prefix, row name).
 DESIGN_ROWS = {
@@ -208,9 +211,18 @@ def run_step(root: Path, repo: Path, case: dict, step: dict,
     return proc, payload
 
 
+def tracker_store_path(ledger_dir: Path) -> Path:
+    return ledger_dir.parent / "ledgers" / "tracker.json"
+
+
 def assert_store_pin(test: unittest.TestCase, ledger_dir: Path, pin: dict) -> None:
     """Pin store-level invariants the verdict JSON cannot express."""
-    data = json.loads((ledger_dir / "state.json").read_text())
+    # Read the split store; a case that never landed a write still answers from
+    # the pre-split fallback, exactly like the CLI's one-release double read.
+    store_file = tracker_store_path(ledger_dir)
+    if not store_file.exists():
+        store_file = ledger_dir / "state.json"
+    data = json.loads(store_file.read_text())
     items = data.get("items", [])
     test.assertEqual(len(items), pin["items"], f"items = {items}")
     test.assertEqual(len({item["id"] for item in items}), pin["unique_ids"],
@@ -300,13 +312,17 @@ class TrackerLedgerParityTests(unittest.TestCase):
                 root = self.root / ("residue-" + case_file.stem)
                 root.mkdir()
                 ledger_dir, _ = self._run_case(case, root)
-                if not ledger_dir.is_dir():
-                    continue
-                names = {p.name for p in ledger_dir.iterdir()}
-                self.assertEqual(
-                    sorted(names - LEDGER_ALLOWED_NAMES), [],
-                    f"unexpected ledger file(s) in {ledger_dir}",
-                )
+                for directory, allowed in (
+                    (ledger_dir, LEDGER_ALLOWED_NAMES),
+                    (tracker_store_path(ledger_dir).parent, LEDGERS_ALLOWED_NAMES),
+                ):
+                    if not directory.is_dir():
+                        continue
+                    names = {p.name for p in directory.iterdir()}
+                    self.assertEqual(
+                        sorted(names - allowed), [],
+                        f"unexpected ledger file(s) in {directory}",
+                    )
 
     def test_corpus_is_stable_across_two_fresh_runs(self):
         for case_file, case in self.verdict_cases:

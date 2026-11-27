@@ -28,7 +28,7 @@ func saveWriteStore(t *testing.T, path string, store Store) {
 // applyWrite is the terse call helper: one write against the canonical identity.
 func applyWrite(t *testing.T, path, providerID string, req WriteRequest) (WriteOutcome, error) {
 	t.Helper()
-	return ApplyWrite(path, ApplyWriteRequest{
+	return ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		ProviderID: providerID,
@@ -268,7 +268,7 @@ func TestApplyWriteBindWithoutChangeIsBranchLevel(t *testing.T) {
 	path := writePath(t)
 	saveWriteStore(t, path, Store{V: StoreVersion})
 
-	out, err := ApplyWrite(path, ApplyWriteRequest{
+	out, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -303,7 +303,7 @@ func TestApplyWriteBindWithoutChangeLinksTheSingleSlottedOpenRow(t *testing.T) {
 	store.OpenItem(ident("existing-slug"), "p", t0)
 	saveWriteStore(t, path, store)
 
-	out, err := ApplyWrite(path, ApplyWriteRequest{
+	out, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -340,7 +340,7 @@ func TestApplyWriteBindWithoutChangeRefusesMultipleOpenRows(t *testing.T) {
 	saveWriteStore(t, path, store)
 	before := rawBytes(t, path)
 
-	_, err := ApplyWrite(path, ApplyWriteRequest{
+	_, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -361,7 +361,7 @@ func TestApplyWriteBindWithChangeKeepsSlugSemantics(t *testing.T) {
 	path := writePath(t)
 	saveWriteStore(t, path, Store{V: StoreVersion})
 
-	if _, err := ApplyWrite(path, ApplyWriteRequest{
+	if _, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -374,7 +374,7 @@ func TestApplyWriteBindWithChangeKeepsSlugSemantics(t *testing.T) {
 		t.Fatalf("items = %+v, want one row under the explicit slug", loaded.Items)
 	}
 
-	out, err := ApplyWrite(path, ApplyWriteRequest{
+	out, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -824,7 +824,7 @@ func TestApplyWriteChangeAmbiguousRefusesWithoutSlug(t *testing.T) {
 	saveWriteStore(t, path, Store{V: StoreVersion})
 	before := rawBytes(t, path)
 
-	_, err := ApplyWrite(path, ApplyWriteRequest{
+	_, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -837,7 +837,7 @@ func TestApplyWriteChangeAmbiguousRefusesWithoutSlug(t *testing.T) {
 		t.Fatal("a refused write must leave the store byte-identical")
 	}
 
-	if _, err := ApplyWrite(path, ApplyWriteRequest{
+	if _, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -855,7 +855,7 @@ func TestApplyWriteChangeAmbiguousRefusesWithoutSlug(t *testing.T) {
 // durable key for an identity Git could not name.
 func TestApplyWriteRefusesUnavailableIdentity(t *testing.T) {
 	path := writePath(t)
-	if _, err := ApplyWrite(path, ApplyWriteRequest{
+	if _, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
 		Identity:   ItemIdentity{},
 		Checkpoint: CheckpointApplyStart,
 		Request:    WriteRequest{Kind: WriteOpen},
@@ -1028,7 +1028,7 @@ func TestAdjudicateClearsExemption(t *testing.T) {
 		assertVerdict(t, "exempt "+cp, Grade(in), vWant{DecisionAllow, ReasonExempt, 0, SeverityOK, true})
 	}
 
-	if _, err := PersistDecision(path, key, DecisionRequest{
+	if _, err := PersistDecision(StoreAt(path), key, DecisionRequest{
 		Checkpoint: CheckpointApplyStart, Kind: DecisionAdjudicate, Choice: "code",
 	}, vtNow); err != nil {
 		t.Fatalf("adjudicate: %v", err)
@@ -1040,7 +1040,7 @@ func TestAdjudicateClearsExemption(t *testing.T) {
 	if item.Exemption != "" {
 		t.Fatalf("exemption = %q, want cleared by adjudication", item.Exemption)
 	}
-	if _, err := PersistDecision(path, key, DecisionRequest{
+	if _, err := PersistDecision(StoreAt(path), key, DecisionRequest{
 		Checkpoint: CheckpointPreMerge, Kind: DecisionOptOut, Choice: "continue",
 	}, vtNow); err != nil {
 		t.Fatalf("opt-out: %v", err)

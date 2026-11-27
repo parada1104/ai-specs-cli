@@ -142,7 +142,8 @@ unreadable, or unknown-version witness stays dormant (`witness-missing`) without
 ever guessing a provider.
 - **Ledger store.** One record per work identity (Git common dir + current short
   branch, optionally enriched by the active change slug) at
-  `<git-common-dir>/ai-specs/ledger/state.json`, written atomically. A missing file
+  `<git-common-dir>/ai-specs/ledgers/tracker.json`, written atomically, with the
+  pre-split `ledger/state.json` readable as a one-release fallback. A missing file
   reads as an empty item set; a corrupt file reads as unevaluable, never as a
   synthesized item. A branch reused after its item closed opens a new item, and two
   open items for one identity are a human conflict, never a silent pick.

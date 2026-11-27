@@ -1230,14 +1230,20 @@ class WorktreeCleanupTests(unittest.TestCase):
         git(repo, "merge", "-q", "--no-ff", "-m", "merge", "feat-ledger")
         # The stored identity carries a change slug; cleanup only sees the branch.
         store_path = self._seed_ledger(repo, "feat-ledger", "some-change-slug")
+        seeded = store_path.read_bytes()
 
         out = self._run_cleanup(repo)
 
         self.assertFalse(wt.exists(), "merged worktree should be removed")
-        item = json.loads(store_path.read_text())["items"][0]
+        tracker_path = store_path.parent.parent / "ledgers" / "tracker.json"
+        item = json.loads(tracker_path.read_text())["items"][0]
         self.assertEqual(item["status"], "closed")
         self.assertEqual(item["decisions"][-1]["kind"], "close")
         self.assertEqual(item["decisions"][-1]["checkpoint"], "archive-close")
+        self.assertEqual(
+            store_path.read_bytes(), seeded,
+            "the migration must never rewrite the pre-split store",
+        )
         self.assertIn("closed ledger item for feat-ledger", out.stdout)
 
     def test_dry_run_never_mutates_ledger(self):

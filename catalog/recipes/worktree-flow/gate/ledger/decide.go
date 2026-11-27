@@ -55,7 +55,7 @@ func (r DecisionRequest) Validate() error {
 // records it as a scoped opt-out instead of inventing a tracked item. It
 // otherwise fails closed on a missing key, a collided identity, a corrupt store,
 // or an invalid request, so the CLI can exit 2.
-func PersistDecision(storePath, key string, req DecisionRequest, now time.Time) (Decision, error) {
+func PersistDecision(loc StoreLocation, key string, req DecisionRequest, now time.Time) (Decision, error) {
 	req = req.Normalize()
 	if err := req.Validate(); err != nil {
 		return Decision{}, err
@@ -67,8 +67,8 @@ func PersistDecision(storePath, key string, req DecisionRequest, now time.Time) 
 	}
 	stamp := rfc3339Stamp(now)
 	persisted := newDecision(req, stamp)
-	err := withStoreLock(storePath, func() error {
-		store, err := LoadStore(storePath)
+	err := withStoreLock(loc.Path, func() error {
+		store, _, err := loc.Load()
 		if err != nil {
 			return err
 		}
@@ -81,7 +81,8 @@ func PersistDecision(storePath, key string, req DecisionRequest, now time.Time) 
 				Key: key, Checkpoint: persisted.Checkpoint, Scope: persisted.Scope,
 				Choice: persisted.Choice, At: persisted.At,
 			})
-			return SaveStore(storePath, store)
+			_, saveErr := loc.Save(store)
+			return saveErr
 		}
 		if err != nil {
 			return err
@@ -95,7 +96,8 @@ func PersistDecision(storePath, key string, req DecisionRequest, now time.Time) 
 			// exemption (DW1): file removal never revokes the store record.
 			clearExemption(&store, item.ID)
 		}
-		return SaveStore(storePath, store)
+		_, saveErr := loc.Save(store)
+		return saveErr
 	})
 	if err != nil {
 		return Decision{}, err

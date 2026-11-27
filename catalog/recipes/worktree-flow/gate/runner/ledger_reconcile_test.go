@@ -171,7 +171,7 @@ func TestLedgerReconcileSkillObservationShapeIsCurrent(t *testing.T) {
 func TestLedgerReconcileAgreesOnDeclaredPropertiesViaCLI(t *testing.T) {
 	dir := reconcileFixture(t)
 	obs := writeReconcileObs(t, reconcileObsBody(t, nil))
-	storePath := ledger.StorePath(RealPath(gitCommon(dir)))
+	storePath := ledger.TrackerStorePath(RealPath(gitCommon(dir)))
 	before := ledgerStoreBytes(t, storePath)
 
 	code, stdout, stderr := reconcileRun(t, dir, obs, "delivery")
@@ -607,7 +607,7 @@ func TestLedgerReconcileUnboundItemNeverGuesses(t *testing.T) {
 	if side["item_id"] != "" {
 		t.Fatalf("item_id = %v, want empty when no item is bound", side["item_id"])
 	}
-	if ledgerStoreBytes(t, ledger.StorePath(RealPath(gitCommon(dir)))) != nil {
+	if ledgerStoreBytes(t, ledger.TrackerStorePath(RealPath(gitCommon(dir)))) != nil {
 		t.Fatal("reconciliation must not create a store")
 	}
 }

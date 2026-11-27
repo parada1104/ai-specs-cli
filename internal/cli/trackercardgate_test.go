@@ -61,7 +61,7 @@ func bindTrackerLedger(t *testing.T, common, branch string, withItem bool) {
 			time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC))
 		store.Items[len(store.Items)-1].ItemID = "card-1"
 	}
-	if err := ledger.SaveStore(ledger.StorePath(common), store); err != nil {
+	if err := ledger.SaveStore(ledger.TrackerStorePath(common), store); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -108,7 +108,7 @@ func trackerBlockedMessage(checkpoint, reason string) string {
 // trackerLoadStore reads the ledger store the fixture bound.
 func trackerLoadStore(t *testing.T, common string) ledger.Store {
 	t.Helper()
-	store, err := ledger.LoadStore(ledger.StorePath(common))
+	store, _, err := ledger.TrackerLocation(common).Load()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +344,7 @@ func TestTrackerCardGateApplyStartDormantWritesNothing(t *testing.T) {
 	if code != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("gate = (%d, %q, %q), want silence", code, stdout, stderr)
 	}
-	if _, err := os.Stat(ledger.StorePath(common)); !os.IsNotExist(err) {
+	if _, err := os.Stat(ledger.TrackerStorePath(common)); !os.IsNotExist(err) {
 		t.Fatalf("dormant grade wrote a store: %v", err)
 	}
 }

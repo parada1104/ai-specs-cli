@@ -58,7 +58,7 @@ func TestPersistDecisionThenRegradeAllows(t *testing.T) {
 		t.Fatalf("pre-decision grade = %q, want ask", got.Decision)
 	}
 
-	if _, err := PersistDecision(path, key, DecisionRequest{Checkpoint: CheckpointPreMerge, Kind: DecisionAdjudicate, Choice: "local"}, vtNow); err != nil {
+	if _, err := PersistDecision(StoreAt(path), key, DecisionRequest{Checkpoint: CheckpointPreMerge, Kind: DecisionAdjudicate, Choice: "local"}, vtNow); err != nil {
 		t.Fatalf("PersistDecision: %v", err)
 	}
 
@@ -106,7 +106,7 @@ func TestPersistDecisionClearsCurrentConflictSnapshot(t *testing.T) {
 		t.Fatalf("stored conflict sides = %+v, want %+v", recorded.Sides, snapshot.Sides)
 	}
 
-	if _, err := PersistDecision(path, key, DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "remote"}, vtNow); err != nil {
+	if _, err := PersistDecision(StoreAt(path), key, DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "remote"}, vtNow); err != nil {
 		t.Fatalf("PersistDecision: %v", err)
 	}
 	item, err = mustLoad(t, path).Primary(key)
@@ -169,7 +169,7 @@ func TestPersistDecisionFailsClosed(t *testing.T) {
 		{"path under a file", filepath.Join(blocker, "state.json"), key, DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}},
 	}
 	for _, tc := range cases {
-		if _, err := PersistDecision(tc.path, tc.key, tc.req, vtNow); err == nil {
+		if _, err := PersistDecision(StoreAt(tc.path), tc.key, tc.req, vtNow); err == nil {
 			t.Fatalf("%s: PersistDecision succeeded, want a closed failure", tc.name)
 		}
 	}
@@ -185,7 +185,7 @@ func TestPersistScopedOptOutWithoutPrimaryIsLifecycleScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := ident("").Key()
-	if _, err := PersistDecision(path, key, DecisionRequest{Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "continue"}, vtNow); err != nil {
+	if _, err := PersistDecision(StoreAt(path), key, DecisionRequest{Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "continue"}, vtNow); err != nil {
 		t.Fatalf("PersistDecision opt-out without a primary: %v", err)
 	}
 
@@ -220,10 +220,10 @@ func TestPersistWithoutPrimaryStaysClosedForUnrecordableAnswers(t *testing.T) {
 	if err := SaveStore(path, Store{V: StoreVersion}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := PersistDecision(path, ident("").Key(), DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}, vtNow); !errors.Is(err, ErrNoPrimary) {
+	if _, err := PersistDecision(StoreAt(path), ident("").Key(), DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}, vtNow); !errors.Is(err, ErrNoPrimary) {
 		t.Fatalf("adjudication without a primary error = %v, want ErrNoPrimary", err)
 	}
-	if _, err := PersistDecision(path, "", DecisionRequest{Checkpoint: CheckpointPreMerge, Kind: DecisionOptOut, Choice: "continue"}, vtNow); err == nil {
+	if _, err := PersistDecision(StoreAt(path), "", DecisionRequest{Checkpoint: CheckpointPreMerge, Kind: DecisionOptOut, Choice: "continue"}, vtNow); err == nil {
 		t.Fatalf("keyless opt-out succeeded, want a closed failure")
 	}
 	if store := mustLoad(t, path); len(store.OptOuts) != 0 {
@@ -255,7 +255,7 @@ func TestPersistOptOutIsLifecycleScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := ident("").Key()
-	if _, err := PersistDecision(path, key, DecisionRequest{Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "continue"}, vtNow); err != nil {
+	if _, err := PersistDecision(StoreAt(path), key, DecisionRequest{Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "continue"}, vtNow); err != nil {
 		t.Fatalf("PersistDecision opt-out: %v", err)
 	}
 

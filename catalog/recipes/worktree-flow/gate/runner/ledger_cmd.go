@@ -95,13 +95,24 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 	if witnessPath == "" && common != "" {
 		witnessPath = ledger.WitnessPath(common)
 	}
-	storePath := opts.store
-	if storePath == "" && common != "" {
-		storePath = ledger.StorePath(common)
+	// An explicit --store names one file: it is read and written as given, with no
+	// pre-split fallback. Only the repository-derived location carries the
+	// one-version double read (S11).
+	loc := ledger.StoreAt(opts.store)
+	if opts.store == "" && common != "" {
+		loc = ledger.TrackerLocation(common)
 	}
 
 	binding := ledger.ReadBinding(witnessPath)
-	store, storeErr := ledger.LoadStore(storePath)
+	store, storeReport, storeErr := loc.Load()
+	if storeErr == nil {
+		storeReport.Note(stderr, "worktree-gate")
+	}
+	if opts.write != "" || opts.decide != "" {
+		// A backup that cannot be written is reported, never silent. The copy is
+		// one-shot, so this is a no-op once it exists.
+		ledger.StoreReport{BackupFailed: loc.BackupLegacy()}.Note(stderr, "worktree-gate")
+	}
 
 	// The effective mode is the explicit --ledger-mode when given (an explicit
 	// normalized mode, unchanged for existing callers); otherwise Go resolves it
@@ -124,11 +135,11 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 	ident = ledgerIdentityWithStoredSlug(ident, store, storeErr, dir, facts)
 
 	if opts.decide != "" && binding.Active() {
-		if err := persistLedgerDecision(storePath, ident.Key, opts.checkpoint, opts.decide); err != nil {
+		if err := persistLedgerDecision(loc, ident.Key, opts.checkpoint, opts.decide); err != nil {
 			fmt.Fprintf(stderr, "worktree-gate: ledger --decide failed: %v\n", err)
 			return 2
 		}
-		store, storeErr = ledger.LoadStore(storePath)
+		store, _, storeErr = loc.Load()
 	}
 
 	// A write is explicit, so it is attempted whenever it was asked for: the
@@ -147,13 +158,13 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 			// lets that row become primary for new work (D17).
 			ident = ledgerIdentityForClose(ident, store, storeErr, dir, facts)
 		}
-		outcome, err := applyLedgerWrite(storePath, ident, binding, opts.checkpoint, opts.write)
+		outcome, err := applyLedgerWrite(loc, ident, binding, opts.checkpoint, opts.write)
 		if err != nil {
 			fmt.Fprintf(stderr, "worktree-gate: ledger --write failed: %v\n", err)
 			return 2
 		}
 		writeOutcome = &outcome
-		store, storeErr = ledger.LoadStore(storePath)
+		store, _, storeErr = loc.Load()
 		// The explicit slug a write just recorded is the stored slug: the re-grade
 		// must select the item that write created, not a stale ambiguous identity.
 		ident = ledgerIdentityWithStoredSlug(ident, store, storeErr, dir, facts)
@@ -359,12 +370,12 @@ func loadLedgerEvidence(path string) (ledger.Evidence, error) {
 // applyLedgerWrite parses and applies one --write payload under the bounded store
 // lock. The binding's recipe id is the provider recorded when the write has to
 // open the item; the checkpoint flag is the write's checkpoint.
-func applyLedgerWrite(storePath string, ident ledger.Identity, binding ledger.Binding, checkpoint, raw string) (ledger.WriteOutcome, error) {
+func applyLedgerWrite(loc ledger.StoreLocation, ident ledger.Identity, binding ledger.Binding, checkpoint, raw string) (ledger.WriteOutcome, error) {
 	var req ledger.WriteRequest
 	if err := json.Unmarshal([]byte(raw), &req); err != nil {
 		return ledger.WriteOutcome{}, fmt.Errorf("invalid --write JSON: %w", err)
 	}
-	return ledger.ApplyWrite(storePath, ledger.ApplyWriteRequest{
+	return ledger.ApplyWrite(loc, ledger.ApplyWriteRequest{
 		Identity: ledger.ItemIdentity{
 			CommonDir: ident.CommonDir,
 			Branch:    ident.Branch,
@@ -379,7 +390,7 @@ func applyLedgerWrite(storePath string, ident ledger.Identity, binding ledger.Bi
 
 // persistLedgerDecision parses and appends the human answer. The checkpoint flag
 // is the default when the payload omits it.
-func persistLedgerDecision(storePath, key, checkpoint, raw string) error {
+func persistLedgerDecision(loc ledger.StoreLocation, key, checkpoint, raw string) error {
 	var req ledger.DecisionRequest
 	if err := json.Unmarshal([]byte(raw), &req); err != nil {
 		return fmt.Errorf("invalid --decide JSON: %w", err)
@@ -387,7 +398,7 @@ func persistLedgerDecision(storePath, key, checkpoint, raw string) error {
 	if req.Checkpoint == "" {
 		req.Checkpoint = checkpoint
 	}
-	_, err := ledger.PersistDecision(storePath, key, req, time.Now())
+	_, err := ledger.PersistDecision(loc, key, req, time.Now())
 	return err
 }
 
