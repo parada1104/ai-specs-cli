@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -26,11 +25,13 @@ const (
 	ReasonStoreCorrupt = "store-corrupt"
 
 	// Item statuses. At most one item is open (primary) per identity; a closed
-	// item is never reopened (D17).
+	// item is never reopened (D17). Status belongs to the worktree ledger (S3):
+	// the tracker row has no status column.
 	StatusOpen   = "open"
 	StatusClosed = "closed"
 
-	// Append-only decision kinds (A6).
+	// Append-only decision kinds (A6). A close is the worktree ledger's decision;
+	// open, link, adjudicate and opt-out are the tracker ledger's.
 	DecisionAdjudicate = "adjudicate"
 	DecisionOptOut     = "opt-out"
 	DecisionOpen       = "open"
@@ -145,13 +146,15 @@ type ScopedOptOut struct {
 	At         string `json:"at"`
 }
 
-// Item is one tracked item. Core fields are provider-neutral (A7): provider
+// Item is one tracker row. Core fields are provider-neutral (A7): provider
 // vocabulary lives only in the opaque Provider payload, which the predicate
 // never reads. Conflict is an opaque snapshot recorded alongside decisions.
+//
+// The row carries no status and no close decision: the lifecycle is the worktree
+// ledger's state, and the two rows are joined by ID (L8/S3).
 type Item struct {
 	ID         string          `json:"id"`
 	Identity   ItemIdentity    `json:"identity"`
-	Status     string          `json:"status"`
 	ItemID     string          `json:"item_id"`
 	ProviderID string          `json:"provider_id"`
 	NativeType string          `json:"native_type"`
@@ -172,7 +175,7 @@ func (i Item) Key() string { return i.Identity.Key() }
 // the predicate reports needs-item for it under the usual mode posture.
 func (i Item) ProviderBacked() bool { return i.ItemID != "" && i.ProviderID != "" }
 
-// Store is the on-disk ledger: one version, the item list, and the
+// Store is the tracker ledger: one version, the tracker rows, and the
 // lifecycle-scoped opt-outs recorded before an item existed (A5).
 type Store struct {
 	V       int            `json:"v"`
@@ -180,14 +183,33 @@ type Store struct {
 	OptOuts []ScopedOptOut `json:"opt_outs"`
 }
 
-// StorePath is the durable store location: <git-common-dir>/ai-specs/ledger/state.json (A3).
+// StorePath is the pre-split single-store location:
+// <git-common-dir>/ai-specs/ledger/state.json (A3). This build only reads it, as
+// the one-release fallback of every ledger (S11).
 func StorePath(gitCommonDir string) string {
 	return filepath.Join(gitCommonDir, "ai-specs", "ledger", "state.json")
 }
 
-// LoadStore reads the store at path. A missing file is an empty item set, not an
-// error. A corrupt or unknown-version file is a *StoreCorruptError carrying no
-// items: it is unevaluable, never a synthesized record (A5).
+// LegacyStore is the pre-split single store (v1) this build only reads: one row
+// per item carrying both capabilities' fields. Its rows are handed forward to the
+// ledger that owns each field; the file itself is never rewritten.
+type LegacyStore struct {
+	V       int            `json:"v"`
+	Items   []LegacyItem   `json:"items"`
+	OptOuts []ScopedOptOut `json:"opt_outs"`
+}
+
+// LegacyItem is one pre-split row: the tracker row plus the status column the
+// worktree ledger now owns. Embedding keeps every shared field, tag and rule in
+// one place, and the JSON stays flat.
+type LegacyItem struct {
+	Status string `json:"status"`
+	Item
+}
+
+// LoadStore reads the tracker store at path. A missing file is an empty item set,
+// not an error. A corrupt or unknown-version file is a *StoreCorruptError
+// carrying no items: it is unevaluable, never a synthesized record (A5).
 func LoadStore(path string) (Store, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -196,33 +218,39 @@ func LoadStore(path string) (Store, error) {
 	if err != nil {
 		return Store{}, &StoreCorruptError{Path: path, Err: err}
 	}
-	var store Store
+	return trackerCodec.decode(path, data)
+}
+
+// LoadLegacyStore reads the pre-split store at path. A missing file is an empty
+// item set; a corrupt or unknown-version file is a *StoreCorruptError, exactly as
+// LoadStore reports it.
+func LoadLegacyStore(path string) (LegacyStore, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return LegacyStore{V: StoreVersion}, nil
+	}
+	if err != nil {
+		return LegacyStore{}, &StoreCorruptError{Path: path, Err: err}
+	}
+	var store LegacyStore
 	if err := json.Unmarshal(data, &store); err != nil {
-		return Store{}, &StoreCorruptError{Path: path, Err: err}
+		return LegacyStore{}, &StoreCorruptError{Path: path, Err: err}
 	}
 	if store.V != StoreVersion {
-		return Store{}, &StoreCorruptError{Path: path, Err: fmt.Errorf("unsupported store version %d", store.V)}
+		return LegacyStore{}, &StoreCorruptError{Path: path, Err: fmt.Errorf("unsupported store version %d", store.V)}
 	}
 	return store, nil
 }
 
-// SaveStore writes the store to path atomically: a state.json.tmp.* file in the
-// same directory, fsynced, then renamed over the destination. It never compacts.
+// SaveStore writes the tracker store to path atomically: a state.json.tmp.* file
+// in the same directory, fsynced, then renamed over the destination. It never
+// compacts.
 func SaveStore(path string, store Store) error {
-	if store.V == 0 {
-		store.V = StoreVersion
-	}
-	if store.Items == nil {
-		store.Items = []Item{}
-	}
-	if store.OptOuts == nil {
-		store.OptOuts = []ScopedOptOut{}
-	}
-	data, err := json.MarshalIndent(store, "", "  ")
+	data, err := trackerCodec.encode(store)
 	if err != nil {
 		return err
 	}
-	return writeAtomic(path, append(data, '\n'))
+	return writeAtomic(path, data)
 }
 
 // writeAtomic is the shared temp-file + rename writer.
@@ -330,7 +358,12 @@ type ApplyWriteRequest struct {
 // ApplyWrite performs one machine write under the bounded store lock and reports
 // whether the store changed. Every failure persists nothing (L6): the caller maps
 // any error to stderr plus exit 2.
-func ApplyWrite(loc StoreLocation, req ApplyWriteRequest, now time.Time) (WriteOutcome, error) {
+//
+// Each verb writes only the ledger that owns its row (L8): a close lands in the
+// worktree ledger alone, and open/bind/link/exempt land on the tracker row —
+// except that an open also records the row's identity and status in the worktree
+// ledger, which is where the lifecycle lives.
+func ApplyWrite(locs Ledgers, req ApplyWriteRequest, now time.Time) (WriteOutcome, error) {
 	write := req.Request.Normalize()
 	if err := write.Validate(req.Checkpoint); err != nil {
 		return WriteOutcome{}, err
@@ -355,12 +388,12 @@ func ApplyWrite(loc StoreLocation, req ApplyWriteRequest, now time.Time) (WriteO
 	}
 
 	out := WriteOutcome{Kind: write.Kind}
-	err := withStoreLock(loc.Path, func() error {
-		store, _, err := loc.Load()
+	err := withStoreLock(locs.Tracker.Path, func() error {
+		view, _, err := locs.Load()
 		if err != nil {
 			return err
 		}
-		applied, reason, err := applyWriteToStore(&store, ident, req, write, now)
+		applied, reason, dirty, err := applyWriteToView(&view, ident, req, write, now)
 		if err != nil {
 			return err
 		}
@@ -368,7 +401,7 @@ func ApplyWrite(loc StoreLocation, req ApplyWriteRequest, now time.Time) (WriteO
 			out.Reason = reason
 			return nil
 		}
-		if _, err := loc.Save(store); err != nil {
+		if err := locs.save(view, dirty); err != nil {
 			return err
 		}
 		out.Applied = true
@@ -380,162 +413,186 @@ func ApplyWrite(loc StoreLocation, req ApplyWriteRequest, now time.Time) (WriteO
 	return out, nil
 }
 
-// applyWriteToStore is the design lifecycle: refuse → verb → save. It mutates the
-// in-memory store and reports whether the caller must persist it.
-func applyWriteToStore(store *Store, ident ItemIdentity, req ApplyWriteRequest, write WriteRequest, now time.Time) (bool, string, error) {
+// applyWriteToView is the design lifecycle: refuse → verb → save. It mutates the
+// in-memory ledgers and reports which of them the caller must persist.
+func applyWriteToView(view *View, ident ItemIdentity, req ApplyWriteRequest, write WriteRequest, now time.Time) (bool, string, ledgerDirty, error) {
 	stamp := rfc3339Stamp(now)
 	key := ident.Key()
 	providerID := req.ProviderID
-	item, err := store.Primary(key)
+	item, err := view.Primary(key)
+	var dirty ledgerDirty
 
 	switch write.Kind {
 	case WriteOpen:
 		if err == nil {
-			return false, WriteReasonAlreadyOpen, nil
+			return false, WriteReasonAlreadyOpen, dirty, nil
 		}
 		if !errors.Is(err, ErrNoPrimary) {
-			return false, "", err
+			return false, "", dirty, err
 		}
-		if _, _, err := store.OpenIfAbsent(ident, providerID, now); err != nil {
-			return false, "", err
+		if _, _, err := view.OpenIfAbsent(ident, providerID, now); err != nil {
+			return false, "", dirty, err
 		}
-		return true, "", nil
+		return true, "", ledgerDirty{worktree: true, tracker: true}, nil
 
 	case WriteBind:
 		if write.Change == "" {
 			// A bind that omits `change` is a branch-level external bind: match the
 			// single open row for this common dir and branch regardless of stored
 			// slug, refuse a collision, or otherwise open a fresh branch-only item.
-			return applyBranchBindToStore(store, ident, req, write, now, stamp)
+			return applyBranchBindToView(view, ident, req, write, now, stamp)
 		}
+		opened := false
 		if err != nil {
 			if !errors.Is(err, ErrNoPrimary) {
 				// A collided identity is not something a bind may guess around.
-				return false, "", err
+				return false, "", dirty, err
 			}
 			// No open primary: open-if-absent and link in this same locked
 			// transaction, so bind is one atomic open+link. OpenIfAbsent never
 			// reopens a closed row; it appends a distinct new primary (D17).
-			item, _, err = store.OpenIfAbsent(ident, providerID, now)
+			item, _, err = view.OpenIfAbsent(ident, providerID, now)
 			if err != nil {
-				return false, "", err
+				return false, "", dirty, err
 			}
+			opened = true
 		}
-		return applyLinkToStore(store, item, req, write, stamp)
+		applied, reason, err := applyLinkToView(view, item, req, write, stamp)
+		if err != nil {
+			return false, "", dirty, err
+		}
+		dirty.tracker = applied
+		if opened {
+			// The open itself changed both ledgers, whatever the link reported.
+			return true, "", ledgerDirty{worktree: true, tracker: true}, nil
+		}
+		return applied, reason, dirty, nil
 
 	case WriteLink:
 		if err != nil {
 			// A link needs exactly one open primary: a collision or a missing
 			// item is not something a link may guess around.
-			return false, "", err
+			return false, "", dirty, err
 		}
-		return applyLinkToStore(store, item, req, write, stamp)
+		applied, reason, err := applyLinkToView(view, item, req, write, stamp)
+		if err != nil {
+			return false, "", dirty, err
+		}
+		dirty.tracker = applied
+		return applied, reason, dirty, nil
 
 	case WriteClose:
 		if err == nil {
 			// S1: a close carrying a provider payload records the observed
 			// snapshot at close time; the store must never keep a stale
 			// link-time snapshot when the provider state was just read. A
-			// bare close invents and clears nothing.
-			if write.State != "" || len(write.Provider) > 0 {
-				if err := store.RecordSnapshot(item.ID, write.State, write.Provider); err != nil {
-					return false, "", err
-				}
+			// bare close invents and clears nothing. The snapshot is updated on
+			// the tracker row that already exists; it never adds a row there, so
+			// the close decision itself lands in the worktree ledger only.
+			dirty.tracker = view.recordSnapshot(item.ID, write.State, write.Provider)
+			if err := view.Worktree.closeItem(item.ID, stamp, req.Checkpoint); err != nil {
+				return false, "", ledgerDirty{}, err
 			}
-			if err := store.CloseItem(item.ID, Decision{At: stamp, Checkpoint: req.Checkpoint}); err != nil {
-				return false, "", err
-			}
-			return true, "", nil
+			dirty.worktree = true
+			return true, "", dirty, nil
 		}
 		if !errors.Is(err, ErrNoPrimary) {
-			return false, "", err
+			return false, "", dirty, err
 		}
-		if store.hasRow(key) {
+		if view.Worktree.hasRow(key) {
 			// A closed row for this identity: the close already happened. The row
-			// stays in the store; there is no reopen path (D17).
-			return false, WriteReasonAlreadyClosed, nil
+			// stays in the ledger; there is no reopen path (D17).
+			return false, WriteReasonAlreadyClosed, dirty, nil
 		}
-		return false, "", ErrNoPrimary
+		return false, "", dirty, ErrNoPrimary
 
 	case WriteExempt:
 		if err != nil && !errors.Is(err, ErrNoPrimary) {
-			return false, "", err
+			return false, "", dirty, err
 		}
+		opened := false
 		if errors.Is(err, ErrNoPrimary) {
-			// Exempt with no primary uses the same locked OpenIfAbsent as open:
+			// Exempt with no primary uses the same locked openIfAbsent as open:
 			// an explicit write, never the parse auto-opening (L2).
-			if _, _, err := store.OpenIfAbsent(ident, providerID, now); err != nil {
-				return false, "", err
-			}
-			item, err = store.Primary(key)
+			item, _, err = view.OpenIfAbsent(ident, providerID, now)
 			if err != nil {
-				return false, "", err
+				return false, "", dirty, err
 			}
+			opened = true
 		}
 		if item.Exemption == write.Reason {
-			return false, WriteReasonUnchanged, nil
+			return false, WriteReasonUnchanged, ledgerDirty{worktree: opened, tracker: opened}, nil
 		}
-		setExemption(store, item.ID, write.Reason)
-		return true, "", nil
+		setExemption(&view.Tracker, item.ID, write.Reason)
+		return true, "", ledgerDirty{worktree: opened, tracker: true}, nil
 	}
-	return false, "", fmt.Errorf("%w: kind %q", ErrInvalidWrite, write.Kind)
+	return false, "", dirty, fmt.Errorf("%w: kind %q", ErrInvalidWrite, write.Kind)
 }
 
-// applyBranchBindToStore is the branch-level external bind: it links the single
+// applyBranchBindToView is the branch-level external bind: it links the single
 // open item whose identity shares the common dir and branch, ignoring any stored
 // change slug, and opens a fresh branch-only primary only when none exists. Two
 // open rows for one branch cannot be disambiguated by branch alone, so it refuses
 // rather than guessing (D17). It is bind-only; open, link, and close keep their
 // slug-keyed identities.
-func applyBranchBindToStore(store *Store, ident ItemIdentity, req ApplyWriteRequest, write WriteRequest, now time.Time, stamp string) (bool, string, error) {
-	matching := store.OpenItemsForBranch(ident.CommonDir, ident.Branch)
+func applyBranchBindToView(view *View, ident ItemIdentity, req ApplyWriteRequest, write WriteRequest, now time.Time, stamp string) (bool, string, ledgerDirty, error) {
+	matching := view.OpenItemsForBranch(ident.CommonDir, ident.Branch)
 	switch len(matching) {
 	case 0:
-		item, _, err := store.OpenIfAbsent(ident, req.ProviderID, now)
+		item, _, err := view.OpenIfAbsent(ident, req.ProviderID, now)
 		if err != nil {
-			return false, "", err
+			return false, "", ledgerDirty{}, err
 		}
-		return applyLinkToStore(store, item, req, write, stamp)
+		if _, _, err := applyLinkToView(view, item, req, write, stamp); err != nil {
+			return false, "", ledgerDirty{}, err
+		}
+		// The open changed both ledgers, whatever the link itself reported.
+		return true, "", ledgerDirty{worktree: true, tracker: true}, nil
 	case 1:
-		return applyLinkToStore(store, matching[0], req, write, stamp)
+		applied, reason, err := applyLinkToView(view, matching[0], req, write, stamp)
+		if err != nil {
+			return false, "", ledgerDirty{}, err
+		}
+		return applied, reason, ledgerDirty{tracker: applied}, nil
 	default:
-		return false, "", ErrMultipleOpen
+		return false, "", ledgerDirty{}, ErrMultipleOpen
 	}
 }
 
-// applyLinkToStore writes the link fields onto an already-selected open item and
+// applyLinkToView writes the link fields onto an already-selected open item and
 // appends the link decision, or reports unchanged when the payload is already the
 // item's exact link state. It is shared by the link and bind verbs so both record
 // provider-neutral fields identically.
-func applyLinkToStore(store *Store, item Item, req ApplyWriteRequest, write WriteRequest, stamp string) (bool, string, error) {
+func applyLinkToView(view *View, item Item, req ApplyWriteRequest, write WriteRequest, stamp string) (bool, string, error) {
 	if sameLink(item, write) {
 		return false, WriteReasonUnchanged, nil
 	}
-	for i := range store.Items {
-		if store.Items[i].ID != item.ID {
-			continue
-		}
-		store.Items[i].ItemID = write.ItemID
-		store.Items[i].URL = write.URL
-		store.Items[i].NativeType = write.NativeType
-		store.Items[i].State = write.State
-		store.Items[i].Provider = json.RawMessage(canonicalProvider(write.Provider))
-		store.Items[i].Decisions = append(store.Items[i].Decisions,
-			Decision{At: stamp, Checkpoint: req.Checkpoint, Kind: DecisionLink})
-		return true, "", nil
+	at, ok := view.Tracker.itemAt(item.ID)
+	if !ok {
+		return false, "", ErrNoPrimary
 	}
-	return false, "", ErrNoPrimary
+	row := &view.Tracker.Items[at]
+	row.ItemID = write.ItemID
+	row.URL = write.URL
+	row.NativeType = write.NativeType
+	row.State = write.State
+	row.Provider = json.RawMessage(canonicalProvider(write.Provider))
+	row.Decisions = append(row.Decisions, Decision{At: stamp, Checkpoint: req.Checkpoint, Kind: DecisionLink})
+	return true, "", nil
 }
 
 // CloseBranchItem closes the single open item whose identity shares commonDir and
 // branch, ignoring any stored change slug. It is the flow-agnostic VCS-boundary
 // close seam: cleanup knows only the repository's common dir and the branch name,
 // so it cannot rebuild the exact identity key when the item carries a slug. A
-// store with no open row for that pair is an idempotent no-op — never bound, or
+// ledger with no open row for that pair is an idempotent no-op — never bound, or
 // already closed — and nothing is written. More than one open row is a collision
 // that fails closed rather than guessing (D17). A closed row is never reopened or
 // rewritten.
-func CloseBranchItem(loc StoreLocation, commonDir, branch, checkpoint string, now time.Time) (WriteOutcome, error) {
+//
+// The close is the worktree ledger's decision, so this seam reads and writes that
+// ledger alone: a corrupt tracker file cannot stop the automatic post-merge close.
+func CloseBranchItem(locs Ledgers, commonDir, branch, checkpoint string, now time.Time) (WriteOutcome, error) {
 	if !ValidCheckpoint(checkpoint) {
 		return WriteOutcome{}, fmt.Errorf("%w: checkpoint %q", ErrInvalidWrite, checkpoint)
 	}
@@ -546,21 +603,21 @@ func CloseBranchItem(loc StoreLocation, commonDir, branch, checkpoint string, no
 	}
 
 	out := WriteOutcome{Kind: WriteClose}
-	err := withStoreLock(loc.Path, func() error {
-		store, _, err := loc.Load()
+	err := withStoreLock(locs.Tracker.Path, func() error {
+		worktree, _, err := locs.Worktree.LoadWorktree()
 		if err != nil {
 			return err
 		}
-		matching := store.OpenItemsForBranch(commonDir, branch)
+		matching := worktree.OpenItemsForBranch(commonDir, branch)
 		switch len(matching) {
 		case 0:
 			out.Reason = WriteReasonAlreadyClosed
 			return nil
 		case 1:
-			if err := store.CloseItem(matching[0].ID, Decision{At: rfc3339Stamp(now), Checkpoint: checkpoint}); err != nil {
+			if err := worktree.closeItem(matching[0].ID, rfc3339Stamp(now), checkpoint); err != nil {
 				return err
 			}
-			if _, err := loc.Save(store); err != nil {
+			if _, err := locs.Worktree.SaveWorktree(worktree); err != nil {
 				return err
 			}
 			out.Applied = true
@@ -575,83 +632,54 @@ func CloseBranchItem(loc StoreLocation, commonDir, branch, checkpoint string, no
 	return out, nil
 }
 
-// OpenItemsForBranch returns the open items whose identity shares commonDir and
-// branch, regardless of change slug, in stored order.
-func (s Store) OpenItemsForBranch(commonDir, branch string) []Item {
-	var open []Item
-	for _, item := range s.Items {
-		if item.Status != StatusOpen {
-			continue
-		}
-		if item.Identity.CommonDir == commonDir && item.Identity.Branch == branch {
-			open = append(open, item)
-		}
+// RecordSnapshot updates the observed provider snapshot (state and opaque
+// payload) on one tracker row without touching decisions. Used by close to
+// persist what the provider actually reported at close time (S1). A worktree row
+// with no tracker row has no snapshot to update, so nothing is written for it.
+func (s *Store) RecordSnapshot(id, state string, provider json.RawMessage) error {
+	at, ok := s.itemAt(id)
+	if !ok {
+		return fmt.Errorf("ledger: no item %q", id)
 	}
-	return open
+	canonical := canonicalProvider(provider)
+	if state != "" {
+		s.Items[at].State = state
+	}
+	if len(canonical) > 0 && string(canonical) != "{}" {
+		s.Items[at].Provider = json.RawMessage(canonical)
+	}
+	return nil
 }
 
-// OpenIfAbsent appends a new open primary item only when the identity has none.
-// A repeated open is a no-op rather than a self-inflicted collision, and a
-// collided identity is refused instead of guessing (DW4/A5).
-func (s *Store) OpenIfAbsent(ident ItemIdentity, providerID string, at time.Time) (Item, bool, error) {
-	existing, err := s.Primary(ident.Key())
-	switch {
-	case err == nil:
-		return existing, false, nil
-	case !errors.Is(err, ErrNoPrimary):
-		return Item{}, false, err
-	}
-	stamp := at.UTC().Format(time.RFC3339)
-	item := Item{
-		ID:         s.uniqueItemID(ident, stamp),
-		Identity:   ident,
-		Status:     StatusOpen,
-		ProviderID: providerID,
-		Decisions:  []Decision{{At: stamp, Kind: DecisionOpen}},
-	}
-	s.Items = append(s.Items, item)
-	return item, true, nil
-}
-
-// uniqueItemID returns NewItemID unless that id is already taken by any stored
-// row — open or closed — in which case it suffixes the stamp input with \x1fN
-// until unique. Two opens for one identity in the same second therefore cannot
-// share an id. The unlocked OpenItem stays deterministic for existing tests.
-func (s *Store) uniqueItemID(ident ItemIdentity, stamp string) string {
-	id := NewItemID(ident.Key(), stamp)
-	for n := 1; s.hasItemID(id); n++ {
-		id = NewItemID(ident.Key(), stamp+"\x1f"+strconv.Itoa(n))
-	}
-	return id
-}
-
-// hasItemID reports whether any row, open or closed, already uses id.
-func (s Store) hasItemID(id string) bool {
-	for _, item := range s.Items {
-		if item.ID == id {
-			return true
+// itemAt returns the tracked index of the row with id.
+func (s Store) itemAt(id string) (int, bool) {
+	for i := range s.Items {
+		if s.Items[i].ID == id {
+			return i, true
 		}
 	}
-	return false
+	return 0, false
 }
 
-// hasRow reports whether any row — open or closed — exists for key.
-func (s Store) hasRow(key string) bool {
-	for _, item := range s.Items {
-		if item.Key() == key {
-			return true
-		}
+// AppendDecision appends an append-only decision to the item with id. Earlier
+// entries are never rewritten and no status is inferred from the decision kind.
+func (s *Store) AppendDecision(id string, d Decision) error {
+	if !decisionKinds[d.Kind] {
+		return fmt.Errorf("%w: %q", ErrUnknownDecisionKind, d.Kind)
 	}
-	return false
+	at, ok := s.itemAt(id)
+	if !ok {
+		return fmt.Errorf("ledger: no item %q", id)
+	}
+	s.Items[at].Decisions = append(s.Items[at].Decisions, d)
+	return nil
 }
 
 // setExemption records the tracker.none reason on the item with id. It is the
 // only writer of Item.Exemption; adjudication is the only clearer (decide.go).
 func setExemption(s *Store, id, reason string) {
-	for i := range s.Items {
-		if s.Items[i].ID == id {
-			s.Items[i].Exemption = reason
-		}
+	if at, ok := s.itemAt(id); ok {
+		s.Items[at].Exemption = reason
 	}
 }
 
@@ -689,130 +717,6 @@ func canonicalProvider(raw json.RawMessage) []byte {
 func NewItemID(identityKey, openedAt string) string {
 	sum := sha256.Sum256([]byte(identityKey + "\x1f" + openedAt))
 	return hex.EncodeToString(sum[:])[:16]
-}
-
-// OpenItem appends a NEW open primary item for ident and records its open
-// decision. A closed item for the same identity is left closed: new work on a
-// reused branch opens a new item (D17). It does not check for an existing open
-// item; Primary reports that collision.
-func (s *Store) OpenItem(ident ItemIdentity, providerID string, at time.Time) Item {
-	stamp := at.UTC().Format(time.RFC3339)
-	item := Item{
-		ID:         s.uniqueItemID(ident, stamp),
-		Identity:   ident,
-		Status:     StatusOpen,
-		ProviderID: providerID,
-		Decisions:  []Decision{{At: stamp, Kind: DecisionOpen}},
-	}
-	s.Items = append(s.Items, item)
-	return item
-}
-
-// RecordSnapshot updates the observed provider snapshot (state and opaque
-// payload) on one item without touching status or decisions. Used by close to
-// persist what the provider actually reported at close time (S1).
-func (s *Store) RecordSnapshot(id, state string, provider json.RawMessage) error {
-	for i := range s.Items {
-		if s.Items[i].ID != id {
-			continue
-		}
-		canonical := canonicalProvider(provider)
-		if state != "" {
-			s.Items[i].State = state
-		}
-		if len(canonical) > 0 && string(canonical) != "{}" {
-			s.Items[i].Provider = json.RawMessage(canonical)
-		}
-		return nil
-	}
-	return fmt.Errorf("ledger: no item %q", id)
-}
-
-// CloseItem appends a close decision and marks the item closed. There is no
-// reopen path: a closed item is never selected again (D17).
-func (s *Store) CloseItem(id string, d Decision) error {
-	for i := range s.Items {
-		if s.Items[i].ID != id {
-			continue
-		}
-		d.Kind = DecisionClose
-		if err := s.AppendDecision(id, d); err != nil {
-			return err
-		}
-		s.Items[i].Status = StatusClosed
-		return nil
-	}
-	return fmt.Errorf("ledger: no item %q", id)
-}
-
-// AppendDecision appends an append-only decision to the item with id. Earlier
-// entries are never rewritten and the item's status is not inferred from the
-// decision kind.
-func (s *Store) AppendDecision(id string, d Decision) error {
-	if !decisionKinds[d.Kind] {
-		return fmt.Errorf("%w: %q", ErrUnknownDecisionKind, d.Kind)
-	}
-	for i := range s.Items {
-		if s.Items[i].ID == id {
-			s.Items[i].Decisions = append(s.Items[i].Decisions, d)
-			return nil
-		}
-	}
-	return fmt.Errorf("ledger: no item %q", id)
-}
-
-// Primary returns the single open item for key. ErrNoPrimary means no open item;
-// ErrMultipleOpen means two open rows collide and a human must adjudicate (A5).
-func (s Store) Primary(key string) (Item, error) {
-	open := s.OpenItems(key)
-	switch len(open) {
-	case 0:
-		return Item{}, ErrNoPrimary
-	case 1:
-		return open[0], nil
-	default:
-		return Item{}, ErrMultipleOpen
-	}
-}
-
-// OpenItems returns the open items for key in stored order.
-func (s Store) OpenItems(key string) []Item {
-	var open []Item
-	for _, item := range s.Items {
-		if item.Status == StatusOpen && item.Key() == key {
-			open = append(open, item)
-		}
-	}
-	return open
-}
-
-// LatestClosed returns the most recently stored closed item for key, if any.
-// Closed rows are never primary (D17); this is the read-only report selector the
-// explicit close write path uses to grade the row it just closed, and it never
-// makes a closed row selectable for new work.
-func (s Store) LatestClosed(key string) (Item, bool) {
-	for i := len(s.Items) - 1; i >= 0; i-- {
-		if s.Items[i].Status == StatusClosed && s.Items[i].Key() == key {
-			return s.Items[i], true
-		}
-	}
-	return Item{}, false
-}
-
-// HasOptOut reports whether the primary item for key recorded an opt-out
-// covering checkpoint. A lifecycle-scoped opt-out covers every checkpoint of the
-// identity/change; a legacy scope-less record covers only its own checkpoint.
-func (s Store) HasOptOut(key, checkpoint string) bool {
-	item, err := s.Primary(key)
-	if err != nil {
-		return false
-	}
-	for _, d := range item.Decisions {
-		if d.Kind == DecisionOptOut && optOutCovers(d.Scope, d.Checkpoint, checkpoint) {
-			return true
-		}
-	}
-	return false
 }
 
 // HasScopedOptOut reports whether key recorded a scoped opt-out covering
@@ -858,7 +762,7 @@ func AppendDecisionToPrimary(path, key string, d Decision) error {
 		if err != nil {
 			return err
 		}
-		item, err := store.Primary(key)
+		item, err := singleFileView(store).Primary(key)
 		if err != nil {
 			return err
 		}
@@ -869,12 +773,15 @@ func AppendDecisionToPrimary(path, key string, d Decision) error {
 	})
 }
 
-// withStoreLock serializes read-modify-write access to the store across
+// withStoreLock serializes read-modify-write access to the ledger across
 // processes and goroutines with a BOUNDED non-blocking acquisition: 5 attempts
 // with a 20 ms backoff, then ErrLockTimeout (~100 ms cap, DW3). flock is released
 // by the kernel when the file description closes, so a crashed writer cannot
 // wedge the ledger. Grade paths treat ErrLockTimeout as fail-open; write and
 // --decide paths fail closed.
+//
+// One lock covers the whole ledger set: a mutation that touches two files must
+// exclude every other writer, not just the writers of one file.
 func withStoreLock(path string, fn func() error) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

@@ -21,12 +21,14 @@ func boundBinding() Binding {
 	return Binding{State: WitnessBound, RecipeID: "trello-mcp-workflow"}
 }
 
-// storeWithOpenItem is a store holding one open primary item carrying itemID.
-func storeWithOpenItem(itemID string) Store {
-	s := Store{V: StoreVersion}
-	s.OpenItem(ident(""), "trello-mcp-workflow", t0)
-	s.Items[len(s.Items)-1].ItemID = itemID
-	return s
+// openFixture is the composed ledger holding one open primary item carrying
+// itemID: the worktree row that makes it primary, and the tracker row that
+// records the provider item.
+func openFixture(itemID string) *fixture {
+	f := newFixture()
+	f.openItem(ident(""), "trello-mcp-workflow", t0)
+	f.Tracker.Items[len(f.Tracker.Items)-1].ItemID = itemID
+	return f
 }
 
 // consistentEvidence is the four-sides-agree case.
@@ -78,12 +80,12 @@ func TestGradePostureMatrixFiveCheckpointsThreeModes(t *testing.T) {
 		t.Fatalf("modes = %v, want exactly three", LedgerModes)
 	}
 
-	twoOpen := Store{V: StoreVersion}
-	twoOpen.OpenItem(ident(""), "trello-mcp-workflow", t0)
-	twoOpen.OpenItem(ident(""), "trello-mcp-workflow", t0)
+	twoOpen := newFixture()
+	twoOpen.openItem(ident(""), "trello-mcp-workflow", t0)
+	twoOpen.openItem(ident(""), "trello-mcp-workflow", t0)
 
-	exempt := storeWithOpenItem("")
-	exempt.Items[0].Exemption = "tracker.none"
+	exempt := openFixture("")
+	exempt.Tracker.Items[0].Exemption = "tracker.none"
 
 	type scenario struct {
 		name  string
@@ -95,7 +97,7 @@ func TestGradePostureMatrixFiveCheckpointsThreeModes(t *testing.T) {
 			name: "open item with consistent evidence allows in every mode",
 			input: func(cp, mode string) Input {
 				return Input{Checkpoint: cp, Mode: mode, Binding: boundBinding(), Identity: availIdentity(),
-					Store: storeWithOpenItem("card-1"), Evidence: consistentEvidence("card-1"), Now: vtNow}
+					View: openFixture("card-1").view(), Evidence: consistentEvidence("card-1"), Now: vtNow}
 			},
 			want: map[string]vWant{
 				ModeAlways: {DecisionAllow, "", 0, SeverityOK, true},
@@ -107,7 +109,7 @@ func TestGradePostureMatrixFiveCheckpointsThreeModes(t *testing.T) {
 			name: "missing item blocks only in always",
 			input: func(cp, mode string) Input {
 				return Input{Checkpoint: cp, Mode: mode, Binding: boundBinding(), Identity: availIdentity(),
-					Store: Store{V: StoreVersion}, Now: vtNow}
+					View: View{}, Now: vtNow}
 			},
 			want: map[string]vWant{
 				ModeAlways: {DecisionBlock, ReasonNeedsItem, 2, SeverityWarn, true},
@@ -119,7 +121,7 @@ func TestGradePostureMatrixFiveCheckpointsThreeModes(t *testing.T) {
 			name: "four-side disagreement has no default winner",
 			input: func(cp, mode string) Input {
 				return Input{Checkpoint: cp, Mode: mode, Binding: boundBinding(), Identity: availIdentity(),
-					Store:    storeWithOpenItem("local"),
+					View:     openFixture("local").view(),
 					Evidence: Evidence{Local: "local", Remote: "remote", Code: "code", Git: "git"},
 					Now:      vtNow}
 			},
@@ -133,7 +135,7 @@ func TestGradePostureMatrixFiveCheckpointsThreeModes(t *testing.T) {
 			name: "identity unavailable blocks in always and is reported otherwise",
 			input: func(cp, mode string) Input {
 				return Input{Checkpoint: cp, Mode: mode, Binding: boundBinding(),
-					Identity: Identity{Reason: ReasonIdentityUnavailable}, Store: storeWithOpenItem("card-1"), Now: vtNow}
+					Identity: Identity{Reason: ReasonIdentityUnavailable}, View: openFixture("card-1").view(), Now: vtNow}
 			},
 			want: map[string]vWant{
 				ModeAlways: {DecisionBlock, ReasonIdentityUnavailable, 2, SeverityOK, true},
@@ -146,7 +148,7 @@ func TestGradePostureMatrixFiveCheckpointsThreeModes(t *testing.T) {
 			input: func(cp, mode string) Input {
 				return Input{Checkpoint: cp, Mode: mode,
 					Binding:  Binding{State: WitnessUnbound, Reason: ReasonWitnessMissing},
-					Identity: availIdentity(), Store: storeWithOpenItem("card-1"), Now: vtNow}
+					Identity: availIdentity(), View: openFixture("card-1").view(), Now: vtNow}
 			},
 			want: map[string]vWant{
 				ModeAlways: {DecisionDormant, ReasonWitnessMissing, 0, SeverityWarn, false},
@@ -171,7 +173,7 @@ func TestGradePostureMatrixFiveCheckpointsThreeModes(t *testing.T) {
 			name: "two open items are a conflict, not a pick",
 			input: func(cp, mode string) Input {
 				return Input{Checkpoint: cp, Mode: mode, Binding: boundBinding(), Identity: availIdentity(),
-					Store: twoOpen, Now: vtNow}
+					View: twoOpen.view(), Now: vtNow}
 			},
 			want: map[string]vWant{
 				ModeAlways: {DecisionBlock, ReasonConflict, 2, SeverityWarn, true},
@@ -183,7 +185,7 @@ func TestGradePostureMatrixFiveCheckpointsThreeModes(t *testing.T) {
 			name: "recorded exemption allows in every mode",
 			input: func(cp, mode string) Input {
 				return Input{Checkpoint: cp, Mode: mode, Binding: boundBinding(), Identity: availIdentity(),
-					Store: exempt, Now: vtNow}
+					View: exempt.view(), Now: vtNow}
 			},
 			want: map[string]vWant{
 				ModeAlways: {DecisionAllow, ReasonExempt, 0, SeverityOK, true},
@@ -212,7 +214,7 @@ func TestGradePostureMatrixFiveCheckpointsThreeModes(t *testing.T) {
 func TestGradeAskPromptAndExitZero(t *testing.T) {
 	for _, cp := range Checkpoints {
 		got := Grade(Input{Checkpoint: cp, Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(),
-			Store: Store{V: StoreVersion}, Now: vtNow})
+			View: View{}, Now: vtNow})
 		if got.Decision != DecisionAsk {
 			t.Fatalf("%s: decision = %q, want ask", cp, got.Decision)
 		}
@@ -228,19 +230,19 @@ func TestGradeAskPromptAndExitZero(t *testing.T) {
 // TestGradeWarnNeverBlocksAnyCheckpoint pins "warn never blocks": missing,
 // conflicted, collided and identity-unavailable state all allow with exit 0.
 func TestGradeWarnNeverBlocksAnyCheckpoint(t *testing.T) {
-	twoOpen := Store{V: StoreVersion}
-	twoOpen.OpenItem(ident(""), "trello-mcp-workflow", t0)
-	twoOpen.OpenItem(ident(""), "trello-mcp-workflow", t0)
+	twoOpen := newFixture()
+	twoOpen.openItem(ident(""), "trello-mcp-workflow", t0)
+	twoOpen.openItem(ident(""), "trello-mcp-workflow", t0)
 
 	inputs := []struct {
 		name string
 		in   Input
 	}{
-		{"missing item", Input{Binding: boundBinding(), Identity: availIdentity(), Store: Store{V: StoreVersion}}},
+		{"missing item", Input{Binding: boundBinding(), Identity: availIdentity(), View: View{}}},
 		{"conflict", Input{Binding: boundBinding(), Identity: availIdentity(),
-			Store: storeWithOpenItem("local"), Evidence: Evidence{Local: "local", Remote: "remote"}}},
+			View: openFixture("local").view(), Evidence: Evidence{Local: "local", Remote: "remote"}}},
 		{"identity unavailable", Input{Binding: boundBinding(), Identity: Identity{Reason: ReasonIdentityUnavailable}}},
-		{"two open items", Input{Binding: boundBinding(), Identity: availIdentity(), Store: twoOpen}},
+		{"two open items", Input{Binding: boundBinding(), Identity: availIdentity(), View: twoOpen.view()}},
 	}
 	for _, tc := range inputs {
 		for _, cp := range Checkpoints {
@@ -267,10 +269,10 @@ func TestGradeAlwaysBlocksPreMergeIdentityUnavailable(t *testing.T) {
 // store reports needs-item. Only an explicit report item — the close write's own
 // row — lets that one grade evaluate the closed row.
 func TestGradeClosedOnlyStoreNeedsItemUnlessExplicitlyReported(t *testing.T) {
-	var store Store
-	closed := store.OpenItem(ident(""), "trello-mcp-workflow", t0)
-	store.Items[0].ItemID = "card-1"
-	if err := store.CloseItem(closed.ID, Decision{At: "2026-09-13T13:00:00Z", Checkpoint: CheckpointArchiveClose}); err != nil {
+	store := newFixture()
+	closed := store.openItem(ident(""), "trello-mcp-workflow", t0)
+	store.Tracker.Items[0].ItemID = "card-1"
+	if err := store.closeItem(closed.ID, Decision{At: "2026-09-13T13:00:00Z", Checkpoint: CheckpointArchiveClose}); err != nil {
 		t.Fatal(err)
 	}
 	input := Input{
@@ -278,7 +280,7 @@ func TestGradeClosedOnlyStoreNeedsItemUnlessExplicitlyReported(t *testing.T) {
 		Mode:       ModeAlways,
 		Binding:    boundBinding(),
 		Identity:   availIdentity(),
-		Store:      store,
+		View:       store.view(),
 		Now:        vtNow,
 	}
 
@@ -290,7 +292,7 @@ func TestGradeClosedOnlyStoreNeedsItemUnlessExplicitlyReported(t *testing.T) {
 		t.Fatalf("plain grade selected a closed row: %+v", plain.Item)
 	}
 
-	reported, ok := store.LatestClosed(availIdentity().Key)
+	reported, ok := store.view().LatestClosed(availIdentity().Key)
 	if !ok {
 		t.Fatal("LatestClosed found no closed row")
 	}
@@ -299,15 +301,15 @@ func TestGradeClosedOnlyStoreNeedsItemUnlessExplicitlyReported(t *testing.T) {
 	if got.Decision != DecisionAllow || got.Reason != "" {
 		t.Fatalf("reported close grade = %q/%q, want allow", got.Decision, got.Reason)
 	}
-	if got.Item == nil || got.Item.Status != StatusClosed {
+	if got.Item == nil || got.Item.ID != closed.ID {
 		t.Fatalf("reported close grade item = %+v, want the closed row", got.Item)
 	}
 
 	// An explicit report only makes a closed row selectable, never compliant: a
 	// local-only closed row still reports the missing provider item.
-	localOnly := store
-	localOnly.Items[0].ItemID = ""
-	unlinked, ok := localOnly.LatestClosed(availIdentity().Key)
+	localOnly := *store
+	localOnly.Tracker.Items[0].ItemID = ""
+	unlinked, ok := localOnly.view().LatestClosed(availIdentity().Key)
 	if !ok {
 		t.Fatal("LatestClosed found no closed row")
 	}
@@ -321,10 +323,10 @@ func TestGradeClosedOnlyStoreNeedsItemUnlessExplicitlyReported(t *testing.T) {
 // compatibility for a record written before lifecycle scoping: a scope-less
 // opt-out still covers only the checkpoint it was answered for.
 func TestGradeLegacyCheckpointOptOutStaysCheckpointScoped(t *testing.T) {
-	s := storeWithOpenItem("local")
-	s.Items[0].Decisions = append(s.Items[0].Decisions,
+	s := openFixture("local")
+	s.Tracker.Items[0].Decisions = append(s.Tracker.Items[0].Decisions,
 		Decision{At: t0.Format(time.RFC3339), Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "continue"})
-	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), Store: s,
+	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), View: s.view(),
 		Evidence: Evidence{Local: "local", Remote: "remote"}, Now: vtNow}
 
 	apply := base
@@ -340,11 +342,11 @@ func TestGradeLegacyCheckpointOptOutStaysCheckpointScoped(t *testing.T) {
 // lifecycle: an explicit ask decline is remembered for the current
 // identity/change, so the later checkpoints do not ask again.
 func TestGradeLifecycleOptOutSuppressesLaterCheckpoints(t *testing.T) {
-	s := storeWithOpenItem("local")
-	s.Items[0].Decisions = append(s.Items[0].Decisions,
+	s := openFixture("local")
+	s.Tracker.Items[0].Decisions = append(s.Tracker.Items[0].Decisions,
 		Decision{At: t0.Format(time.RFC3339), Checkpoint: CheckpointApplyStart, Scope: ScopeLifecycle,
 			Kind: DecisionOptOut, Choice: "continue"})
-	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), Store: s,
+	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), View: s.view(),
 		Evidence: Evidence{Local: "local", Remote: "remote"}, Now: vtNow}
 
 	for _, cp := range []string{CheckpointApplyStart, CheckpointPRReview, CheckpointPreMerge, CheckpointArchiveClose} {
@@ -362,8 +364,8 @@ func TestGradeScopedOptOutScopeCompatibility(t *testing.T) {
 	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), Now: vtNow}
 
 	legacy := base
-	legacy.Store = Store{V: StoreVersion, OptOuts: []ScopedOptOut{
-		{Key: key, Checkpoint: CheckpointApplyStart, Choice: "continue"}}}
+	legacy.View = View{Tracker: Store{V: StoreVersion, OptOuts: []ScopedOptOut{
+		{Key: key, Checkpoint: CheckpointApplyStart, Choice: "continue"}}}}
 	legacy.Checkpoint = CheckpointApplyStart
 	assertVerdict(t, "legacy scoped opt-out answers apply-start", Grade(legacy), vWant{DecisionAllow, ReasonOptOut, 0, SeverityOK, true})
 	laterLegacy := legacy
@@ -371,8 +373,8 @@ func TestGradeScopedOptOutScopeCompatibility(t *testing.T) {
 	assertVerdict(t, "legacy scoped opt-out does not carry", Grade(laterLegacy), vWant{DecisionAsk, ReasonNeedsItem, 0, SeverityWarn, true})
 
 	lifecycle := base
-	lifecycle.Store = Store{V: StoreVersion, OptOuts: []ScopedOptOut{
-		{Key: key, Checkpoint: CheckpointApplyStart, Scope: ScopeLifecycle, Choice: "continue"}}}
+	lifecycle.View = View{Tracker: Store{V: StoreVersion, OptOuts: []ScopedOptOut{
+		{Key: key, Checkpoint: CheckpointApplyStart, Scope: ScopeLifecycle, Choice: "continue"}}}}
 	later := lifecycle
 	later.Checkpoint = CheckpointPreMerge
 	assertVerdict(t, "lifecycle scoped opt-out carries", Grade(later), vWant{DecisionAllow, ReasonOptOut, 0, SeverityOK, true})
@@ -393,7 +395,7 @@ func TestGradeLocalOnlyRowIsNotCompliant(t *testing.T) {
 	}
 	for _, tc := range cases {
 		got := Grade(Input{Checkpoint: CheckpointPreMerge, Mode: tc.mode, Binding: boundBinding(),
-			Identity: availIdentity(), Store: storeWithOpenItem(""), Now: vtNow})
+			Identity: availIdentity(), View: openFixture("").view(), Now: vtNow})
 		assertVerdict(t, tc.name, got, tc.want)
 		if got.Item == nil || got.Item.ItemID != "" {
 			t.Fatalf("%s: verdict must expose the local-only row, got %+v", tc.name, got.Item)
@@ -405,10 +407,10 @@ func TestGradeLocalOnlyRowIsNotCompliant(t *testing.T) {
 // contract: a row that names a provider item but records no provider id is not
 // provider-backed either.
 func TestGradeRowWithoutProviderIDIsNotCompliant(t *testing.T) {
-	s := storeWithOpenItem("card-1")
-	s.Items[0].ProviderID = ""
+	s := openFixture("card-1")
+	s.Tracker.Items[0].ProviderID = ""
 	got := Grade(Input{Checkpoint: CheckpointPreMerge, Mode: ModeAlways, Binding: boundBinding(),
-		Identity: availIdentity(), Store: s, Evidence: consistentEvidence("card-1"), Now: vtNow})
+		Identity: availIdentity(), View: s.view(), Evidence: consistentEvidence("card-1"), Now: vtNow})
 	assertVerdict(t, "missing provider id", got, vWant{DecisionBlock, ReasonNeedsItem, 2, SeverityWarn, true})
 }
 
@@ -417,7 +419,7 @@ func TestGradeRowWithoutProviderIDIsNotCompliant(t *testing.T) {
 // the missing provider-backed requirement instead of hiding it.
 func TestGradeWarnDoctorExposesMissingProviderItem(t *testing.T) {
 	got := Grade(Input{Checkpoint: CheckpointPreMerge, Mode: ModeWarn, Binding: boundBinding(),
-		Identity: availIdentity(), Store: storeWithOpenItem(""), Now: vtNow})
+		Identity: availIdentity(), View: openFixture("").view(), Now: vtNow})
 	if got.Decision != DecisionAllow || got.ExitCode() != 0 {
 		t.Fatalf("warn decision = %q (exit %d), want allow/0", got.Decision, got.ExitCode())
 	}
@@ -435,11 +437,11 @@ func TestGradeWarnDoctorExposesMissingProviderItem(t *testing.T) {
 // TestGradeAdjudicatedConflictAllows pins that a persisted human choice resolves
 // the conflict for that checkpoint and allows the grade.
 func TestGradeAdjudicatedConflictAllows(t *testing.T) {
-	s := storeWithOpenItem("local")
-	s.Items[0].Decisions = append(s.Items[0].Decisions,
+	s := openFixture("local")
+	s.Tracker.Items[0].Decisions = append(s.Tracker.Items[0].Decisions,
 		Decision{At: t0.Format(time.RFC3339), Checkpoint: CheckpointPreMerge, Kind: DecisionAdjudicate, Choice: "local"})
 	got := Grade(Input{Checkpoint: CheckpointPreMerge, Mode: ModeAlways, Binding: boundBinding(), Identity: availIdentity(),
-		Store: s, Evidence: Evidence{Local: "local", Remote: "remote"}, Now: vtNow})
+		View: s.view(), Evidence: Evidence{Local: "local", Remote: "remote"}, Now: vtNow})
 	assertVerdict(t, "pre-merge adjudicated", got, vWant{DecisionAllow, ReasonAdjudicated, 0, SeverityOK, true})
 	if got.Conflict != nil {
 		t.Fatalf("adjudicated conflict still reported: %+v", got.Conflict)
@@ -451,7 +453,7 @@ func TestGradeAdjudicatedConflictAllows(t *testing.T) {
 func TestGradeAskConflictPromptCarriesEveryChoice(t *testing.T) {
 	ev := Evidence{Local: "local", Remote: "remote", Code: "code", Git: "git"}
 	got := Grade(Input{Checkpoint: CheckpointPreMerge, Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(),
-		Store: storeWithOpenItem("local"), Evidence: ev, Now: vtNow})
+		View: openFixture("local").view(), Evidence: ev, Now: vtNow})
 	if got.Decision != DecisionAsk || got.ExitCode() != 0 {
 		t.Fatalf("decision = %q exit %d, want ask/0", got.Decision, got.ExitCode())
 	}
@@ -481,7 +483,7 @@ func containsChoice(choices []string, want string) bool {
 // side defaults to the ledger item snapshot.
 func TestGradeConflictSnapshotUsesItemSnapshotAsLocalSide(t *testing.T) {
 	got := Grade(Input{Checkpoint: CheckpointPreMerge, Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(),
-		Store: storeWithOpenItem("card-abc"), Evidence: Evidence{Remote: "card-xyz"}, Now: vtNow})
+		View: openFixture("card-abc").view(), Evidence: Evidence{Remote: "card-xyz"}, Now: vtNow})
 	if got.Conflict == nil {
 		t.Fatalf("expected a conflict for a remote/local disagreement")
 	}

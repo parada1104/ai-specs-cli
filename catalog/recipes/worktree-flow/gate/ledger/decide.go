@@ -50,12 +50,14 @@ func (r DecisionRequest) Validate() error {
 }
 
 // PersistDecision appends the human answer to the single open item for key and
-// clears its current conflict snapshot, all under the store lock. An opt-out is
+// clears its current conflict snapshot, all under the ledger lock. An opt-out is
 // the one answer that does not need an existing item (A5): a fresh binding
 // records it as a scoped opt-out instead of inventing a tracked item. It
 // otherwise fails closed on a missing key, a collided identity, a corrupt store,
 // or an invalid request, so the CLI can exit 2.
-func PersistDecision(loc StoreLocation, key string, req DecisionRequest, now time.Time) (Decision, error) {
+//
+// The answer is the tracker ledger's row: only that file is written (L8).
+func PersistDecision(locs Ledgers, key string, req DecisionRequest, now time.Time) (Decision, error) {
 	req = req.Normalize()
 	if err := req.Validate(); err != nil {
 		return Decision{}, err
@@ -67,36 +69,36 @@ func PersistDecision(loc StoreLocation, key string, req DecisionRequest, now tim
 	}
 	stamp := rfc3339Stamp(now)
 	persisted := newDecision(req, stamp)
-	err := withStoreLock(loc.Path, func() error {
-		store, _, err := loc.Load()
+	err := withStoreLock(locs.Tracker.Path, func() error {
+		view, _, err := locs.Load()
 		if err != nil {
 			return err
 		}
-		item, err := store.Primary(key)
+		item, err := view.Primary(key)
 		if errors.Is(err, ErrNoPrimary) && req.Kind == DecisionOptOut {
 			// A fresh binding has no item yet (A5): record the explicit human
 			// opt-out on its own, without inventing an item that `always` would
 			// then treat as satisfied.
-			store.OptOuts = append(store.OptOuts, ScopedOptOut{
+			view.Tracker.OptOuts = append(view.Tracker.OptOuts, ScopedOptOut{
 				Key: key, Checkpoint: persisted.Checkpoint, Scope: persisted.Scope,
 				Choice: persisted.Choice, At: persisted.At,
 			})
-			_, saveErr := loc.Save(store)
+			_, saveErr := locs.Tracker.Save(view.Tracker)
 			return saveErr
 		}
 		if err != nil {
 			return err
 		}
-		if err := store.AppendDecision(item.ID, persisted); err != nil {
+		if err := view.Tracker.AppendDecision(item.ID, persisted); err != nil {
 			return err
 		}
-		clearConflict(&store, item.ID)
+		clearConflict(&view.Tracker, item.ID)
 		if req.Kind == DecisionAdjudicate {
 			// An adjudication is the one human act that clears a tracker.none
 			// exemption (DW1): file removal never revokes the store record.
-			clearExemption(&store, item.ID)
+			clearExemption(&view.Tracker, item.ID)
 		}
-		_, saveErr := loc.Save(store)
+		_, saveErr := locs.Tracker.Save(view.Tracker)
 		return saveErr
 	})
 	if err != nil {
@@ -129,7 +131,7 @@ func PersistConflict(storePath, key string, c Conflict) error {
 		if err != nil {
 			return err
 		}
-		item, err := store.Primary(key)
+		item, err := singleFileView(store).Primary(key)
 		if err != nil {
 			return err
 		}

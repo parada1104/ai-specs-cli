@@ -253,12 +253,17 @@ EOF
     [ "$rc" -eq 0 ] ||
         fail "(5) tracker-card-gate exited $rc; the Tracker gate is advisory and must exit 0" \
             "$S/apply.err" "$S/apply.out"
-    # The store file is an implementation detail, never a contract (S14): read
-    # whichever file the binary under test wrote, so this scenario holds for the
-    # split layout and for an older binary that still writes the pre-split one. A
-    # CLI read verb (`changes status`) replaces this seam when it lands (T7).
-    LEDGER="$P/.git/ai-specs/ledgers/tracker.json"
-    [ -f "$LEDGER" ] || LEDGER="$P/.git/ai-specs/ledger/state.json"
+    # The store files are an implementation detail, never a contract (S14): read
+    # whichever files the binary under test wrote, so this scenario holds for the
+    # split layout — the lifecycle in worktree.json, the provider record in
+    # tracker.json — and for an older binary that still writes the pre-split one.
+    # A CLI read verb (`changes status`) replaces this seam when it lands (T7).
+    LEDGER="$P/.git/ai-specs/ledgers/worktree.json"
+    TRACKER="$P/.git/ai-specs/ledgers/tracker.json"
+    if [ ! -f "$LEDGER" ] && [ ! -f "$TRACKER" ]; then
+        LEDGER="$P/.git/ai-specs/ledger/state.json"
+        TRACKER="$LEDGER"
+    fi
     [ -f "$LEDGER" ] ||
         fail "(5) apply-start wrote no ledger store, so the change was never registered" \
             "$S/apply.err" "$S/apply.out"
@@ -266,14 +271,16 @@ EOF
         fail "(5) apply-start did not report exactly one actionable line" "$S/apply.err"
     grep -q "bound card $CARD_ID at apply-start" "$S/apply.err" ||
         fail "(5) apply-start did not report binding card $CARD_ID" "$S/apply.err"
-    grep -q "\"item_id\": \"$CARD_ID\"" "$LEDGER" ||
-        fail "(5) the ledger row is not bound to card $CARD_ID" "$LEDGER"
+    grep -q "\"item_id\": \"$CARD_ID\"" "$TRACKER" ||
+        fail "(5) the tracker row is not bound to card $CARD_ID" "$TRACKER"
     grep -q '"branch": "change/feat"' "$LEDGER" ||
         fail "(5) the ledger row is not keyed to branch change/feat" "$LEDGER"
     grep -q '"status": "open"' "$LEDGER" ||
         fail "(5) the ledger row is not open" "$LEDGER"
-    [ "$(grep -c '"kind": "open"' "$LEDGER")" = 1 ] ||
-        fail "(5) apply-start did not open exactly one ledger item" "$LEDGER"
+    [ "$(grep -c '"kind": "open"' "$TRACKER")" = 1 ] ||
+        fail "(5) apply-start did not open exactly one ledger item" "$TRACKER"
+    [ "$(grep -c '"kind": "close"' "$TRACKER")" = 0 ] ||
+        fail "(5) a close decision landed in the tracker ledger" "$TRACKER"
     pass "(5) apply-start bound one open ledger row to $CARD_ID"
 }
 
@@ -383,6 +390,8 @@ run_strategy() {
         fail "(7) the close decision is not recorded at archive-close" "$LEDGER"
     grep -q '"branch": "change/feat"' "$LEDGER" ||
         fail "(7) the closed row is no longer keyed to change/feat" "$LEDGER"
+    [ "$(grep -c '"kind": "close"' "$TRACKER")" = 0 ] ||
+        fail "(7) the close decision landed in the tracker ledger too" "$TRACKER"
     (cd "$P" && git show main:src/app.go | grep -q 'func feat') ||
         fail "(7) main does not contain the change's content" "$S/cleanup.log"
     [ -z "$(cd "$P" && git status --porcelain)" ] ||

@@ -128,7 +128,7 @@ type Input struct {
 	Mode       string
 	Binding    Binding
 	Identity   Identity
-	Store      Store
+	View       View
 	StoreErr   error
 	Evidence   Evidence
 	Now        time.Time
@@ -203,7 +203,7 @@ func Grade(in Input) Verdict {
 	}
 
 	ev := in.Evidence
-	item, err := in.Store.Primary(in.Identity.Key)
+	item, err := in.View.Primary(in.Identity.Key)
 	if errors.Is(err, ErrNoPrimary) && in.ReportItem != nil {
 		// An explicit close write reports the row it just closed: the row stays
 		// non-primary (D17), but this one invocation must grade its own observation.
@@ -215,7 +215,7 @@ func Grade(in Input) Verdict {
 		v.Conflict = newConflict(ev, in.Now)
 		v.outcome(ev, ReasonConflict)
 	case errors.Is(err, ErrNoPrimary):
-		if in.Store.HasScopedOptOut(in.Identity.Key, in.Checkpoint) {
+		if in.View.HasScopedOptOut(in.Identity.Key, in.Checkpoint) {
 			// A fresh binding answered the ask prompt with an explicit opt-out
 			// (A5): the decline is remembered for the identity/change, so every
 			// checkpoint of this lifecycle proceeds. No item exists, so nothing

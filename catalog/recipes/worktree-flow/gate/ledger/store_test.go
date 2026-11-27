@@ -22,6 +22,74 @@ func ident(change string) ItemIdentity {
 	return ItemIdentity{CommonDir: "/repo/.git", Branch: "change/tracker-ledger-foundation", Change: change}
 }
 
+// fixture is the pair of ledgers a test seeds the way the pre-split store was
+// seeded before the split: one open row per ledger, a close that only the
+// worktree ledger records, and the two read back together as the composed View.
+type fixture struct {
+	Tracker  Store
+	Worktree WorktreeStore
+}
+
+func newFixture() *fixture { return &fixture{} }
+
+// openItem appends one open row to each ledger, exactly as ApplyWrite's open
+// verb does: identity and status in the worktree ledger, the provider record and
+// the open decision in the tracker.
+func (f *fixture) openItem(id ItemIdentity, providerID string, at time.Time) Item {
+	stamp := at.UTC().Format(time.RFC3339)
+	rowID := f.Worktree.uniqueItemID(id, stamp)
+	f.Worktree.Items = append(f.Worktree.Items,
+		WorktreeItem{ID: rowID, Identity: id, Status: StatusOpen, Decisions: []WorktreeDecision{}})
+	item := Item{ID: rowID, Identity: id, ProviderID: providerID,
+		Decisions: []Decision{{At: stamp, Kind: DecisionOpen}}}
+	f.Tracker.Items = append(f.Tracker.Items, item)
+	return item
+}
+
+// closeItem closes the row in the worktree ledger: that is where the lifecycle
+// lives, so the close decision never reaches the tracker row.
+func (f *fixture) closeItem(id string, d Decision) error {
+	at := d.At
+	if at == "" {
+		at = t0.UTC().Format(time.RFC3339)
+	}
+	return f.Worktree.closeItem(id, at, d.Checkpoint)
+}
+
+// view composes the two ledgers into the read-only contract.
+func (f *fixture) view() View { return View{Worktree: f.Worktree, Tracker: f.Tracker} }
+
+// write stores both ledgers at the explicit locations a test names: the tracker
+// file path and its worktree sibling.
+func (f *fixture) write(t *testing.T, path string) Ledgers {
+	t.Helper()
+	locs := LedgersAtStore(path)
+	if _, err := locs.Worktree.SaveWorktree(f.Worktree); err != nil {
+		t.Fatalf("save worktree ledger: %v", err)
+	}
+	if _, err := locs.Tracker.Save(f.Tracker); err != nil {
+		t.Fatalf("save tracker ledger: %v", err)
+	}
+	return locs
+}
+
+// ledgerPath is a fresh tracker ledger path under a temp git common dir; its
+// worktree sibling lives beside it.
+func ledgerPath(t *testing.T) string {
+	t.Helper()
+	return TrackerStorePath(filepath.Join(t.TempDir(), ".git"))
+}
+
+// loadView reads a ledger pair back as the composed View.
+func loadView(t *testing.T, locs Ledgers) View {
+	t.Helper()
+	view, _, err := locs.Load()
+	if err != nil {
+		t.Fatalf("load ledgers: %v", err)
+	}
+	return view
+}
+
 // TestStorePathDesignAuthority pins A3: the store is a single JSON object under
 // the Git common dir, shared across worktrees, never under openspec/**.
 func TestStorePathDesignAuthority(t *testing.T) {
@@ -99,9 +167,9 @@ func TestSaveStoreAtomicRenameLeavesNoTempResidue(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".git", "ai-specs", "ledger")
 	path := filepath.Join(dir, "state.json")
 
-	var store Store
-	store.OpenItem(ident("tracker-ledger-foundation"), "trello-mcp-workflow", t0)
-	if err := SaveStore(path, store); err != nil {
+	f := newFixture()
+	f.openItem(ident("tracker-ledger-foundation"), "trello-mcp-workflow", t0)
+	if err := SaveStore(path, f.Tracker); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
@@ -159,13 +227,13 @@ func TestStoreIdentityKeyExactJoin(t *testing.T) {
 		t.Fatalf("item key = %q, want %q", got, want)
 	}
 
-	var store Store
-	item := store.OpenItem(id, "trello-mcp-workflow", t0)
+	f := newFixture()
+	item := f.openItem(id, "trello-mcp-workflow", t0)
 	if item.Key() != id.Key() {
 		t.Fatalf("item key = %q, want %q", item.Key(), id.Key())
 	}
 
-	if _, err := store.Primary(id.Key()); err != nil {
+	if _, err := f.view().Primary(id.Key()); err != nil {
 		t.Fatalf("full key must select the item: %v", err)
 	}
 	for _, miss := range []string{
@@ -174,7 +242,7 @@ func TestStoreIdentityKeyExactJoin(t *testing.T) {
 		IdentityKey("/repo/.git", "another-branch", "tracker-ledger-foundation"),
 		IdentityKey("/other/.git", "change/tracker-ledger-foundation", "tracker-ledger-foundation"),
 	} {
-		if _, err := store.Primary(miss); !errors.Is(err, ErrNoPrimary) {
+		if _, err := f.view().Primary(miss); !errors.Is(err, ErrNoPrimary) {
 			t.Fatalf("key %q must not match (err = %v)", miss, err)
 		}
 	}
@@ -208,23 +276,23 @@ func TestNewItemIDIsStable16Hex(t *testing.T) {
 // item stays closed and is never the primary, and no reopen path exists.
 func TestClosedItemIsNeverSelectedOrReopened(t *testing.T) {
 	id := ident("old-work")
-	var store Store
-	item := store.OpenItem(id, "trello-mcp-workflow", t0)
-	if err := store.CloseItem(item.ID, Decision{At: "2026-09-13T01:00:00Z", Checkpoint: "archive-close", Note: "merged"}); err != nil {
+	f := newFixture()
+	item := f.openItem(id, "trello-mcp-workflow", t0)
+	if err := f.closeItem(item.ID, Decision{At: "2026-09-13T01:00:00Z", Checkpoint: "archive-close", Note: "merged"}); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 
-	if _, err := store.Primary(id.Key()); !errors.Is(err, ErrNoPrimary) {
+	if _, err := f.view().Primary(id.Key()); !errors.Is(err, ErrNoPrimary) {
 		t.Fatalf("closed item must not be primary (err = %v)", err)
 	}
-	if store.Items[0].Status != StatusClosed {
-		t.Fatalf("status = %q, want %q", store.Items[0].Status, StatusClosed)
+	if f.Worktree.Items[0].Status != StatusClosed {
+		t.Fatalf("status = %q, want %q", f.Worktree.Items[0].Status, StatusClosed)
 	}
-	decisions := store.Items[0].Decisions
+	decisions := f.Worktree.Items[0].Decisions
 	if len(decisions) == 0 || decisions[len(decisions)-1].Kind != DecisionClose {
 		t.Fatalf("close decision missing: %+v", decisions)
 	}
-	if err := store.CloseItem("does-not-exist", Decision{At: "x"}); err == nil {
+	if err := f.closeItem("does-not-exist", Decision{At: "x"}); err == nil {
 		t.Fatal("closing an unknown item must error")
 	}
 }
@@ -235,39 +303,39 @@ func TestClosedItemIsNeverSelectedOrReopened(t *testing.T) {
 // new open row (D17).
 func TestLatestClosedReportsLatestClosedRowWithoutPrimary(t *testing.T) {
 	id := ident("old-work")
-	var store Store
-	if _, ok := store.LatestClosed(id.Key()); ok {
+	f := newFixture()
+	if _, ok := f.view().LatestClosed(id.Key()); ok {
 		t.Fatal("an empty store has no closed row")
 	}
-	first := store.OpenItem(id, "trello-mcp-workflow", t0)
-	if err := store.CloseItem(first.ID, Decision{At: "2026-09-13T01:00:00Z"}); err != nil {
+	first := f.openItem(id, "trello-mcp-workflow", t0)
+	if err := f.closeItem(first.ID, Decision{At: "2026-09-13T01:00:00Z"}); err != nil {
 		t.Fatal(err)
 	}
-	got, ok := store.LatestClosed(id.Key())
-	if !ok || got.ID != first.ID || got.Status != StatusClosed {
+	got, ok := f.view().LatestClosed(id.Key())
+	if !ok || got.ID != first.ID || f.Worktree.Items[0].Status != StatusClosed {
 		t.Fatalf("LatestClosed = %+v/%v, want the closed row %q", got, ok, first.ID)
 	}
-	if _, err := store.Primary(id.Key()); !errors.Is(err, ErrNoPrimary) {
+	if _, err := f.view().Primary(id.Key()); !errors.Is(err, ErrNoPrimary) {
 		t.Fatalf("a closed row must never be primary (err = %v)", err)
 	}
 
 	// A newer close for the same key is the row reported.
-	second := store.OpenItem(id, "trello-mcp-workflow", t0.Add(time.Minute))
-	if err := store.CloseItem(second.ID, Decision{At: "2026-09-13T02:00:00Z"}); err != nil {
+	second := f.openItem(id, "trello-mcp-workflow", t0.Add(time.Minute))
+	if err := f.closeItem(second.ID, Decision{At: "2026-09-13T02:00:00Z"}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := store.LatestClosed(id.Key()); got.ID != second.ID {
+	if got, _ := f.view().LatestClosed(id.Key()); got.ID != second.ID {
 		t.Fatalf("LatestClosed = %q, want the newer closed row %q", got.ID, second.ID)
 	}
 
 	// New work still opens its own primary and LatestClosed never returns it.
-	third := store.OpenItem(id, "trello-mcp-workflow", t0.Add(2*time.Minute))
-	primary, err := store.Primary(id.Key())
+	third := f.openItem(id, "trello-mcp-workflow", t0.Add(2*time.Minute))
+	primary, err := f.view().Primary(id.Key())
 	if err != nil || primary.ID != third.ID {
 		t.Fatalf("new work primary = %+v/%v, want the new open row %q", primary, err, third.ID)
 	}
-	if got, _ := store.LatestClosed(id.Key()); got.Status != StatusClosed {
-		t.Fatalf("LatestClosed returned a non-closed row: %+v", got)
+	if got, _ := f.view().LatestClosed(id.Key()); got.ID == third.ID {
+		t.Fatalf("LatestClosed returned the open row: %+v", got)
 	}
 }
 
@@ -277,34 +345,34 @@ func TestReusedBranchOpensNewItemD17(t *testing.T) {
 	old := ident("old-work")
 	newWork := ident("new-work")
 
-	var store Store
-	closed := store.OpenItem(old, "trello-mcp-workflow", t0)
-	if err := store.CloseItem(closed.ID, Decision{At: "2026-09-13T01:00:00Z"}); err != nil {
+	f := newFixture()
+	closed := f.openItem(old, "trello-mcp-workflow", t0)
+	if err := f.closeItem(closed.ID, Decision{At: "2026-09-13T01:00:00Z"}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Same branch, new change identity: a brand-new open item.
-	reopened := store.OpenItem(newWork, "trello-mcp-workflow", t0.Add(time.Hour))
+	reopened := f.openItem(newWork, "trello-mcp-workflow", t0.Add(time.Hour))
 	if reopened.ID == closed.ID {
 		t.Fatalf("reused branch must open a new item, reused id %q", reopened.ID)
 	}
-	primary, err := store.Primary(newWork.Key())
+	primary, err := f.view().Primary(newWork.Key())
 	if err != nil {
 		t.Fatalf("new work has no primary: %v", err)
 	}
 	if primary.ID != reopened.ID {
 		t.Fatalf("primary = %q, want the new item %q", primary.ID, reopened.ID)
 	}
-	if len(store.Items) != 2 || store.Items[0].Status != StatusClosed {
-		t.Fatalf("closed row must remain: %+v", store.Items)
+	if len(f.Tracker.Items) != 2 || f.Worktree.Items[0].Status != StatusClosed {
+		t.Fatalf("closed row must remain: %+v", f.Tracker.Items)
 	}
 
 	// Same branch and same change identity is also a new row, not a reopen.
-	same := store.OpenItem(old, "trello-mcp-workflow", t0.Add(2*time.Hour))
-	if same.ID == closed.ID || store.Items[0].Status != StatusClosed {
-		t.Fatalf("closed item was reopened: %+v", store.Items)
+	same := f.openItem(old, "trello-mcp-workflow", t0.Add(2*time.Hour))
+	if same.ID == closed.ID || f.Worktree.Items[0].Status != StatusClosed {
+		t.Fatalf("closed item was reopened: %+v", f.Tracker.Items)
 	}
-	if _, err := store.Primary(old.Key()); err != nil {
+	if _, err := f.view().Primary(old.Key()); err != nil {
 		t.Fatalf("the fresh same-key row must be primary: %v", err)
 	}
 }
@@ -313,17 +381,17 @@ func TestReusedBranchOpensNewItemD17(t *testing.T) {
 // a close followed by a new open in the same second must not reuse the ID.
 func TestSameSecondOpenItemIDsStayUnique(t *testing.T) {
 	id := ident("same-second")
-	var store Store
-	closed := store.OpenItem(id, "trello-mcp-workflow", vtNow)
-	if err := store.CloseItem(closed.ID, Decision{At: t0.Format(time.RFC3339)}); err != nil {
+	f := newFixture()
+	closed := f.openItem(id, "trello-mcp-workflow", vtNow)
+	if err := f.closeItem(closed.ID, Decision{At: t0.Format(time.RFC3339)}); err != nil {
 		t.Fatal(err)
 	}
-	fresh := store.OpenItem(id, "trello-mcp-workflow", vtNow)
+	fresh := f.openItem(id, "trello-mcp-workflow", vtNow)
 	if fresh.ID == closed.ID {
 		t.Fatalf("same-second open reused ID %q", fresh.ID)
 	}
-	if len(store.Items) != 2 || store.Items[0].Status != StatusClosed || store.Items[1].Status != StatusOpen {
-		t.Fatalf("store rows = %+v, want closed then open", store.Items)
+	if len(f.Tracker.Items) != 2 || f.Worktree.Items[0].Status != StatusClosed || f.Worktree.Items[1].Status != StatusOpen {
+		t.Fatalf("store rows = %+v, want closed then open", f.Tracker.Items)
 	}
 }
 
@@ -331,11 +399,11 @@ func TestSameSecondOpenItemIDsStayUnique(t *testing.T) {
 // silent pick": Primary reports the collision and returns no item.
 func TestTwoOpenItemsAreConflictNotPick(t *testing.T) {
 	id := ident("tracker-ledger-foundation")
-	var store Store
-	first := store.OpenItem(id, "trello-mcp-workflow", t0)
-	second := store.OpenItem(id, "trello-mcp-workflow", t0.Add(time.Minute))
+	f := newFixture()
+	first := f.openItem(id, "trello-mcp-workflow", t0)
+	second := f.openItem(id, "trello-mcp-workflow", t0.Add(time.Minute))
 
-	got, err := store.Primary(id.Key())
+	got, err := f.view().Primary(id.Key())
 	if !errors.Is(err, ErrMultipleOpen) {
 		t.Fatalf("error = %v, want ErrMultipleOpen", err)
 	}
@@ -355,7 +423,6 @@ func TestItemCoreFieldsAreProviderNeutral(t *testing.T) {
 	item := Item{
 		ID:         "0123456789abcdef",
 		Identity:   ident("tracker-ledger-foundation"),
-		Status:     StatusOpen,
 		ItemID:     "card-1",
 		ProviderID: "trello-mcp-workflow",
 		NativeType: "card",
@@ -371,7 +438,7 @@ func TestItemCoreFieldsAreProviderNeutral(t *testing.T) {
 	if err := json.Unmarshal(raw, &keys); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"id", "identity", "status", "item_id", "provider_id", "native_type", "url", "state", "provider", "exemption", "conflict", "decisions"}
+	want := []string{"id", "identity", "item_id", "provider_id", "native_type", "url", "state", "provider", "exemption", "conflict", "decisions"}
 	if len(keys) != len(want) {
 		t.Fatalf("core field count = %d (%v), want %d", len(keys), raw, len(want))
 	}
@@ -409,21 +476,23 @@ func TestItemCoreFieldsAreProviderNeutral(t *testing.T) {
 // TestDecisionsAreAppendOnly pins A6: decisions append in order, earlier entries
 // are untouched, and an unknown kind is rejected without mutating the item.
 func TestDecisionsAreAppendOnly(t *testing.T) {
-	var store Store
-	item := store.OpenItem(ident("slug"), "trello-mcp-workflow", t0)
+	f := newFixture()
+	item := f.openItem(ident("slug"), "trello-mcp-workflow", t0)
 	before := append([]Decision(nil), item.Decisions...)
 	if len(before) != 1 || before[0].Kind != DecisionOpen {
 		t.Fatalf("open decision missing: %+v", before)
 	}
 
-	kinds := []string{DecisionAdjudicate, DecisionOptOut, DecisionLink, DecisionClose}
+	// The tracker's append-only set: a close is the worktree ledger's decision
+	// and is covered by the close tests above, never appended here (S3).
+	kinds := []string{DecisionAdjudicate, DecisionOptOut, DecisionLink}
 	for i, kind := range kinds {
 		d := Decision{At: fmt.Sprintf("2026-09-13T0%d:00:00Z", i+1), Checkpoint: "pr-review", Kind: kind}
-		if err := store.AppendDecision(item.ID, d); err != nil {
+		if err := f.Tracker.AppendDecision(item.ID, d); err != nil {
 			t.Fatalf("append %s: %v", kind, err)
 		}
 	}
-	got := store.Items[0].Decisions
+	got := f.Tracker.Items[0].Decisions
 	if len(got) != len(before)+len(kinds) {
 		t.Fatalf("decisions = %d, want %d", len(got), len(before)+len(kinds))
 	}
@@ -438,13 +507,13 @@ func TestDecisionsAreAppendOnly(t *testing.T) {
 		}
 	}
 
-	if err := store.AppendDecision(item.ID, Decision{At: "2026-09-13T05:00:00Z", Kind: "invented"}); !errors.Is(err, ErrUnknownDecisionKind) {
+	if err := f.Tracker.AppendDecision(item.ID, Decision{At: "2026-09-13T05:00:00Z", Kind: "invented"}); !errors.Is(err, ErrUnknownDecisionKind) {
 		t.Fatalf("unknown kind error = %v, want ErrUnknownDecisionKind", err)
 	}
-	if len(store.Items[0].Decisions) != len(before)+len(kinds) {
+	if len(f.Tracker.Items[0].Decisions) != len(before)+len(kinds) {
 		t.Fatal("a rejected decision must not mutate the item")
 	}
-	if err := store.AppendDecision("missing-id", Decision{At: "x", Kind: DecisionLink}); err == nil {
+	if err := f.Tracker.AppendDecision("missing-id", Decision{At: "x", Kind: DecisionLink}); err == nil {
 		t.Fatal("appending to an unknown item must error")
 	}
 }
@@ -453,39 +522,39 @@ func TestDecisionsAreAppendOnly(t *testing.T) {
 // checkpoint that was answered; the next checkpoint is not covered.
 func TestOptOutIsCheckpointScopedD19(t *testing.T) {
 	id := ident("slug")
-	var store Store
-	item := store.OpenItem(id, "trello-mcp-workflow", t0)
+	f := newFixture()
+	item := f.openItem(id, "trello-mcp-workflow", t0)
 
-	if store.HasOptOut(id.Key(), "apply-start") {
+	if f.view().HasOptOut(id.Key(), "apply-start") {
 		t.Fatal("no opt-out recorded yet, want false")
 	}
-	if err := store.AppendDecision(item.ID, Decision{At: "2026-09-13T01:00:00Z", Checkpoint: "apply-start", Kind: DecisionOptOut, Choice: "continue"}); err != nil {
+	if err := f.Tracker.AppendDecision(item.ID, Decision{At: "2026-09-13T01:00:00Z", Checkpoint: "apply-start", Kind: DecisionOptOut, Choice: "continue"}); err != nil {
 		t.Fatal(err)
 	}
-	if !store.HasOptOut(id.Key(), "apply-start") {
+	if !f.view().HasOptOut(id.Key(), "apply-start") {
 		t.Fatal("apply-start opt-out not detected")
 	}
-	if store.HasOptOut(id.Key(), "pre-merge") {
+	if f.view().HasOptOut(id.Key(), "pre-merge") {
 		t.Fatal("opt-out must not carry to pre-merge (D19)")
 	}
 
-	if err := store.AppendDecision(item.ID, Decision{At: "2026-09-13T02:00:00Z", Checkpoint: "pre-merge", Kind: DecisionOptOut, Choice: "continue"}); err != nil {
+	if err := f.Tracker.AppendDecision(item.ID, Decision{At: "2026-09-13T02:00:00Z", Checkpoint: "pre-merge", Kind: DecisionOptOut, Choice: "continue"}); err != nil {
 		t.Fatal(err)
 	}
-	if !store.HasOptOut(id.Key(), "pre-merge") {
+	if !f.view().HasOptOut(id.Key(), "pre-merge") {
 		t.Fatal("pre-merge opt-out not detected after being recorded")
 	}
 
 	// A non-opt-out decision at another checkpoint is not an opt-out.
-	if err := store.AppendDecision(item.ID, Decision{At: "2026-09-13T03:00:00Z", Checkpoint: "pr-review", Kind: DecisionAdjudicate, Choice: "local"}); err != nil {
+	if err := f.Tracker.AppendDecision(item.ID, Decision{At: "2026-09-13T03:00:00Z", Checkpoint: "pr-review", Kind: DecisionAdjudicate, Choice: "local"}); err != nil {
 		t.Fatal(err)
 	}
-	if store.HasOptOut(id.Key(), "pr-review") {
+	if f.view().HasOptOut(id.Key(), "pr-review") {
 		t.Fatal("an adjudicate decision must not read as an opt-out")
 	}
 
 	// A deleted identity has no opt-out (no primary).
-	if store.HasOptOut(ident("other").Key(), "apply-start") {
+	if f.view().HasOptOut(ident("other").Key(), "apply-start") {
 		t.Fatal("an unrelated identity must not inherit an opt-out")
 	}
 }
@@ -500,20 +569,20 @@ func TestAdvisoryCeilingDoesNotCompact(t *testing.T) {
 		t.Fatalf("MaxStoreBytes = %d, want 65536", MaxStoreBytes)
 	}
 
-	var atCeiling Store
+	atCeiling := newFixture()
 	for i := 0; i < MaxItems; i++ {
-		atCeiling.OpenItem(ItemIdentity{CommonDir: "/repo/.git", Branch: fmt.Sprintf("branch-%d", i)}, "p", t0)
+		atCeiling.openItem(ItemIdentity{CommonDir: "/repo/.git", Branch: fmt.Sprintf("branch-%d", i)}, "p", t0)
 	}
-	if atCeiling.OverCeiling() {
+	if atCeiling.Tracker.OverCeiling() {
 		t.Fatalf("exactly %d items is the ceiling, not over it", MaxItems)
 	}
-	atCeiling.OpenItem(ItemIdentity{CommonDir: "/repo/.git", Branch: "one-more"}, "p", t0)
-	if !atCeiling.OverCeiling() {
+	atCeiling.openItem(ItemIdentity{CommonDir: "/repo/.git", Branch: "one-more"}, "p", t0)
+	if !atCeiling.Tracker.OverCeiling() {
 		t.Fatalf("%d items must be over the advisory ceiling", MaxItems+1)
 	}
 
 	// The byte branch: a single oversized item is over the ceiling.
-	big := Store{Items: []Item{{ID: "big", Identity: ident("slug"), Status: StatusOpen, URL: strings.Repeat("u", MaxStoreBytes)}}}
+	big := Store{Items: []Item{{ID: "big", Identity: ident("slug"), URL: strings.Repeat("u", MaxStoreBytes)}}}
 	if !big.OverCeiling() {
 		t.Fatal("an oversized store must be over the advisory ceiling")
 	}
@@ -523,14 +592,14 @@ func TestAdvisoryCeilingDoesNotCompact(t *testing.T) {
 
 	// No compaction: 40 saved rows load back as 40 rows.
 	path := StorePath(filepath.Join(t.TempDir(), ".git"))
-	var store Store
+	f := newFixture()
 	for i := 0; i < MaxItems+8; i++ {
-		store.OpenItem(ItemIdentity{CommonDir: "/repo/.git", Branch: fmt.Sprintf("branch-%d", i)}, "p", t0)
+		f.openItem(ItemIdentity{CommonDir: "/repo/.git", Branch: fmt.Sprintf("branch-%d", i)}, "p", t0)
 	}
-	if len(store.Items) != MaxItems+8 {
-		t.Fatalf("prepared items = %d", len(store.Items))
+	if len(f.Tracker.Items) != MaxItems+8 {
+		t.Fatalf("prepared items = %d", len(f.Tracker.Items))
 	}
-	if err := SaveStore(path, store); err != nil {
+	if err := SaveStore(path, f.Tracker); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := LoadStore(path)
@@ -562,10 +631,10 @@ func TestAppendDecisionToPrimaryFailsClosed(t *testing.T) {
 	}
 
 	// Two open rows: a collision is not a pick, and the store is untouched.
-	var collided Store
-	collided.OpenItem(id, "p", t0)
-	collided.OpenItem(id, "p", t0)
-	if err := SaveStore(path, collided); err != nil {
+	collided := newFixture()
+	collided.openItem(id, "p", t0)
+	collided.openItem(id, "p", t0)
+	if err := SaveStore(path, collided.Tracker); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(path)
@@ -584,9 +653,9 @@ func TestAppendDecisionToPrimaryFailsClosed(t *testing.T) {
 	}
 
 	// An unknown kind is rejected before any write.
-	var single Store
-	single.OpenItem(id, "p", t0)
-	if err := SaveStore(path, single); err != nil {
+	single := newFixture()
+	single.openItem(id, "p", t0)
+	if err := SaveStore(path, single.Tracker); err != nil {
 		t.Fatal(err)
 	}
 	if err := AppendDecisionToPrimary(path, id.Key(), Decision{At: "x", Kind: "invented"}); !errors.Is(err, ErrUnknownDecisionKind) {
@@ -601,9 +670,9 @@ func TestConcurrentAppendDoesNotLoseDecisions(t *testing.T) {
 	path := StorePath(filepath.Join(t.TempDir(), ".git"))
 	id := ident("slug")
 
-	var store Store
-	store.OpenItem(id, "trello-mcp-workflow", t0)
-	if err := SaveStore(path, store); err != nil {
+	f := newFixture()
+	f.openItem(id, "trello-mcp-workflow", t0)
+	if err := SaveStore(path, f.Tracker); err != nil {
 		t.Fatal(err)
 	}
 
@@ -630,7 +699,7 @@ func TestConcurrentAppendDoesNotLoseDecisions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store must stay parseable under concurrency: %v", err)
 	}
-	primary, err := loaded.Primary(id.Key())
+	primary, err := singleFileView(loaded).Primary(id.Key())
 	if err != nil {
 		t.Fatalf("primary after concurrent appends: %v", err)
 	}
@@ -639,7 +708,7 @@ func TestConcurrentAppendDoesNotLoseDecisions(t *testing.T) {
 		t.Fatalf("decisions = %d, want %d: %+v", len(primary.Decisions), len(checkpoints)+1, primary.Decisions)
 	}
 	for _, checkpoint := range checkpoints {
-		if !loaded.HasOptOut(id.Key(), checkpoint) {
+		if !singleFileView(loaded).HasOptOut(id.Key(), checkpoint) {
 			t.Fatalf("lost decision for checkpoint %s: %+v", checkpoint, primary.Decisions)
 		}
 	}
@@ -667,11 +736,11 @@ func branchCloseIdent() ItemIdentity {
 func TestCloseBranchItemClosesSingleMatchingOpenItemAcrossChangeSlug(t *testing.T) {
 	path := writePath(t)
 	stored := ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/vcs-close", Change: "some-change"}
-	var store Store
-	opened := store.OpenItem(stored, "test-recipe", t0)
-	saveWriteStore(t, path, store)
+	f := newFixture()
+	opened := f.openItem(stored, "test-recipe", t0)
+	saveWriteStore(t, path, f)
 
-	out, err := CloseBranchItem(StoreAt(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+	out, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 	if err != nil {
 		t.Fatalf("CloseBranchItem: %v", err)
 	}
@@ -679,19 +748,19 @@ func TestCloseBranchItemClosesSingleMatchingOpenItemAcrossChangeSlug(t *testing.
 		t.Fatalf("outcome = %+v, want an applied close", out)
 	}
 
-	loaded := loadWriteStore(t, path)
-	if len(loaded.Items) != 1 {
-		t.Fatalf("items = %+v, want the single stored row", loaded.Items)
+	view := loadWriteView(t, path)
+	if len(view.Worktree.Items) != 1 {
+		t.Fatalf("rows = %+v, want the single stored row", view.Worktree.Items)
 	}
-	item := loaded.Items[0]
-	if item.ID != opened.ID || item.Status != StatusClosed {
-		t.Fatalf("item = %+v, want the matching row closed", item)
+	row := view.Worktree.Items[0]
+	if row.ID != opened.ID || row.Status != StatusClosed {
+		t.Fatalf("row = %+v, want the matching row closed", row)
 	}
-	last := item.Decisions[len(item.Decisions)-1]
+	last := row.Decisions[len(row.Decisions)-1]
 	if last.Kind != DecisionClose || last.Checkpoint != CheckpointArchiveClose {
 		t.Fatalf("last decision = %+v, want close at archive-close", last)
 	}
-	if _, err := loaded.Primary(item.Key()); !errors.Is(err, ErrNoPrimary) {
+	if _, err := view.Primary(row.Key()); !errors.Is(err, ErrNoPrimary) {
 		t.Fatalf("closed row must not be primary (err = %v)", err)
 	}
 }
@@ -701,10 +770,10 @@ func TestCloseBranchItemClosesSingleMatchingOpenItemAcrossChangeSlug(t *testing.
 func TestCloseBranchItemAbsentOrClosedIsNoOp(t *testing.T) {
 	t.Run("absent", func(t *testing.T) {
 		path := writePath(t)
-		saveWriteStore(t, path, Store{V: StoreVersion})
+		saveWriteStore(t, path, newFixture())
 		before := rawBytes(t, path)
 
-		out, err := CloseBranchItem(StoreAt(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+		out, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 		if err != nil {
 			t.Fatalf("absent close: %v", err)
 		}
@@ -719,15 +788,15 @@ func TestCloseBranchItemAbsentOrClosedIsNoOp(t *testing.T) {
 	t.Run("already closed", func(t *testing.T) {
 		path := writePath(t)
 		ident := ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/vcs-close", Change: "some-change"}
-		var store Store
-		item := store.OpenItem(ident, "test-recipe", t0)
-		if err := store.CloseItem(item.ID, Decision{At: t0.Format(time.RFC3339)}); err != nil {
+		f := newFixture()
+		item := f.openItem(ident, "test-recipe", t0)
+		if err := f.closeItem(item.ID, Decision{At: t0.Format(time.RFC3339)}); err != nil {
 			t.Fatal(err)
 		}
-		saveWriteStore(t, path, store)
+		saveWriteStore(t, path, f)
 		before := rawBytes(t, path)
 
-		out, err := CloseBranchItem(StoreAt(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+		out, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 		if err != nil {
 			t.Fatalf("closed close: %v", err)
 		}
@@ -737,9 +806,9 @@ func TestCloseBranchItemAbsentOrClosedIsNoOp(t *testing.T) {
 		if string(before) != string(rawBytes(t, path)) {
 			t.Fatal("a closed row must not be rewritten or reopened (D17)")
 		}
-		loaded := loadWriteStore(t, path)
-		if loaded.Items[0].Status != StatusClosed {
-			t.Fatalf("status = %q, want the closed row preserved", loaded.Items[0].Status)
+		view := loadWriteView(t, path)
+		if view.Worktree.Items[0].Status != StatusClosed {
+			t.Fatalf("status = %q, want the closed row preserved", view.Worktree.Items[0].Status)
 		}
 	})
 }
@@ -749,13 +818,13 @@ func TestCloseBranchItemAbsentOrClosedIsNoOp(t *testing.T) {
 // the close fails closed and persists nothing.
 func TestCloseBranchItemMultipleOpenIsCollisionRefused(t *testing.T) {
 	path := writePath(t)
-	var store Store
-	store.OpenItem(ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/vcs-close", Change: "one"}, "test-recipe", t0)
-	store.OpenItem(ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/vcs-close", Change: "two"}, "test-recipe", t0)
-	saveWriteStore(t, path, store)
+	f := newFixture()
+	f.openItem(ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/vcs-close", Change: "one"}, "test-recipe", t0)
+	f.openItem(ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/vcs-close", Change: "two"}, "test-recipe", t0)
+	saveWriteStore(t, path, f)
 	before := rawBytes(t, path)
 
-	_, err := CloseBranchItem(StoreAt(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+	_, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 	if !errors.Is(err, ErrMultipleOpen) {
 		t.Fatalf("error = %v, want ErrMultipleOpen", err)
 	}
@@ -771,33 +840,33 @@ func TestCloseBranchItemTargetsOnlyOpenRowOnReusedBranch(t *testing.T) {
 	path := writePath(t)
 	oldIdent := ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/vcs-close", Change: "old"}
 	newIdent := ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/vcs-close", Change: "new"}
-	var store Store
-	old := store.OpenItem(oldIdent, "test-recipe", t0)
-	if err := store.CloseItem(old.ID, Decision{At: t0.Format(time.RFC3339), Checkpoint: CheckpointArchiveClose}); err != nil {
+	f := newFixture()
+	old := f.openItem(oldIdent, "test-recipe", t0)
+	if err := f.closeItem(old.ID, Decision{At: t0.Format(time.RFC3339), Checkpoint: CheckpointArchiveClose}); err != nil {
 		t.Fatal(err)
 	}
-	fresh := store.OpenItem(newIdent, "test-recipe", t0.Add(time.Hour))
-	saveWriteStore(t, path, store)
+	fresh := f.openItem(newIdent, "test-recipe", t0.Add(time.Hour))
+	saveWriteStore(t, path, f)
 
-	out, err := CloseBranchItem(StoreAt(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+	out, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 	if err != nil {
 		t.Fatalf("CloseBranchItem: %v", err)
 	}
 	if !out.Applied {
 		t.Fatalf("outcome = %+v, want the new open row closed", out)
 	}
-	loaded := loadWriteStore(t, path)
-	if len(loaded.Items) != 2 {
-		t.Fatalf("items = %d, want the old closed + new closed row", len(loaded.Items))
+	view := loadWriteView(t, path)
+	if len(view.Worktree.Items) != 2 {
+		t.Fatalf("rows = %d, want the old closed + new closed row", len(view.Worktree.Items))
 	}
-	for _, item := range loaded.Items {
-		if item.Status != StatusClosed {
-			t.Fatalf("item %s status = %q, want closed", item.ID, item.Status)
+	for _, row := range view.Worktree.Items {
+		if row.Status != StatusClosed {
+			t.Fatalf("row %s status = %q, want closed", row.ID, row.Status)
 		}
 	}
 	// The fresh row was the one closed now; the old row keeps its original close.
-	if last := loaded.Items[1].Decisions[len(loaded.Items[1].Decisions)-1]; loaded.Items[1].ID != fresh.ID || last.Checkpoint != CheckpointArchiveClose {
-		t.Fatalf("fresh row = %+v, want it closed at archive-close", loaded.Items[1])
+	if last := view.Worktree.Items[1].Decisions[len(view.Worktree.Items[1].Decisions)-1]; view.Worktree.Items[1].ID != fresh.ID || last.Checkpoint != CheckpointArchiveClose {
+		t.Fatalf("fresh row = %+v, want it closed at archive-close", view.Worktree.Items[1])
 	}
 }
 
@@ -805,7 +874,7 @@ func TestCloseBranchItemTargetsOnlyOpenRowOnReusedBranch(t *testing.T) {
 // input validation: cleanup must never guess a key or accept a fake checkpoint.
 func TestCloseBranchItemRejectsMissingIdentityOrCheckpoint(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, Store{V: StoreVersion})
+	saveWriteStore(t, path, newFixture())
 	before := rawBytes(t, path)
 
 	cases := []struct {
@@ -820,7 +889,7 @@ func TestCloseBranchItemRejectsMissingIdentityOrCheckpoint(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := CloseBranchItem(StoreAt(path), tc.common, tc.branch, tc.checkpt, vtNow); err == nil {
+			if _, err := CloseBranchItem(LedgersAtStore(path), tc.common, tc.branch, tc.checkpt, vtNow); err == nil {
 				t.Fatal("invalid close input was accepted")
 			}
 			if string(before) != string(rawBytes(t, path)) {

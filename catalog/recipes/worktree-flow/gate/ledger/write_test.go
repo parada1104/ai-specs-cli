@@ -11,24 +11,24 @@ import (
 	"time"
 )
 
-// writePath is a fresh store path under a temp git common dir.
+// writePath is a fresh tracker ledger path under a temp git common dir; its
+// worktree sibling is written beside it.
 func writePath(t *testing.T) string {
 	t.Helper()
-	return StorePath(filepath.Join(t.TempDir(), ".git"))
+	return TrackerStorePath(filepath.Join(t.TempDir(), ".git"))
 }
 
-// writeRepos writes a store and returns its path.
-func saveWriteStore(t *testing.T, path string, store Store) {
+// saveWriteStore writes a fixture's two ledgers at the tracker path and returns
+// the located ledger set.
+func saveWriteStore(t *testing.T, path string, f *fixture) Ledgers {
 	t.Helper()
-	if err := SaveStore(path, store); err != nil {
-		t.Fatalf("SaveStore: %v", err)
-	}
+	return f.write(t, path)
 }
 
 // applyWrite is the terse call helper: one write against the canonical identity.
 func applyWrite(t *testing.T, path, providerID string, req WriteRequest) (WriteOutcome, error) {
 	t.Helper()
-	return ApplyWrite(StoreAt(path), ApplyWriteRequest{
+	return ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		ProviderID: providerID,
@@ -36,14 +36,10 @@ func applyWrite(t *testing.T, path, providerID string, req WriteRequest) (WriteO
 	}, vtNow)
 }
 
-// loadWriteStore loads a store and fails the test on error.
-func loadWriteStore(t *testing.T, path string) Store {
+// loadWriteView loads the ledger pair at path and fails the test on error.
+func loadWriteView(t *testing.T, path string) View {
 	t.Helper()
-	store, err := LoadStore(path)
-	if err != nil {
-		t.Fatalf("LoadStore(%s): %v", path, err)
-	}
-	return store
+	return loadView(t, LedgersAtStore(path))
 }
 
 // rawBytes reads a file and fails the test on error.
@@ -139,7 +135,7 @@ func TestWriteRequestNormalizeDefaultsProvider(t *testing.T) {
 // open reports already-open and the store still holds exactly one open item.
 func TestApplyWriteOpenIsOpenIfAbsent(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, Store{V: StoreVersion})
+	saveWriteStore(t, path, newFixture())
 
 	first, err := applyWrite(t, path, "trello-mcp-workflow", WriteRequest{Kind: WriteOpen})
 	if err != nil {
@@ -161,7 +157,7 @@ func TestApplyWriteOpenIsOpenIfAbsent(t *testing.T) {
 		t.Fatal("an idempotent open must not rewrite the store")
 	}
 
-	open := loadWriteStore(t, path).OpenItems(ident("").Key())
+	open := loadWriteView(t, path).OpenItems(ident("").Key())
 	if len(open) != 1 {
 		t.Fatalf("open items = %d, want exactly 1", len(open))
 	}
@@ -179,7 +175,7 @@ func TestApplyWriteOpenIsOpenIfAbsent(t *testing.T) {
 // never two rows and never a stored-but-unlinked row.
 func TestApplyWriteBindOpensAndLinksInOneWrite(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, Store{V: StoreVersion})
+	saveWriteStore(t, path, newFixture())
 
 	out, err := applyWrite(t, path, "trello-mcp-workflow", WriteRequest{
 		Kind: WriteBind, ItemID: "card-7", URL: "https://example.invalid/c/7",
@@ -193,12 +189,12 @@ func TestApplyWriteBindOpensAndLinksInOneWrite(t *testing.T) {
 		t.Fatalf("bind = %+v, want applied bind with no reason", out)
 	}
 
-	loaded := loadWriteStore(t, path)
-	if len(loaded.Items) != 1 {
-		t.Fatalf("items = %d, want exactly one open+linked row", len(loaded.Items))
+	loaded := loadWriteView(t, path)
+	if len(loaded.Tracker.Items) != 1 {
+		t.Fatalf("items = %d, want exactly one open+linked row", len(loaded.Tracker.Items))
 	}
-	item := loaded.Items[0]
-	if item.Status != StatusOpen || item.ItemID != "card-7" || item.URL != "https://example.invalid/c/7" ||
+	item := loaded.Tracker.Items[0]
+	if loaded.Worktree.Items[0].Status != StatusOpen || item.ItemID != "card-7" || item.URL != "https://example.invalid/c/7" ||
 		item.NativeType != "card" || item.State != "in-progress" {
 		t.Fatalf("bound item = %+v, want the open+linked row", item)
 	}
@@ -221,7 +217,7 @@ func TestApplyWriteBindOpensAndLinksInOneWrite(t *testing.T) {
 // and canonical provider formatting is not a spurious change.
 func TestApplyWriteBindIsIdempotent(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, Store{V: StoreVersion})
+	saveWriteStore(t, path, newFixture())
 	bind := WriteRequest{
 		Kind: WriteBind, ItemID: "card-8", URL: "https://example.invalid/c/8",
 		NativeType: "card", State: "in-progress",
@@ -245,18 +241,18 @@ func TestApplyWriteBindIsIdempotent(t *testing.T) {
 		t.Fatal("an idempotent bind must not rewrite the store")
 	}
 
-	loaded := loadWriteStore(t, path)
-	if len(loaded.Items) != 1 {
-		t.Fatalf("items = %d, want exactly one row after a retried bind", len(loaded.Items))
+	loaded := loadWriteView(t, path)
+	if len(loaded.Tracker.Items) != 1 {
+		t.Fatalf("items = %d, want exactly one row after a retried bind", len(loaded.Tracker.Items))
 	}
 	links := 0
-	for _, d := range loaded.Items[0].Decisions {
+	for _, d := range loaded.Tracker.Items[0].Decisions {
 		if d.Kind == DecisionLink {
 			links++
 		}
 	}
 	if links != 1 {
-		t.Fatalf("link decisions = %d, want exactly 1 (%+v)", links, loaded.Items[0].Decisions)
+		t.Fatalf("link decisions = %d, want exactly 1 (%+v)", links, loaded.Tracker.Items[0].Decisions)
 	}
 }
 
@@ -266,9 +262,9 @@ func TestApplyWriteBindIsIdempotent(t *testing.T) {
 // is not refused; the bind opens a fresh branch-only primary instead.
 func TestApplyWriteBindWithoutChangeIsBranchLevel(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, Store{V: StoreVersion})
+	saveWriteStore(t, path, newFixture())
 
-	out, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
+	out, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -281,15 +277,15 @@ func TestApplyWriteBindWithoutChangeIsBranchLevel(t *testing.T) {
 		t.Fatalf("ambiguous branch bind = %+v, want applied bind", out)
 	}
 
-	loaded := loadWriteStore(t, path)
-	if len(loaded.Items) != 1 {
-		t.Fatalf("items = %d, want one branch-only row", len(loaded.Items))
+	loaded := loadWriteView(t, path)
+	if len(loaded.Tracker.Items) != 1 {
+		t.Fatalf("items = %d, want one branch-only row", len(loaded.Tracker.Items))
 	}
-	item := loaded.Items[0]
+	item := loaded.Tracker.Items[0]
 	if item.Identity.Change != "" {
 		t.Fatalf("stored change = %q, want branch-only", item.Identity.Change)
 	}
-	if item.ItemID != "card-1" || item.Status != StatusOpen {
+	if item.ItemID != "card-1" || loaded.Worktree.Items[0].Status != StatusOpen {
 		t.Fatalf("bound item = %+v, want the open branch-only card", item)
 	}
 }
@@ -299,11 +295,11 @@ func TestApplyWriteBindWithoutChangeIsBranchLevel(t *testing.T) {
 // change payload links that row even though it stores a change slug.
 func TestApplyWriteBindWithoutChangeLinksTheSingleSlottedOpenRow(t *testing.T) {
 	path := writePath(t)
-	store := Store{V: StoreVersion}
-	store.OpenItem(ident("existing-slug"), "p", t0)
-	saveWriteStore(t, path, store)
+	f := newFixture()
+	f.openItem(ident("existing-slug"), "p", t0)
+	saveWriteStore(t, path, f)
 
-	out, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
+	out, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -316,15 +312,15 @@ func TestApplyWriteBindWithoutChangeLinksTheSingleSlottedOpenRow(t *testing.T) {
 		t.Fatalf("branch-level bind = %+v, want applied", out)
 	}
 
-	loaded := loadWriteStore(t, path)
-	if len(loaded.Items) != 1 {
-		t.Fatalf("items = %d, want the existing row linked in place", len(loaded.Items))
+	loaded := loadWriteView(t, path)
+	if len(loaded.Tracker.Items) != 1 {
+		t.Fatalf("items = %d, want the existing row linked in place", len(loaded.Tracker.Items))
 	}
-	item := loaded.Items[0]
+	item := loaded.Tracker.Items[0]
 	if item.Identity.Change != "existing-slug" {
 		t.Fatalf("stored change = %q, want the untouched existing slug", item.Identity.Change)
 	}
-	if item.ItemID != "card-2" || item.Status != StatusOpen {
+	if item.ItemID != "card-2" || loaded.Worktree.Items[0].Status != StatusOpen {
 		t.Fatalf("linked item = %+v, want the existing open row with the new card", item)
 	}
 }
@@ -334,13 +330,13 @@ func TestApplyWriteBindWithoutChangeLinksTheSingleSlottedOpenRow(t *testing.T) {
 // branch-level bind fails closed and persists nothing.
 func TestApplyWriteBindWithoutChangeRefusesMultipleOpenRows(t *testing.T) {
 	path := writePath(t)
-	store := Store{V: StoreVersion}
-	store.OpenItem(ident("one"), "p", t0)
-	store.OpenItem(ident("two"), "p", t0)
-	saveWriteStore(t, path, store)
+	f := newFixture()
+	f.openItem(ident("one"), "p", t0)
+	f.openItem(ident("two"), "p", t0)
+	saveWriteStore(t, path, f)
 	before := rawBytes(t, path)
 
-	_, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
+	_, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -359,9 +355,9 @@ func TestApplyWriteBindWithoutChangeRefusesMultipleOpenRows(t *testing.T) {
 // distinct row that a later branch-level bind then links in place.
 func TestApplyWriteBindWithChangeKeepsSlugSemantics(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, Store{V: StoreVersion})
+	saveWriteStore(t, path, newFixture())
 
-	if _, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
+	if _, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -369,12 +365,12 @@ func TestApplyWriteBindWithChangeKeepsSlugSemantics(t *testing.T) {
 	}, vtNow); err != nil {
 		t.Fatalf("explicit-slug bind: %v", err)
 	}
-	loaded := loadWriteStore(t, path)
-	if len(loaded.Items) != 1 || loaded.Items[0].Identity.Change != "alpha-change" {
-		t.Fatalf("items = %+v, want one row under the explicit slug", loaded.Items)
+	loaded := loadWriteView(t, path)
+	if len(loaded.Tracker.Items) != 1 || loaded.Tracker.Items[0].Identity.Change != "alpha-change" {
+		t.Fatalf("items = %+v, want one row under the explicit slug", loaded.Tracker.Items)
 	}
 
-	out, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
+	out, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -386,9 +382,9 @@ func TestApplyWriteBindWithChangeKeepsSlugSemantics(t *testing.T) {
 	if !out.Applied {
 		t.Fatalf("branch-level bind over a slotted row = %+v, want applied", out)
 	}
-	loaded = loadWriteStore(t, path)
-	if len(loaded.Items) != 1 || loaded.Items[0].Identity.Change != "alpha-change" || loaded.Items[0].ItemID != "card-5" {
-		t.Fatalf("items = %+v, want the single slotted row relinked", loaded.Items)
+	loaded = loadWriteView(t, path)
+	if len(loaded.Tracker.Items) != 1 || loaded.Tracker.Items[0].Identity.Change != "alpha-change" || loaded.Tracker.Items[0].ItemID != "card-5" {
+		t.Fatalf("items = %+v, want the single slotted row relinked", loaded.Tracker.Items)
 	}
 }
 
@@ -397,7 +393,7 @@ func TestApplyWriteBindWithChangeKeepsSlugSemantics(t *testing.T) {
 // row in place instead of opening a second one.
 func TestApplyWriteBindLinksAnAlreadyOpenItem(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, Store{V: StoreVersion})
+	saveWriteStore(t, path, newFixture())
 	if _, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteOpen}); err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -410,11 +406,11 @@ func TestApplyWriteBindLinksAnAlreadyOpenItem(t *testing.T) {
 		t.Fatalf("bind over an open row = %+v, want applied", out)
 	}
 
-	loaded := loadWriteStore(t, path)
-	if len(loaded.Items) != 1 {
-		t.Fatalf("items = %d, want the one existing row linked in place", len(loaded.Items))
+	loaded := loadWriteView(t, path)
+	if len(loaded.Tracker.Items) != 1 {
+		t.Fatalf("items = %d, want the one existing row linked in place", len(loaded.Tracker.Items))
 	}
-	item := loaded.Items[0]
+	item := loaded.Tracker.Items[0]
 	if item.ItemID != "card-9" {
 		t.Fatalf("item id = %q, want the bound card", item.ItemID)
 	}
@@ -437,13 +433,13 @@ func TestApplyWriteBindLinksAnAlreadyOpenItem(t *testing.T) {
 // that opens a distinct new primary for reused work on the same branch.
 func TestApplyWriteBindAfterCloseKeepsTheClosedRowAndOpensANewOne(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, Store{V: StoreVersion})
+	saveWriteStore(t, path, newFixture())
 	key := ident("").Key()
 
 	if _, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteBind, ItemID: "card-1"}); err != nil {
 		t.Fatalf("first bind: %v", err)
 	}
-	firstID := loadWriteStore(t, path).Items[0].ID
+	firstID := loadWriteView(t, path).Tracker.Items[0].ID
 	if _, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteClose}); err != nil {
 		t.Fatalf("close: %v", err)
 	}
@@ -451,25 +447,25 @@ func TestApplyWriteBindAfterCloseKeepsTheClosedRowAndOpensANewOne(t *testing.T) 
 		t.Fatalf("bind after close: %v", err)
 	}
 
-	loaded := loadWriteStore(t, path)
-	if len(loaded.Items) != 2 {
-		t.Fatalf("items = %d, want the closed row plus a new open row", len(loaded.Items))
+	loaded := loadWriteView(t, path)
+	if len(loaded.Tracker.Items) != 2 {
+		t.Fatalf("items = %d, want the closed row plus a new open row", len(loaded.Tracker.Items))
 	}
 	ids := map[string]bool{}
-	for _, item := range loaded.Items {
+	for _, item := range loaded.Tracker.Items {
 		if ids[item.ID] {
 			t.Fatalf("duplicate item id %q", item.ID)
 		}
 		ids[item.ID] = true
 	}
-	if got := loaded.Items[0]; got.ID != firstID || got.Status != StatusClosed {
+	if got := loaded.Worktree.Items[0]; got.ID != firstID || got.Status != StatusClosed {
 		t.Fatalf("closed row = %+v, want it still closed and never reopened (D17)", got)
 	}
 	primary, err := loaded.Primary(key)
 	if err != nil {
 		t.Fatalf("the new bind must be the single primary: %v", err)
 	}
-	if primary.ID == firstID || primary.ItemID != "card-2" || primary.Status != StatusOpen {
+	if primary.ID == firstID || primary.ItemID != "card-2" {
 		t.Fatalf("primary = %+v, want a distinct new open row from the second bind", primary)
 	}
 }
@@ -479,7 +475,7 @@ func TestApplyWriteBindAfterCloseKeepsTheClosedRowAndOpensANewOne(t *testing.T) 
 // and no duplicate ids, because the whole open+link happens under one lock.
 func TestApplyWriteConcurrentBindsKeepOnePrimary(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, Store{V: StoreVersion})
+	saveWriteStore(t, path, newFixture())
 
 	done := make(chan error, 2)
 	for i := 0; i < 2; i++ {
@@ -494,7 +490,7 @@ func TestApplyWriteConcurrentBindsKeepOnePrimary(t *testing.T) {
 		}
 	}
 
-	loaded := loadWriteStore(t, path)
+	loaded := loadWriteView(t, path)
 	open := loaded.OpenItems(ident("").Key())
 	if len(open) != 1 {
 		t.Fatalf("open items = %d, want exactly 1 under concurrency", len(open))
@@ -503,7 +499,7 @@ func TestApplyWriteConcurrentBindsKeepOnePrimary(t *testing.T) {
 		t.Fatalf("item id = %q, want the bound card", open[0].ItemID)
 	}
 	ids := map[string]bool{}
-	for _, item := range loaded.Items {
+	for _, item := range loaded.Tracker.Items {
 		if ids[item.ID] {
 			t.Fatalf("duplicate item id %q", item.ID)
 		}
@@ -522,13 +518,13 @@ func TestApplyWriteConcurrentBindsKeepOnePrimary(t *testing.T) {
 // the same second as an existing row must not reuse that row's id.
 func TestApplyWriteSameSecondIdsStayUnique(t *testing.T) {
 	path := writePath(t)
-	store := Store{V: StoreVersion}
+	f := newFixture()
 	// A closed row and a fresh open share one second (vtNow) and one identity.
-	closed := store.OpenItem(ident(""), "p", vtNow)
-	if err := store.CloseItem(closed.ID, Decision{At: t0.Format(time.RFC3339)}); err != nil {
+	closed := f.openItem(ident(""), "p", vtNow)
+	if err := f.closeItem(closed.ID, Decision{At: t0.Format(time.RFC3339)}); err != nil {
 		t.Fatal(err)
 	}
-	saveWriteStore(t, path, store)
+	saveWriteStore(t, path, f)
 
 	out, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteOpen})
 	if err != nil {
@@ -538,22 +534,22 @@ func TestApplyWriteSameSecondIdsStayUnique(t *testing.T) {
 		t.Fatalf("open after close = %+v, want applied", out)
 	}
 
-	loaded := loadWriteStore(t, path)
-	if len(loaded.Items) != 2 {
-		t.Fatalf("items = %d, want the closed row plus the new open row", len(loaded.Items))
+	loaded := loadWriteView(t, path)
+	if len(loaded.Tracker.Items) != 2 {
+		t.Fatalf("items = %d, want the closed row plus the new open row", len(loaded.Tracker.Items))
 	}
 	ids := map[string]bool{}
-	for _, item := range loaded.Items {
+	for _, item := range loaded.Tracker.Items {
 		if item.ID == "" || ids[item.ID] {
-			t.Fatalf("duplicate or empty item id: %+v", loaded.Items)
+			t.Fatalf("duplicate or empty item id: %+v", loaded.Tracker.Items)
 		}
 		ids[item.ID] = true
 	}
 	if _, err := loaded.Primary(ident("").Key()); err != nil {
 		t.Fatalf("the new row must be the single primary: %v", err)
 	}
-	if loaded.Items[0].Status != StatusClosed {
-		t.Fatalf("the closed row was reopened: %+v", loaded.Items[0])
+	if loaded.Worktree.Items[0].Status != StatusClosed {
+		t.Fatalf("the closed row was reopened: %+v", loaded.Tracker.Items[0])
 	}
 }
 
@@ -561,7 +557,7 @@ func TestApplyWriteSameSecondIdsStayUnique(t *testing.T) {
 // fields plus canonically-equal provider bytes append no duplicate decision.
 func TestApplyWriteLinkIsIdempotentForIdenticalState(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, storeWithOpenItem("card-1"))
+	saveWriteStore(t, path, openFixture("card-1"))
 
 	link := WriteRequest{
 		Kind: WriteLink, ItemID: "card-1", URL: "https://example.invalid/c/1",
@@ -591,7 +587,7 @@ func TestApplyWriteLinkIsIdempotentForIdenticalState(t *testing.T) {
 		t.Fatal("an unchanged link must not rewrite the store")
 	}
 
-	item, err := loadWriteStore(t, path).Primary(ident("").Key())
+	item, err := loadWriteView(t, path).Primary(ident("").Key())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -611,7 +607,7 @@ func TestApplyWriteLinkIsIdempotentForIdenticalState(t *testing.T) {
 // payload stays opaque, and a link decision is appended.
 func TestApplyWriteLinkPopulatesCoreFieldsAndAppendsDecision(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, storeWithOpenItem(""))
+	saveWriteStore(t, path, openFixture(""))
 
 	out, err := applyWrite(t, path, "trello-mcp-workflow", WriteRequest{
 		Kind: WriteLink, ItemID: "card-9", URL: "https://example.invalid/c/9",
@@ -625,7 +621,7 @@ func TestApplyWriteLinkPopulatesCoreFieldsAndAppendsDecision(t *testing.T) {
 		t.Fatalf("link = %+v, want applied", out)
 	}
 
-	item, err := loadWriteStore(t, path).Primary(ident("").Key())
+	item, err := loadWriteView(t, path).Primary(ident("").Key())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -652,7 +648,7 @@ func TestApplyWriteLinkPopulatesCoreFieldsAndAppendsDecision(t *testing.T) {
 // existing behavior (no snapshot update).
 func TestApplyWriteCloseRecordsObservedSnapshot(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, storeWithOpenItem("card-1"))
+	saveWriteStore(t, path, openFixture("card-1"))
 
 	if _, err := applyWrite(t, path, "p", WriteRequest{
 		Kind: WriteLink, ItemID: "card-1", URL: "https://example.test/card-1",
@@ -667,10 +663,10 @@ func TestApplyWriteCloseRecordsObservedSnapshot(t *testing.T) {
 		t.Fatalf("close with payload: %v", err)
 	}
 
-	loaded := loadWriteStore(t, path)
-	item := loaded.Items[0]
-	if item.Status != StatusClosed {
-		t.Fatalf("status = %q, want closed", item.Status)
+	loaded := loadWriteView(t, path)
+	item := loaded.Tracker.Items[0]
+	if loaded.Worktree.Items[0].Status != StatusClosed {
+		t.Fatalf("status = %q, want closed", loaded.Worktree.Items[0].Status)
 	}
 	if item.State != "done" {
 		t.Fatalf("state = %q, want the observed done state, not the stale link snapshot", item.State)
@@ -682,9 +678,17 @@ func TestApplyWriteCloseRecordsObservedSnapshot(t *testing.T) {
 	if provider["list"] != "Done" {
 		t.Fatalf("provider payload = %v, want the observed list=Done", provider)
 	}
-	last := item.Decisions[len(item.Decisions)-1]
+	// The close decision is the worktree ledger's row; the tracker row keeps the
+	// observed snapshot and no close decision (S3/L8).
+	closed := loaded.Worktree.Items[0]
+	last := closed.Decisions[len(closed.Decisions)-1]
 	if last.Kind != DecisionClose {
-		t.Fatalf("last decision = %+v, want close", last)
+		t.Fatalf("last worktree decision = %+v, want close", last)
+	}
+	for _, d := range item.Decisions {
+		if d.Kind == DecisionClose {
+			t.Fatalf("the tracker row carries a close decision: %+v", item.Decisions)
+		}
 	}
 }
 
@@ -692,7 +696,7 @@ func TestApplyWriteCloseRecordsObservedSnapshot(t *testing.T) {
 // is opt-in via payload: a bare close must not invent or clear state.
 func TestApplyWriteCloseWithoutPayloadKeepsSnapshot(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, storeWithOpenItem("card-1"))
+	saveWriteStore(t, path, openFixture("card-1"))
 	if _, err := applyWrite(t, path, "p", WriteRequest{
 		Kind: WriteLink, ItemID: "card-1", URL: "https://example.test/card-1",
 		NativeType: "card", State: "in-progress", Provider: json.RawMessage(`{"list":"In Progress"}`),
@@ -702,7 +706,7 @@ func TestApplyWriteCloseWithoutPayloadKeepsSnapshot(t *testing.T) {
 	if _, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteClose}); err != nil {
 		t.Fatalf("bare close: %v", err)
 	}
-	item := loadWriteStore(t, path).Items[0]
+	item := loadWriteView(t, path).Tracker.Items[0]
 	if item.State != "in-progress" {
 		t.Fatalf("state = %q, want the link snapshot preserved on a payload-less close", item.State)
 	}
@@ -712,7 +716,7 @@ func TestApplyWriteCloseWithoutPayloadKeepsSnapshot(t *testing.T) {
 // signalled as already-closed and the item stays in the store, closed.
 func TestApplyWriteCloseThenCloseIsExplicit(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, storeWithOpenItem("card-1"))
+	saveWriteStore(t, path, openFixture("card-1"))
 
 	first, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteClose})
 	if err != nil {
@@ -734,9 +738,9 @@ func TestApplyWriteCloseThenCloseIsExplicit(t *testing.T) {
 		t.Fatal("an already-closed item must not be rewritten")
 	}
 
-	loaded := loadWriteStore(t, path)
-	if len(loaded.Items) != 1 || loaded.Items[0].Status != StatusClosed {
-		t.Fatalf("items = %+v, want one closed row that stays in the store", loaded.Items)
+	loaded := loadWriteView(t, path)
+	if len(loaded.Tracker.Items) != 1 || loaded.Worktree.Items[0].Status != StatusClosed {
+		t.Fatalf("items = %+v, want one closed row that stays in the store", loaded.Tracker.Items)
 	}
 	if _, err := loaded.Primary(ident("").Key()); !errors.Is(err, ErrNoPrimary) {
 		t.Fatalf("a closed row must not be primary (err = %v)", err)
@@ -747,7 +751,7 @@ func TestApplyWriteCloseThenCloseIsExplicit(t *testing.T) {
 // row persists nothing.
 func TestApplyWriteCloseWithoutRowFailsClosed(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, Store{V: StoreVersion})
+	saveWriteStore(t, path, newFixture())
 	before := rawBytes(t, path)
 
 	if _, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteClose}); !errors.Is(err, ErrNoPrimary) {
@@ -763,7 +767,7 @@ func TestApplyWriteCloseWithoutRowFailsClosed(t *testing.T) {
 // decision kind, reports unchanged for the same text and applies a new text.
 func TestApplyWriteExemptPersistsReasonAndIsIdempotent(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, Store{V: StoreVersion})
+	saveWriteStore(t, path, newFixture())
 
 	first, err := applyWrite(t, path, "trello-mcp-workflow", WriteRequest{
 		Kind: WriteExempt, Reason: "no tracker for this exploit spike",
@@ -775,7 +779,7 @@ func TestApplyWriteExemptPersistsReasonAndIsIdempotent(t *testing.T) {
 		t.Fatalf("exempt = %+v, want applied", first)
 	}
 
-	item, err := loadWriteStore(t, path).Primary(ident("").Key())
+	item, err := loadWriteView(t, path).Primary(ident("").Key())
 	if err != nil {
 		t.Fatalf("exempt must open-if-absent: %v", err)
 	}
@@ -807,7 +811,7 @@ func TestApplyWriteExemptPersistsReasonAndIsIdempotent(t *testing.T) {
 	if !changed.Applied {
 		t.Fatalf("changed exempt = %+v, want applied", changed)
 	}
-	item, err = loadWriteStore(t, path).Primary(ident("").Key())
+	item, err = loadWriteView(t, path).Primary(ident("").Key())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -821,10 +825,10 @@ func TestApplyWriteExemptPersistsReasonAndIsIdempotent(t *testing.T) {
 // as the stored change.
 func TestApplyWriteChangeAmbiguousRefusesWithoutSlug(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, Store{V: StoreVersion})
+	saveWriteStore(t, path, newFixture())
 	before := rawBytes(t, path)
 
-	_, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
+	_, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -837,7 +841,7 @@ func TestApplyWriteChangeAmbiguousRefusesWithoutSlug(t *testing.T) {
 		t.Fatal("a refused write must leave the store byte-identical")
 	}
 
-	if _, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
+	if _, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
 		Identity:   ident(""),
 		Checkpoint: CheckpointApplyStart,
 		Collision:  CollisionChangeAmbiguous,
@@ -845,9 +849,9 @@ func TestApplyWriteChangeAmbiguousRefusesWithoutSlug(t *testing.T) {
 	}, vtNow); err != nil {
 		t.Fatalf("explicit slug must be accepted: %v", err)
 	}
-	stored := loadWriteStore(t, path)
-	if len(stored.Items) != 1 || stored.Items[0].Identity.Change != "the-one-change" {
-		t.Fatalf("items = %+v, want one item under the explicit slug", stored.Items)
+	stored := loadWriteView(t, path)
+	if len(stored.Tracker.Items) != 1 || stored.Tracker.Items[0].Identity.Change != "the-one-change" {
+		t.Fatalf("items = %+v, want one item under the explicit slug", stored.Tracker.Items)
 	}
 }
 
@@ -855,7 +859,7 @@ func TestApplyWriteChangeAmbiguousRefusesWithoutSlug(t *testing.T) {
 // durable key for an identity Git could not name.
 func TestApplyWriteRefusesUnavailableIdentity(t *testing.T) {
 	path := writePath(t)
-	if _, err := ApplyWrite(StoreAt(path), ApplyWriteRequest{
+	if _, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
 		Identity:   ItemIdentity{},
 		Checkpoint: CheckpointApplyStart,
 		Request:    WriteRequest{Kind: WriteOpen},
@@ -871,7 +875,7 @@ func TestApplyWriteRefusesUnavailableIdentity(t *testing.T) {
 // lock yields ErrLockTimeout in roughly 100 ms and the store is untouched.
 func TestApplyWriteHeldLockTimesOutFailsClosed(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, storeWithOpenItem("card-1"))
+	saveWriteStore(t, path, openFixture("card-1"))
 	before := rawBytes(t, path)
 
 	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o644)
@@ -907,9 +911,9 @@ func TestApplyWriteFailuresLeaveStoreByteIdentical(t *testing.T) {
 	}
 
 	twoOpen := writePath(t)
-	two := Store{V: StoreVersion}
-	two.OpenItem(ident(""), "p", t0)
-	two.OpenItem(ident(""), "p", t0)
+	two := newFixture()
+	two.openItem(ident(""), "p", t0)
+	two.openItem(ident(""), "p", t0)
 	saveWriteStore(t, twoOpen, two)
 
 	cases := []struct {
@@ -930,7 +934,7 @@ func TestApplyWriteFailuresLeaveStoreByteIdentical(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.seed {
-				saveWriteStore(t, tc.path, Store{V: StoreVersion})
+				saveWriteStore(t, tc.path, newFixture())
 			}
 			before, beforeErr := os.ReadFile(tc.path)
 			if _, err := applyWrite(t, tc.path, "p", tc.req); err == nil {
@@ -956,7 +960,7 @@ func TestApplyWriteFailuresLeaveStoreByteIdentical(t *testing.T) {
 // temp-file + rename path and leaves no state.json.tmp.* behind.
 func TestApplyWriteLeavesNoTempResidue(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, Store{V: StoreVersion})
+	saveWriteStore(t, path, newFixture())
 	if _, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteOpen}); err != nil {
 		t.Fatal(err)
 	}
@@ -974,7 +978,7 @@ func TestApplyWriteLeavesNoTempResidue(t *testing.T) {
 // duplicate ids.
 func TestApplyWriteConcurrentOpensKeepOnePrimary(t *testing.T) {
 	path := writePath(t)
-	saveWriteStore(t, path, Store{V: StoreVersion})
+	saveWriteStore(t, path, newFixture())
 
 	done := make(chan error, 2)
 	for i := 0; i < 2; i++ {
@@ -989,13 +993,13 @@ func TestApplyWriteConcurrentOpensKeepOnePrimary(t *testing.T) {
 		}
 	}
 
-	loaded := loadWriteStore(t, path)
+	loaded := loadWriteView(t, path)
 	open := loaded.OpenItems(ident("").Key())
 	if len(open) != 1 {
 		t.Fatalf("open items = %d, want exactly 1 under concurrency", len(open))
 	}
 	ids := map[string]bool{}
-	for _, item := range loaded.Items {
+	for _, item := range loaded.Tracker.Items {
 		if ids[item.ID] {
 			t.Fatalf("duplicate item id %q", item.ID)
 		}
@@ -1014,38 +1018,38 @@ func TestApplyWriteConcurrentOpensKeepOnePrimary(t *testing.T) {
 // only by a persisted human adjudication, never by a grade or by file removal.
 func TestAdjudicateClearsExemption(t *testing.T) {
 	path := writePath(t)
-	store := storeWithOpenItem("card-1")
-	store.Items[0].Exemption = "no tracker for this change"
-	saveWriteStore(t, path, store)
+	f := openFixture("card-1")
+	f.Tracker.Items[0].Exemption = "no tracker for this change"
+	saveWriteStore(t, path, f)
 	key := ident("").Key()
 
 	// The exemption alone allows every checkpoint with allow/exempt.
 	base := Input{Mode: ModeAlways, Binding: boundBinding(), Identity: availIdentity(),
-		Store: loadWriteStore(t, path), Now: vtNow}
+		View: loadWriteView(t, path), Now: vtNow}
 	for _, cp := range Checkpoints {
 		in := base
 		in.Checkpoint = cp
 		assertVerdict(t, "exempt "+cp, Grade(in), vWant{DecisionAllow, ReasonExempt, 0, SeverityOK, true})
 	}
 
-	if _, err := PersistDecision(StoreAt(path), key, DecisionRequest{
+	if _, err := PersistDecision(LedgersAtStore(path), key, DecisionRequest{
 		Checkpoint: CheckpointApplyStart, Kind: DecisionAdjudicate, Choice: "code",
 	}, vtNow); err != nil {
 		t.Fatalf("adjudicate: %v", err)
 	}
-	item, err := loadWriteStore(t, path).Primary(key)
+	item, err := loadWriteView(t, path).Primary(key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if item.Exemption != "" {
 		t.Fatalf("exemption = %q, want cleared by adjudication", item.Exemption)
 	}
-	if _, err := PersistDecision(StoreAt(path), key, DecisionRequest{
+	if _, err := PersistDecision(LedgersAtStore(path), key, DecisionRequest{
 		Checkpoint: CheckpointPreMerge, Kind: DecisionOptOut, Choice: "continue",
 	}, vtNow); err != nil {
 		t.Fatalf("opt-out: %v", err)
 	}
-	item, err = loadWriteStore(t, path).Primary(key)
+	item, err = loadWriteView(t, path).Primary(key)
 	if err != nil {
 		t.Fatal(err)
 	}

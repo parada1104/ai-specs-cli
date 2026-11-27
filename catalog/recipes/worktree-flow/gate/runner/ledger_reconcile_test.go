@@ -1251,10 +1251,8 @@ config_field_when_set = "published_list"
 // post-merge shape the comparison must bind without reopening the row.
 func saveClosedReconcileStore(t *testing.T, common, branch, itemID string) string {
 	t.Helper()
-	return saveLedgerStore(t, common, branch, itemID, func(s *ledger.Store) {
-		if err := s.CloseItem(s.Items[0].ID, ledger.Decision{At: ledgerT0.UTC().Format(time.RFC3339)}); err != nil {
-			t.Fatal(err)
-		}
+	return saveLedgerStore(t, common, branch, itemID, func(v *ledger.View) {
+		closeViewRow(v, 0, ledgerT0)
 	})
 }
 
@@ -1322,16 +1320,14 @@ func TestLedgerReconcileUncorroboratedClosedItemStaysUnbound(t *testing.T) {
 func TestLedgerReconcileAmbiguousClosedItemStaysUnbound(t *testing.T) {
 	dir, common, branch := ledgerRepo(t)
 	writeLedgerWitness(t, common, "bound", reconcileRecipeID)
-	saveLedgerStore(t, common, branch, "card-1", func(s *ledger.Store) {
-		if err := s.CloseItem(s.Items[0].ID, ledger.Decision{At: ledgerT0.UTC().Format(time.RFC3339)}); err != nil {
-			t.Fatal(err)
-		}
+	saveLedgerStore(t, common, branch, "card-1", func(v *ledger.View) {
+		closeViewRow(v, 0, ledgerT0)
 		at := ledgerT0.Add(time.Minute)
-		s.OpenItem(ledger.ItemIdentity{CommonDir: common, Branch: branch}, reconcileRecipeID, at)
-		s.Items[len(s.Items)-1].ItemID = "card-1"
-		if err := s.CloseItem(s.Items[len(s.Items)-1].ID, ledger.Decision{At: at.UTC().Format(time.RFC3339)}); err != nil {
+		if _, _, err := v.OpenIfAbsent(ledger.ItemIdentity{CommonDir: common, Branch: branch}, reconcileRecipeID, at); err != nil {
 			t.Fatal(err)
 		}
+		v.Tracker.Items[len(v.Tracker.Items)-1].ItemID = "card-1"
+		closeViewRow(v, len(v.Worktree.Items)-1, at)
 	})
 	writeReconcileManifest(t, dir, reconcileMergeManifestBody)
 	obs := writeReconcileObs(t, reconcileObsBody(t, func(o map[string]any) {

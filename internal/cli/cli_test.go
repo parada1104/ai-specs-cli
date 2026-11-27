@@ -285,16 +285,30 @@ func TestWorktreeGateRoutePinnedContracts(t *testing.T) {
 	}
 	storePath := ledger.TrackerStorePath(common)
 	identity := ledger.DeriveIdentity(ledger.IdentityOptions{Dir: ledgerRepo})
-	store := ledger.Store{V: ledger.StoreVersion}
-	item := store.OpenItem(ledger.ItemIdentity{CommonDir: identity.CommonDir, Branch: identity.Branch}, "trello-mcp-workflow", time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC))
-	item.ID = "fixture-item"
-	item.ItemID = "card-local"
-	item.Decisions = append(item.Decisions, ledger.Decision{
-		At: "2026-09-13T12:30:00Z", Checkpoint: "pre-merge",
-		Kind: ledger.DecisionAdjudicate, Choice: "local",
-	})
-	store.Items[len(store.Items)-1] = item
-	if err := ledger.SaveStore(storePath, store); err != nil {
+	ident := ledger.ItemIdentity{CommonDir: identity.CommonDir, Branch: identity.Branch}
+	// One open row per ledger (S3): the lifecycle in the worktree ledger, the
+	// provider record and its decisions in the tracker ledger, joined by the id
+	// both rows carry. The CLI still emits the joined item with its status.
+	locs := ledger.LedgersAtStore(storePath)
+	if _, err := locs.Worktree.SaveWorktree(ledger.WorktreeStore{
+		V: ledger.StoreVersion,
+		Items: []ledger.WorktreeItem{{
+			ID: "fixture-item", Identity: ident, Status: ledger.StatusOpen,
+			Decisions: []ledger.WorktreeDecision{},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := locs.Tracker.Save(ledger.Store{
+		V: ledger.StoreVersion,
+		Items: []ledger.Item{{
+			ID: "fixture-item", Identity: ident, ItemID: "card-local", ProviderID: "trello-mcp-workflow",
+			Decisions: []ledger.Decision{
+				{At: time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC).Format(time.RFC3339), Kind: ledger.DecisionOpen},
+				{At: "2026-09-13T12:30:00Z", Checkpoint: "pre-merge", Kind: ledger.DecisionAdjudicate, Choice: "local"},
+			},
+		}},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	evidence := filepath.Join(t.TempDir(), "evidence.json")

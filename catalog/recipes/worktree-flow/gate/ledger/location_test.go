@@ -13,40 +13,59 @@ import (
 // closedHistory builds a pre-split store shaped like the real one this repo
 // carries: only closed rows, no opt-outs. The rows stand for the historical
 // decisions S11 requires to survive the migration untouched.
-func closedHistory(n int) Store {
-	store := Store{V: StoreVersion}
+func closedHistory(n int) LegacyStore {
+	store := LegacyStore{V: StoreVersion}
 	for i := 0; i < n; i++ {
 		branch := "feat/history-" + string(rune('a'+i))
-		store.Items = append(store.Items, Item{
-			ID:       "item-" + string(rune('a'+i)),
-			Identity: ItemIdentity{CommonDir: "/repo/.git", Branch: branch},
-			Status:   StatusClosed,
-			ItemID:   "card-" + string(rune('a'+i)),
-			Decisions: []Decision{{
-				At: "2026-10-08T14:40:02Z", Checkpoint: CheckpointArchiveClose,
-				Kind: DecisionClose, Choice: "local", Note: "merged",
-			}},
+		store.Items = append(store.Items, LegacyItem{
+			Status: StatusClosed,
+			Item: Item{
+				ID:       "item-" + string(rune('a'+i)),
+				Identity: ItemIdentity{CommonDir: "/repo/.git", Branch: branch},
+				ItemID:   "card-" + string(rune('a'+i)),
+				Decisions: []Decision{{
+					At: "2026-10-08T14:40:02Z", Checkpoint: CheckpointArchiveClose,
+					Kind: DecisionClose, Choice: "local", Note: "merged",
+				}},
+			},
 		})
 	}
 	return store
 }
 
+// trackerRows is the tracker ledger's share of a pre-split store: what that
+// ledger writes for the rows it owns, with no status column and no close
+// decision (L8).
+func trackerRows(legacy LegacyStore) Store {
+	store := Store{V: StoreVersion}
+	for _, row := range legacy.Items {
+		store.Items = append(store.Items, trackerShare(row))
+	}
+	store.OptOuts = legacy.OptOuts
+	return store
+}
+
 // seedLegacy writes store at the pre-split location under root and returns the
 // path and the exact bytes on disk.
-func seedLegacy(t *testing.T, root string, store Store) (string, []byte) {
+func seedLegacy(t *testing.T, root string, store LegacyStore) (string, []byte) {
 	t.Helper()
 	path := StorePath(root)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir legacy: %v", err)
 	}
-	if err := SaveStore(path, store); err != nil {
+	// Written exactly as an older ai-specs wrote it: this build only reads it.
+	data, err := json.MarshalIndent(store, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal legacy store: %v", err)
+	}
+	if err := writeAtomic(path, append(data, '\n')); err != nil {
 		t.Fatalf("seed legacy store: %v", err)
 	}
-	data, err := os.ReadFile(path)
+	written, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read legacy store: %v", err)
 	}
-	return path, data
+	return path, written
 }
 
 // itemsOf returns the exact on-disk bytes of the items array, so a test can pin
@@ -100,7 +119,7 @@ func TestTrackerStoreHandsTheLegacyRowsForwardOnTheFirstDecision(t *testing.T) {
 	split := TrackerStorePath(root)
 	key := ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/fresh"}.Key()
 
-	_, err := PersistDecision(TrackerLocation(root), key, DecisionRequest{
+	_, err := PersistDecision(LedgersAt(root), key, DecisionRequest{
 		Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "local",
 	}, time.Now())
 	if err != nil {
@@ -114,8 +133,22 @@ func TestTrackerStoreHandsTheLegacyRowsForwardOnTheFirstDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the first decision did not land in the split store: %v", err)
 	}
-	if got, want := string(itemsOf(t, split)), string(itemsOf(t, legacy)); got != want {
-		t.Fatalf("historical rows are not byte-identical in the split store:\n got %s\nwant %s", got, want)
+	// The tracker ledger carries its own share of every historical row: the
+	// fields it owns, unchanged, and nothing the worktree ledger owns.
+	var gotRows []Item
+	if err := json.Unmarshal(itemsOf(t, split), &gotRows); err != nil {
+		t.Fatalf("decode the split rows: %v", err)
+	}
+	wantRows := trackerRows(closedHistory(14)).Items
+	if len(gotRows) != len(wantRows) {
+		t.Fatalf("rows = %d, want %d", len(gotRows), len(wantRows))
+	}
+	for i := range wantRows {
+		// Compared as the ledger compares rows, so a JSON null and an absent
+		// value are the same row.
+		if !sameJSON(trackerShare(LegacyItem{Item: gotRows[i]}), wantRows[i]) {
+			t.Fatalf("row %d is not the historical share:\n got %+v\nwant %+v", i, gotRows[i], wantRows[i])
+		}
 	}
 
 	store, _, err := TrackerLocation(root).Load()
@@ -125,9 +158,23 @@ func TestTrackerStoreHandsTheLegacyRowsForwardOnTheFirstDecision(t *testing.T) {
 	if len(store.Items) != 14 {
 		t.Fatalf("items = %d, want the 14 historical rows", len(store.Items))
 	}
+	worktree, _, err := WorktreeLocation(root).LoadWorktree()
+	if err != nil {
+		t.Fatalf("LoadWorktree: %v", err)
+	}
+	if len(worktree.Items) != 14 {
+		t.Fatalf("worktree rows = %d, want the 14 historical rows", len(worktree.Items))
+	}
+	for _, row := range worktree.Items {
+		if row.Status != StatusClosed {
+			t.Fatalf("row %q is %q: a historical row was revived as live state", row.ID, row.Status)
+		}
+	}
 	for _, item := range store.Items {
-		if item.Status != StatusClosed {
-			t.Fatalf("row %q is %q: a historical row was revived as live state", item.ID, item.Status)
+		for _, d := range item.Decisions {
+			if d.Kind == DecisionClose {
+				t.Fatalf("row %q carries a close decision in the tracker ledger", item.ID)
+			}
 		}
 	}
 	if len(store.OptOuts) != 1 {
@@ -151,7 +198,7 @@ func TestTrackerStoreHandsTheLegacyRowsForwardOnTheFirstDecision(t *testing.T) {
 	if err := os.WriteFile(legacy, []byte("\n"), 0o600); err != nil {
 		t.Fatalf("rewrite legacy: %v", err)
 	}
-	if _, err := PersistDecision(TrackerLocation(root), key+"-2", DecisionRequest{
+	if _, err := PersistDecision(LedgersAt(root), key+"-2", DecisionRequest{
 		Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "local",
 	}, time.Now()); err != nil {
 		t.Fatalf("second PersistDecision: %v", err)
@@ -168,7 +215,7 @@ func TestTrackerStoreHandsTheLegacyRowsForwardOnTheFirstDecision(t *testing.T) {
 func TestSplitRowsWinAndLegacyOnlyRowsAreAdded(t *testing.T) {
 	root := t.TempDir()
 	seedLegacy(t, root, closedHistory(14))
-	splitRows := closedHistory(2)
+	splitRows := trackerRows(closedHistory(2))
 	splitRows.Items[0].ItemID = "from-the-split-store"
 	if _, err := TrackerLocation(root).Save(splitRows); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -241,7 +288,7 @@ func TestExplicitStorePathHasNoLegacyFallback(t *testing.T) {
 	explicit := filepath.Join(root, "state.json")
 	key := ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/explicit"}.Key()
 
-	if _, err := PersistDecision(StoreAt(explicit), key, DecisionRequest{
+	if _, err := PersistDecision(LedgersAtStore(explicit), key, DecisionRequest{
 		Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "local",
 	}, time.Now()); err != nil {
 		t.Fatalf("PersistDecision: %v", err)
@@ -286,7 +333,7 @@ func TestExplicitStoreUnderALedgersDirKeepsNoLegacyFallback(t *testing.T) {
 			seed(t, root, legacy)
 			explicit := filepath.Join(root, "ai-specs", "ledgers", "tracker.json")
 
-			if _, err := PersistDecision(StoreAt(explicit), key, DecisionRequest{
+			if _, err := PersistDecision(LedgersAtStore(explicit), key, DecisionRequest{
 				Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "local",
 			}, time.Now()); err != nil {
 				t.Fatalf("PersistDecision: %v", err)
@@ -318,29 +365,35 @@ func TestTrackerStoreAbsorbsRowsAnOlderBinaryWroteAfterTheHandoff(t *testing.T) 
 	legacy, _ := seedLegacy(t, root, closedHistory(14))
 	key := ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/fresh"}.Key()
 
-	if _, err := PersistDecision(TrackerLocation(root), key+"-1", DecisionRequest{
+	if _, err := PersistDecision(LedgersAt(root), key+"-1", DecisionRequest{
 		Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "local",
 	}, time.Now()); err != nil {
 		t.Fatalf("first PersistDecision: %v", err)
 	}
 
 	// The older binary opens a row and records an opt-out in the pre-split store.
-	old, err := LoadStore(legacy)
+	old, err := LoadLegacyStore(legacy)
 	if err != nil {
-		t.Fatalf("LoadStore(legacy): %v", err)
+		t.Fatalf("LoadLegacyStore(legacy): %v", err)
 	}
-	old.Items = append(old.Items, Item{
-		ID:       "row-from-the-old-binary",
-		Identity: ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/old"},
-		Status:   StatusOpen,
-		ItemID:   "card-old",
+	old.Items = append(old.Items, LegacyItem{
+		Status: StatusOpen,
+		Item: Item{
+			ID:       "row-from-the-old-binary",
+			Identity: ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/old"},
+			ItemID:   "card-old",
+		},
 	})
 	old.OptOuts = append(old.OptOuts, ScopedOptOut{
 		Key: key + "-old", Checkpoint: CheckpointApplyStart, Scope: ScopeLifecycle,
 		Choice: "local", At: "2026-11-27T00:00:00Z",
 	})
-	if err := SaveStore(legacy, old); err != nil {
-		t.Fatalf("SaveStore(legacy): %v", err)
+	oldBytes, err := json.MarshalIndent(old, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal legacy: %v", err)
+	}
+	if err := writeAtomic(legacy, append(oldBytes, '\n')); err != nil {
+		t.Fatalf("write legacy: %v", err)
 	}
 	legacyBytes, err := os.ReadFile(legacy)
 	if err != nil {
@@ -363,9 +416,22 @@ func TestTrackerStoreAbsorbsRowsAnOlderBinaryWroteAfterTheHandoff(t *testing.T) 
 	if len(store.OptOuts) != 2 {
 		t.Fatalf("opt_outs = %d, want this build's decision and the older binary's", len(store.OptOuts))
 	}
-	open := store.OpenItems(ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/old"}.Key())
-	if len(open) != 1 || open[0].ItemID != "card-old" {
+	worktree, _, err := WorktreeLocation(root).LoadWorktree()
+	if err != nil {
+		t.Fatalf("LoadWorktree: %v", err)
+	}
+	open := worktree.OpenItems(ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/old"}.Key())
+	if len(open) != 1 || open[0].ID != "row-from-the-old-binary" {
 		t.Fatalf("the older binary's row is not visible to the read: %+v", open)
+	}
+	found := false
+	for _, item := range store.Items {
+		if item.ID == "row-from-the-old-binary" && item.ItemID == "card-old" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the older binary's tracker row is not visible to the read: %+v", store.Items)
 	}
 	if !store.HasScopedOptOut(key+"-old", CheckpointApplyStart) {
 		t.Fatalf("the older binary's opt-out is not visible to the read")
@@ -373,7 +439,7 @@ func TestTrackerStoreAbsorbsRowsAnOlderBinaryWroteAfterTheHandoff(t *testing.T) 
 
 	// The next write carries the absorbed rows into the split store, so the
 	// divergence heals instead of recurring, and the pre-split file is untouched.
-	if _, err := PersistDecision(TrackerLocation(root), key+"-2", DecisionRequest{
+	if _, err := PersistDecision(LedgersAt(root), key+"-2", DecisionRequest{
 		Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "local",
 	}, time.Now()); err != nil {
 		t.Fatalf("second PersistDecision: %v", err)
@@ -397,7 +463,7 @@ func TestTrackerStoreAbsorbsRowsAnOlderBinaryWroteAfterTheHandoff(t *testing.T) 
 // must not be silent either.
 func TestTrackerStoreReportsAnUnreadableLegacyWithoutDroppingSplitRows(t *testing.T) {
 	root := t.TempDir()
-	if _, err := TrackerLocation(root).Save(closedHistory(2)); err != nil {
+	if _, err := TrackerLocation(root).Save(trackerRows(closedHistory(2))); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(StorePath(root)), 0o755); err != nil {
@@ -433,7 +499,7 @@ func TestTrackerStoreReportsAFailedBackup(t *testing.T) {
 	}
 	defer os.Chmod(legacyDir, 0o755)
 
-	report, err := TrackerLocation(root).Save(closedHistory(1))
+	report, err := TrackerLocation(root).Save(trackerRows(closedHistory(1)))
 	if err != nil {
 		t.Fatalf("Save: %v, want the split write to succeed where it lives", err)
 	}
@@ -496,19 +562,23 @@ func TestTrackerStoreReportsRowsAnOlderBinaryChangedInPlace(t *testing.T) {
 	root := t.TempDir()
 	history := closedHistory(14)
 	legacy, _ := seedLegacy(t, root, history)
-	if _, err := TrackerLocation(root).Save(history); err != nil {
+	if _, err := TrackerLocation(root).Save(trackerRows(history)); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	changed, err := LoadStore(legacy)
+	changed, err := LoadLegacyStore(legacy)
 	if err != nil {
-		t.Fatalf("LoadStore(legacy): %v", err)
+		t.Fatalf("LoadLegacyStore(legacy): %v", err)
 	}
 	changed.Items[0].Decisions = append(changed.Items[0].Decisions, Decision{
 		At: "2026-11-27T00:00:00Z", Checkpoint: CheckpointArchiveClose, Kind: DecisionLink,
 	})
-	if err := SaveStore(legacy, changed); err != nil {
-		t.Fatalf("SaveStore(legacy): %v", err)
+	changedBytes, err := json.MarshalIndent(changed, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal legacy: %v", err)
+	}
+	if err := writeAtomic(legacy, append(changedBytes, '\n')); err != nil {
+		t.Fatalf("write legacy: %v", err)
 	}
 
 	store, report, err := TrackerLocation(root).Load()
@@ -524,7 +594,9 @@ func TestTrackerStoreReportsRowsAnOlderBinaryChangedInPlace(t *testing.T) {
 	if len(store.Items) != 14 {
 		t.Fatalf("items = %d, want the 14 rows the split store already had", len(store.Items))
 	}
-	if got := len(store.Items[0].Decisions); got != 1 {
-		t.Fatalf("row %q carries %d decisions, want the split store's 1", store.Items[0].ID, got)
+	// The tracker share of a historical row carries no close decision, so the
+	// split store's version is the empty decision list, not the older binary's.
+	if got := len(store.Items[0].Decisions); got != 0 {
+		t.Fatalf("row %q carries %d decisions, want the split store's 0", store.Items[0].ID, got)
 	}
 }
