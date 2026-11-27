@@ -200,6 +200,12 @@ each unit's own delta lives in its own change folder.
     each step; JSON shape stability; exit 3 when a needed fact is `unknown`.
   - risks: a status verb that lies is worse than none; every fact must be derived,
     never defaulted.
+  - carried from T5's review (R2): the store notes — rows absorbed from the pre-split
+    store, rows that differ in place, an unreadable pre-split store, a backup that
+    could not be written — are only visible when `worktree-gate` is invoked directly.
+    `tracker-card-gate`, `doctor` and the cleanup path discard them, so a note can be
+    lost and can even mask the real error of a bind. This verb is where they surface,
+    once and per ledger.
   - deps: T1, T2, T3, T5, T6. PR size ~700.
 - T8 — `changes next` plus postures: `advise` by default, `require` per project and
   checkpoint (S5, S10).
@@ -214,6 +220,10 @@ each unit's own delta lives in its own change folder.
     `require = ["merge"]` exits 2 with rule and exits; thresholds override the
     defaults; a workstream is never subject to a posture.
   - risks: config surface creep; keep it to two keys.
+  - carried from T5's review (R1): a close written by an older binary on a row the
+    split store already has stays shadowed — the split store's version answers — and
+    its notice repeats on every invocation. Report it once, name the ledger that owns
+    the row, and say which file wins.
   - deps: T7. PR size ~400.
 - T9 — Tracker reconciliation: `always|ask|off` per provider and the decision menu
   on disagreement (S6, S7).
