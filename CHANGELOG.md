@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0] — 2026-11-27
+
 ### Changed
 - The flow ledger is now one versioned file with a section per capability
   (`worktree`, `tracker`, `plan`) instead of one record mixing lifecycle and
