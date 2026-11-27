@@ -27,12 +27,12 @@ plan, design and audit live in `odd/tasks/change-ledger-v2.md` and
   closes and exemptions to the worktree ledger, plan exemptions/archive/workstream
   decisions to the plan ledger, and everything else staying in the tracker ledger.
   Produce the map in `## Log` with `path:line` evidence before splitting anything.
-  Specs: S3. route: worker. commit: pending.
+  Specs: S3. route: worker. commit: 18650df4 (the map, in `## Log`).
 - T6.2 — Add `ledgers/worktree.json` and `ledgers/plan.json` as locations with the
   same invariants T5 established (`StoreLocation`, one-release fallback to the
   pre-split file, absorb-and-report, one-shot atomic backup) and route every read and
   write to the ledger that owns the row. Specs: S3, S11. route: worker.
-  commit: pending.
+  commit: af587978 (PR-1 half: the worktree ledger; the plan ledger is T6b).
 - T6.3 — Delete the monolithic single-store writer, so one row cannot land in the
   wrong ledger, and keep the migration honest: each ledger reads its own share of the
   pre-split file. Specs: S3, S14. route: worker. commit: pending.
@@ -201,3 +201,17 @@ plan, design and audit live in `odd/tasks/change-ledger-v2.md` and
   `internal/cli` fixtures (`cli_test.go`, `trackercardgate_test.go`) are adapted to seed
   both ledgers, since they call the removed `Store.OpenItem`/`Items` API and the root
   module cannot `go vet` without them; no production code under `internal/` changes.
+- **L10** — Delivery split, decided before the first merge. PR-1 (`af587978`, the
+  worktree ledger) and T6b (PR-2: the plan store, deleting the monolithic writer and
+  the dead writers, full corruption isolation, the S14 contract, T6.5) are two ordered
+  PRs, so the second one is built in its own worktree from `development` once PR-1 has
+  merged and the cleanup hook has retired this one. That keeps one unit per worktree
+  and per PR, and avoids a stacked branch nobody asked for. Before each merge: handoff
+  in Engram. Before the last one: the T7 worktree from `development` with its branch
+  and plan. PR-1's evidence: gate module and root `go build`/`go vet` clean,
+  `ledger_cleanup_flow.sh` 7/7 (identical to L7's baseline), `-race` clean on the
+  ledger package, `gofmt` clean, and the real-flow probe over a copy of the real 14-row
+  store showing close decisions 15 in `worktree.json` / 0 in `tracker.json`, link
+  decisions 0/15, `status` only in the worktree ledger and `item_id` only in the
+  tracker, 14/14 historical rows still answering by identity, and the pre-split file
+  byte-identical (`63535f2c…`). Log: `/private/tmp/change-ledger-v2/t6/`.
