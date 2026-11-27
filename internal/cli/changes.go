@@ -265,19 +265,27 @@ func runChangesWorkstream(args []string, stdout, stderr io.Writer) int {
 	collect := func() gates.WriteFacts { return gates.WriteFactsFor(root, mode, change, "") }
 	facts := collect()
 
+	// The declaration is read once, with its report: what reaching the plan section had to
+	// do — a predecessor absorbed, one that could not be read, a copy that could not be
+	// kept — is said out loud instead of being kept to the ledger.
+	ledgerWhere := planledger.Store(root)
+	if ledgerWhere == "" {
+		ledgerWhere = "a repository Git cannot name"
+	}
+	declaration, readErr := planledger.Read(root)
+	if readErr != nil {
+		fmt.Fprintf(stderr, "changes workstream: cannot read the plan ledger in %s: %s\n",
+			ledgerWhere, readErr)
+	} else {
+		declaration.Report.Note(stderr, "changes workstream")
+	}
+
 	if request.end || request.reasonSet {
 		if request.end {
-			declared, _, err := planledger.Workstream(root)
-			if err != nil {
-				where := planledger.Store(root)
-				if where == "" {
-					where = "a repository Git cannot name"
-				}
-				fmt.Fprintf(stderr, "changes workstream: cannot read the plan ledger in %s: %s\n",
-					where, err)
+			if readErr != nil {
 				return 1
 			}
-			if !declared {
+			if !declaration.Declared {
 				fmt.Fprintf(stderr, "changes workstream: no workstream declaration is open for %s; "+
 					"nothing to end\n", workstreamBranch(branch))
 				return 1
@@ -293,18 +301,20 @@ func runChangesWorkstream(args []string, stdout, stderr io.Writer) int {
 		if request.end {
 			event = planledger.EventWorkstreamEnd
 		}
-		if err := planledger.Append(root, planledger.Event{
+		saveReport, err := planledger.Append(root, planledger.Event{
 			Event: event, At: time.Now().UTC().Format(time.RFC3339), Reason: request.reason,
-		}); err != nil {
+		})
+		saveReport.Note(stderr, "changes workstream")
+		if err != nil {
 			fmt.Fprintf(stderr, "changes workstream: cannot record the decision in %s: %s\n",
-				planledger.Store(root), err)
+				ledgerWhere, err)
 			return 1
 		}
 		facts = collect()
 		if !request.asJSON && !request.end {
 			fmt.Fprintf(stdout, "changes workstream: declared %s a workstream — recorded in %s "+
 				"(reason: %s). Nothing is owed until 'changes workstream --end'.\n",
-				workstreamBranch(branch), planledger.Store(root), request.reason)
+				workstreamBranch(branch), ledgerWhere, request.reason)
 		}
 		if !request.asJSON && request.end {
 			fmt.Fprintf(stdout, "changes workstream: ended the declaration for %s — the worktree returns "+
@@ -312,7 +322,7 @@ func runChangesWorkstream(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	view := workstreamViewOf(facts, branch, planledger.Store(root))
+	view := workstreamViewOf(facts, branch, ledgerWhere)
 	if request.asJSON {
 		encoded, err := json.Marshal(view)
 		if err != nil {

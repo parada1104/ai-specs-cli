@@ -327,3 +327,28 @@ the sections the caller owns (`Save(file, SectionWorktree, SectionTracker)`) and
   and the gate naming an unreadable ledger. Evidence: `gofmt` clean; both Go modules build,
   vet and test clean; `ledger_cleanup_flow.sh` 7/7; the real-store probe PASS; the Python
   suite rerun before the commit.
+- **L17** — Cody's independent review approved with reservations, and its H1 was real: git
+  reuses the admin directory name, so a worktree recreated in the same folder inherited the
+  removed one's open declaration (reproduced end to end: declare in `.worktrees/d`, `git
+  worktree remove --force`, `git worktree add -b feat/d-again` at the same path, and the
+  report still said `declared:true` with the old reason). The name alone is not an identity.
+  The plan key now has two parts: git's name for the checkout, and a **creation token** this
+  build writes once into the admin directory (`ai-specs-created`, 16 random bytes, `O_EXCL`
+  with the winner's value re-read). The admin directory is removed with the worktree and
+  recreated empty by the next one, so a recreated worktree can never borrow a row. A token
+  that cannot be written is no identity: `RecordPlanDecision` refuses with «the checkout
+  cannot be named durably» rather than falling back to the name. `adoptPlanRow` keeps its
+  single-candidate migration only for rows written before the key carried a worktree name
+  at all, and now requires the same folder; a row that carries a name but no token is
+  deliberately **not** moved, because borrowing a declaration is exactly what a recreated
+  worktree must not do. Also closed here: the mode-`000` predecessor test L15 claimed (it
+  exists now: the load reports the source, the write is refused, neither the ledger nor a
+  copy is created); the verb reports the plan section's own report — an unreadable
+  predecessor and a failed copy are said out loud, and a ledger that cannot be read is named
+  on stderr instead of surfacing as a silent «no declaration» — which also makes the gate's
+  note (which points at this verb) honest; and `.ai-specs/` is ignored, so the local
+  predecessor and its one-shot copies never show up as untracked files. RED before the
+  token: `TestChangesWorkstreamDoesNotInheritAReusedWorktreeName` failed with
+  `Declared:true Reason:"audit of the release"` on the recreated worktree; GREEN after it,
+  with `TestRecreatedWorktreeDoesNotInheritTheRow` pinning the same rule at the ledger level.
+  R3-001 remains T7's.

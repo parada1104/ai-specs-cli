@@ -256,3 +256,58 @@ func TestChangesWorkstreamSurvivesABranchRename(t *testing.T) {
 		t.Fatalf("second end = (%d, %q), want the refusal", code, stderr)
 	}
 }
+
+// A worktree git recreates under a reused admin name is a different checkout: the
+// declaration of the removed one must not come back with the folder.
+func TestChangesWorkstreamDoesNotInheritAReusedWorktreeName(t *testing.T) {
+	root := workstreamRepo(t)
+	wt := filepath.Join(root, ".worktrees", "d")
+	workstreamGit(t, root, "worktree", "add", "-q", "-b", "feat/d", wt)
+	if code, _, stderr := runChangesCLI(t, "changes", "workstream", "--root", wt,
+		"--reason", "audit of the release"); code != 0 || stderr != "" {
+		t.Fatalf("declare = (%d, %q), want it recorded", code, stderr)
+	}
+	if report := workstreamReport(t, wt); !report.Declared {
+		t.Fatalf("report = %+v, want the declaration in the linked worktree", report)
+	}
+
+	// The same folder and the same admin name, recreated by git.
+	workstreamGit(t, root, "worktree", "remove", "--force", wt)
+	workstreamGit(t, root, "worktree", "add", "-q", "-b", "feat/d-again", wt)
+
+	report := workstreamReport(t, wt)
+	if report.Declared {
+		t.Fatalf("report = %+v, want a clean worktree: the removed one's declaration came back "+
+			"because git reused the admin directory name", report)
+	}
+	if report.Reason != "" {
+		t.Fatalf("reason = %q, want nothing carried over", report.Reason)
+	}
+}
+
+// A ledger nobody can read is named by the verb too, not only by the gate: the report
+// path keeps grading the facts and says on stderr why no declaration came back, and
+// `--end` refuses instead of claiming there is nothing to end.
+func TestChangesWorkstreamNamesAnUnreadableLedger(t *testing.T) {
+	root := workstreamRepo(t)
+	ledger := filepath.Join(root, ".git", "ai-specs", "ledger", "state.json")
+	if err := os.MkdirAll(filepath.Dir(ledger), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ledger, []byte("{ corrupt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, stderr := runChangesCLI(t, "changes", "workstream", "--root", root)
+	if code != 0 {
+		t.Fatalf("report = %d, want the facts still graded", code)
+	}
+	if !strings.Contains(stderr, "cannot read the plan ledger") {
+		t.Fatalf("stderr = %q, want it naming the unreadable ledger", stderr)
+	}
+
+	code, _, stderr = runChangesCLI(t, "changes", "workstream", "--root", root, "--end")
+	if code != 1 || !strings.Contains(stderr, "cannot read the plan ledger") {
+		t.Fatalf("end = (%d, %q), want the read failure named and the verb to refuse", code, stderr)
+	}
+}

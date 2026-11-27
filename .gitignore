@@ -27,6 +27,9 @@ ai-specs.env
 ai-specs/.env
 ai-specs/.env.bak
 ai-specs/.envrc.bak
+# The checkout's own plan ledger and the one-shot copies of its predecessors: execution
+# state, never a deliverable.
+.ai-specs/
 # --- end ai-specs ---
 .env
 ai-specs.env

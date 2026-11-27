@@ -68,7 +68,7 @@ func corruptionWriters() []corruptionCase {
 // planKey is the plan row identity of a fixture's checkout: the plan row is keyed by
 // the worktree, not by the branch (odd/tasks/change-ledger-t6b.md L14).
 func planKey(id ItemIdentity) PlanIdentity {
-	return PlanIdentity{CommonDir: id.CommonDir, Worktree: "worktrees/fixture",
+	return PlanIdentity{CommonDir: id.CommonDir, Worktree: "worktrees/fixture", Created: "token-fixture",
 		Root: filepath.Join(filepath.Dir(id.CommonDir), "checkout"), Branch: id.Branch}
 }
 

@@ -1,6 +1,8 @@
 package ledger
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,29 +25,42 @@ const (
 	PlanKindWorkstreamEnd = "workstream-end"
 )
 
-// PlanIdentity is a plan row's key: the checkout, not the branch and not the path. A
-// workstream declaration belongs to the worktree it was made in, so renaming the branch
-// or moving the folder must neither lose its end nor resurrect it. The stable part is
-// the name git keeps for the checkout in its admin directory; the path and the branch
-// travel as data so a report can still name them.
+// PlanIdentity is a plan row's key: the checkout instance, not the branch and not the
+// path. A workstream declaration belongs to the worktree it was made in, so renaming the
+// branch or moving the folder must neither lose its end nor resurrect it. Two parts make
+// the instance: git's own name for the checkout, and the creation token this build
+// writes into its admin directory — because git reuses that name when a worktree is
+// removed and another is created in the same place, and a recreated worktree is not the
+// one that declared anything. The path and the branch travel as data so a report can
+// still name them.
 type PlanIdentity struct {
 	CommonDir string `json:"common_dir"`
 	// Worktree is mainWorktree for the checkout that owns the git dir, and
 	// "worktrees/<name>" for a linked one: the admin directory git keeps for it, which
-	// no path or branch rename can change. An empty value is a row written before this
-	// key existed, and is migrated by adoptPlanRow.
+	// no path or branch rename can change.
 	Worktree string `json:"worktree"`
-	Root     string `json:"root"`
-	Branch   string `json:"branch,omitempty"`
+	// Created is the creation token of that admin directory: a random value written once
+	// beside it, so a worktree git recreates under the same name is a different
+	// checkout. An empty value is a row written by a build that had no token, and such a
+	// row is not moved by adoptPlanRow.
+	Created string `json:"created,omitempty"`
+	Root    string `json:"root"`
+	Branch  string `json:"branch,omitempty"`
 }
 
 // mainWorktree is the prepared name of the checkout that owns the git dir. A linked
 // worktree cannot collide with it, because its own name is always prefixed.
 const mainWorktree = "main"
 
-// Key is the row's matching key: common dir + the stable worktree name, never the
-// branch and never the path.
-func (i PlanIdentity) Key() string { return i.CommonDir + "\x1f" + i.Worktree }
+// createdTokenFile is where the checkout's creation token lives, inside the admin
+// directory git removes with the worktree: a recreated worktree starts without one.
+const createdTokenFile = "ai-specs-created"
+
+// Key is the row's matching key: common dir, the worktree name and the token of the
+// instance, never the branch and never the path.
+func (i PlanIdentity) Key() string {
+	return i.CommonDir + "\x1f" + i.Worktree + "\x1f" + i.Created
+}
 
 // PlanIdentityAt derives the plan key for the checkout containing dir. Unlike the item
 // identity it needs no commit, so a declaration can be recorded before the branch has
@@ -59,30 +74,80 @@ func PlanIdentityAt(dir string, facts Facts) PlanIdentity {
 	if root == "" {
 		root = dir
 	}
+	gitDir, name := worktreeAdmin(dir, facts, common)
 	return PlanIdentity{
 		CommonDir: common,
-		Worktree:  worktreeName(dir, facts, common),
+		Worktree:  name,
+		Created:   createdToken(gitDir),
 		Root:      realPath(root),
 		Branch:    facts(dir, "symbolic-ref", "--quiet", "--short", "HEAD"),
 	}
 }
 
-// worktreeName is git's own name for this checkout: the admin directory under
-// <common>/worktrees, or mainWorktree for the checkout that owns the git dir. It is the
-// one identity that survives a branch rename, a folder move and a deleted worktree.
-func worktreeName(dir string, facts Facts, common string) string {
-	gitDir := facts(dir, "rev-parse", "--absolute-git-dir")
+// worktreeAdmin is git's own name for this checkout and the admin directory it belongs
+// to: <common>/worktrees/<name> for a linked worktree, <common> itself for the checkout
+// that owns it.
+func worktreeAdmin(dir string, facts Facts, common string) (gitDir, name string) {
+	gitDir = facts(dir, "rev-parse", "--absolute-git-dir")
 	if gitDir == "" {
 		gitDir = facts(dir, "rev-parse", "--git-dir")
 	}
 	if gitDir == "" {
-		return ""
+		return "", ""
 	}
 	gitDir = realPath(gitDir)
 	if common != "" && gitDir == common {
-		return mainWorktree
+		return gitDir, mainWorktree
 	}
-	return "worktrees/" + filepath.Base(gitDir)
+	return gitDir, "worktrees/" + filepath.Base(gitDir)
+}
+
+// createdToken is the creation token of one admin directory: read when it exists, and
+// written once when it does not. A token that cannot be written is no identity, so the
+// value is left empty and a declaration fails closed rather than borrowing the name of
+// a worktree that no longer exists.
+func createdToken(adminDir string) string {
+	if adminDir == "" {
+		return ""
+	}
+	path := filepath.Join(adminDir, createdTokenFile)
+	if token := readToken(path); token != "" {
+		return token
+	}
+	token := newCreatedToken()
+	if token == "" {
+		return ""
+	}
+	// O_EXCL: a concurrent invocation that wins the race keeps its token, and both
+	// processes then read the same one.
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err == nil {
+		_, writeErr := file.WriteString(token + "\n")
+		closeErr := file.Close()
+		if writeErr != nil || closeErr != nil {
+			return ""
+		}
+	}
+	return readToken(path)
+}
+
+// readToken reads a token file, reporting nothing when it is absent or unusable.
+func readToken(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// newCreatedToken is 16 random bytes, hex encoded. Randomness is what makes a recreated
+// worktree unmistakably different from the one that was removed.
+func newCreatedToken() string {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(buf)
 }
 
 // PlanSection is the plan section: one row per work, in stored order.
@@ -155,8 +220,8 @@ func (s *PlanSection) appendDecision(ident PlanIdentity, decision PlanDecision) 
 // fail closed, so the verb that records a declaration can exit non-zero instead of
 // pretending it was recorded.
 func RecordPlanDecision(loc StoreLocation, ident PlanIdentity, decision PlanDecision) (StoreReport, error) {
-	if ident.CommonDir == "" || ident.Worktree == "" {
-		return StoreReport{}, fmt.Errorf("%w: the checkout cannot be named", ErrInvalidWrite)
+	if ident.CommonDir == "" || ident.Worktree == "" || ident.Created == "" {
+		return StoreReport{}, fmt.Errorf("%w: the checkout cannot be named durably", ErrInvalidWrite)
 	}
 	if decision.At == "" || decision.Kind == "" {
 		return StoreReport{}, fmt.Errorf("%w: a plan decision needs an at and a kind", ErrInvalidWrite)
@@ -265,27 +330,32 @@ func (l StoreLocation) absorbPlanSource(file *LedgerFile, report *StoreReport) {
 //     inheriting a stranger's end;
 //   - every other row is left alone.
 func adoptPlanRow(file *LedgerFile, ident PlanIdentity) {
-	if ident.CommonDir == "" || ident.Worktree == "" {
+	if ident.CommonDir == "" || ident.Worktree == "" || ident.Created == "" {
 		return
 	}
 	for i := range file.Plan.Items {
 		row := &file.Plan.Items[i]
-		if row.Identity.CommonDir == ident.CommonDir && row.Identity.Worktree == ident.Worktree {
+		if row.Identity.CommonDir == ident.CommonDir && row.Identity.Worktree == ident.Worktree &&
+			row.Identity.Created == ident.Created {
 			row.Identity.Root = ident.Root
 			row.Identity.Branch = ident.Branch
 			return
 		}
 	}
+	// A row written before the key carried a worktree name has no identity of its own. It
+	// is migrated only when it names this very folder and is the single candidate, so a
+	// guess can never move one worktree's declaration into another. A row that carries a
+	// name but no creation token is left alone: the build that wrote it is gone, and
+	// borrowing its declaration is exactly what a recreated worktree must not do.
 	candidate := -1
 	for i, row := range file.Plan.Items {
 		if row.Identity.CommonDir != ident.CommonDir || row.Identity.Worktree != "" {
 			continue
 		}
-		if row.Identity.Branch != ident.Branch {
+		if row.Identity.Root != ident.Root {
 			continue
 		}
 		if candidate >= 0 {
-			// Ambiguous: two rows claim this work, so neither is moved.
 			return
 		}
 		candidate = i

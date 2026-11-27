@@ -59,39 +59,60 @@ func Store(root string) string {
 	return ledger.StorePath(ident.CommonDir)
 }
 
-// Append records one decision in the plan section. Every failure persists nothing, so
-// the verb that records a declaration can exit non-zero instead of claiming success.
-func Append(root string, event Event) error {
+// Append records one decision in the plan section, and reports what reaching the section
+// had to do beyond the write — a predecessor absorbed, one that could not be read, a copy
+// that could not be kept. Every failure persists nothing, so the verb that records a
+// declaration can exit non-zero instead of claiming success.
+func Append(root string, event Event) (ledger.StoreReport, error) {
 	if event.Event == "" {
-		return errors.New("plan ledger: the event name is empty")
+		return ledger.StoreReport{}, errors.New("plan ledger: the event name is empty")
 	}
 	if event.At == "" {
-		return errors.New("plan ledger: the event time is empty")
+		return ledger.StoreReport{}, errors.New("plan ledger: the event time is empty")
 	}
 	loc, ident, err := work(root)
 	if err != nil {
-		return err
+		return ledger.StoreReport{}, err
 	}
-	_, err = ledger.RecordPlanDecision(loc, ident, ledger.PlanDecision{
+	return ledger.RecordPlanDecision(loc, ident, ledger.PlanDecision{
 		At: event.At, Kind: event.Event, Reason: event.Reason,
 	})
-	return err
 }
 
-// Workstream is the standing declaration, and why the ledger could not answer it. The
-// error is never swallowed: a verb that records a decision must refuse instead of
-// claiming there is nothing to end, and the write gate turns it into a note naming the
-// file, because a corrupt shared ledger would otherwise look like "this worktree is a
-// change" in every worktree of the clone.
-func Workstream(root string) (declared bool, reason string, err error) {
+// Declaration is what the plan section says about this checkout, with the report of what
+// reaching it took: rows and opt-outs absorbed from a predecessor, and a source that could
+// not be read. The report is the verb's to print, so an unreadable predecessor is never
+// silent to the human running the command.
+type Declaration struct {
+	Declared bool
+	Reason   string
+	Report   ledger.StoreReport
+}
+
+// Read is the verb's contract. The error means the section could not be read at all,
+// which the verb prints instead of reporting "no declaration" out of a file nobody
+// opened.
+func Read(root string) (Declaration, error) {
 	loc, ident, err := work(root)
 	if err != nil {
-		return false, "", err
+		return Declaration{}, err
 	}
-	file, _, err := loc.Load()
+	file, report, err := loc.Load()
+	if err != nil {
+		return Declaration{}, err
+	}
+	declared, reason := file.Plan.Workstream(ident.Key())
+	return Declaration{Declared: declared, Reason: reason, Report: report}, nil
+}
+
+// Workstream is the facts contract the write gate reads: the declaration and why the
+// ledger could not answer it. The error is never swallowed there either — a corrupt shared
+// ledger would otherwise look like "this worktree is a change" in every worktree of the
+// clone — and the report is left to the verb, which is where a human reads it.
+func Workstream(root string) (declared bool, reason string, err error) {
+	declaration, err := Read(root)
 	if err != nil {
 		return false, "", err
 	}
-	declared, reason = file.Plan.Workstream(ident.Key())
-	return declared, reason, nil
+	return declaration.Declared, declaration.Reason, nil
 }

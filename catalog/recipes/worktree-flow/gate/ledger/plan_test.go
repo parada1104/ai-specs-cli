@@ -31,7 +31,7 @@ func newPlanFixture(t *testing.T) planFixture {
 		t.Fatal(err)
 	}
 	common := filepath.Join(dir, ".git")
-	ident := ledger.PlanIdentity{CommonDir: common, Worktree: "worktrees/fixture", Root: root, Branch: "feat-plan"}
+	ident := ledger.PlanIdentity{CommonDir: common, Worktree: "worktrees/fixture", Created: "token-fixture", Root: root, Branch: "feat-plan"}
 	source := filepath.Join(dir, ".ai-specs", "plan-ledger.jsonl")
 	return planFixture{
 		location: ledger.LedgerAt(common).WithPlanSource(source, ident),
@@ -249,7 +249,7 @@ func TestPlanSectionSeedsOnlyTheOwningCheckout(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	sibling := ledger.PlanIdentity{CommonDir: fixture.ident.CommonDir, Worktree: "worktrees/sibling",
-		Root: t.TempDir(), Branch: "feat-sibling"}
+		Created: "token-sibling", Root: t.TempDir(), Branch: "feat-sibling"}
 	if declared, _ := file.Plan.Workstream(sibling.Key()); declared {
 		t.Fatal("a sibling checkout inherited the declaration")
 	}
@@ -333,7 +333,7 @@ func TestDeletedWorktreeIsNotInheritedByAnotherCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 	newcomer := ledger.PlanIdentity{
-		CommonDir: fixture.ident.CommonDir, Worktree: "worktrees/newcomer",
+		CommonDir: fixture.ident.CommonDir, Worktree: "worktrees/newcomer", Created: "token-newcomer",
 		Root: newcomerRoot, Branch: fixture.ident.Branch,
 	}
 	file, _, err := fixture.withIdent(t, newcomer).Load()
@@ -657,6 +657,41 @@ func TestAllSectionSaveStillFailsClosedOnACorruptLedger(t *testing.T) {
 	}
 }
 
+// TestRecreatedWorktreeDoesNotInheritTheRow: git reuses the admin directory name when a
+// worktree is removed and another is created in the same folder, so the creation token
+// is part of the key. The same name with a different token is a different checkout.
+func TestRecreatedWorktreeDoesNotInheritTheRow(t *testing.T) {
+	fixture := newPlanFixture(t)
+	fixture.recordPlan(t, ledger.PlanKindWorkstream, "2026-11-27T11:00:00Z")
+
+	recreated := fixture.ident
+	recreated.Created = "token-recreated"
+	file, report, err := fixture.withIdent(t, recreated).Load()
+	if err != nil {
+		t.Fatalf("Load for the recreated worktree: %v", err)
+	}
+	for _, row := range file.Plan.Items {
+		if row.Identity.CommonDir != recreated.CommonDir {
+			continue
+		}
+		if row.Identity.Worktree == recreated.Worktree && row.Identity.Created == recreated.Created {
+			t.Fatalf("the recreated worktree took the removed one's row: %+v", row.Identity)
+		}
+	}
+	if report.Absorbed != 0 {
+		t.Fatalf("Absorbed = %d, want nothing inherited", report.Absorbed)
+	}
+
+	// The original checkout still answers its own row, unchanged.
+	original, _, err := fixture.location.Load()
+	if err != nil {
+		t.Fatalf("Load for the original checkout: %v", err)
+	}
+	if declared, _ := original.Plan.Workstream(fixture.ident.Key()); !declared {
+		t.Fatal("the original checkout lost its declaration")
+	}
+}
+
 func mustJSON(t *testing.T, value any) string {
 	t.Helper()
 	raw, err := json.Marshal(value)
@@ -664,4 +699,36 @@ func mustJSON(t *testing.T, value any) string {
 		t.Fatal(err)
 	}
 	return string(raw)
+}
+
+// TestUnreadableRegularPredecessorFailsClosed pins the other half of the asymmetry L15
+// describes: a path with no predecessor bytes is not a failed backup, but a regular
+// file whose bytes cannot be read is, so the write is refused instead of replacing
+// bytes nobody could read. The predecessor keeps its content and gains no copy.
+func TestUnreadableRegularPredecessorFailsClosed(t *testing.T) {
+	fixture := newPlanFixture(t)
+	fixture.writeSource(t, planEvent(t, ledger.PlanKindWorkstream, "2026-11-20T09:00:00Z", "spike"))
+	if err := os.Chmod(fixture.source, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(fixture.source, 0o600) })
+
+	_, report, err := fixture.location.Load()
+	if err != nil {
+		t.Fatalf("Load: %v (reading the ledger must not fail because a predecessor is unreadable)", err)
+	}
+	if report.LegacyUnreadable == nil {
+		t.Fatal("LegacyUnreadable is nil; a regular predecessor nobody can read must be reported")
+	}
+
+	if _, err := fixture.location.Save(ledger.EmptyLedger(),
+		ledger.SectionWorktree, ledger.SectionTracker, ledger.SectionPlan); err == nil {
+		t.Fatal("a write over an unreadable regular predecessor was accepted")
+	}
+	if _, err := os.Stat(fixture.location.Path); !os.IsNotExist(err) {
+		t.Fatalf("the ledger file was written despite the refused backup: %v", err)
+	}
+	if _, err := os.Stat(fixture.source + ".v1-backup"); !os.IsNotExist(err) {
+		t.Fatalf("a copy was written from bytes nobody could read: %v", err)
+	}
 }
