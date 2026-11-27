@@ -140,6 +140,9 @@ func (l StoreLocation) Load() (LedgerFile, StoreReport, error) {
 	if err != nil {
 		return EmptyLedger(), report, err
 	}
+	// The plan row this checkout owns is migrated before the predecessor is read, so
+	// the seeding lands in the row that already belongs to it.
+	adoptPlanRow(&file, l.Plan.Identity)
 	l.absorbPlanSource(&file, &report)
 	settleCloses(&file)
 	return file, report, nil

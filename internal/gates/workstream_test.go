@@ -7,6 +7,7 @@ package gates
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"ai-specs.dev/ai-specs/internal/planbuild"
@@ -99,5 +100,38 @@ func appendLine(t *testing.T, path, line string) {
 	defer file.Close()
 	if _, err := file.WriteString(line + "\n"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A ledger nobody can read is a fact this collection could not observe, and the
+// verdict says so: the declaration lives in a file every worktree shares, so a corrupt
+// one must never look like "this worktree is a change" without naming the cause.
+func TestWriteFactsNamesAnUnreadablePlanLedger(t *testing.T) {
+	root := writeRepo(t, nil)
+	commitPath(t, root, "src/app.go", "feat: product work")
+	ledger := filepath.Join(root, ".git", "ai-specs", "ledger", "state.json")
+	if err := os.MkdirAll(filepath.Dir(ledger), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ledger, []byte("{ corrupt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	facts := WriteFactsFor(root, planbuild.ModeOdd, "thing", "src/app.go")
+	if facts.DeclaredErr == nil {
+		t.Fatalf("Facts = %+v, want the read error reported", facts)
+	}
+	if facts.Declared {
+		t.Fatalf("Facts = %+v, want no declaration invented out of an unreadable ledger", facts)
+	}
+	verdict := facts.Verdict()
+	found := false
+	for _, note := range verdict.Notes {
+		if strings.Contains(note, "plan ledger could not be loaded") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Notes = %v, want one naming the ledger", verdict.Notes)
 	}
 }

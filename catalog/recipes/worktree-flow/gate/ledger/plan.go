@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -22,35 +23,66 @@ const (
 	PlanKindWorkstreamEnd = "workstream-end"
 )
 
-// PlanIdentity is a plan row's key: the checkout, not the branch. A workstream
-// declaration belongs to the worktree it was made in, so renaming the branch must not
-// lose its end and must not resurrect it; the branch travels as data so a report can
-// still name it (Cody's R1-001 decision, option A).
+// PlanIdentity is a plan row's key: the checkout, not the branch and not the path. A
+// workstream declaration belongs to the worktree it was made in, so renaming the branch
+// or moving the folder must neither lose its end nor resurrect it. The stable part is
+// the name git keeps for the checkout in its admin directory; the path and the branch
+// travel as data so a report can still name them.
 type PlanIdentity struct {
 	CommonDir string `json:"common_dir"`
-	Root      string `json:"root"`
-	Branch    string `json:"branch,omitempty"`
+	// Worktree is mainWorktree for the checkout that owns the git dir, and
+	// "worktrees/<name>" for a linked one: the admin directory git keeps for it, which
+	// no path or branch rename can change. An empty value is a row written before this
+	// key existed, and is migrated by adoptPlanRow.
+	Worktree string `json:"worktree"`
+	Root     string `json:"root"`
+	Branch   string `json:"branch,omitempty"`
 }
 
-// Key is the row's matching key: common dir + worktree root, never the branch.
-func (i PlanIdentity) Key() string { return i.CommonDir + "\x1f" + i.Root }
+// mainWorktree is the prepared name of the checkout that owns the git dir. A linked
+// worktree cannot collide with it, because its own name is always prefixed.
+const mainWorktree = "main"
+
+// Key is the row's matching key: common dir + the stable worktree name, never the
+// branch and never the path.
+func (i PlanIdentity) Key() string { return i.CommonDir + "\x1f" + i.Worktree }
 
 // PlanIdentityAt derives the plan key for the checkout containing dir. Unlike the item
 // identity it needs no commit, so a declaration can be recorded before the branch has
-// one; the branch is recorded when git can name it and left empty otherwise.
+// one; the branch and the path are recorded when git can name them.
 func PlanIdentityAt(dir string, facts Facts) PlanIdentity {
 	if facts == nil {
 		facts = localFacts
 	}
+	common := commonDir(dir, facts)
 	root := facts(dir, "rev-parse", "--show-toplevel")
 	if root == "" {
 		root = dir
 	}
 	return PlanIdentity{
-		CommonDir: realPath(commonDir(dir, facts)),
+		CommonDir: common,
+		Worktree:  worktreeName(dir, facts, common),
 		Root:      realPath(root),
 		Branch:    facts(dir, "symbolic-ref", "--quiet", "--short", "HEAD"),
 	}
+}
+
+// worktreeName is git's own name for this checkout: the admin directory under
+// <common>/worktrees, or mainWorktree for the checkout that owns the git dir. It is the
+// one identity that survives a branch rename, a folder move and a deleted worktree.
+func worktreeName(dir string, facts Facts, common string) string {
+	gitDir := facts(dir, "rev-parse", "--absolute-git-dir")
+	if gitDir == "" {
+		gitDir = facts(dir, "rev-parse", "--git-dir")
+	}
+	if gitDir == "" {
+		return ""
+	}
+	gitDir = realPath(gitDir)
+	if common != "" && gitDir == common {
+		return mainWorktree
+	}
+	return "worktrees/" + filepath.Base(gitDir)
 }
 
 // PlanSection is the plan section: one row per work, in stored order.
@@ -123,7 +155,7 @@ func (s *PlanSection) appendDecision(ident PlanIdentity, decision PlanDecision) 
 // fail closed, so the verb that records a declaration can exit non-zero instead of
 // pretending it was recorded.
 func RecordPlanDecision(loc StoreLocation, ident PlanIdentity, decision PlanDecision) (StoreReport, error) {
-	if ident.CommonDir == "" || ident.Root == "" {
+	if ident.CommonDir == "" || ident.Worktree == "" {
 		return StoreReport{}, fmt.Errorf("%w: the checkout cannot be named", ErrInvalidWrite)
 	}
 	if decision.At == "" || decision.Kind == "" {
@@ -161,14 +193,15 @@ func (l StoreLocation) WithPlanSource(path string, ident PlanIdentity) StoreLoca
 
 // absorbPlanSource seeds the plan section from the checkout's JSONL predecessor: one
 // PlanDecision per event, in file order, into the row of the checkout that owns the
-// file. The row answers when it already holds decisions, and is filled when it exists
-// but is empty, so no event is lost and no superseded decision comes back (L7). An
-// absent predecessor is ordinary absence; a source that exists but cannot be read, or
-// that is not a regular file, is reported and the ledger still answers (L17 MEDIO-3).
+// file. It only reads: the migration of a row inherited from an earlier key is
+// adoptPlanRow's job, one step earlier in Load. The row answers when it already holds
+// decisions, and is filled when it exists but is empty, so no event is lost and no
+// superseded decision comes back. An absent predecessor is ordinary absence; a source
+// that exists but cannot be read, or that is not a regular file, is reported and the
+// ledger still answers.
 func (l StoreLocation) absorbPlanSource(file *LedgerFile, report *StoreReport) {
 	ident := l.Plan.Identity
-	l.rekeyPlanRows(file, ident)
-	if l.Plan.Path == "" || ident.CommonDir == "" || ident.Root == "" {
+	if l.Plan.Path == "" || ident.CommonDir == "" || ident.Worktree == "" {
 		return
 	}
 	// A row that already holds decisions is the answer; only a missing or empty one
@@ -199,7 +232,7 @@ func (l StoreLocation) absorbPlanSource(file *LedgerFile, report *StoreReport) {
 	seeded, unreadable := decodePlanEvents(data)
 	if unreadable > 0 {
 		// The read stays lenient — an interrupted run must not block the ledger — but
-		// a line nobody could read is said out loud instead of swallowed (R1-002).
+		// a line nobody could read is said out loud instead of swallowed.
 		report.LegacyUnreadable = fmt.Errorf("%s: %d line(s) could not be read", l.Plan.Path, unreadable)
 		report.LegacyRows = l.Plan.Path
 	}
@@ -220,39 +253,45 @@ func (l StoreLocation) absorbPlanSource(file *LedgerFile, report *StoreReport) {
 	}
 }
 
-// rekeyPlanRows adopts a row this checkout inherited, and refreshes the branch it
-// carries as data. Three cases, and a row of another live checkout is never touched:
-//   - the same checkout under another branch name: the key already matches, so only
-//     the branch data is refreshed (R1-001);
-//   - the checkout moved: its old root no longer exists, so the row is rekeyed to the
-//     root it answers for now;
-//   - a row written before the key moved to the checkout carries no root, and is
-//     adopted by the checkout whose common dir and branch it names.
-func (l StoreLocation) rekeyPlanRows(file *LedgerFile, ident PlanIdentity) {
-	if ident.CommonDir == "" || ident.Root == "" {
+// adoptPlanRow migrates the row this checkout owns and refreshes the data it carries.
+// It is a step of Load, before the predecessor is absorbed, and it never guesses:
+//   - the row whose stable worktree name matches is this checkout's, so its recorded
+//     root and branch are refreshed — that is what makes a branch rename and a folder
+//     move keep the declaration without any path heuristic;
+//   - a row written before the key became stable carries no worktree name, and is
+//     rekeyed to this checkout only when it is the SINGLE candidate by common dir and
+//     branch. Two candidates adopt nothing, and a row of a deleted worktree keeps its
+//     name, so a checkout that later takes that branch starts clean instead of
+//     inheriting a stranger's end;
+//   - every other row is left alone.
+func adoptPlanRow(file *LedgerFile, ident PlanIdentity) {
+	if ident.CommonDir == "" || ident.Worktree == "" {
 		return
 	}
 	for i := range file.Plan.Items {
 		row := &file.Plan.Items[i]
-		if row.Identity.CommonDir != ident.CommonDir {
-			continue
-		}
-		if row.Identity.Key() == ident.Key() {
+		if row.Identity.CommonDir == ident.CommonDir && row.Identity.Worktree == ident.Worktree {
+			row.Identity.Root = ident.Root
 			row.Identity.Branch = ident.Branch
+			return
+		}
+	}
+	candidate := -1
+	for i, row := range file.Plan.Items {
+		if row.Identity.CommonDir != ident.CommonDir || row.Identity.Worktree != "" {
 			continue
 		}
-		if row.Identity.Root == "" {
-			if row.Identity.Branch == ident.Branch {
-				row.Identity = ident
-			}
+		if row.Identity.Branch != ident.Branch {
 			continue
 		}
-		if info, err := os.Stat(row.Identity.Root); err == nil && info.IsDir() {
-			continue
+		if candidate >= 0 {
+			// Ambiguous: two rows claim this work, so neither is moved.
+			return
 		}
-		if row.Identity.Branch == ident.Branch {
-			row.Identity = ident
-		}
+		candidate = i
+	}
+	if candidate >= 0 {
+		file.Plan.Items[candidate].Identity = ident
 	}
 }
 

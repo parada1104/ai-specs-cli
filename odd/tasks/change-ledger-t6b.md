@@ -301,3 +301,29 @@ the sections the caller owns (`Save(file, SectionWorktree, SectionTracker)`) and
   and the all-section save over a corrupt ledger. Evidence: both Go modules build, vet and
   test clean; `gofmt` clean; `ledger_cleanup_flow.sh` 7/7; the real-store probe PASS again;
   the Python suite rerun before the commit.
+- **L16** — L15 corrected again, per Cody's closing instruction (recorded as his, in the same
+  terms he gave them). **R1-checkout-inheritance**: the path is out of the key. `PlanIdentity`
+  now carries `Worktree`, git's own name for the checkout — `main` for the one that owns the
+  git dir, `worktrees/<name>` for a linked one, taken from `rev-parse --absolute-git-dir` —
+  and `Key()` is the common dir plus that name. `adoptPlanRow` is a step of `Load`, before the
+  predecessor is read, and it never guesses: a row whose worktree name matches is this
+  checkout's (its recorded root and branch are refreshed, which is what makes a branch rename
+  and a folder move keep the declaration with no path heuristic at all); a row written before
+  the key became stable carries no name and is rekeyed only when it is the **single**
+  candidate by common dir and branch, two candidates adopting nothing; a row of a deleted
+  worktree keeps its name, so a checkout that later takes that branch starts clean. The old
+  "its root no longer exists, so it is mine" rule is gone. **R1-predecessor-diagnostic**:
+  `planledger.Workstream` returns the read error instead of swallowing it (`Declared` is
+  gone; one read, one contract), `WriteFacts` carries `DeclaredErr`, and the verdict names
+  the ledger — «the workstream declaration was not read: the plan ledger could not be loaded
+  (…), so this worktree is graded on its artifacts alone» — instead of demanding a plan with
+  no visible cause. **Cheap findings**: `absorbPlanSource` is read-only again with the migration
+  named as `adoptPlanRow`'s own step (R2-001); `EventWorkstream`/`EventWorkstreamEnd` alias the
+  ledger's kinds and `Event` loses its dead JSON tags (R2-002); the comments cite this plan's
+  Log instead of review labels that only resolve in an external file (R2-003). R3-001 — the
+  CLI discarding the load report — stays with T7, where the plan makes the notes surface.
+  Tests added: the deleted worktree plus a newcomer on the same branch, the moved checkout by
+  its stable name, the legacy row adopted only when unique (and left alone when ambiguous),
+  and the gate naming an unreadable ledger. Evidence: `gofmt` clean; both Go modules build,
+  vet and test clean; `ledger_cleanup_flow.sh` 7/7; the real-store probe PASS; the Python
+  suite rerun before the commit.

@@ -267,7 +267,7 @@ func runChangesWorkstream(args []string, stdout, stderr io.Writer) int {
 
 	if request.end || request.reasonSet {
 		if request.end {
-			declared, _, err := planledger.Declared(root)
+			declared, _, err := planledger.Workstream(root)
 			if err != nil {
 				where := planledger.Store(root)
 				if where == "" {

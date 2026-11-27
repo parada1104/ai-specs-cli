@@ -19,16 +19,18 @@ const Path = ".ai-specs/plan-ledger.jsonl"
 
 // The two events this port records. A reader that meets a kind it does not know
 // skips it, so a later unit can add its own.
+// They are the ledger's own kinds, aliased so the verb and the fold can never drift
+// apart; a later unit adds its kinds there and inherits them here.
 const (
-	EventWorkstream    = "workstream"
-	EventWorkstreamEnd = "workstream-end"
+	EventWorkstream    = ledger.PlanKindWorkstream
+	EventWorkstreamEnd = ledger.PlanKindWorkstreamEnd
 )
 
-// Event is one plan-flow decision as the verb's caller names it.
+// Event is one plan-flow decision as this package's verbs name it.
 type Event struct {
-	Event  string `json:"event"`
-	At     string `json:"at"`
-	Reason string `json:"reason,omitempty"`
+	Event  string
+	At     string
+	Reason string
 }
 
 // File is the predecessor's absolute path for a repository root.
@@ -76,10 +78,12 @@ func Append(root string, event Event) error {
 	return err
 }
 
-// Declared is the standing declaration, plus why the ledger could not answer: a verb
-// that records a decision must be able to refuse instead of claiming there is
-// nothing to end.
-func Declared(root string) (declared bool, reason string, err error) {
+// Workstream is the standing declaration, and why the ledger could not answer it. The
+// error is never swallowed: a verb that records a decision must refuse instead of
+// claiming there is nothing to end, and the write gate turns it into a note naming the
+// file, because a corrupt shared ledger would otherwise look like "this worktree is a
+// change" in every worktree of the clone.
+func Workstream(root string) (declared bool, reason string, err error) {
 	loc, ident, err := work(root)
 	if err != nil {
 		return false, "", err
@@ -90,15 +94,4 @@ func Declared(root string) (declared bool, reason string, err error) {
 	}
 	declared, reason = file.Plan.Workstream(ident.Key())
 	return declared, reason, nil
-}
-
-// Workstream is the facts contract the write gate reads: a ledger that cannot be read
-// declares nothing, exactly as a missing line file did, so the gate keeps grading the
-// facts instead of failing open on a corrupt file it would have to guess about.
-func Workstream(root string) (declared bool, reason string) {
-	declared, reason, err := Declared(root)
-	if err != nil {
-		return false, ""
-	}
-	return declared, reason
 }

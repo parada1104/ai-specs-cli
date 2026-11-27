@@ -31,7 +31,7 @@ func newPlanFixture(t *testing.T) planFixture {
 		t.Fatal(err)
 	}
 	common := filepath.Join(dir, ".git")
-	ident := ledger.PlanIdentity{CommonDir: common, Root: root, Branch: "feat-plan"}
+	ident := ledger.PlanIdentity{CommonDir: common, Worktree: "worktrees/fixture", Root: root, Branch: "feat-plan"}
 	source := filepath.Join(dir, ".ai-specs", "plan-ledger.jsonl")
 	return planFixture{
 		location: ledger.LedgerAt(common).WithPlanSource(source, ident),
@@ -248,13 +248,14 @@ func TestPlanSectionSeedsOnlyTheOwningCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	sibling := ledger.PlanIdentity{CommonDir: fixture.ident.CommonDir, Root: t.TempDir(), Branch: "feat-sibling"}
+	sibling := ledger.PlanIdentity{CommonDir: fixture.ident.CommonDir, Worktree: "worktrees/sibling",
+		Root: t.TempDir(), Branch: "feat-sibling"}
 	if declared, _ := file.Plan.Workstream(sibling.Key()); declared {
 		t.Fatal("a sibling checkout inherited the declaration")
 	}
 }
 
-// TestBranchRenameKeepsTheDeclarationEnded is R1-001: the row is keyed by the
+// TestBranchRenameKeepsTheDeclarationEnded pins the checkout key: the row is keyed by the
 // checkout, so a renamed branch neither loses the end nor resurrects the declaration,
 // and the branch travels as data so a report can still name it.
 func TestBranchRenameKeepsTheDeclarationEnded(t *testing.T) {
@@ -283,9 +284,9 @@ func TestBranchRenameKeepsTheDeclarationEnded(t *testing.T) {
 	}
 }
 
-// TestMovedCheckoutCarriesItsDeclaration is the other half of R1-001: a checkout whose
-// folder moved carries its end, because the row whose root no longer exists cannot
-// answer for anything, while a live sibling checkout is never adopted.
+// TestMovedCheckoutCarriesItsDeclaration: the row is keyed by git's own name for the
+// checkout, so moving the folder keeps the declaration and only the recorded path
+// changes.
 func TestMovedCheckoutCarriesItsDeclaration(t *testing.T) {
 	fixture := newPlanFixture(t)
 	fixture.recordPlan(t, ledger.PlanKindWorkstream, "2026-11-27T11:00:00Z")
@@ -298,7 +299,8 @@ func TestMovedCheckoutCarriesItsDeclaration(t *testing.T) {
 	if err := os.RemoveAll(fixture.root); err != nil {
 		t.Fatal(err)
 	}
-	relocated := ledger.PlanIdentity{CommonDir: fixture.ident.CommonDir, Root: moved, Branch: fixture.ident.Branch}
+	relocated := fixture.ident
+	relocated.Root = moved
 	file, _, err := fixture.withIdent(t, relocated).Load()
 	if err != nil {
 		t.Fatalf("Load after moving the checkout: %v", err)
@@ -306,24 +308,100 @@ func TestMovedCheckoutCarriesItsDeclaration(t *testing.T) {
 	if declared, reason := file.Plan.Workstream(relocated.Key()); declared || reason != "" {
 		t.Fatalf("Workstream() = %v, %q; a moved checkout must carry its end", declared, reason)
 	}
-
-	// A sibling checkout whose root still exists is not adopted, even on the same
-	// branch: it has its own declaration to answer for.
-	live := filepath.Join(t.TempDir(), "checkout-live")
-	if err := os.MkdirAll(live, 0o755); err != nil {
-		t.Fatal(err)
+	if len(file.Plan.Items) != 1 {
+		t.Fatalf("plan rows = %d, want the one row", len(file.Plan.Items))
 	}
-	sibling := ledger.PlanIdentity{CommonDir: fixture.ident.CommonDir, Root: live, Branch: fixture.ident.Branch}
-	file, _, err = fixture.withIdent(t, sibling).Load()
-	if err != nil {
-		t.Fatalf("Load for the live sibling: %v", err)
-	}
-	if declared, _ := file.Plan.Workstream(sibling.Key()); declared {
-		t.Fatal("a live sibling checkout took a row that belongs to another checkout")
+	if file.Plan.Items[0].Identity.Root != moved {
+		t.Fatalf("stored root = %q, want %q", file.Plan.Items[0].Identity.Root, moved)
 	}
 }
 
-// TestEmptyPlanRowIsFilledNotDuplicated is V-3: a row that exists with no decisions is
+// TestDeletedWorktreeIsNotInheritedByAnotherCheckout: a row belongs to the checkout
+// that wrote it. Once that worktree is gone, another checkout on the same branch starts
+// clean instead of inheriting a stranger's declaration or its end.
+func TestDeletedWorktreeIsNotInheritedByAnotherCheckout(t *testing.T) {
+	fixture := newPlanFixture(t)
+	fixture.recordPlan(t, ledger.PlanKindWorkstream, "2026-11-27T11:00:00Z")
+	fixture.recordPlan(t, ledger.PlanKindWorkstreamEnd, "2026-11-27T12:00:00Z")
+
+	// The worktree that wrote the row disappears; its folder goes with it.
+	if err := os.RemoveAll(fixture.root); err != nil {
+		t.Fatal(err)
+	}
+	newcomerRoot := filepath.Join(t.TempDir(), "checkout-newcomer")
+	if err := os.MkdirAll(newcomerRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	newcomer := ledger.PlanIdentity{
+		CommonDir: fixture.ident.CommonDir, Worktree: "worktrees/newcomer",
+		Root: newcomerRoot, Branch: fixture.ident.Branch,
+	}
+	file, _, err := fixture.withIdent(t, newcomer).Load()
+	if err != nil {
+		t.Fatalf("Load for the newcomer: %v", err)
+	}
+	if declared, reason := file.Plan.Workstream(newcomer.Key()); declared || reason != "" {
+		t.Fatalf("Workstream() = %v, %q; a newcomer inherited the deleted worktree's row", declared, reason)
+	}
+	if len(file.Plan.Items) != 1 {
+		t.Fatalf("plan rows = %d, want the deleted worktree's row left alone", len(file.Plan.Items))
+	}
+}
+
+// TestLegacyRowIsAdoptedOnlyWhenItIsTheOnlyCandidate: a row written before the key
+// became stable carries no worktree name and is migrated to this checkout only when it
+// is the single candidate by common dir and branch. Two candidates adopt nothing,
+// because a guess here would put one worktree's declaration in another.
+func TestLegacyRowIsAdoptedOnlyWhenItIsTheOnlyCandidate(t *testing.T) {
+	fixture := newPlanFixture(t)
+	legacy := ledger.PlanIdentity{CommonDir: fixture.ident.CommonDir, Root: fixture.root, Branch: fixture.ident.Branch}
+	seed := ledger.EmptyLedger()
+	seed.Plan.Items = append(seed.Plan.Items, ledger.PlanItem{
+		Identity:  legacy,
+		Decisions: []ledger.PlanDecision{{At: "2026-11-27T11:00:00Z", Kind: ledger.PlanKindWorkstreamEnd}},
+	})
+	if _, err := fixture.location.Save(seed, ledger.SectionWorktree, ledger.SectionTracker, ledger.SectionPlan); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	file, _, err := fixture.location.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(file.Plan.Items) != 1 || file.Plan.Items[0].Identity.Key() != fixture.ident.Key() {
+		t.Fatalf("rows = %+v, want the single legacy row adopted by this checkout", file.Plan.Items)
+	}
+	if declared, _ := file.Plan.Workstream(fixture.ident.Key()); declared {
+		t.Fatal("the adopted end did not answer")
+	}
+
+	// Two legacy rows for the same work: neither is moved, and this checkout starts clean.
+	ambiguous := newPlanFixture(t)
+	seed = ledger.EmptyLedger()
+	for _, root := range []string{filepath.Join(t.TempDir(), "one"), filepath.Join(t.TempDir(), "two")} {
+		seed.Plan.Items = append(seed.Plan.Items, ledger.PlanItem{
+			Identity:  ledger.PlanIdentity{CommonDir: ambiguous.ident.CommonDir, Root: root, Branch: ambiguous.ident.Branch},
+			Decisions: []ledger.PlanDecision{{At: "2026-11-27T11:00:00Z", Kind: ledger.PlanKindWorkstream}},
+		})
+	}
+	if _, err := ambiguous.location.Save(seed, ledger.SectionWorktree, ledger.SectionTracker, ledger.SectionPlan); err != nil {
+		t.Fatalf("seed ambiguous: %v", err)
+	}
+	file, _, err = ambiguous.location.Load()
+	if err != nil {
+		t.Fatalf("Load ambiguous: %v", err)
+	}
+	if declared, _ := file.Plan.Workstream(ambiguous.ident.Key()); declared {
+		t.Fatal("an ambiguous legacy row was adopted")
+	}
+	for _, row := range file.Plan.Items {
+		if row.Identity.Worktree != "" {
+			t.Fatalf("row %+v was rekeyed despite an ambiguous candidate", row.Identity)
+		}
+	}
+}
+
+// TestEmptyPlanRowIsFilledNotDuplicated pins the single-row rule: a row that exists with no decisions is
 // still the answer, so the predecessor fills it instead of adding a second row whose
 // stale reason would win the fold.
 func TestEmptyPlanRowIsFilledNotDuplicated(t *testing.T) {
@@ -352,7 +430,7 @@ func TestEmptyPlanRowIsFilledNotDuplicated(t *testing.T) {
 	}
 }
 
-// TestAbsentPredecessorIsNotReported is R3-001: a checkout that never had a
+// TestAbsentPredecessorIsNotReported pins ordinary absence: a checkout that never had a
 // predecessor is ordinary absence, not an unreadable source, and it never overwrites
 // another source's diagnostic.
 func TestAbsentPredecessorIsNotReported(t *testing.T) {
@@ -397,7 +475,7 @@ func TestUnreadablePlanSourceIsReportedNotFatal(t *testing.T) {
 	}
 }
 
-// TestPlanDecisionReportsUnreadableLines is R1-002: the read stays lenient, so an
+// TestPlanDecisionReportsUnreadableLines pins the report: the read stays lenient, so an
 // interrupted run never blocks the ledger, but a line nobody could read is reported.
 // An event without a timestamp is still an event: the predecessor's own reader always
 // honoured it, so dropping it would lose a real end.
@@ -523,7 +601,7 @@ func TestSaveCannotWriteASectionItDoesNotOwn(t *testing.T) {
 	}
 }
 
-// TestTrackerWriteKeepsTheAbsorbedPlanRow is V-1: Save reports the rows it absorbed on
+// TestTrackerWriteKeepsTheAbsorbedPlanRow pins the absorbed-row promise: Save reports the rows it absorbed on
 // read as part of the answer, so a write by another capability must persist them
 // instead of dropping what the report promised to carry.
 func TestTrackerWriteKeepsTheAbsorbedPlanRow(t *testing.T) {
@@ -551,7 +629,7 @@ func TestTrackerWriteKeepsTheAbsorbedPlanRow(t *testing.T) {
 	}
 }
 
-// TestAllSectionSaveStillFailsClosedOnACorruptLedger is V-2: naming every section does
+// TestAllSectionSaveStillFailsClosedOnACorruptLedger pins the read-then-write contract: naming every section does
 // not buy a bypass, so the corruption contract holds for every caller and not only for
 // the production writers, which happen to load first.
 func TestAllSectionSaveStillFailsClosedOnACorruptLedger(t *testing.T) {
