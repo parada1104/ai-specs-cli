@@ -6,8 +6,8 @@
 # detection; recipe/skill content hashes are not tracked.
 
 [meta]
-cli_version = "0.28.0"
-synced_at = "2026-11-27T04:17:42Z"
+cli_version = "0.29.0"
+synced_at = "2026-11-27T18:07:04Z"
 
 [managed.".claude/commands/pr-create.md"]
 sha256 = "709a703204ad4437a24f7f5a4bc9ca47e2101ca6e6f081c9c96916813dda963d"
@@ -20,7 +20,7 @@ recipe = "tdd-flow"
 kind = "recipe-command"
 
 [managed.".claude/commands/trello-workflow.md"]
-sha256 = "ba345a9b881c4d8c9076e31cf368abc9e04ee5902c42733047afae54529d6f85"
+sha256 = "f07f5a7b2b5311f207b8c23a7874a4f4b4150aa37a1e30529a8c1f8339da0de2"
 recipe = "trello-mcp-workflow"
 kind = "recipe-command"
 
@@ -45,7 +45,7 @@ recipe = "tdd-flow"
 kind = "recipe-command"
 
 [managed.".cursor/commands/trello-workflow.md"]
-sha256 = "ba345a9b881c4d8c9076e31cf368abc9e04ee5902c42733047afae54529d6f85"
+sha256 = "f07f5a7b2b5311f207b8c23a7874a4f4b4150aa37a1e30529a8c1f8339da0de2"
 recipe = "trello-mcp-workflow"
 kind = "recipe-command"
 
@@ -70,7 +70,7 @@ recipe = "tdd-flow"
 kind = "recipe-command"
 
 [managed.".omp/commands/trello-workflow.md"]
-sha256 = "ba345a9b881c4d8c9076e31cf368abc9e04ee5902c42733047afae54529d6f85"
+sha256 = "f07f5a7b2b5311f207b8c23a7874a4f4b4150aa37a1e30529a8c1f8339da0de2"
 recipe = "trello-mcp-workflow"
 kind = "recipe-command"
 
@@ -95,7 +95,7 @@ recipe = "tdd-flow"
 kind = "recipe-command"
 
 [managed.".opencode/commands/trello-workflow.md"]
-sha256 = "ba345a9b881c4d8c9076e31cf368abc9e04ee5902c42733047afae54529d6f85"
+sha256 = "f07f5a7b2b5311f207b8c23a7874a4f4b4150aa37a1e30529a8c1f8339da0de2"
 recipe = "trello-mcp-workflow"
 kind = "recipe-command"
 
