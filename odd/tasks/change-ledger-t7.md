@@ -247,3 +247,16 @@ the immediate predecessor and must be read before touching the ledger.
   3. Tracker: `not-applicable` only when no tracker recipe is enabled; with a recipe and
      no row it reports the real state (`no item bound`, card none); what to do about
      it is T9's.
+- **L9** — Evidence for L7/L8 at `86b4dcbd`. Real flow (`flow.sh`, `flow2.log`):
+  `integration` on `main`, workstream, read-only, an `internal/`-only change `open`,
+  `not-applicable (no tracker recipe enabled)`, planned, merged, cleaned, exit 3 twice,
+  RED base `unknown subcommand 'status'`; RED for L7-1 with the base binary: `changes
+  workstream` calls the `internal/`-only change a workstream, the branch calls it a
+  change — `FLOW OK`. This repo: `planned`, `internal/` and `cmd/` in the divergence,
+  `tracker: no item bound, card: none`. Suites (`validate2.log`): gofmt clean, root vet
+  clean, root tests fail only in the three stale differential oracles, gate module
+  clean, `ledger_cleanup_flow.sh` 7/7, Python 1934 tests with only the pre-existing
+  `test_skill_never_recommends_delete_branch`. Reservations added: `product_exclude` is
+  not declared in `recipe.toml` (the schema oracle models scalars only); the retired
+  shell host ignores `product_exclude`; `changes workstream` does not print scope
+  notes; the canonical spec text still names the folder list (T11 promotion).
