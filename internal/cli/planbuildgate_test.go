@@ -282,14 +282,14 @@ func planBuildCommonDir(t *testing.T, repo string) string {
 // planBuildOddSpecsRefusal is R1's message for a hand write to the canonical
 // spec tree, rendered as the gate prints it.
 func planBuildOddSpecsRefusal(tool, rel, change string) string {
-	return "plan-build-gate: refusing to " + tool + " '" + rel + "' — " +
+	return "plan-build-gate: refusing to " + tool + " '" + rel + "' — R1: " +
 		gates.CanonicalSpecRefusal(planbuild.ModeOdd, change, rel) + "\n"
 }
 
 // planBuildOddSpecsBranchRefusal is R1's message when HEAD is detached, so no
 // change can be paired.
 func planBuildOddSpecsBranchRefusal(tool, rel string) string {
-	return "plan-build-gate: refusing to " + tool + " '" + rel + "' — " +
+	return "plan-build-gate: refusing to " + tool + " '" + rel + "' — R1: " +
 		gates.CanonicalSpecRefusal(planbuild.ModeOdd, "", rel) + "\n"
 }
 

@@ -38,7 +38,6 @@ import (
 	"ai-specs.dev/ai-specs/internal/gates"
 	"ai-specs.dev/ai-specs/internal/hook"
 	"ai-specs.dev/ai-specs/internal/planbuild"
-	"ai-specs.dev/ai-specs/internal/tier"
 	"ai-specs.dev/worktree-gate/runner"
 	shared "ai-specs.dev/worktree-gate/shared"
 )
@@ -47,9 +46,8 @@ const (
 	// planBuildGateName is the program label of every message. The verb replaced
 	// the script of the same name, so the prefix is unchanged.
 	planBuildGateName = "plan-build-gate"
-	// planBuildGateProdDirsEnv overrides the graded production directories.
-	planBuildGateProdDirsEnv = gates.ProductDirsEnv
-	// planBuildGateDefaultProdDirs is the default of that env.
+	// planBuildGateDefaultProdDirs is the graded production scope the help text
+	// names; the predicate itself lives with the facts that read it.
 	planBuildGateDefaultProdDirs = gates.ProductDirs
 	// planBuildGateCheckpoint is the checkpoint this host grades.
 	planBuildGateCheckpoint = "work-start"
@@ -130,138 +128,57 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 	rel := planBuildGateRel(repoRoot, abs)
 	// The execution mode is resolved once.
 	mode := planbuild.Resolve(repoRoot, planBuildGateCommonDir(target.Probe))
-	// Gitignored agent configuration is machine setup, never a production change.
-	if planBuildGateAgentConfig(rel) {
-		return 0
-	}
-	// Artifact writes are unconditional at the nearest repository root.
-	if planBuildGateUnder(filepath.Join(repoRoot, "openspec", "changes"), abs) {
-		return 0
-	}
-	// The canonical spec tree is the one protected path in either mode: promotion
-	// is its only writer, so a hand write there is R1.
-	if planBuildGateUnder(planbuild.SpecsBase(repoRoot, mode), abs) {
-		tool := target.Tool
-		if tool == "" {
-			tool = "edit"
-		}
-		return planBuildGateCanonicalSpec(repoRoot, target.Probe, mode, tool, rel, explain, stderr)
-	}
-	if mode == planbuild.ModeOdd && planBuildGateUnder(filepath.Join(repoRoot, "odd"), abs) {
+	// Machine configuration and planning artifacts are never graded; the canonical
+	// spec tree always is, before the odd-tree exemption below.
+	if planBuildGateAgentConfig(rel) || !planBuildGateGraded(repoRoot, mode, abs) {
 		return 0
 	}
 	change := ""
 	if name, ok := planbuild.ChangeFromBranch(planbuild.Branch(target.Probe)); ok {
 		change = name
 	}
-	// S16: a worktree with no plan, no delta and no product-path divergence is not a
-	// change, so its diff owes no refutation; R2 still grades the pending target.
+	// One fact collection per write. Work-start fires before the first production
+	// write, whether or not a change folder exists.
+	facts := gates.WriteFactsFor(repoRoot, mode, change, rel)
+	if facts.Production && !planBuildGateGradeLedger(repoRoot, stderr) {
+		return 2
+	}
+	// The refusal and --explain are one verdict: no path prints one and skips the
+	// other, and no rule decides its own applicability.
+	verdict := facts.Verdict()
 	tool := target.Tool
 	if tool == "" {
 		tool = "edit"
 	}
-	// Work-start fires before the first non-read-only production write, whether
-	// or not a change folder exists.
-	if planBuildGateProduction(rel) && !planBuildGateGradeLedger(repoRoot, stderr) {
-		return 2
-	}
-	// The tier is inferred, never required: no plan, declaration or authorization
-	// is a precondition, and only a proven refutation refuses.
-	blockers := gates.WriteRefutations(repoRoot, mode, change, rel,
-		planBuildGateWorkstream(repoRoot, mode, change))
 	if explain {
-		fmt.Fprintf(stderr, "%s: tier %s; refutations %s\n", planBuildGateName,
-			planBuildGateInferredTier(repoRoot, mode, change), planBuildGateRules(blockers))
+		fmt.Fprintf(stderr, "%s: tier %s; refutations %s\n", planBuildGateName, verdict.Tier, verdict.Rules())
 	}
-	for _, blocker := range blockers {
+	for _, blocker := range verdict.Blockers {
 		fmt.Fprintf(stderr, "%s: refusing to %s '%s' — %s\n", planBuildGateName, tool, rel, blocker)
 	}
-	if len(blockers) > 0 {
+	if !verdict.Allowed() {
 		return 2
 	}
 	return 0
 }
 
-// planBuildGateWorkstream reports a worktree that is not a change at all: no plan,
-// no delta and no product-path divergence from the integration base (S16). A change
-// is conservative — any product-path divergence is enough — and an unresolvable
-// base is graded rather than exempted.
-func planBuildGateWorkstream(repoRoot, mode, change string) bool {
-	if change == "" || planbuild.HasDelta(repoRoot, mode, change) {
+// planBuildGateGraded reports whether the write is graded at all. Planning
+// artifacts are never graded; the canonical spec tree always is, in either mode,
+// because promotion is its only writer.
+func planBuildGateGraded(repoRoot, mode, abs string) bool {
+	if planBuildGateUnder(planbuild.SpecsBase(repoRoot, mode), abs) {
+		return true
+	}
+	if planBuildGateUnder(filepath.Join(repoRoot, "openspec", "changes"), abs) {
 		return false
 	}
-	if info, err := os.Stat(planbuild.TasksPath(repoRoot, mode, change)); err == nil && !info.IsDir() {
-		return false
-	}
-	entries, ok := planbuild.DiffEntries(repoRoot, gates.BaseRef(repoRoot, nil))
-	if !ok {
-		return false
-	}
-	for _, entry := range entries {
-		if planBuildGateProduction(entry.Path) {
-			return false
-		}
-	}
-	return true
-}
-
-// planBuildGateInferredTier derives the change tier from the artifacts the
-// change carries, through the one derivation both gates share.
-func planBuildGateInferredTier(repoRoot, mode, change string) string {
-	if change == "" {
-		return tier.None
-	}
-	return tier.Derive(
-		planbuild.PlanIsValidForMode(repoRoot, mode, change),
-		planbuild.HasDelta(repoRoot, mode, change))
-}
-
-// planBuildGateRules names the rules that fired, for --explain.
-func planBuildGateRules(blockers []string) string {
-	if len(blockers) == 0 {
-		return "none"
-	}
-	rules := make([]string, 0, len(blockers))
-	for _, blocker := range blockers {
-		rule, _, _ := strings.Cut(blocker, ":")
-		rules = append(rules, rule)
-	}
-	return strings.Join(rules, ", ")
+	return !(mode == planbuild.ModeOdd && planBuildGateUnder(filepath.Join(repoRoot, "odd"), abs))
 }
 
 // planBuildGateCommonDir resolves git's common directory against the probe
 // directory, through the one helper the promoter shares.
 func planBuildGateCommonDir(probeDir string) string {
 	return planbuild.CommonDir(probeDir)
-}
-
-// planBuildGateCanonicalSpec grades a write to the canonical spec tree: a hand
-// write there is a promotion bypass (R1), so it passes only when the branch
-// pairs a change whose delta promotion would promote. A passing canonical write
-// still owes the --explain report.
-func planBuildGateCanonicalSpec(repoRoot, probeDir, mode, tool, rel string, explain bool, stderr io.Writer) int {
-	change := ""
-	if name, ok := planbuild.ChangeFromBranch(planbuild.Branch(probeDir)); ok {
-		if planbuild.HasDelta(repoRoot, mode, name) {
-			// A delta answers R1, never R2: the pending target is still graded.
-			blockers := gates.HighRiskRefutation(repoRoot, mode, name, rel)
-			if explain {
-				fmt.Fprintf(stderr, "%s: tier %s; refutations %s\n", planBuildGateName,
-					planBuildGateInferredTier(repoRoot, mode, name), planBuildGateRules(blockers))
-			}
-			for _, blocker := range blockers {
-				fmt.Fprintf(stderr, "%s: refusing to %s '%s' — %s\n", planBuildGateName, tool, rel, blocker)
-			}
-			if len(blockers) > 0 {
-				return 2
-			}
-			return 0
-		}
-		change = name
-	}
-	fmt.Fprintf(stderr, "%s: refusing to %s '%s' — %s\n", planBuildGateName, tool, rel,
-		gates.CanonicalSpecRefusal(mode, change, rel))
-	return 2
 }
 
 // planBuildGateUnder reports whether path is container or below it. Component
@@ -298,23 +215,6 @@ func planBuildGateAgentConfig(rel string) bool {
 			if matched, err := filepath.Match("settings*.json", next); err == nil && matched {
 				return true
 			}
-		}
-	}
-	return false
-}
-
-// planBuildGateProduction reports whether the first segment of rel is one of the
-// configured production directories.
-func planBuildGateProduction(rel string) bool {
-	dirs := os.Getenv(planBuildGateProdDirsEnv)
-	// `${prod_dirs// /}`: only spaces make the value blank.
-	if strings.ReplaceAll(dirs, " ", "") == "" {
-		dirs = planBuildGateDefaultProdDirs
-	}
-	first, _, _ := strings.Cut(rel, "/")
-	for _, dir := range strings.Fields(dirs) {
-		if first == dir {
-			return true
 		}
 	}
 	return false

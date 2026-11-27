@@ -169,18 +169,19 @@ func HighRiskRefutation(repoRoot, mode, change, target string) []string {
 
 // CanonicalSpecRefusal is R1's message body for a hand write to a canonical
 // spec, naming the missing delta and the promotion exit. change is empty when
-// no branch can be paired.
+// no branch can be paired. The rule id is carried by the Refutation, not by the
+// text, so `--explain` and the refusal cannot disagree about it.
 func CanonicalSpecRefusal(mode, change, specPath string) string {
 	changes := "openspec/changes/"
 	if mode == planbuild.ModeOdd {
 		changes = "odd/changes/"
 	}
 	if change == "" {
-		return fmt.Sprintf("R1: `%s` is written by promotion, not by hand, and the current branch "+
+		return fmt.Sprintf("`%s` is written by promotion, not by hand, and the current branch "+
 			"cannot be resolved (detached HEAD), so no delta can back it. Run the write from the "+
 			"change's branch, or promote the delta instead of editing the canonical tree.", specPath)
 	}
-	return fmt.Sprintf("R1: `%s` is written by promotion, not by hand, and the change `%s` carries "+
+	return fmt.Sprintf("`%s` is written by promotion, not by hand, and the change `%s` carries "+
 		"no delta under `%s%s/specs/`. Write the delta there and run `ai-specs specs promote`, or "+
 		"promote from the change folder that owns the rule. Writing under `%s` is never blocked.",
 		specPath, change, changes, change, changes)

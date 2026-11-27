@@ -486,10 +486,10 @@ func TestWriteRefutationsGradeThePendingHighRiskTarget(t *testing.T) {
 		"ai-specs/ai-specs.toml": "[recipes.plan-build-flow.config]\nmode = \"odd\"\n" +
 			"high_risk_paths = [\"src/**\"]\n",
 	})
-	blockers := WriteRefutations(root, planbuild.ModeOdd, "thing", "src/app.go", false)
-	if len(blockers) != 1 || !strings.HasPrefix(blockers[0], "R2:") ||
-		!strings.Contains(blockers[0], "src/app.go") {
-		t.Fatalf("WriteRefutations = %q, want one R2 blocker naming the pending path", blockers)
+	blockers := WriteFactsFor(root, planbuild.ModeOdd, "thing", "src/app.go").Verdict().Blockers
+	if len(blockers) != 1 || blockers[0].Rule != "R2" ||
+		!strings.Contains(blockers[0].Message, "src/app.go") {
+		t.Fatalf("Blockers = %q, want one R2 blocker naming the pending path", blockers)
 	}
 }
 
@@ -511,14 +511,18 @@ func TestCheckPrearchiveBlocksACanonicalSpecEditWithoutADelta(t *testing.T) {
 }
 
 // R2 is graded even in a workstream: a declared high-risk path owes its evidence
-// whatever S16 exempts.
+// whatever S16 exempts, and the fact layer is what says the worktree is one.
 func TestWriteRefutationsGradeAHighRiskTargetInAWorkstream(t *testing.T) {
 	root := writeRepo(t, map[string]string{
 		"ai-specs/ai-specs.toml": "[recipes.plan-build-flow.config]\nmode = \"odd\"\n" +
 			"high_risk_paths = [\"docs/**\"]\n",
 	})
-	blockers := WriteRefutations(root, planbuild.ModeOdd, "thing", "docs/deploy.md", true)
-	if len(blockers) != 1 || !strings.HasPrefix(blockers[0], "R2:") {
-		t.Fatalf("WriteRefutations = %q, want one R2 blocker for the workstream target", blockers)
+	facts := WriteFactsFor(root, planbuild.ModeOdd, "thing", "docs/deploy.md")
+	if !facts.Workstream {
+		t.Fatalf("Facts = %+v, want the fixture to be a workstream", facts)
+	}
+	blockers := facts.Verdict().Blockers
+	if len(blockers) != 1 || blockers[0].Rule != "R2" {
+		t.Fatalf("Blockers = %q, want one R2 blocker for the workstream target", blockers)
 	}
 }

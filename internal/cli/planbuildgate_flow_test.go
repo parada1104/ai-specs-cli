@@ -163,6 +163,25 @@ func TestPlanBuildGateWriteFlow(t *testing.T) {
 	})
 }
 
+// S2: the refusal and `--explain` come from one verdict, so a refused write still
+// reports the tier and the rule the refusal names. Today the canonical-spec path
+// refuses before the explain line is reached.
+func TestPlanBuildGateExplainsARefusedWrite(t *testing.T) {
+	bin, _ := smokeSetup(t)
+	repo := flowRepo(t, "odd", nil)
+	stdout, stderr, code := flowRun(t, bin, repo, flowEvent(repo, "odd/specs/cap/spec.md"),
+		"plan-build-gate", "--explain")
+	if code != 2 || stdout != "" {
+		t.Fatalf("gate = (%d, %q), want exit 2", code, stdout)
+	}
+	if !strings.Contains(stderr, "plan-build-gate: tier none; refutations R1\n") {
+		t.Fatalf("stderr = %q, want the tier and the rule the refusal names", stderr)
+	}
+	if !strings.Contains(stderr, "R1:") {
+		t.Fatalf("stderr = %q, want the refusal", stderr)
+	}
+}
+
 // S16: an inherited canonical-spec edit in a worktree with no plan, no delta and
 // no product divergence is not a change, so the next ordinary write is allowed.
 func TestPlanBuildGateDoesNotGradeAWorkstreamWithACanonicalSpecEdit(t *testing.T) {
