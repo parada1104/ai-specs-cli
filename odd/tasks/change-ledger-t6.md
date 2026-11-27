@@ -470,3 +470,15 @@ plan, design and audit live in `odd/tasks/change-ledger-v2.md` and
   fixed, because T5 has no release. Confirmado asimismo por el revisor: upgrade desde T5,
   Python 49/49, backup imposible que falla cerrado, backup fresco numerado, `tracker.json`
   corrupto que no inutiliza el ledger, y solo-v1 con 0 diferencias.
+- **L20** — L19 closed. `mergeLegacyMissing` merges the predecessor's scoped opt-outs by
+  `optOutKey`, so the most common upgrade keeps answering `allow/opt-out` and its first
+  write persists the decision; the unreadable-file note names the source that failed; and
+  a close 0.28.0 wrote into v1 after T5 copied the row is merged and made terminal (safe
+  because a close is terminal and nothing reopens a row, D17). Parent-verified: gate 404
+  tests, root clean, `internal/cli` green, `ledger_cleanup_flow.sh` 7/7, `gofmt` and
+  `-race` clean, full Python at 1933/1/1/2 identical to the base with the pre-existing
+  failure confirmed by running it alone, and a parent-run probe over a copy of the real
+  store carrying a v1 lifecycle opt-out and no `tracker.json`: covered before the write,
+  the write applies, the v2 tracker section persists one opt-out, still covered after
+  reload. Left open by instruction: MEDIO-1 (0.28.0 cannot read v2 — Robert's decision)
+  and the unbounded numbered predecessor backups while an older binary keeps writing.
