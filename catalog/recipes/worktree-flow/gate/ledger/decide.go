@@ -83,8 +83,9 @@ func PersistDecision(locs Ledgers, key string, req DecisionRequest, now time.Tim
 				Key: key, Checkpoint: persisted.Checkpoint, Scope: persisted.Scope,
 				Choice: persisted.Choice, At: persisted.At,
 			})
-			_, saveErr := locs.Tracker.Save(view.Tracker)
-			return saveErr
+			// The pair save lands any close this write would otherwise drop first
+			// (L11), and restores both files if it fails (L12.1).
+			return locs.save(view, ledgerDirty{tracker: true})
 		}
 		if err != nil {
 			return err
@@ -98,8 +99,7 @@ func PersistDecision(locs Ledgers, key string, req DecisionRequest, now time.Tim
 			// exemption (DW1): file removal never revokes the store record.
 			clearExemption(&view.Tracker, item.ID)
 		}
-		_, saveErr := locs.Tracker.Save(view.Tracker)
-		return saveErr
+		return locs.save(view, ledgerDirty{tracker: true})
 	})
 	if err != nil {
 		return Decision{}, err

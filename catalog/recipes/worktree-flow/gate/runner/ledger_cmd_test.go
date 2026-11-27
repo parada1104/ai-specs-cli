@@ -482,6 +482,50 @@ func TestLedgerIdentityUnavailableModes(t *testing.T) {
 	}
 }
 
+// TestLedgerCloseStdoutKeepsTheCloseInTheDecisionHistory pins L12.2: the reported
+// item carries the tracker's decisions plus the worktree row's close, in stored
+// order, and a bare close leaves the tracker ledger untouched because no snapshot
+// changed.
+func TestLedgerCloseStdoutKeepsTheCloseInTheDecisionHistory(t *testing.T) {
+	dir, common, branch := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+	storePath := saveLedgerStore(t, common, branch, "card-1", nil)
+	trackerBefore := ledger.LedgersAtStore(storePath)
+	before, err := os.ReadFile(trackerBefore.Tracker.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base := []string{"--ledger", "--checkpoint", "archive-close", "--ledger-mode", "always", "--project-root", dir}
+	code, stdout, stderr := ledgerWriteRun(t, base, `{"kind":"close"}`)
+	if code != 0 {
+		t.Fatalf("close exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	out := decodeLedgerOut(t, stdout)
+	item, ok := out["item"].(map[string]any)
+	if !ok {
+		t.Fatalf("post-close item = %v, want the just-closed row", out["item"])
+	}
+	decisions, ok := item["decisions"].([]any)
+	if !ok {
+		t.Fatalf("item decisions = %v, want a list", item["decisions"])
+	}
+	kinds := make([]string, 0, len(decisions))
+	for _, d := range decisions {
+		entry, ok := d.(map[string]any)
+		if !ok {
+			t.Fatalf("decision = %v, want an object", d)
+		}
+		kinds = append(kinds, entry["kind"].(string))
+	}
+	if got, want := strings.Join(kinds, ","), "open,close"; got != want {
+		t.Fatalf("reported decision history = %q, want %q (the close keeps its place)", got, want)
+	}
+	if after, err := os.ReadFile(trackerBefore.Tracker.Path); err != nil || string(after) != string(before) {
+		t.Fatalf("a bare close rewrote the tracker ledger (%v)", err)
+	}
+}
+
 // TestLedgerTwoOpenItemsConflict pins the collision as a conflict, not a pick.
 func TestLedgerTwoOpenItemsConflict(t *testing.T) {
 	dir, common, branch := ledgerRepo(t)
@@ -1191,7 +1235,9 @@ func TestLedgerWriteLeavesNoTempResidueViaCLI(t *testing.T) {
 	if code, _, stderr := ledgerWriteRun(t, ledgerWritePrefix(dir), `{"kind":"open"}`); code != 0 {
 		t.Fatalf("write exit = %d, want 0; stderr: %s", code, stderr)
 	}
-	residue, err := filepath.Glob(filepath.Join(common, "ai-specs", "ledger", "state.json.tmp.*"))
+	// The names actually written are the two split ledgers, so the residue check
+	// covers that directory and every temp name in it (L12.6).
+	residue, err := filepath.Glob(filepath.Join(common, "ai-specs", "ledgers", "*.tmp.*"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1263,10 +1309,10 @@ func assertLedgerConflictGradeIsPure(t *testing.T, dir, storePath string) {
 	if !ledgerStoreMtime(t, storePath).Equal(beforeMtime) {
 		t.Fatal("a conflicting grade must not touch the store at all")
 	}
-	if _, err := os.Stat(storePath + ".lock"); !os.IsNotExist(err) {
-		t.Fatalf("a conflicting grade created the store lock: %v", err)
+	if _, err := os.Stat(ledger.LockPath(storePath)); !os.IsNotExist(err) {
+		t.Fatalf("a conflicting grade created the ledger lock: %v", err)
 	}
-	residue, err := filepath.Glob(filepath.Join(filepath.Dir(storePath), "state.json.tmp.*"))
+	residue, err := filepath.Glob(filepath.Join(filepath.Dir(storePath), "*.tmp.*"))
 	if err != nil {
 		t.Fatal(err)
 	}

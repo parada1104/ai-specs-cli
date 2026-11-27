@@ -33,13 +33,37 @@ func PlanStorePath(gitCommonDir string) string {
 	return filepath.Join(gitCommonDir, "ai-specs", "ledgers", "plan.json")
 }
 
+// Ledger file names: the canonical name of each ledger is the whole contract an
+// override resolves against (L12.4).
+const (
+	worktreeFileName = "worktree.json"
+	trackerFileName  = "tracker.json"
+)
+
 // StoreLocation is one ledger store on disk: Path is the file this build writes,
 // Legacy is the pre-split single store read once for the one-version double read
-// (S11), and an empty Legacy means "no fallback and no backup" — a file that was
-// named explicitly is exactly the file it says, whatever its directory is called.
+// (S11), and Inherit is another ledger's file that still carries this ledger's
+// rows for one release — T5's mixed ledgers/tracker.json, the immediate
+// predecessor of the split, which still holds each row's status and closes. An
+// empty Legacy means "no fallback and no backup".
 type StoreLocation struct {
-	Path   string
-	Legacy string
+	Path    string
+	Legacy  string
+	Inherit string
+}
+
+// sources are the pre-split files this ledger is handed forward from, in the order
+// they answer: the file that already owns the row first, the shared pre-split
+// single store last.
+func (l StoreLocation) sources() []string {
+	var sources []string
+	if l.Inherit != "" {
+		sources = append(sources, l.Inherit)
+	}
+	if l.Legacy != "" && l.Legacy != l.Inherit {
+		sources = append(sources, l.Legacy)
+	}
+	return sources
 }
 
 // TrackerLocation is the tracker ledger's location under a repository's common
@@ -49,9 +73,16 @@ func TrackerLocation(gitCommonDir string) StoreLocation {
 }
 
 // WorktreeLocation is the worktree ledger's location under a repository's common
-// dir: the split store plus the pre-split file it is handed forward from.
+// dir: the split store, the pre-split single store, and T5's mixed tracker file —
+// the immediate predecessor of the field split, whose rows still carry status and
+// close decisions. Without that second source a repository upgraded straight from
+// T5 loses its lifecycle (L11).
 func WorktreeLocation(gitCommonDir string) StoreLocation {
-	return StoreLocation{Path: WorktreeStorePath(gitCommonDir), Legacy: StorePath(gitCommonDir)}
+	return StoreLocation{
+		Path:    WorktreeStorePath(gitCommonDir),
+		Legacy:  StorePath(gitCommonDir),
+		Inherit: TrackerStorePath(gitCommonDir),
+	}
 }
 
 // PlanLocation is the plan ledger's location under a repository's common dir: the
@@ -77,14 +108,36 @@ func LedgersAt(gitCommonDir string) Ledgers {
 	return Ledgers{Worktree: WorktreeLocation(gitCommonDir), Tracker: TrackerLocation(gitCommonDir)}
 }
 
-// LedgersAtStore resolves the ledger set from an explicitly named tracker file:
-// no fallback and no backup for either, with the worktree ledger as the sibling
-// file this build writes beside it.
+// LedgersAtStore resolves the ledger set from an explicitly named override. The
+// name decides which ledger the override is (L12.4): an override naming
+// worktree.json or tracker.json selects that ledger and derives the other's
+// canonical file beside it, so two ledgers are never aliased onto one file. An
+// override naming the pre-split state.json selects it as the read-only legacy
+// source of both ledgers, so it is never rewritten. Any other name keeps T5's
+// meaning — the tracker ledger's file — with the worktree sibling beside it.
 func LedgersAtStore(path string) Ledgers {
-	return Ledgers{
-		Worktree: StoreLocation{Path: filepath.Join(filepath.Dir(path), "worktree.json")},
-		Tracker:  StoreAt(path),
+	dir := filepath.Dir(path)
+	worktree := filepath.Join(dir, worktreeFileName)
+	tracker := filepath.Join(dir, trackerFileName)
+	switch filepath.Base(path) {
+	case worktreeFileName:
+		return Ledgers{Worktree: StoreAt(path), Tracker: StoreAt(tracker)}
+	case trackerFileName:
+		return Ledgers{Worktree: StoreAt(worktree), Tracker: StoreAt(path)}
+	case filepath.Base(StorePath("")):
+		return Ledgers{
+			Worktree: StoreLocation{Path: worktree, Legacy: path},
+			Tracker:  StoreLocation{Path: tracker, Legacy: path},
+		}
 	}
+	return Ledgers{Worktree: StoreAt(worktree), Tracker: StoreAt(path)}
+}
+
+// LockPath is the canonical lock for a ledger directory. One lock covers every
+// ledger pair in that directory, so two overrides in it serialize even when they
+// name different files (L12.3).
+func LockPath(storePath string) string {
+	return filepath.Join(filepath.Dir(storePath), ".ledger.lock")
 }
 
 // Load reads both ledgers and joins them into the read-only View (L8). Each
@@ -94,25 +147,18 @@ func LedgersAtStore(path string) Ledgers {
 func (l Ledgers) Load() (View, LedgerReports, error) {
 	worktree, worktreeReport, worktreeErr := l.Worktree.LoadWorktree()
 	tracker, trackerReport, trackerErr := l.Tracker.Load()
-	reports := LedgerReports{Worktree: worktreeReport, Tracker: trackerReport}
-	// A pre-split file this build cannot read is reported per ledger, not fatal:
-	// it is not this build's file, and each ledger still answers from its own. A
-	// corrupt split file stays fatal, so the grade reports it as unevaluable.
-	worktreeErr = legacyOnly(worktreeErr, l.Worktree, &reports.Worktree)
-	trackerErr = legacyOnly(trackerErr, l.Tracker, &reports.Tracker)
-	return View{Worktree: worktree, Tracker: tracker}, reports, errors.Join(worktreeErr, trackerErr)
-}
-
-// legacyOnly turns a corrupt pre-split file into a report instead of a failure.
-// Only the pre-split path is downgraded: a corrupt split file is still the error
-// the caller grades as unevaluable.
-func legacyOnly(err error, loc StoreLocation, report *StoreReport) error {
-	var corrupt *StoreCorruptError
-	if err == nil || loc.Legacy == "" || !errors.As(err, &corrupt) || corrupt.Path != loc.Legacy {
-		return err
+	// The tracker ledger reads its own file normalised: a tracker row carries no
+	// close decision, because a close belongs to the worktree ledger (L8). Any
+	// close the file still carries is in the worktree ledger's memory, and
+	// inheritsClose makes the next tracker write land it there before the tracker
+	// file loses it (L11).
+	view := View{
+		Worktree:      worktree,
+		Tracker:       withoutCloseDecisions(tracker),
+		inheritsClose: worktreeReport.carried,
 	}
-	report.LegacyUnreadable = err
-	return nil
+	return view, LedgerReports{Worktree: worktreeReport, Tracker: trackerReport},
+		errors.Join(worktreeErr, trackerErr)
 }
 
 // Backup attempts the one-shot pre-split backup of every ledger that still falls
@@ -128,18 +174,91 @@ func (l Ledgers) Backup() LedgerReports {
 // save writes the ledgers a mutation changed, and only those: one verb owns one
 // ledger's rows. The worktree ledger goes first, so a partial write can never
 // leave a tracker row claiming an item the lifecycle file does not know.
+//
+// Two rules make the pair behave like one write. A tracker write that would drop a
+// close its own file still carries lands the worktree rows that hold it first and
+// refuses if it cannot (L11). And a save that fails part way restores every file it
+// already replaced, because a lock plus two atomic renames is not a transaction
+// (L12.1).
 func (l Ledgers) save(view View, dirty ledgerDirty) error {
+	if dirty.tracker && view.inheritsClose {
+		dirty.worktree = true
+	}
+	var steps []saveStep
 	if dirty.worktree {
-		if _, err := l.Worktree.SaveWorktree(view.Worktree); err != nil {
+		steps = append(steps, saveStep{path: l.Worktree.Path, write: func() error {
+			_, err := l.Worktree.SaveWorktree(view.Worktree)
 			return err
-		}
+		}})
 	}
 	if dirty.tracker {
-		if _, err := l.Tracker.Save(view.Tracker); err != nil {
+		steps = append(steps, saveStep{path: l.Tracker.Path, write: func() error {
+			_, err := l.Tracker.Save(view.Tracker)
 			return err
+		}})
+	}
+	return saveSteps(steps)
+}
+
+// saveStep is one file a mutation persists and the write that persists it.
+type saveStep struct {
+	path  string
+	write func() error
+}
+
+// saveSteps writes the files in order and restores every file it already replaced
+// when a later write fails, returning the original error alongside any restore
+// failure so nothing is hidden (L12.1).
+func saveSteps(steps []saveStep) error {
+	var done []fileSnapshot
+	for _, step := range steps {
+		snapshot, err := captureFile(step.path)
+		if err != nil {
+			return errors.Join(err, restoreFiles(done))
 		}
+		if err := step.write(); err != nil {
+			return errors.Join(err, restoreFiles(append(done, snapshot)))
+		}
+		done = append(done, snapshot)
 	}
 	return nil
+}
+
+// fileSnapshot is one file's pre-write bytes, or the fact that it did not exist.
+type fileSnapshot struct {
+	path    string
+	data    []byte
+	existed bool
+}
+
+func captureFile(path string) (fileSnapshot, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return fileSnapshot{path: path}, nil
+	}
+	if err != nil {
+		return fileSnapshot{}, err
+	}
+	return fileSnapshot{path: path, data: data, existed: true}, nil
+}
+
+// restoreFiles puts the snapshots back, newest first, and reports everything it
+// could not restore instead of hiding it.
+func restoreFiles(snapshots []fileSnapshot) error {
+	var failures []error
+	for i := len(snapshots) - 1; i >= 0; i-- {
+		snapshot := snapshots[i]
+		if !snapshot.existed {
+			if err := os.Remove(snapshot.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				failures = append(failures, err)
+			}
+			continue
+		}
+		if err := writeAtomic(snapshot.path, snapshot.data); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
 }
 
 // ledgerDirty is which of the ledgers a mutation changed, so a verb never writes
@@ -184,6 +303,9 @@ type StoreReport struct {
 	// BackupFailed is the one-shot copy of the pre-split rows that could not be
 	// written before the first split write.
 	BackupFailed error
+	// carried reports a close decision this ledger's file does not hold yet but a
+	// file it is about to overwrite does, so the write has to land it first (L11).
+	carried bool
 }
 
 // Empty reports whether a read or write was a plain one.
@@ -218,10 +340,22 @@ type codec[T any] struct {
 	empty  func() T
 	decode func(path string, data []byte) (T, error)
 	encode func(T) ([]byte, error)
-	// absorb adds this ledger's own share of the pre-split rows it is missing, by
-	// row id, and counts the rows both files have with different content. A
-	// disagreement in a field this ledger does not own is never counted.
-	absorb func(*T, LegacyStore) (absorbed, shadowed int)
+	// absorb adds this ledger's own share of a pre-split source, by row id, and
+	// reports what it had to add. A disagreement in a field this ledger does not
+	// own is never counted.
+	absorb func(*T, LegacyStore) merge
+}
+
+// merge is what absorbing one pre-split source added to a ledger.
+type merge struct {
+	// absorbed is the rows the ledger's own file did not have at all.
+	absorbed int
+	// shadowed is the rows both files have with different content in the fields
+	// this ledger owns.
+	shadowed int
+	// carried reports a close decision the ledger's own file did not hold yet, so
+	// the file must be written before that source is overwritten (L11).
+	carried bool
 }
 
 // trackerCodec is the tracker ledger's file shape: the tracker rows plus the
@@ -314,12 +448,13 @@ func (l StoreLocation) SaveWorktree(store WorktreeStore) (StoreReport, error) {
 	return saveLedger(l, worktreeCodec, store)
 }
 
-// loadLedger is the one read every ledger performs. When both files exist the rows
-// of the pre-split store that the split ledger does not have are part of the
-// answer: until this release reaches every hook, an older ai-specs can still
-// record a decision in the pre-split file, and silently ignoring it would drop a
-// human opt-out or let a second item be opened for an identity that already has
-// one. Rows already present keep their position and bytes.
+// loadLedger is the one read every ledger performs. When the split file exists the
+// rows of every source that it does not have are part of the answer: until this
+// release reaches every hook, an older ai-specs can still record a decision in a
+// pre-split file, and silently ignoring it would drop a human opt-out, let a
+// second item be opened for an identity that already has one, or lose a close
+// that only exists in T5's mixed tracker file. Rows already present keep their
+// position and bytes.
 func loadLedger[T any](l StoreLocation, c codec[T]) (T, StoreReport, error) {
 	var report StoreReport
 	if l.Path == "" {
@@ -332,39 +467,61 @@ func loadLedger[T any](l StoreLocation, c codec[T]) (T, StoreReport, error) {
 		if err != nil {
 			return c.empty(), report, err
 		}
-		return absorbLegacy(split, l, c, &report)
+		return absorbSources(split, l, c, &report), report, nil
 	case !errors.Is(err, fs.ErrNotExist):
 		return c.empty(), report, &StoreCorruptError{Path: l.Path, Err: err}
 	}
-	if l.Legacy == "" {
-		return c.empty(), report, nil
-	}
-	legacy, err := LoadLegacyStore(l.Legacy)
-	if err != nil {
-		return c.empty(), report, err
-	}
-	// No split file yet: the pre-split file is the answer, and this ledger takes
-	// its own share of it. Nothing is "missing", so nothing is reported.
+	// No split file yet: every source this ledger is handed forward from is the
+	// answer, and it takes its own share of each. A source that is present but
+	// unreadable is unevaluable — corruption is never masked by a synthetic empty
+	// store — exactly as the single-ledger read has always been (L11.5).
 	share := c.empty()
-	c.absorb(&share, legacy)
+	for _, source := range l.sources() {
+		if !fileExists(source) {
+			continue
+		}
+		legacy, err := LoadLegacyStore(source)
+		if err != nil {
+			return c.empty(), report, err
+		}
+		m := c.absorb(&share, legacy)
+		if source == l.Inherit {
+			report.carried = report.carried || m.carried
+		}
+		report.LegacyRows = source
+	}
 	return share, report, nil
 }
 
-// absorbLegacy merges the pre-split rows the split ledger is missing. A corrupt
-// pre-split file never fails the read — the split ledger answered — but it is
-// reported, because its rows cannot be shown.
-func absorbLegacy[T any](split T, l StoreLocation, c codec[T], report *StoreReport) (T, StoreReport, error) {
-	if l.Legacy == "" {
-		return split, *report, nil
+// absorbSources merges this ledger's share of every pre-split source. A corrupt
+// source never fails the read — the split file answered — but it is reported,
+// because its rows cannot be shown.
+func absorbSources[T any](split T, l StoreLocation, c codec[T], report *StoreReport) T {
+	for _, source := range l.sources() {
+		if !fileExists(source) {
+			continue
+		}
+		legacy, err := LoadLegacyStore(source)
+		if err != nil {
+			report.LegacyUnreadable = err
+			continue
+		}
+		m := c.absorb(&split, legacy)
+		report.Absorbed += m.absorbed
+		report.Shadowed += m.shadowed
+		if source == l.Inherit {
+			report.carried = report.carried || m.carried
+		}
+		report.LegacyRows = source
 	}
-	legacy, err := LoadLegacyStore(l.Legacy)
-	if err != nil {
-		report.LegacyUnreadable = err
-		return split, *report, nil
-	}
-	absorbed, shadowed := c.absorb(&split, legacy)
-	report.Absorbed, report.Shadowed, report.LegacyRows = absorbed, shadowed, l.Legacy
-	return split, *report, nil
+	return split
+}
+
+// fileExists reports whether a source is there at all. A source that is absent
+// simply has nothing to hand forward.
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // read decodes the split file, reporting a corrupt one as *StoreCorruptError.

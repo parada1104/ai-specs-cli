@@ -592,19 +592,21 @@ func applyLinkToView(view *View, item Item, req ApplyWriteRequest, write WriteRe
 //
 // The close is the worktree ledger's decision, so this seam reads and writes that
 // ledger alone: a corrupt tracker file cannot stop the automatic post-merge close.
-func CloseBranchItem(locs Ledgers, commonDir, branch, checkpoint string, now time.Time) (WriteOutcome, error) {
+func CloseBranchItem(locs Ledgers, commonDir, branch, checkpoint string, now time.Time) (WriteOutcome, LedgerReports, error) {
+	var reports LedgerReports
 	if !ValidCheckpoint(checkpoint) {
-		return WriteOutcome{}, fmt.Errorf("%w: checkpoint %q", ErrInvalidWrite, checkpoint)
+		return WriteOutcome{}, reports, fmt.Errorf("%w: checkpoint %q", ErrInvalidWrite, checkpoint)
 	}
 	commonDir = strings.TrimSpace(commonDir)
 	branch = strings.TrimSpace(branch)
 	if commonDir == "" || branch == "" {
-		return WriteOutcome{}, fmt.Errorf("%w: identity unavailable", ErrInvalidWrite)
+		return WriteOutcome{}, reports, fmt.Errorf("%w: identity unavailable", ErrInvalidWrite)
 	}
 
 	out := WriteOutcome{Kind: WriteClose}
 	err := withStoreLock(locs.Tracker.Path, func() error {
-		worktree, _, err := locs.Worktree.LoadWorktree()
+		worktree, report, err := locs.Worktree.LoadWorktree()
+		reports.Worktree = report
 		if err != nil {
 			return err
 		}
@@ -617,7 +619,12 @@ func CloseBranchItem(locs Ledgers, commonDir, branch, checkpoint string, now tim
 			if err := worktree.closeItem(matching[0].ID, rfc3339Stamp(now), checkpoint); err != nil {
 				return err
 			}
-			if _, err := locs.Worktree.SaveWorktree(worktree); err != nil {
+			saveReport, err := locs.Worktree.SaveWorktree(worktree)
+			reports.Worktree.Absorbed = report.Absorbed
+			reports.Worktree.Shadowed = report.Shadowed
+			reports.Worktree.LegacyRows = report.LegacyRows
+			reports.Worktree.BackupFailed = saveReport.BackupFailed
+			if err != nil {
 				return err
 			}
 			out.Applied = true
@@ -627,9 +634,9 @@ func CloseBranchItem(locs Ledgers, commonDir, branch, checkpoint string, now tim
 		}
 	})
 	if err != nil {
-		return WriteOutcome{}, err
+		return WriteOutcome{}, reports, err
 	}
-	return out, nil
+	return out, reports, nil
 }
 
 // RecordSnapshot updates the observed provider snapshot (state and opaque
@@ -649,6 +656,13 @@ func (s *Store) RecordSnapshot(id, state string, provider json.RawMessage) error
 		s.Items[at].Provider = json.RawMessage(canonical)
 	}
 	return nil
+}
+
+// hasItemID reports whether any tracker row already uses id. Ids are unique across
+// both ledgers (L11.3).
+func (s Store) hasItemID(id string) bool {
+	_, ok := s.itemAt(id)
+	return ok
 }
 
 // itemAt returns the tracked index of the row with id.
@@ -780,13 +794,15 @@ func AppendDecisionToPrimary(path, key string, d Decision) error {
 // wedge the ledger. Grade paths treat ErrLockTimeout as fail-open; write and
 // --decide paths fail closed.
 //
-// One lock covers the whole ledger set: a mutation that touches two files must
-// exclude every other writer, not just the writers of one file.
+// One lock covers a whole ledger directory (L12.3): a mutation that touches two
+// files must exclude every other writer, and two overrides naming different files
+// in one directory must not take different locks for the same lifecycle rows.
 func withStoreLock(path string, fn func() error) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	lockPath := LockPath(path)
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
 		return err
 	}
-	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o644)
+	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return err
 	}

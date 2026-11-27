@@ -42,6 +42,29 @@ func loadWriteView(t *testing.T, path string) View {
 	return loadView(t, LedgersAtStore(path))
 }
 
+// pairBytes is the exact bytes of both ledgers at a tracker path, with a marker
+// for a file that is absent: a mutation that must persist nothing has to leave the
+// whole pair untouched, not only the tracker file (L12.6).
+func pairBytes(t *testing.T, path string) string {
+	t.Helper()
+	locs := LedgersAtStore(path)
+	return "worktree=" + readOrAbsent(t, locs.Worktree.Path) +
+		"\ntracker=" + readOrAbsent(t, locs.Tracker.Path)
+}
+
+// readOrAbsent reads a ledger file, naming its absence instead of failing.
+func readOrAbsent(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "<absent>"
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 // rawBytes reads a file and fails the test on error.
 func rawBytes(t *testing.T, path string) []byte {
 	t.Helper()
@@ -145,7 +168,7 @@ func TestApplyWriteOpenIsOpenIfAbsent(t *testing.T) {
 		t.Fatalf("first open = %+v, want applied open with no reason", first)
 	}
 
-	before := rawBytes(t, path)
+	before := pairBytes(t, path)
 	second, err := applyWrite(t, path, "trello-mcp-workflow", WriteRequest{Kind: WriteOpen})
 	if err != nil {
 		t.Fatalf("retried open: %v", err)
@@ -153,7 +176,7 @@ func TestApplyWriteOpenIsOpenIfAbsent(t *testing.T) {
 	if second.Applied || second.Reason != WriteReasonAlreadyOpen {
 		t.Fatalf("retried open = %+v, want applied=false/already-open", second)
 	}
-	if string(before) != string(rawBytes(t, path)) {
+	if before != pairBytes(t, path) {
 		t.Fatal("an idempotent open must not rewrite the store")
 	}
 
@@ -229,7 +252,7 @@ func TestApplyWriteBindIsIdempotent(t *testing.T) {
 
 	same := bind
 	same.Provider = json.RawMessage("{\n  \"list\": \"In Progress\"\n}")
-	before := rawBytes(t, path)
+	before := pairBytes(t, path)
 	second, err := applyWrite(t, path, "p", same)
 	if err != nil {
 		t.Fatalf("retried bind: %v", err)
@@ -237,7 +260,7 @@ func TestApplyWriteBindIsIdempotent(t *testing.T) {
 	if second.Applied || second.Kind != WriteBind || second.Reason != WriteReasonUnchanged {
 		t.Fatalf("retried bind = %+v, want applied=false/unchanged", second)
 	}
-	if string(before) != string(rawBytes(t, path)) {
+	if before != pairBytes(t, path) {
 		t.Fatal("an idempotent bind must not rewrite the store")
 	}
 
@@ -334,7 +357,7 @@ func TestApplyWriteBindWithoutChangeRefusesMultipleOpenRows(t *testing.T) {
 	f.openItem(ident("one"), "p", t0)
 	f.openItem(ident("two"), "p", t0)
 	saveWriteStore(t, path, f)
-	before := rawBytes(t, path)
+	before := pairBytes(t, path)
 
 	_, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
 		Identity:   ident(""),
@@ -345,7 +368,7 @@ func TestApplyWriteBindWithoutChangeRefusesMultipleOpenRows(t *testing.T) {
 	if !errors.Is(err, ErrMultipleOpen) {
 		t.Fatalf("branch-level bind error = %v, want ErrMultipleOpen", err)
 	}
-	if string(before) != string(rawBytes(t, path)) {
+	if before != pairBytes(t, path) {
 		t.Fatal("a refused branch-level bind must leave the store byte-identical")
 	}
 }
@@ -505,7 +528,7 @@ func TestApplyWriteConcurrentBindsKeepOnePrimary(t *testing.T) {
 		}
 		ids[item.ID] = true
 	}
-	residue, err := filepath.Glob(filepath.Join(filepath.Dir(path), "state.json.tmp.*"))
+	residue, err := filepath.Glob(filepath.Join(filepath.Dir(path), "*.tmp.*"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -575,7 +598,7 @@ func TestApplyWriteLinkIsIdempotentForIdenticalState(t *testing.T) {
 	// Same values, different JSON formatting and key order: canonically identical.
 	same := link
 	same.Provider = json.RawMessage("{\n  \"card_id\": \"card-1\",\n  \"board_id\": \"b\"\n}")
-	before := rawBytes(t, path)
+	before := pairBytes(t, path)
 	second, err := applyWrite(t, path, "trello-mcp-workflow", same)
 	if err != nil {
 		t.Fatalf("second link: %v", err)
@@ -583,7 +606,7 @@ func TestApplyWriteLinkIsIdempotentForIdenticalState(t *testing.T) {
 	if second.Applied || second.Reason != WriteReasonUnchanged {
 		t.Fatalf("repeated link = %+v, want applied=false/unchanged", second)
 	}
-	if string(before) != string(rawBytes(t, path)) {
+	if before != pairBytes(t, path) {
 		t.Fatal("an unchanged link must not rewrite the store")
 	}
 
@@ -726,7 +749,7 @@ func TestApplyWriteCloseThenCloseIsExplicit(t *testing.T) {
 		t.Fatalf("first close = %+v, want applied", first)
 	}
 
-	before := rawBytes(t, path)
+	before := pairBytes(t, path)
 	second, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteClose})
 	if err != nil {
 		t.Fatalf("second close: %v", err)
@@ -734,7 +757,7 @@ func TestApplyWriteCloseThenCloseIsExplicit(t *testing.T) {
 	if second.Applied || second.Reason != WriteReasonAlreadyClosed {
 		t.Fatalf("second close = %+v, want applied=false/already-closed", second)
 	}
-	if string(before) != string(rawBytes(t, path)) {
+	if before != pairBytes(t, path) {
 		t.Fatal("an already-closed item must not be rewritten")
 	}
 
@@ -752,12 +775,12 @@ func TestApplyWriteCloseThenCloseIsExplicit(t *testing.T) {
 func TestApplyWriteCloseWithoutRowFailsClosed(t *testing.T) {
 	path := writePath(t)
 	saveWriteStore(t, path, newFixture())
-	before := rawBytes(t, path)
+	before := pairBytes(t, path)
 
 	if _, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteClose}); !errors.Is(err, ErrNoPrimary) {
 		t.Fatalf("close without a row error = %v, want ErrNoPrimary", err)
 	}
-	if string(before) != string(rawBytes(t, path)) {
+	if before != pairBytes(t, path) {
 		t.Fatal("a failed close must leave the store byte-identical")
 	}
 }
@@ -826,7 +849,7 @@ func TestApplyWriteExemptPersistsReasonAndIsIdempotent(t *testing.T) {
 func TestApplyWriteChangeAmbiguousRefusesWithoutSlug(t *testing.T) {
 	path := writePath(t)
 	saveWriteStore(t, path, newFixture())
-	before := rawBytes(t, path)
+	before := pairBytes(t, path)
 
 	_, err := ApplyWrite(LedgersAtStore(path), ApplyWriteRequest{
 		Identity:   ident(""),
@@ -837,7 +860,7 @@ func TestApplyWriteChangeAmbiguousRefusesWithoutSlug(t *testing.T) {
 	if err == nil {
 		t.Fatal("a change-ambiguous write without a slug must be refused")
 	}
-	if string(before) != string(rawBytes(t, path)) {
+	if before != pairBytes(t, path) {
 		t.Fatal("a refused write must leave the store byte-identical")
 	}
 
@@ -876,9 +899,9 @@ func TestApplyWriteRefusesUnavailableIdentity(t *testing.T) {
 func TestApplyWriteHeldLockTimesOutFailsClosed(t *testing.T) {
 	path := writePath(t)
 	saveWriteStore(t, path, openFixture("card-1"))
-	before := rawBytes(t, path)
+	before := pairBytes(t, path)
 
-	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o644)
+	lock, err := os.OpenFile(LockPath(path), os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -897,7 +920,7 @@ func TestApplyWriteHeldLockTimesOutFailsClosed(t *testing.T) {
 	if elapsed < 20*time.Millisecond || elapsed > time.Second {
 		t.Fatalf("lock timeout took %v, want a bounded ~100 ms wait", elapsed)
 	}
-	if string(before) != string(rawBytes(t, path)) {
+	if before != pairBytes(t, path) {
 		t.Fatal("a lock-timeout write must leave the store byte-identical")
 	}
 }
@@ -957,14 +980,14 @@ func TestApplyWriteFailuresLeaveStoreByteIdentical(t *testing.T) {
 }
 
 // TestApplyWriteLeavesNoTempResidue pins that a successful write uses the atomic
-// temp-file + rename path and leaves no state.json.tmp.* behind.
+// temp-file + rename path and leaves no <ledger>.tmp.* behind in the pair.
 func TestApplyWriteLeavesNoTempResidue(t *testing.T) {
 	path := writePath(t)
 	saveWriteStore(t, path, newFixture())
 	if _, err := applyWrite(t, path, "p", WriteRequest{Kind: WriteOpen}); err != nil {
 		t.Fatal(err)
 	}
-	residue, err := filepath.Glob(filepath.Join(filepath.Dir(path), "state.json.tmp.*"))
+	residue, err := filepath.Glob(filepath.Join(filepath.Dir(path), "*.tmp.*"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1005,7 +1028,7 @@ func TestApplyWriteConcurrentOpensKeepOnePrimary(t *testing.T) {
 		}
 		ids[item.ID] = true
 	}
-	residue, err := filepath.Glob(filepath.Join(filepath.Dir(path), "state.json.tmp.*"))
+	residue, err := filepath.Glob(filepath.Join(filepath.Dir(path), "*.tmp.*"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"strconv"
 )
 
 // The worktree ledger: which rows exist, which one is open, and when each one
@@ -122,18 +121,6 @@ func (s *WorktreeStore) closeItem(id, at, checkpoint string) error {
 	return fmt.Errorf("ledger: no item %q", id)
 }
 
-// uniqueItemID returns NewItemID unless that id is already taken by any stored
-// row — open or closed — in which case it suffixes the stamp input with \x1fN
-// until unique. Two opens for one identity in the same second therefore cannot
-// share an id.
-func (s WorktreeStore) uniqueItemID(ident ItemIdentity, stamp string) string {
-	id := NewItemID(ident.Key(), stamp)
-	for n := 1; s.hasItemID(id); n++ {
-		id = NewItemID(ident.Key(), stamp+"\x1f"+strconv.Itoa(n))
-	}
-	return id
-}
-
 // worktreeShare is this ledger's part of a pre-split row: the id, the identity,
 // the lifecycle status and the close decisions. The provider record and the
 // tracker decisions belong to the tracker ledger and are never copied here (S3).
@@ -152,28 +139,66 @@ func worktreeShare(row LegacyItem) WorktreeItem {
 	return share
 }
 
-// absorbWorktree takes this ledger's share of the pre-split rows the split file
-// lacks, by row id, and counts the rows both files have with different content.
-// Only the fields this ledger owns are compared, so a disagreement in a tracker
-// field is not reported as a shadow here.
-func absorbWorktree(split *WorktreeStore, legacy LegacyStore) (absorbed, shadowed int) {
+// absorbWorktree takes this ledger's share of a pre-split source: the rows it does
+// not have at all, and the close decisions a row it already has is missing. A
+// close is never dropped from its source until this file holds it (L11), so a
+// close is merged rather than reported as a shadow. Only the fields this ledger
+// owns are compared, so a disagreement in a tracker field is not a shadow here.
+//
+// A source row with no status and no close carries no lifecycle at all — that is
+// what this build's own normalised tracker.json looks like — and is skipped, so it
+// cannot shadow a closed worktree row.
+func absorbWorktree(split *WorktreeStore, legacy LegacyStore) merge {
 	seen := make(map[string]int, len(split.Items))
 	for i, item := range split.Items {
 		seen[item.ID] = i
 	}
+	var result merge
 	for _, row := range legacy.Items {
 		share := worktreeShare(row)
-		if at, ok := seen[share.ID]; ok {
-			if !sameJSON(split.Items[at], share) {
-				shadowed++
+		if share.Status == "" && len(share.Decisions) == 0 {
+			continue
+		}
+		at, ok := seen[share.ID]
+		if !ok {
+			seen[share.ID] = len(split.Items)
+			split.Items = append(split.Items, share)
+			result.absorbed++
+			if len(share.Decisions) > 0 {
+				result.carried = true
 			}
 			continue
 		}
-		seen[share.ID] = len(split.Items)
-		split.Items = append(split.Items, share)
-		absorbed++
+		if added := mergeCloses(&split.Items[at], share.Decisions); added > 0 {
+			result.carried = true
+		}
+		if split.Items[at].Status != share.Status {
+			result.shadowed++
+		}
 	}
-	return absorbed, shadowed
+	return result
+}
+
+// mergeCloses appends the close decisions a row does not have yet, in the source's
+// order, and reports how many it appended. A close already present is never
+// duplicated or rewritten.
+func mergeCloses(row *WorktreeItem, closes []WorktreeDecision) int {
+	added := 0
+	for _, candidate := range closes {
+		seen := false
+		for _, existing := range row.Decisions {
+			if existing == candidate {
+				seen = true
+				break
+			}
+		}
+		if seen {
+			continue
+		}
+		row.Decisions = append(row.Decisions, candidate)
+		added++
+	}
+	return added
 }
 
 // trackerShare is the tracker ledger's part of a pre-split row: the provider
@@ -213,24 +238,25 @@ func trackerDecisions(decisions []Decision) []Decision {
 // lacks, by row id, and the scoped opt-outs it lacks, and counts the rows both
 // files have with different content. Only the fields this ledger owns are
 // compared, so a disagreement in the lifecycle status is not a shadow here.
-func absorbTracker(split *Store, legacy LegacyStore) (absorbed, shadowed int) {
+func absorbTracker(split *Store, legacy LegacyStore) merge {
 	seen := make(map[string]int, len(split.Items))
 	for i, item := range split.Items {
 		seen[item.ID] = i
 	}
+	var result merge
 	for _, row := range legacy.Items {
 		share := trackerShare(row)
 		if at, ok := seen[share.ID]; ok {
 			// Compare the split row's share too, so the two sides are normalised
 			// the same way and a formatting difference is never a shadow.
 			if !sameJSON(trackerShare(LegacyItem{Item: split.Items[at]}), share) {
-				shadowed++
+				result.shadowed++
 			}
 			continue
 		}
 		seen[share.ID] = len(split.Items)
 		split.Items = append(split.Items, share)
-		absorbed++
+		result.absorbed++
 	}
 	seenOptOut := make(map[string]int, len(split.OptOuts))
 	for i, optOut := range split.OptOuts {
@@ -243,9 +269,9 @@ func absorbTracker(split *Store, legacy LegacyStore) (absorbed, shadowed int) {
 		}
 		seenOptOut[key] = len(split.OptOuts)
 		split.OptOuts = append(split.OptOuts, optOut)
-		absorbed++
+		result.absorbed++
 	}
-	return absorbed, shadowed
+	return result
 }
 
 // sameJSON reports whether two ledger rows carry the same content. A row the

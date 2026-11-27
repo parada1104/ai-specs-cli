@@ -37,7 +37,7 @@ func newFixture() *fixture { return &fixture{} }
 // the open decision in the tracker.
 func (f *fixture) openItem(id ItemIdentity, providerID string, at time.Time) Item {
 	stamp := at.UTC().Format(time.RFC3339)
-	rowID := f.Worktree.uniqueItemID(id, stamp)
+	rowID := f.view().uniqueItemID(id, stamp)
 	f.Worktree.Items = append(f.Worktree.Items,
 		WorktreeItem{ID: rowID, Identity: id, Status: StatusOpen, Decisions: []WorktreeDecision{}})
 	item := Item{ID: rowID, Identity: id, ProviderID: providerID,
@@ -740,7 +740,7 @@ func TestCloseBranchItemClosesSingleMatchingOpenItemAcrossChangeSlug(t *testing.
 	opened := f.openItem(stored, "test-recipe", t0)
 	saveWriteStore(t, path, f)
 
-	out, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+	out, _, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 	if err != nil {
 		t.Fatalf("CloseBranchItem: %v", err)
 	}
@@ -771,16 +771,16 @@ func TestCloseBranchItemAbsentOrClosedIsNoOp(t *testing.T) {
 	t.Run("absent", func(t *testing.T) {
 		path := writePath(t)
 		saveWriteStore(t, path, newFixture())
-		before := rawBytes(t, path)
+		before := pairBytes(t, path)
 
-		out, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+		out, _, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 		if err != nil {
 			t.Fatalf("absent close: %v", err)
 		}
 		if out.Applied || out.Kind != WriteClose || out.Reason != WriteReasonAlreadyClosed {
 			t.Fatalf("absent close = %+v, want applied=false/already-closed", out)
 		}
-		if string(before) != string(rawBytes(t, path)) {
+		if before != pairBytes(t, path) {
 			t.Fatal("an absent no-op must not rewrite the store")
 		}
 	})
@@ -794,16 +794,16 @@ func TestCloseBranchItemAbsentOrClosedIsNoOp(t *testing.T) {
 			t.Fatal(err)
 		}
 		saveWriteStore(t, path, f)
-		before := rawBytes(t, path)
+		before := pairBytes(t, path)
 
-		out, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+		out, _, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 		if err != nil {
 			t.Fatalf("closed close: %v", err)
 		}
 		if out.Applied || out.Reason != WriteReasonAlreadyClosed {
 			t.Fatalf("closed close = %+v, want applied=false/already-closed", out)
 		}
-		if string(before) != string(rawBytes(t, path)) {
+		if before != pairBytes(t, path) {
 			t.Fatal("a closed row must not be rewritten or reopened (D17)")
 		}
 		view := loadWriteView(t, path)
@@ -822,13 +822,13 @@ func TestCloseBranchItemMultipleOpenIsCollisionRefused(t *testing.T) {
 	f.openItem(ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/vcs-close", Change: "one"}, "test-recipe", t0)
 	f.openItem(ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/vcs-close", Change: "two"}, "test-recipe", t0)
 	saveWriteStore(t, path, f)
-	before := rawBytes(t, path)
+	before := pairBytes(t, path)
 
-	_, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+	_, _, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 	if !errors.Is(err, ErrMultipleOpen) {
 		t.Fatalf("error = %v, want ErrMultipleOpen", err)
 	}
-	if string(before) != string(rawBytes(t, path)) {
+	if before != pairBytes(t, path) {
 		t.Fatal("a refused collision must persist nothing")
 	}
 }
@@ -848,7 +848,7 @@ func TestCloseBranchItemTargetsOnlyOpenRowOnReusedBranch(t *testing.T) {
 	fresh := f.openItem(newIdent, "test-recipe", t0.Add(time.Hour))
 	saveWriteStore(t, path, f)
 
-	out, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
+	out, _, err := CloseBranchItem(LedgersAtStore(path), "/repo/.git", "feat/vcs-close", CheckpointArchiveClose, vtNow)
 	if err != nil {
 		t.Fatalf("CloseBranchItem: %v", err)
 	}
@@ -875,7 +875,7 @@ func TestCloseBranchItemTargetsOnlyOpenRowOnReusedBranch(t *testing.T) {
 func TestCloseBranchItemRejectsMissingIdentityOrCheckpoint(t *testing.T) {
 	path := writePath(t)
 	saveWriteStore(t, path, newFixture())
-	before := rawBytes(t, path)
+	before := pairBytes(t, path)
 
 	cases := []struct {
 		name    string
@@ -889,10 +889,10 @@ func TestCloseBranchItemRejectsMissingIdentityOrCheckpoint(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := CloseBranchItem(LedgersAtStore(path), tc.common, tc.branch, tc.checkpt, vtNow); err == nil {
+			if _, _, err := CloseBranchItem(LedgersAtStore(path), tc.common, tc.branch, tc.checkpt, vtNow); err == nil {
 				t.Fatal("invalid close input was accepted")
 			}
-			if string(before) != string(rawBytes(t, path)) {
+			if before != pairBytes(t, path) {
 				t.Fatal("a rejected close must persist nothing")
 			}
 		})

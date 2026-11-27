@@ -92,6 +92,18 @@ fail() {
     exit 1
 }
 
+# assert_close_absent_from_tracker <check>: in the split layout the close lives in
+# worktree.json only, so a second file exists to prove it stayed out of. In the
+# single-file fallback the pre-split file IS both ledgers: there is no second file,
+# and the close check above already proved the close in the file that owns it.
+# Requiring zero closes there would contradict the close it must find.
+assert_close_absent_from_tracker() {
+    local check="$1"
+    [ "$TRACKER" != "$LEDGER" ] || return 0
+    [ "$(grep -c '"kind": "close"' "$TRACKER")" = 0 ] ||
+        fail "$check the close decision landed in the tracker ledger too" "$TRACKER"
+}
+
 case "$MERGE_STRATEGY" in
     "") RUN="merge ff rebase squash" ;;
     merge | ff | rebase | squash) RUN="$MERGE_STRATEGY" ;;
@@ -279,8 +291,7 @@ EOF
         fail "(5) the ledger row is not open" "$LEDGER"
     [ "$(grep -c '"kind": "open"' "$TRACKER")" = 1 ] ||
         fail "(5) apply-start did not open exactly one ledger item" "$TRACKER"
-    [ "$(grep -c '"kind": "close"' "$TRACKER")" = 0 ] ||
-        fail "(5) a close decision landed in the tracker ledger" "$TRACKER"
+    assert_close_absent_from_tracker "(5)"
     pass "(5) apply-start bound one open ledger row to $CARD_ID"
 }
 
@@ -390,8 +401,7 @@ run_strategy() {
         fail "(7) the close decision is not recorded at archive-close" "$LEDGER"
     grep -q '"branch": "change/feat"' "$LEDGER" ||
         fail "(7) the closed row is no longer keyed to change/feat" "$LEDGER"
-    [ "$(grep -c '"kind": "close"' "$TRACKER")" = 0 ] ||
-        fail "(7) the close decision landed in the tracker ledger too" "$TRACKER"
+    assert_close_absent_from_tracker "(7)"
     (cd "$P" && git show main:src/app.go | grep -q 'func feat') ||
         fail "(7) main does not contain the change's content" "$S/cleanup.log"
     [ -z "$(cd "$P" && git status --porcelain)" ] ||
@@ -479,6 +489,7 @@ assert_hook_cleanup() {
         fail "$label close decision is not recorded at archive-close" "$LEDGER"
     [ "$(grep -c '"kind": "close"' "$LEDGER")" = 1 ] ||
         fail "$label recorded something other than exactly one close decision" "$LEDGER"
+    assert_close_absent_from_tracker "$label"
     (cd "$P" && git show main:src/app.go | grep -q 'func feat') ||
         fail "$label main does not contain the change's content" "$log"
     [ -z "$(cd "$P" && git status --porcelain)" ] ||

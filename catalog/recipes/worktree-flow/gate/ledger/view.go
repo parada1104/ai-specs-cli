@@ -1,7 +1,10 @@
 package ledger
 
 import (
+	"bytes"
 	"errors"
+	"sort"
+	"strconv"
 	"time"
 )
 
@@ -12,6 +15,10 @@ import (
 type View struct {
 	Worktree WorktreeStore
 	Tracker  Store
+	// inheritsClose reports that a file this build is about to overwrite still
+	// carries close decisions the worktree ledger's own file does not hold yet, so
+	// the next tracker write must land them there first (L11).
+	inheritsClose bool
 }
 
 // Primary returns the single open item for key, joined with its tracker record.
@@ -108,12 +115,31 @@ func (v View) HasScopedOptOut(key, checkpoint string) bool {
 // tracker record still answers — it is a row whose provider fields were never
 // recorded, which grades as needs-item, never as a missing row.
 func (v View) item(row WorktreeItem) Item {
+	item := Item{ID: row.ID, Identity: row.Identity}
 	if at, ok := v.Tracker.itemAt(row.ID); ok {
-		item := v.Tracker.Items[at]
+		item = v.Tracker.Items[at]
 		item.Identity = row.Identity
-		return item
 	}
-	return Item{ID: row.ID, Identity: row.Identity}
+	// The host contract has one decision list: the tracker's decisions and the
+	// worktree row's close decisions in stored order, so a close keeps the place it
+	// always had in the reported item (L12.2).
+	if len(row.Decisions) > 0 {
+		item.Decisions = joinDecisions(item.Decisions, row.Decisions)
+	}
+	return item
+}
+
+// joinDecisions merges the two ledgers' decisions for one row in stored order. The
+// sort is stable, so a close recorded in the same second as a tracker decision
+// keeps the position the single store appended it at.
+func joinDecisions(tracker []Decision, closes []WorktreeDecision) []Decision {
+	joined := make([]Decision, 0, len(tracker)+len(closes))
+	joined = append(joined, tracker...)
+	for _, close := range closes {
+		joined = append(joined, Decision{At: close.At, Checkpoint: close.Checkpoint, Kind: close.Kind})
+	}
+	sort.SliceStable(joined, func(i, j int) bool { return joined[i].At < joined[j].At })
+	return joined
 }
 
 // OpenIfAbsent appends a new open primary row to both ledgers only when the
@@ -130,7 +156,7 @@ func (v *View) OpenIfAbsent(ident ItemIdentity, providerID string, at time.Time)
 		return Item{}, false, err
 	}
 	stamp := at.UTC().Format(time.RFC3339)
-	id := v.Worktree.uniqueItemID(ident, stamp)
+	id := v.uniqueItemID(ident, stamp)
 	if _, created, err := v.Worktree.openIfAbsent(ident, id, stamp); err != nil {
 		return Item{}, false, err
 	} else if !created {
@@ -147,18 +173,57 @@ func (v *View) OpenIfAbsent(ident ItemIdentity, providerID string, at time.Time)
 }
 
 // recordSnapshot updates the observed provider snapshot on the tracker row that
-// already exists and reports whether it had one. It never adds a row, so a close
-// carrying a provider payload never lands a second close row anywhere: the close
-// belongs to the worktree ledger and the snapshot to the row the tracker already
-// has (L8).
+// already exists and reports whether the snapshot actually changed. It never adds a
+// row, so a close carrying a provider payload never lands a second close row
+// anywhere: the close belongs to the worktree ledger and the snapshot to the row
+// the tracker already has (L8). A payload that repeats the stored snapshot is not
+// a change, so a bare or identical close leaves the tracker ledger untouched
+// (L12.2).
 func (v *View) recordSnapshot(id, state string, provider []byte) bool {
-	if _, ok := v.Tracker.itemAt(id); !ok {
+	at, ok := v.Tracker.itemAt(id)
+	if !ok {
+		return false
+	}
+	row := &v.Tracker.Items[at]
+	canonical := canonicalProvider(provider)
+	snapshot := string(canonical) != "{}"
+	changed := (state != "" && row.State != state) ||
+		(snapshot && !bytes.Equal(canonical, canonicalProvider(row.Provider)))
+	if !changed {
 		return false
 	}
 	if err := v.Tracker.RecordSnapshot(id, state, provider); err != nil {
 		return false
 	}
 	return true
+}
+
+// uniqueItemID returns NewItemID unless that id is already taken by any row of
+// either ledger, in which case it suffixes the stamp input with \x1fN until
+// unique. Ids are unique across both ledgers, not only the one that happens to
+// have rows: after a T5 upgrade the worktree file is empty while the tracker file
+// already holds the row and its id (L11.3).
+func (v View) uniqueItemID(ident ItemIdentity, stamp string) string {
+	id := NewItemID(ident.Key(), stamp)
+	for n := 1; v.hasItemID(id); n++ {
+		id = NewItemID(ident.Key(), stamp+"\x1f"+strconv.Itoa(n))
+	}
+	return id
+}
+
+// hasItemID reports whether either ledger already uses id.
+func (v View) hasItemID(id string) bool {
+	return v.Worktree.hasItemID(id) || v.Tracker.hasItemID(id)
+}
+
+// withoutCloseDecisions is the tracker ledger's normalised read: a tracker row
+// carries the decisions the tracker owns, never a close (L8). The close is in the
+// worktree ledger, which absorbed it before this runs.
+func withoutCloseDecisions(store Store) Store {
+	for i := range store.Items {
+		store.Items[i].Decisions = trackerDecisions(store.Items[i].Decisions)
+	}
+	return store
 }
 
 // singleFileView reads one pre-split store as a view. It exists only for the two
