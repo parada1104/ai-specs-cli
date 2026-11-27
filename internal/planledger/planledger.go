@@ -1,91 +1,118 @@
 package planledger
 
-// The plan ledger (change-ledger-v2 T3, L3): one append-only JSONL file at the
-// repository root, mode-agnostic, one JSON object per line. T3 records only the
-// workstream decision — the event the discriminator has to read — and later units
-// append their own events to the same file without touching these.
+// The plan ledger's root-module port (change-ledger-v2 S14): the CLI's one way to the
+// plan section of the versioned ledger file. This package used to own an append-only
+// line file at the repository root; that file is now a read-only predecessor the
+// ledger absorbs on read (T6b), so nothing here writes it.
 
 import (
-	"bufio"
-	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
+
+	"ai-specs.dev/worktree-gate/ledger"
 )
 
-// Path is the ledger's repository-relative location. One file per checkout, so a
-// worktree carries its own declaration and its siblings cannot inherit it.
+// Path is the predecessor's repository-relative location: the line file one build
+// wrote per checkout, before the plan section existed. It is read on load and never
+// written again.
 const Path = ".ai-specs/plan-ledger.jsonl"
 
-// The two events this unit writes. Later units add theirs; a reader that meets an
-// unknown event skips it.
+// The two events this port records. A reader that meets a kind it does not know
+// skips it, so a later unit can add its own.
+// They are the ledger's own kinds, aliased so the verb and the fold can never drift
+// apart; a later unit adds its kinds there and inherits them here.
 const (
-	EventWorkstream    = "workstream"
-	EventWorkstreamEnd = "workstream-end"
+	EventWorkstream    = ledger.PlanKindWorkstream
+	EventWorkstreamEnd = ledger.PlanKindWorkstreamEnd
 )
 
-// Event is one appended fact. `event` and `at` are the ledger's own fields; the
-// rest names the decision.
+// Event is one plan-flow decision as this package's verbs name it.
 type Event struct {
-	Event  string `json:"event"`
-	At     string `json:"at"`
-	Reason string `json:"reason,omitempty"`
+	Event  string
+	At     string
+	Reason string
 }
 
-// File is the absolute ledger path of a repository root.
+// File is the predecessor's absolute path for a repository root.
 func File(root string) string { return filepath.Join(root, filepath.FromSlash(Path)) }
 
-// Append writes one event as exactly one line, creating the directory on first
-// use. One Write of a whole line is what keeps an interrupted run from leaving a
-// half event behind, and nothing is ever rewritten: the file only grows.
-func Append(root string, event Event) error {
-	if event.Event == "" {
-		return errors.New("plan ledger: the event name is empty")
+// work is the checkout's ledger and the plan identity its rows are keyed by. The key
+// is the common dir plus the worktree root: a declaration belongs to the worktree, so a
+// renamed branch neither loses it nor brings it back, and the branch travels as data
+// (R1-001).
+func work(root string) (ledger.StoreLocation, ledger.PlanIdentity, error) {
+	ident := ledger.PlanIdentityAt(root, nil)
+	if ident.CommonDir == "" || ident.Root == "" {
+		return ledger.StoreLocation{}, ledger.PlanIdentity{},
+			errors.New("plan ledger: cannot name this checkout (no Git common dir)")
 	}
-	if event.At == "" {
-		return errors.New("plan ledger: the event time is empty")
-	}
-	line, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
-	path := File(root)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := file.Write(append(line, '\n')); err != nil {
-		file.Close()
-		return err
-	}
-	return file.Close()
+	return ledger.LedgerAt(ident.CommonDir).WithPlanSource(File(root), ident), ident, nil
 }
 
-// Workstream is the standing workstream decision: the last workstream or
-// workstream-end event wins, and a line the ledger cannot parse is skipped rather
-// than trusted. A missing ledger is no declaration.
-func Workstream(root string) (declared bool, reason string) {
-	file, err := os.Open(File(root))
+// Store is the ledger file the plan section lives in, for the messages a verb prints.
+// It needs no branch, so a repository without a commit still names its ledger.
+func Store(root string) string {
+	ident := ledger.PlanIdentityAt(root, nil)
+	if ident.CommonDir == "" {
+		return ""
+	}
+	return ledger.StorePath(ident.CommonDir)
+}
+
+// Append records one decision in the plan section, and reports what reaching the section
+// had to do beyond the write — a predecessor absorbed, one that could not be read, a copy
+// that could not be kept. Every failure persists nothing, so the verb that records a
+// declaration can exit non-zero instead of claiming success.
+func Append(root string, event Event) (ledger.StoreReport, error) {
+	if event.Event == "" {
+		return ledger.StoreReport{}, errors.New("plan ledger: the event name is empty")
+	}
+	if event.At == "" {
+		return ledger.StoreReport{}, errors.New("plan ledger: the event time is empty")
+	}
+	loc, ident, err := work(root)
 	if err != nil {
-		return false, ""
+		return ledger.StoreReport{}, err
 	}
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(nil, 1<<20)
-	for scanner.Scan() {
-		var event Event
-		if json.Unmarshal(scanner.Bytes(), &event) != nil {
-			continue
-		}
-		switch event.Event {
-		case EventWorkstream:
-			declared, reason = true, event.Reason
-		case EventWorkstreamEnd:
-			declared, reason = false, ""
-		}
+	return ledger.RecordPlanDecision(loc, ident, ledger.PlanDecision{
+		At: event.At, Kind: event.Event, Reason: event.Reason,
+	})
+}
+
+// Declaration is what the plan section says about this checkout, with the report of what
+// reaching it took: rows and opt-outs absorbed from a predecessor, and a source that could
+// not be read. The report is the verb's to print, so an unreadable predecessor is never
+// silent to the human running the command.
+type Declaration struct {
+	Declared bool
+	Reason   string
+	Report   ledger.StoreReport
+}
+
+// Read is the verb's contract. The error means the section could not be read at all,
+// which the verb prints instead of reporting "no declaration" out of a file nobody
+// opened.
+func Read(root string) (Declaration, error) {
+	loc, ident, err := work(root)
+	if err != nil {
+		return Declaration{}, err
 	}
-	return declared, reason
+	file, report, err := loc.Load()
+	if err != nil {
+		return Declaration{}, err
+	}
+	declared, reason := file.Plan.Workstream(ident.Key())
+	return Declaration{Declared: declared, Reason: reason, Report: report}, nil
+}
+
+// Workstream is the facts contract the write gate reads: the declaration and why the
+// ledger could not answer it. The error is never swallowed there either — a corrupt shared
+// ledger would otherwise look like "this worktree is a change" in every worktree of the
+// clone — and the report is left to the verb, which is where a human reads it.
+func Workstream(root string) (declared bool, reason string, err error) {
+	declaration, err := Read(root)
+	if err != nil {
+		return false, "", err
+	}
+	return declaration.Declared, declaration.Reason, nil
 }

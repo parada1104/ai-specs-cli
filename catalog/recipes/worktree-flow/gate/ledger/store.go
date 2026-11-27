@@ -104,6 +104,17 @@ type ItemIdentity struct {
 // Key is the A5 identity key: common_dir + "\x1f" + branch [+ "\x1f" + change].
 func (i ItemIdentity) Key() string { return IdentityKey(i.CommonDir, i.Branch, i.Change) }
 
+// Section names one capability's part of the ledger file. A writer names the
+// sections it owns; Save re-reads every other one from disk, so no caller can put a
+// row into a capability it does not own (S3).
+type Section string
+
+const (
+	SectionWorktree Section = "worktree"
+	SectionTracker  Section = "tracker"
+	SectionPlan     Section = "plan"
+)
+
 // Decision is one append-only entry in an item's decisions[] (A6).
 type Decision struct {
 	At         string `json:"at"`
@@ -286,7 +297,7 @@ func ApplyWrite(loc StoreLocation, req ApplyWriteRequest, now time.Time) (WriteO
 			return nil
 		}
 		file.Worktree, file.Tracker = view.Worktree, view.Tracker
-		if _, err := loc.Save(file); err != nil {
+		if _, err := loc.Save(file, SectionWorktree, SectionTracker); err != nil {
 			return err
 		}
 		out.Applied = true
@@ -456,7 +467,7 @@ func CloseBranchItem(loc StoreLocation, commonDir, branch, checkpoint string, no
 			if err := file.Worktree.closeItem(matching[0].ID, rfc3339Stamp(now), checkpoint); err != nil {
 				return err
 			}
-			saveReport, err := loc.Save(file)
+			saveReport, err := loc.Save(file, SectionWorktree)
 			report.BackupFailed = saveReport.BackupFailed
 			if err != nil {
 				return err
@@ -585,27 +596,6 @@ func (s Store) OverCeiling() bool {
 		return false
 	}
 	return len(data) > MaxStoreBytes
-}
-
-// AppendDecisionToPrimary is the locked read-modify-write append on one ledger file.
-// It is a dead writer kept until the monolithic-writer removal lands.
-func AppendDecisionToPrimary(path, key string, d Decision) error {
-	return withStoreLock(path, func() error {
-		loc := StoreAt(path)
-		file, _, err := loc.Load()
-		if err != nil {
-			return err
-		}
-		item, err := file.View().Primary(key)
-		if err != nil {
-			return err
-		}
-		if err := file.Tracker.AppendDecision(item.ID, d); err != nil {
-			return err
-		}
-		_, err = loc.Save(file)
-		return err
-	})
 }
 
 // withStoreLock serializes read-modify-write access to the ledger file with a

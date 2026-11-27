@@ -528,7 +528,7 @@ func TestFailedBackupFailsClosedWithATruthfulMessage(t *testing.T) {
 	}
 	defer os.Chmod(t5Dir, 0o755)
 
-	report, err := LedgerAt(root).Save(EmptyLedger())
+	report, err := LedgerAt(root).Save(EmptyLedger(), SectionWorktree, SectionTracker, SectionPlan)
 	if err == nil {
 		t.Fatal("Save wrote the ledger although the predecessor backup failed")
 	}

@@ -119,7 +119,7 @@ func TestBackupKeepsTheBytesItReplaces(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := StoreAt(legacy).Save(EmptyLedger()); err != nil {
+	if _, err := StoreAt(legacy).Save(EmptyLedger(), SectionWorktree, SectionTracker, SectionPlan); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	fresh := false
@@ -161,7 +161,7 @@ func TestWriteFailsClosedWhenTheBackupCannotBeWritten(t *testing.T) {
 	}
 	defer os.Chmod(t5Dir, 0o755)
 
-	if _, err := LedgerAt(root).Save(EmptyLedger()); err == nil {
+	if _, err := LedgerAt(root).Save(EmptyLedger(), SectionWorktree, SectionTracker, SectionPlan); err == nil {
 		t.Fatal("Save wrote the ledger although the predecessor backup could not be written")
 	}
 	if _, err := os.Stat(StorePath(root)); !errors.Is(err, os.ErrNotExist) {

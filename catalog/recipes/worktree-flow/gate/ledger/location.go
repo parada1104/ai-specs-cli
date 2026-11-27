@@ -48,19 +48,13 @@ type LedgerFile struct {
 	Plan     PlanSection   `json:"plan"`
 }
 
-// PlanSection is the plan-build-flow ledger's section. T6a declares the shape only:
-// no plan row is written until the plan store lands.
-type PlanSection struct {
-	Items []json.RawMessage `json:"items"`
-}
-
 // EmptyLedger is a fresh v2 ledger with every section present and empty.
 func EmptyLedger() LedgerFile {
 	return LedgerFile{
 		V:        LedgerVersion,
 		Worktree: WorktreeStore{Items: []WorktreeItem{}},
 		Tracker:  Store{Items: []Item{}, OptOuts: []ScopedOptOut{}},
-		Plan:     PlanSection{Items: []json.RawMessage{}},
+		Plan:     PlanSection{Items: []PlanItem{}},
 	}
 }
 
@@ -68,11 +62,13 @@ func EmptyLedger() LedgerFile {
 func (f LedgerFile) View() View { return View{Worktree: f.Worktree, Tracker: f.Tracker} }
 
 // StoreLocation is the ledger file one invocation reads and writes: Path is THE
-// file, and Migration is T5's mixed tracker file, absorbed on read and never
-// written. `--store` names Path and nothing else.
+// file, Migration is T5's mixed tracker file, and Plan is the checkout's plan
+// predecessor; both sources are absorbed on read and never written. `--store` names
+// Path and nothing else.
 type StoreLocation struct {
 	Path      string
 	Migration string
+	Plan      PlanSource
 }
 
 // LedgerAt is a repository's ledger: the v2 file plus T5's tracker file as the
@@ -140,23 +136,37 @@ func (l StoreLocation) Load() (LedgerFile, StoreReport, error) {
 		return EmptyLedger(), report, nil
 	}
 
+	file, err := l.loadFile(&report)
+	if err != nil {
+		return EmptyLedger(), report, err
+	}
+	// The plan row this checkout owns is migrated before the predecessor is read, so
+	// the seeding lands in the row that already belongs to it.
+	adoptPlanRow(&file, l.Plan.Identity)
+	l.absorbPlanSource(&file, &report)
+	settleCloses(&file)
+	return file, report, nil
+}
+
+// loadFile reads Path and every predecessor except the plan source, which the caller
+// absorbs after it, so the seeding happens once on every read path.
+func (l StoreLocation) loadFile(report *StoreReport) (LedgerFile, error) {
 	switch err := statExact(l.Path); {
 	case err == nil:
 		file, stale, err := readLedgerFile(l.Path)
 		if err != nil {
-			return EmptyLedger(), report, err
+			return EmptyLedger(), err
 		}
 		if stale == nil {
 			// Already v2: its own version answers, and a source only adds what it lacks.
-			l.absorbMigration(&file, &report)
-			settleCloses(&file)
-			return file, report, nil
+			l.absorbMigration(&file, report)
+			return file, nil
 		}
 		// Path is still v1, so it is a stale predecessor: 0.28.0 wrote it and T5 never
 		// did. T5's mixed tracker file is the newest superset, so it is the base and
 		// the v1 file only contributes the rows it lacks (L17 ALTO-1).
 		base := EmptyLedger()
-		l.absorbMigration(&base, &report)
+		l.absorbMigration(&base, report)
 		if added := mergeLegacyMissing(&base, *stale); added > 0 {
 			report.Absorbed += added
 		}
@@ -165,15 +175,13 @@ func (l StoreLocation) Load() (LedgerFile, StoreReport, error) {
 			// name absorbMigration reported, never the ledger's own path (L19).
 			report.LegacyRows = l.Path
 		}
-		settleCloses(&base)
-		return base, report, nil
+		return base, nil
 	case errors.Is(err, fs.ErrNotExist):
 		file := EmptyLedger()
-		l.absorbMigration(&file, &report)
-		settleCloses(&file)
-		return file, report, nil
+		l.absorbMigration(&file, report)
+		return file, nil
 	default:
-		return EmptyLedger(), report, &StoreCorruptError{Path: l.Path, Err: err}
+		return EmptyLedger(), &StoreCorruptError{Path: l.Path, Err: err}
 	}
 }
 
@@ -211,25 +219,66 @@ func (l StoreLocation) absorbMigration(file *LedgerFile, report *StoreReport) {
 	report.LegacyRows = l.Migration
 }
 
-// Save writes the whole file atomically, after keeping a copy of every predecessor it
-// is about to supersede. A copy that cannot be written fails the save closed: a
+// Save writes the file atomically, after keeping a copy of every predecessor it is
+// about to supersede. A copy that cannot be written fails the save closed: a
 // predecessor with no backup must never be replaced (L17 MEDIO-2).
-func (l StoreLocation) Save(file LedgerFile) (StoreReport, error) {
-	report := StoreReport{BackupFailed: errors.Join(l.backupPredecessor(l.Path), l.backupPredecessor(l.Migration))}
+//
+// own names the sections the caller owns. Every other section is re-read from disk
+// before the write, so no caller can put a row into a capability it does not own
+// (S3): the whole-store write that could land a row in the wrong ledger is what the
+// ownership contract removes.
+func (l StoreLocation) Save(file LedgerFile, own ...Section) (StoreReport, error) {
+	report := StoreReport{BackupFailed: errors.Join(
+		l.backupPredecessor(l.Path), l.backupPredecessor(l.Migration), l.copyPredecessor(l.Plan.Path))}
 	if report.BackupFailed != nil {
 		return report, fmt.Errorf("ledger: refusing to write %s without a predecessor backup: %w", l.Path, report.BackupFailed)
 	}
-	data, err := encodeLedgerFile(file)
+	kept, err := l.keepUnowned(file, own)
+	if err != nil {
+		return report, err
+	}
+	data, err := encodeLedgerFile(kept)
 	if err != nil {
 		return report, err
 	}
 	return report, writeAtomic(l.Path, data)
 }
 
+// keepUnowned restores every section the caller did not name from a fresh read. A
+// read that fails fails the write closed: an unowned section whose current content
+// cannot be known must not be guessed.
+func (l StoreLocation) keepUnowned(file LedgerFile, own []Section) (LedgerFile, error) {
+	if len(own) == 0 {
+		return LedgerFile{}, fmt.Errorf("%w: a write names the sections it owns", ErrInvalidWrite)
+	}
+	owned := make(map[Section]bool, len(own))
+	for _, section := range own {
+		owned[section] = true
+	}
+	// One full read per write, whatever the caller names: the sections it does not own
+	// come from disk, the rows it absorbed on load ride along as the report promises,
+	// and a ledger nobody can read is never replaced, even by an all-section write.
+	onDisk, _, err := l.Load()
+	if err != nil {
+		return LedgerFile{}, err
+	}
+	if !owned[SectionWorktree] {
+		file.Worktree = onDisk.Worktree
+	}
+	if !owned[SectionTracker] {
+		file.Tracker = onDisk.Tracker
+	}
+	if !owned[SectionPlan] {
+		file.Plan = onDisk.Plan
+	}
+	return file, nil
+}
+
 // Backup keeps the one-shot predecessor copies without writing the ledger file.
 // Callers do this before the first write of an invocation that mutates.
 func (l StoreLocation) Backup() StoreReport {
-	return StoreReport{BackupFailed: errors.Join(l.backupPredecessor(l.Path), l.backupPredecessor(l.Migration))}
+	return StoreReport{BackupFailed: errors.Join(
+		l.backupPredecessor(l.Path), l.backupPredecessor(l.Migration), l.copyPredecessor(l.Plan.Path))}
 }
 
 // backupPredecessor keeps a copy of the bytes a v1 predecessor actually holds: an
@@ -238,22 +287,53 @@ func (l StoreLocation) Backup() StoreReport {
 // copy (L17 MEDIO-2). A v2 file is not a predecessor and is not copied; a missing
 // source has nothing to copy.
 func (l StoreLocation) backupPredecessor(path string) error {
-	if path == "" {
-		return nil
-	}
-	switch err := statExact(path); {
-	case errors.Is(err, fs.ErrNotExist):
-		return nil
-	case err != nil:
+	data, ok, err := predecessorBytes(path)
+	if err != nil || !ok || !isV1(data) {
 		return err
+	}
+	return keepCopy(path, data)
+}
+
+// copyPredecessor keeps a one-shot copy of a source whatever shape it has: the plan
+// predecessor is a line file, not a v1 store, and it is still replaced by the first
+// write that seeds its events into the ledger. A missing source has nothing to copy.
+func (l StoreLocation) copyPredecessor(path string) error {
+	data, ok, err := predecessorBytes(path)
+	if err != nil || !ok {
+		return err
+	}
+	return keepCopy(path, data)
+}
+
+// predecessorBytes reads the bytes a predecessor holds. A path that is absent, or
+// that is not a regular file, holds no predecessor bytes: a directory where a
+// ledger file belongs is reported on load as an unreadable source and is not a
+// failed backup, so it never disables the write (L17 MEDIO-3). A regular file whose
+// bytes cannot be read is still an error, and the save fails closed.
+func predecessorBytes(path string) ([]byte, bool, error) {
+	if path == "" {
+		return nil, false, nil
+	}
+	info, err := os.Stat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, false, nil
+	case err != nil:
+		return nil, false, err
+	case !info.Mode().IsRegular():
+		return nil, false, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
-	if !isV1(data) {
-		return nil
-	}
+	return data, true, nil
+}
+
+// keepCopy writes path's bytes to a one-shot copy: an existing copy is reused only
+// when it holds exactly these bytes, otherwise the copy gets a name of its own, so a
+// predecessor that grew is never replaced under a stale copy (L17 MEDIO-2).
+func keepCopy(path string, data []byte) error {
 	for n := 0; ; n++ {
 		name := path + ".v1-backup"
 		if n > 0 {
@@ -508,7 +588,7 @@ func encodeLedgerFile(file LedgerFile) ([]byte, error) {
 		file.Tracker.OptOuts = []ScopedOptOut{}
 	}
 	if file.Plan.Items == nil {
-		file.Plan.Items = []json.RawMessage{}
+		file.Plan.Items = []PlanItem{}
 	}
 	data, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {

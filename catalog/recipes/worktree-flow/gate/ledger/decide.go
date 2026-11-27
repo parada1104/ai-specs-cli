@@ -1,7 +1,6 @@
 package ledger
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -82,7 +81,7 @@ func PersistDecision(loc StoreLocation, key string, req DecisionRequest, now tim
 				Key: key, Checkpoint: persisted.Checkpoint, Scope: persisted.Scope,
 				Choice: persisted.Choice, At: persisted.At,
 			})
-			_, saveErr := loc.Save(file)
+			_, saveErr := loc.Save(file, SectionTracker)
 			return saveErr
 		}
 		if err != nil {
@@ -97,7 +96,7 @@ func PersistDecision(loc StoreLocation, key string, req DecisionRequest, now tim
 			// exemption (DW1): file removal never revokes the store record.
 			clearExemption(&file.Tracker, item.ID)
 		}
-		_, saveErr := loc.Save(file)
+		_, saveErr := loc.Save(file, SectionTracker)
 		return saveErr
 	})
 	if err != nil {
@@ -118,29 +117,6 @@ func newDecision(req DecisionRequest, stamp string) Decision {
 	return d
 }
 
-// PersistConflict records the latest disagreement as the item's current conflict
-// snapshot. It never resolves anything and never picks a side.
-func PersistConflict(storePath, key string, c Conflict) error {
-	raw, err := json.Marshal(c)
-	if err != nil {
-		return err
-	}
-	return withStoreLock(storePath, func() error {
-		loc := StoreAt(storePath)
-		file, _, err := loc.Load()
-		if err != nil {
-			return err
-		}
-		item, err := file.View().Primary(key)
-		if err != nil {
-			return err
-		}
-		setConflict(&file.Tracker, item.ID, raw)
-		_, err = loc.Save(file)
-		return err
-	})
-}
-
 // clearConflict drops the current conflict snapshot: once a human adjudicates,
 // the conflict is no longer current.
 func clearConflict(s *Store, id string) {
@@ -157,15 +133,6 @@ func clearExemption(s *Store, id string) {
 	for i := range s.Items {
 		if s.Items[i].ID == id {
 			s.Items[i].Exemption = ""
-		}
-	}
-}
-
-// setConflict stores the snapshot on the item with id.
-func setConflict(s *Store, id string, raw json.RawMessage) {
-	for i := range s.Items {
-		if s.Items[i].ID == id {
-			s.Items[i].Conflict = raw
 		}
 	}
 }

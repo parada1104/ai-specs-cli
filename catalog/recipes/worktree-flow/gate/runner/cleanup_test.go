@@ -640,7 +640,7 @@ func seedCleanupLedger(t *testing.T, root, branch, change string) string {
 		ID: id, Identity: ident, ProviderID: "test-recipe",
 		Decisions: []ledger.Decision{{At: stamp, Kind: ledger.DecisionOpen}},
 	})
-	if _, err := ledger.StoreAt(path).Save(file); err != nil {
+	if _, err := ledger.StoreAt(path).Save(file, ledger.SectionWorktree, ledger.SectionTracker, ledger.SectionPlan); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	return path

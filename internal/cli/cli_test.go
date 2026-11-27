@@ -301,7 +301,7 @@ func TestWorktreeGateRoutePinnedContracts(t *testing.T) {
 			{At: "2026-09-13T12:30:00Z", Checkpoint: "pre-merge", Kind: ledger.DecisionAdjudicate, Choice: "local"},
 		},
 	})
-	if _, err := ledger.StoreAt(storePath).Save(file); err != nil {
+	if _, err := ledger.StoreAt(storePath).Save(file, ledger.SectionWorktree, ledger.SectionTracker, ledger.SectionPlan); err != nil {
 		t.Fatal(err)
 	}
 	evidence := filepath.Join(t.TempDir(), "evidence.json")

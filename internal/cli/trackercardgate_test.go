@@ -70,7 +70,7 @@ func bindTrackerLedger(t *testing.T, common, branch string, withItem bool) {
 			ID: id, Identity: ident, ItemID: "card-1", ProviderID: "trello-mcp-workflow",
 			Decisions: []ledger.Decision{{At: stamp, Kind: ledger.DecisionOpen}}})
 	}
-	if _, err := ledger.StoreAt(path).Save(file); err != nil {
+	if _, err := ledger.StoreAt(path).Save(file, ledger.SectionWorktree, ledger.SectionTracker, ledger.SectionPlan); err != nil {
 		t.Fatal(err)
 	}
 }

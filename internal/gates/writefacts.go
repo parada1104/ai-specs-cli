@@ -64,10 +64,14 @@ type WriteFacts struct {
 	// RiskTrailer reports a `Risk: item N` trailer in Base..HEAD (odd mode only,
 	// and only when a high-risk pattern is declared).
 	RiskTrailer bool
-	// Declared reports the standing `changes workstream` decision recorded in the
-	// plan ledger, and DeclaredReason is the reason that decision carries.
+	// Declared reports the standing `changes workstream` decision recorded in the plan
+	// ledger, and DeclaredReason is the reason that decision carries. DeclaredErr is set
+	// when the ledger could not be read at all: the grade then rests on the facts it
+	// could observe, and the verdict says so instead of silently reading "no
+	// declaration" out of a file nobody could open.
 	Declared       bool
 	DeclaredReason string
+	DeclaredErr    error
 	// Untracked is the product-path divergence the diff cannot see: a file the
 	// branch never added. It is collected only when nothing else already says
 	// "change", so a graded worktree pays no extra git call.
@@ -172,22 +176,31 @@ func (f WriteFacts) Verdict() Verdict {
 // notes names the facts the collection could not observe, so a rule that could not
 // run is never indistinguishable from a rule that found nothing.
 func (f WriteFacts) notes() []string {
+	var notes []string
+	if f.DeclaredErr != nil {
+		// The declaration is a fact this collection could not observe. Naming the file
+		// is what separates "this worktree is a change" from "the ledger the decision
+		// lives in could not be read".
+		notes = append(notes, fmt.Sprintf("the workstream declaration was not read: the plan "+
+			"ledger could not be loaded (%v), so this worktree is graded on its artifacts alone. "+
+			"Run `ai-specs changes workstream` to see the ledger's own error.", f.DeclaredErr))
+	}
 	switch {
 	case f.Base == "" && f.Unborn:
 		// A branch with no commit has nothing to compare against: silence is the
 		// honest answer, not a note about a base the project never had.
-		return nil
+		return notes
 	case f.Base == "":
-		return []string{"the diff was not graded: no base ref resolves in this root (no declared " +
-			"base_branch and none of the integration branch names exists), so there is no diff to grade " +
-			"and no declared high-risk pattern could be read. Fetch the base branch or declare " +
-			"[recipes.git-pr-flow.config] base_branch; the pending target is still graded."}
+		return append(notes, "the diff was not graded: no base ref resolves in this root (no declared "+
+			"base_branch and none of the integration branch names exists), so there is no diff to grade "+
+			"and no declared high-risk pattern could be read. Fetch the base branch or declare "+
+			"[recipes.git-pr-flow.config] base_branch; the pending target is still graded.")
 	case !f.DiffKnown:
-		return []string{fmt.Sprintf("the diff was not graded: `git diff` against `%s` produced no "+
+		return append(notes, fmt.Sprintf("the diff was not graded: `git diff` against `%s` produced no "+
 			"usable answer (a shallow clone, or no such history in this root). The pending target is "+
-			"still graded.", f.Base)}
+			"still graded.", f.Base))
 	}
-	return nil
+	return notes
 }
 
 // GradedPath reports whether the write gate grades a repository-relative path.
@@ -252,7 +265,12 @@ func ProductPath(rel string) bool {
 // L4), and an unreadable index is not an empty one: silence keeps the worktree
 // graded.
 func (f *WriteFacts) observeWorkstream(repoRoot string) {
-	f.Declared, f.DeclaredReason = planledger.Workstream(repoRoot)
+	f.Declared, f.DeclaredReason, f.DeclaredErr = planledger.Workstream(repoRoot)
+	if f.DeclaredErr != nil {
+		// An unreadable ledger declares nothing: the worktree stays graded, and the
+		// verdict carries the reason (see notes).
+		f.Declared, f.DeclaredReason = false, ""
+	}
 	if f.Change == "" || f.HasPlan || f.HasDelta || f.Declared || !f.DiffKnown {
 		return
 	}

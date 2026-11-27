@@ -1,0 +1,354 @@
+# change-ledger-t6b (ODD)
+
+Unit T6b of the change-ledger-v2 redesign: the plan build-flow ledger becomes a real
+section, the monolithic single-store writer and its dead writers go, corruption stays
+contained to the file it belongs to, and the S14 contract names the entrypoint instead
+of a set of forbidden strings. It completes T6 after T6a delivered the per-capability
+one-file layout. Master plan, design and audit live in `odd/tasks/change-ledger-v2.md`
+and `odd/tasks/change-ledger-v2/`; T6a's own plan and its Log (L5-L20) are the
+immediate predecessor and must be read before touching the ledger.
+
+## Specs
+
+- **S3** — One ledger per capability, in the CLI, conversing without mixing state.
+  Verbatim: «no es un ledger único. Hay un ledger por capacidad, todos en el CLI,
+  que conversan pero no se mezclan: el de worktree (identidad, merge, limpieza,
+  integración), el de plan-build-flow (la capa del change y su flujo: si
+  plan-build-flow está activo el checkpoint tiene más pasos) y el del tracker
+  (conciliación entre el tracker y los changes)».
+- **S11** — Store v2 with one-version double read; the 14 rows stay as history.
+  Verbatim: «store v2 con doble lectura una versión, las 14 filas quedan como
+  histórico».
+- **S14** — Everything goes through the CLI entrypoint; the on-disk layout is not a
+  contract. Verbatim: «cada ledger con su propio archivo está bien siempre que todo
+  pase por el entrypoint del CLI de ai-specs (nadie lee ni escribe esos archivos
+  directamente)».
+
+## Tasks
+
+- T6b.1 — The plan ledger owns the plan section. The `workstream` and `workstream-end`
+  events that today live in `.ai-specs/plan-ledger.jsonl` (`internal/planledger`,
+  appended from `internal/cli/changes.go`, read by `internal/gates/writefacts.go`)
+  move into `LedgerFile.Plan`, seeded on read from the existing JSONL without losing
+  an event, with the same one-shot backup discipline T6a established. Specs: S3, S11.
+  route: worker. commit: pending.
+- T6b.2 — Delete the monolithic writer and the dead writers: whatever still writes a
+  whole store without going through a capability section, plus `PersistConflict` and
+  `AppendDecisionToPrimary` (no production caller; carried from T5 L9, deferred here by
+  the master plan). Specs: S3, S14. route: worker. commit: pending.
+- T6b.3 — Corruption stays contained: a corrupt file is unevaluable and every write
+  fails closed with the file byte-identical (the L15 replacement for the old
+  "a corrupt ledger leaves the others answering", which has no subject in one file),
+  and an unreadable migration source is reported without disabling the ledger. Specs:
+  S11. route: worker. commit: pending.
+- T6b.4 — The S14 contract test names the entrypoint: it must fail on a new API-only
+  caller such as `ledger.LedgerAt(root).Load()` from outside the gate entrypoint, not
+  just on `ledgers/` literals. Specs: S14. route: worker. commit: pending.
+- T6b.5 — Validation: focused suites, both Go modules, `ledger_cleanup_flow.sh` before
+  and after, the full Python suite, and the real-store probes T6a used (v1 only; v1 +
+  T5 tracker; T5 single open row; the 0.28.0 -> T5 upgrade; v1 with a lifecycle
+  opt-out). Specs: S3, S11, S14. route: worker. commit: pending.
+
+## Allowed edit surfaces
+
+- catalog/recipes/worktree-flow/gate/ledger/
+- catalog/recipes/worktree-flow/gate/runner/
+- internal/planledger/
+- internal/cli/
+- internal/gates/
+- tests/scenarios/ledger_cleanup_flow.sh
+- tests/
+- odd/tasks/change-ledger-t6b.md
+
+## Verification
+
+| Spec | Evidence |
+| --- | --- |
+| S3 | A workstream decision lands in the plan section and nowhere else; the worktree and tracker sections are untouched by it; no row is written to two sections. |
+| S11 | The JSONL events survive migration byte-identically (or with a one-shot backup), the v1 ledger still migrates, and no historical row is lost. |
+| S14 | The contract test fails on an outside caller using the new API, and every read and write still happens through the CLI entrypoint. |
+
+## Log
+
+- **L1** — Mandate, verbatim (from `odd/tasks/change-ledger-t6.md` L1, which covers
+  this unit): «Sigue con el plan maestro: T4 (aviso de Pi visible) y luego T5,
+  T6… en orden, una unidad = un worktree nuevo desde development + un PR, con el
+  mismo mandato (validar con flujo real y RED, revisión nativa antes del merge; si
+  la revisión se traba en el paso de validación como en T2, me avisas con
+  LISTO REVISAR-<unidad> y reviso yo; PR, merge, `ai-specs sync` del repo con su
+  PR). Sin release hasta T12, salvo que una unidad lo necesite. Guarda en Engram
+  antes de cada merge (el hook retira el worktree). Cuando el contexto pase de
+  ~45 %, cierra en Engram y avísame con LISTO RELEVO para abrir sesión nueva.
+  Avísame al cerrar cada unidad con una línea LISTO <unidad> (p. ej. LISTO T4).»
+  Plus, verbatim, from Robert at the close of T6a: «Antes del merge: handoff en
+  Engram y worktree de T6b.»
+- **L2** — Master plan entry, verbatim (`odd/tasks/change-ledger-v2.md`, T6):
+  «T6 — Worktree and plan stores extracted, with the same invariants (S3, S11, S14).»
+  T6a delivered the worktree half; this unit delivers the plan half plus the deletion
+  of the monolithic writer.
+- **L3** — Inherited state, not to be re-derived. T6a (`5317fe47`, PR #620) made the
+  ledger one versioned file with a `worktree`, a `tracker` and a shape-only `plan`
+  section, one atomic rename per write, the lock `<store>.lock`, `--store` naming THE
+  file, and a read-time migration absorbing both predecessors (the v1 file and T5's
+  `ledgers/tracker.json`) with the newest form winning. `StoreLocation{Path,
+  Migration}`, `LedgerFile`, `LedgerAt`, `StoreAt`, `Load`, `Save`, `Backup`,
+  `StoreReport`, `View` and the share functions are its API. Still present and owed to
+  this unit: `PersistConflict`, `AppendDecisionToPrimary`, the plan section with no
+  writer, and the `.ai-specs/plan-ledger.jsonl` events outside it.
+  Traps carried over, each of which cost real time: the pi-lens LSP binds the MAIN
+  worktree (its `undefined:` reports are stale in a linked one — only `go build`,
+  `go vet`, `go test` count); the gate is its own Go module under
+  `catalog/recipes/worktree-flow/gate`; `tests/run.sh` aborts at its parity leg, so run
+  `python3 -m unittest discover -s tests -p 'test_*.py'` directly (about ten minutes;
+  the base has exactly one pre-existing failure,
+  `test_git_pr_flow_recipe.GitPrFlowGoldenContentTests.test_skill_never_recommends_delete_branch`);
+  a merge retires the worktree and the cwd; native review cannot run on candidates of
+  this size (`lens_context_budget_exceeded` from ~3300 changed lines with every lens
+  set), so a candidate of that size goes to Robert with `LISTO REVISAR-<unit>`.
+  Lesson worth carrying: the two defects that survived T6a's first probes were the ones
+  whose fixtures differed from reality only in a detail (the real rows carry no
+  opt-out; an older binary can relink and close a row instead of only adding one).
+  Probe the queries that read, not just the writes that arrive.
+- **L4** — Release findings from shipping 0.29.0, recorded for their own unit (not fixed
+  here, and not this unit's scope):
+  1. **`scripts/build-cli.sh` builds the four assets but never writes
+     `bin/SHA256SUMS`**, although its own header says the digests must be regenerated
+     after any CLI change. A version bump that changes the binary therefore ships a
+     trust manifest holding the previous release's digests, and every install of the new
+     asset would be refused as a mismatch and silently fall back to a local Go build.
+     Reproduced: the 0.29.0 binaries hashed `21c88263…`, `d7aa2ae4…`, `8d611720…`,
+     `aaeae58d…` while the committed manifest still held 0.28.0's digests; the manifest
+     had to be regenerated by hand. Fix direction: make the script write the manifest
+     (or fail when it is stale) so the release cannot publish a mismatched asset.
+  2. **`ai-specs upgrade` reports «Already up to date» by comparing `VERSION` and can
+     leave a stale launcher binary.** Reproduced: the home checkout fast-forwarded to
+     0.29.0 while `~/.ai-specs/dist/ai-specs` stayed the 0.28.0 asset (`acc2cff7…`
+     instead of `d7aa2ae4…`) and `dist/VERSION` kept the old stamp; `ai-specs version`
+     still answered 0.29.0 because it reads the checkout's `VERSION`, so the mismatch was
+     invisible from the command users run. Only `install.sh` noticed and printed
+     «verified release asset». Fix direction: compare the installed binary's digest
+     against the trust root, not the version string, and refresh the launcher when they
+     differ.
+  Both matter for T12 (release) and for any unit that ships a binary change.
+- **L5** — Baseline before any change, on `306691d8`: the gate module
+  (`catalog/recipes/worktree-flow/gate`) builds, vets and tests clean and the root
+  module builds and vets clean (`go test ./ledger/... ./runner/... -count=1`: both ok,
+  3.8 s and 44 s). Log: `/private/tmp/change-ledger-v2/t6b/baseline.log`.
+- **L6** — The plan section's shape and the identity it is keyed by. `PlanSection`
+  stops being `[]json.RawMessage` (T6a shipped it shape-only, L15.1) and becomes
+  `{items:[{identity, decisions:[{at, kind, checkpoint, choice, note, reason}]}]}`,
+  with `kind` one of `workstream` / `workstream-end` for this unit (a later unit adds
+  `plan-exempt` and `archive`). One refinement of L8, decided here and stated for the
+  reviewer: the row carries the **existing `ItemIdentity`** (`common_dir`, `branch`,
+  `change`) instead of L8's bare `change` slug, because the ledger file is shared by
+  every worktree of the clone (`<git-common-dir>/ai-specs/ledger/state.json`) while a
+  workstream declaration is per-checkout (T3 chose a per-checkout file for exactly
+  that reason: «a worktree carries its own declaration and its siblings cannot inherit
+  it»). Keying by identity keeps that property in one shared file and reuses the
+  identity type the other two rows already use; a workstream row is written with an
+  empty `change`, because a workstream by definition has no change. No new key, no new
+  identity scheme.
+- **L7** — Seeding, and why the JSONL becomes a predecessor instead of a second
+  writer. `.ai-specs/plan-ledger.jsonl` is read **on load** by `StoreLocation`, through
+  a new `PlanSource{Path, Key}` field that names the checkout's JSONL and the work
+  identity that owns it; every event it holds becomes one `PlanDecision` for that
+  identity, in file order, so no event is lost. It contributes **only when the plan
+  section has no row for that identity**, which is the same rule T6a settled for the
+  tracker and for the same reason (L17 ALTO-1: a newer file wins over an older binary's
+  append; the alternative is `close,open`-style resurrection of a decision that was
+  already superseded). A one-shot copy of the JSONL is kept by the same
+  `backupPredecessor` discipline before the first write that supersedes it, and an
+  unreadable or unparseable JSONL is reported through `StoreReport.LegacyUnreadable`
+  without disabling the ledger (L17 MEDIO-3, now applied to the third source). Reads
+  fold last-event-wins exactly as `planledger.Workstream` does today, so the
+  declaration's meaning does not change; unknown event names are still skipped.
+- **L8** — T6b.2, decided. «Whatever still writes a whole store without going through
+  a capability section» is `StoreLocation.Save(LedgerFile)`: the only export that
+  writes all three sections at once, and the reason a caller could put a row in a
+  ledger it does not own. It is not deleted but made incapable of that: `Save` takes
+the sections the caller owns (`Save(file, SectionWorktree, SectionTracker)`) and
+  re-reads every section it was not given from disk before writing, so an unowned
+  section cannot be overwritten even by a hand-built `LedgerFile`. Deleting it
+  outright was the alternative and was rejected on evidence: four cross-package
+  fixtures (`internal/cli`, `gate/runner`) seed a file the production mutators cannot
+  construct (a pinned item id, a collided pair, an adjudication history), so the
+  export would have to be re-added as a seeding helper with a different name; the
+  ownership contract gives the published invariant instead, and it is testable. Plus
+  the two dead writers and their now-unreachable helper: `PersistConflict`
+  (`decide.go:123`), `AppendDecisionToPrimary` (`store.go:592`) and `setConflict`.
+- **L9** — T6b.4, decided: the contract test stops matching a string list and starts
+  naming the API. Detection becomes (a) the existing forbidden literals and (b) any
+  shipped source outside the owned prefixes that imports `worktree-gate/ledger` or
+  `worktree-gate/ledger/...`, plus the store entrypoints that have no string form
+  (`LedgerAt(`, `.Load()`, `.Save(`). `internal/planledger/` joins the owned prefixes,
+  because it is now the CLI's port to the plan section — the one place outside the
+  gate that may reach the ledger, and it is reachable only from `internal/cli`. RED is
+  a new file under a non-owned package calling `ledger.LedgerAt(...).Load()`, which the
+  test must name; the same file must be deleted afterwards, so the RED proof is
+  recorded as the failure text in this Log.
+- **L10** — T6b.1 and T6b.2 landed with their tests first. RED for the plan section, on
+  `306691d8` with the tests written and the API absent: `go vet ./ledger/` →
+  `ledger/plan_test.go:31:46: ledger.LedgerAt(ident.CommonDir).WithPlanSource undefined
+  (type ledger.StoreLocation has no field or method WithPlanSource)`
+  (`/private/tmp/change-ledger-v2/t6b/red-t6b1.log`). GREEN: `go test ./ledger/ -count=1`
+  passes with nine new plan tests — the decision lands only in the plan section, every
+  JSONL event is absorbed in order, the file answers over a stale append, the first
+  write absorbs the predecessor and keeps its one-shot copy, a sibling checkout inherits
+  nothing, an unreadable predecessor is reported and not fatal, unparseable lines stay
+  skipped, and the writer refuses an identity it cannot name.
+  Deleted: `PersistConflict`, `AppendDecisionToPrimary` and their now-unreachable
+  `setConflict`; `TestPersistConflictFailsClosedForCollision` and
+  `TestAppendDecisionToPrimaryFailsClosed` went with them, and
+  `TestConcurrentAppendDoesNotLoseDecisions` was **retargeted to a live writer**
+  (`PersistDecision`) rather than deleted, so the atomic-replace-and-lock pin survives.
+  `Save` now names its sections: a write that names none is refused, and every section
+  it was not given is re-read from disk, pinned by
+  `TestSaveCannotWriteASectionItDoesNotOwn` (a tracker-only write that hands over a
+  stolen lifecycle row and a stolen plan row writes neither).
+- **L11** — A real defect the new tests found, and its fix. An unreadable predecessor
+  (a directory where a ledger file belongs) made **every** write fail closed: `Save`
+  treats a predecessor it cannot copy as a failed backup, which is right for a regular
+  file with unreadable bytes and wrong for a path that holds no predecessor bytes at
+  all. Reproduced by two new tests (`TestUnreadableMigrationSourceDoesNotDisableWrites`,
+  `TestUnreadablePlanSourceDoesNotDisableWrites`) failing with «refusing to write …
+  without a predecessor backup: read …: is a directory». Fixed in `location.go` with
+  `predecessorBytes`, which reports an absent or non-regular path as «nothing to copy»
+  while a regular file whose bytes cannot be read still fails the save closed (the
+  existing `TestWriteFailsClosedWhenTheBackupCannotBeWritten` keeps passing, unweakened).
+- **L12** — T6b.4 delivered, with one prefix decision taken here. The contract test now
+  detects the API, not only its string forms: `LedgerAt(`, `.Load()` and `.Save(` joined
+  the forbidden entrypoints, and an import of `ai-specs.dev/worktree-gate/ledger` (or a
+  subpackage) outside the owned prefixes is a finding on its own. `internal/planledger/`
+  joined the prefixes, and so did `catalog/recipes/worktree-flow/gate/shared/` — the one
+  change to L9's list, taken on evidence the worker escalated rather than silently
+  fixing: `witness.go` there imports the ledger package for the witness schema and
+  `WitnessPath`, never for a store call, and it is compiled into the gate the CLI runs
+  in-process. Widening to the whole gate module (the alternative) was rejected because
+  it would license any future gate subpackage to reach the store. Parent-verified RED,
+  with a compiling probe at `internal/tier/zz_contract_red.go` that names no path and
+  only calls the API:
+  «`internal/tier/zz_contract_red.go imports ai-specs.dev/worktree-gate/ledger` /
+  `internal/tier/zz_contract_red.go names LedgerAt(` / `… names .Load()`» — three
+  independent detections for one caller, green again once the probe was deleted
+  (`/private/tmp/change-ledger-v2/t6b/red-t6b4.log`).
+- **L13** — Real-flow probe over copies of the real 14-row store, built binary, no
+  fabricated rows (`/private/tmp/change-ledger-v2/t6b/probe.sh`, log beside it): **PASS**.
+  With a three-event JSONL predecessor beside the real v1 file, a read absorbs the
+  declaration and leaves both files byte-identical; `--reason` writes v2 with 14
+  worktree and 14 tracker rows, one plan row carrying
+  `[workstream, workstream-end, workstream, workstream]` with each reason preserved, ids
+  joined across sections, `status` only in the worktree section and no `close` in the
+  tracker, and both predecessors keep a one-shot `.v1-backup` and their own bytes;
+  `--end` appends to the same plan row; the same rows as T5 left them (`ledgers/tracker.json`
+  only) migrate to v2 with the plan decision beside them and T5's file byte-identical; a
+  lifecycle opt-out written into the real rows survives into `tracker.opt_outs`; and a
+  corrupt ledger refuses the write with the file byte-identical.
+- **L14** — Native review and the independent verifier both rejected `13fd0b27`, and Robert
+  took the decisions. The review (`correction_required`, lineage `review-5c09336a1626d7ad`,
+  budget 200 diff lines, unconsumed) reported R1-001 (a branch rename resurrects an ended
+  workstream), R1-002 (malformed JSONL lines are dropped in silence), R3-001 (an absent
+  predecessor is reported as unreadable) and R3-002 (a regular, unreadable predecessor blocks
+  every write); the verifier reproduced four more: `keepUnowned` does not absorb the plan, an
+  all-section `Save` replaces a corrupt file, seeding over an empty row duplicates it, and a
+  repository without a commit gets a misleading `--end` message and an empty `ledger` field.
+  What held: both Go modules green, `gofmt` clean, the Python suite identical to the base,
+  `ledger_cleanup_flow.sh` 7/7, sibling branches isolated, the real 14-row migration intact,
+  the dead writers gone, and the S14 contract catching an API-only caller.
+  **Cody's decisions (technical, recorded as his, not the parent's):**
+  1. R1-001 → **option A**: the plan row is keyed by the checkout (`common_dir` + the
+     worktree root), with the branch kept as data so a report can name it. Migration rule, as
+     proposed: rekey only the current checkout's row. Tests for the branch rename and for
+     moving the worktree folder.
+  2. R3-002 → **fail closed stays** (readings 1+3): a regular, unreadable predecessor blocks
+     the write with a clear message. Document the asymmetry in the L17 lineage and add the
+     mode-`000` test the verifier showed was missing.
+  3. All mechanical findings to be fixed: R1-002 (report discarded JSONL lines through
+     `LegacyUnreadable` without changing what is absorbed), R3-001 (absent is not unreadable),
+     V-1 and V-2 (one full read per write), V-3 (seed inside the existing row even when it is
+     empty), V-4 (the ledger path and the `--end` message in a repository without a commit).
+  4. **Do not spend the single correction shot**: a new commit and a new native review lineage.
+     If it gets stuck on size, `LISTO REVISAR-T6b` and Robert reviews it.
+  The full findings record, with reproductions and the design comparison, is at
+  `/Users/robert/.orca/bots/cody-2/scripts/t6b-hallazgos.md` (outside the repository, as asked).
+- **L15** — L14 applied as its own commit, not as the review's correction slot. **R1-001**:
+  `PlanIdentity{CommonDir, Root, Branch}` replaces the item identity in the plan section —
+  the row is keyed by the checkout (`common_dir` + the worktree root) and the branch
+  travels as data. `PlanIdentityAt` derives it without requiring a commit, so a
+  declaration can be recorded on a branch that has none, and `realPath` keeps the key
+  stable across a symlinked root. `rekeyPlanRows` covers the three migrations in one
+  place: a row of this checkout under another branch name has its branch data refreshed
+  (the key already matches), a row whose root no longer exists is rekeyed to the root it
+  now answers for (the checkout moved), and a row written before the key moved carries no
+  root and is adopted by the checkout whose common dir and branch it names. A row of
+  another **live** checkout is never touched, which is what keeps two worktrees of one
+  clone apart. **R3-002**: fail-closed stays, and the missing test exists now
+  (`predecessorBytes` keeps returning the read error for a regular file, `location.go`
+  still refuses the save); the asymmetry is documented in L17's lineage — a path that
+  holds no predecessor bytes is not a failed backup, a regular file nobody can read is.
+  **Mechanical findings, all fixed**: R1-002 (`decodePlanEvents` counts the lines nobody
+  could read and the count is reported through `LegacyUnreadable`, while the read stays
+  lenient and an event without a timestamp is still kept, because dropping it lost a real
+  end); R3-001 (an absent predecessor is ordinary absence and no longer overwrites
+  another source's diagnostic); V-1 and V-2 (`keepUnowned` does one full `Load` per write,
+  so absorbed rows ride along as `Absorbed` promises and an all-section write cannot
+  replace a ledger nobody can read); V-3 (a row that exists but is empty is filled
+  instead of duplicated); V-4 (`Store` needs no branch, so a repository without a commit
+  names its ledger, and `--end` says it cannot read the ledger only when it truly cannot).
+  A non-regular predecessor is reported without being read, which also stops a FIFO from
+  blocking the invocation. Tests added: the branch rename (at the ledger and, end to end,
+  in `internal/cli`), the moved checkout plus its live sibling, the absent predecessor, the
+  unreadable-line report, the empty row, the tracker write that keeps an absorbed plan row,
+  and the all-section save over a corrupt ledger. Evidence: both Go modules build, vet and
+  test clean; `gofmt` clean; `ledger_cleanup_flow.sh` 7/7; the real-store probe PASS again;
+  the Python suite rerun before the commit.
+- **L16** — L15 corrected again, per Cody's closing instruction (recorded as his, in the same
+  terms he gave them). **R1-checkout-inheritance**: the path is out of the key. `PlanIdentity`
+  now carries `Worktree`, git's own name for the checkout — `main` for the one that owns the
+  git dir, `worktrees/<name>` for a linked one, taken from `rev-parse --absolute-git-dir` —
+  and `Key()` is the common dir plus that name. `adoptPlanRow` is a step of `Load`, before the
+  predecessor is read, and it never guesses: a row whose worktree name matches is this
+  checkout's (its recorded root and branch are refreshed, which is what makes a branch rename
+  and a folder move keep the declaration with no path heuristic at all); a row written before
+  the key became stable carries no name and is rekeyed only when it is the **single**
+  candidate by common dir and branch, two candidates adopting nothing; a row of a deleted
+  worktree keeps its name, so a checkout that later takes that branch starts clean. The old
+  "its root no longer exists, so it is mine" rule is gone. **R1-predecessor-diagnostic**:
+  `planledger.Workstream` returns the read error instead of swallowing it (`Declared` is
+  gone; one read, one contract), `WriteFacts` carries `DeclaredErr`, and the verdict names
+  the ledger — «the workstream declaration was not read: the plan ledger could not be loaded
+  (…), so this worktree is graded on its artifacts alone» — instead of demanding a plan with
+  no visible cause. **Cheap findings**: `absorbPlanSource` is read-only again with the migration
+  named as `adoptPlanRow`'s own step (R2-001); `EventWorkstream`/`EventWorkstreamEnd` alias the
+  ledger's kinds and `Event` loses its dead JSON tags (R2-002); the comments cite this plan's
+  Log instead of review labels that only resolve in an external file (R2-003). R3-001 — the
+  CLI discarding the load report — stays with T7, where the plan makes the notes surface.
+  Tests added: the deleted worktree plus a newcomer on the same branch, the moved checkout by
+  its stable name, the legacy row adopted only when unique (and left alone when ambiguous),
+  and the gate naming an unreadable ledger. Evidence: `gofmt` clean; both Go modules build,
+  vet and test clean; `ledger_cleanup_flow.sh` 7/7; the real-store probe PASS; the Python
+  suite rerun before the commit.
+- **L17** — Cody's independent review approved with reservations, and its H1 was real: git
+  reuses the admin directory name, so a worktree recreated in the same folder inherited the
+  removed one's open declaration (reproduced end to end: declare in `.worktrees/d`, `git
+  worktree remove --force`, `git worktree add -b feat/d-again` at the same path, and the
+  report still said `declared:true` with the old reason). The name alone is not an identity.
+  The plan key now has two parts: git's name for the checkout, and a **creation token** this
+  build writes once into the admin directory (`ai-specs-created`, 16 random bytes, `O_EXCL`
+  with the winner's value re-read). The admin directory is removed with the worktree and
+  recreated empty by the next one, so a recreated worktree can never borrow a row. A token
+  that cannot be written is no identity: `RecordPlanDecision` refuses with «the checkout
+  cannot be named durably» rather than falling back to the name. `adoptPlanRow` keeps its
+  single-candidate migration only for rows written before the key carried a worktree name
+  at all, and now requires the same folder; a row that carries a name but no token is
+  deliberately **not** moved, because borrowing a declaration is exactly what a recreated
+  worktree must not do. Also closed here: the mode-`000` predecessor test L15 claimed (it
+  exists now: the load reports the source, the write is refused, neither the ledger nor a
+  copy is created); the verb reports the plan section's own report — an unreadable
+  predecessor and a failed copy are said out loud, and a ledger that cannot be read is named
+  on stderr instead of surfacing as a silent «no declaration» — which also makes the gate's
+  note (which points at this verb) honest; and `.ai-specs/` is ignored, so the local
+  predecessor and its one-shot copies never show up as untracked files. RED before the
+  token: `TestChangesWorkstreamDoesNotInheritAReusedWorktreeName` failed with
+  `Declared:true Reason:"audit of the release"` on the recreated worktree; GREEN after it,
+  with `TestRecreatedWorktreeDoesNotInheritTheRow` pinning the same rule at the ledger level.
+  R3-001 remains T7's.

@@ -92,8 +92,8 @@ func TestChangesWorkstreamReportsAFreshWorktree(t *testing.T) {
 	if report.Declared || len(report.Divergence) != 0 || report.Plan != "" || report.Delta {
 		t.Fatalf("report = %+v, want no declaration, no divergence and no artifact", report)
 	}
-	if report.Ledger != ".ai-specs/plan-ledger.jsonl" {
-		t.Fatalf("Ledger = %q, want the plan ledger", report.Ledger)
+	if !strings.HasSuffix(report.Ledger, filepath.Join("ai-specs", "ledger", "state.json")) {
+		t.Fatalf("Ledger = %q, want the ledger file the plan section lives in", report.Ledger)
 	}
 }
 
@@ -119,7 +119,7 @@ func TestChangesWorkstreamReportsAChange(t *testing.T) {
 // returns the worktree to the facts.
 func TestChangesWorkstreamDeclaresAndEnds(t *testing.T) {
 	root := workstreamRepo(t)
-	ledger := filepath.Join(root, ".ai-specs", "plan-ledger.jsonl")
+	ledgerFile := filepath.Join(root, ".git", "ai-specs", "ledger", "state.json")
 
 	code, stdout, stderr := runChangesCLI(t, "changes", "workstream", "--root", root,
 		"--reason", "audit of the ledger")
@@ -140,14 +140,32 @@ func TestChangesWorkstreamDeclaresAndEnds(t *testing.T) {
 		t.Fatalf("report = %+v, want a change once the declaration ended", report)
 	}
 
-	raw, err := os.ReadFile(ledger)
+	raw, err := os.ReadFile(ledgerFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if len(lines) != 2 || !strings.Contains(lines[0], `"workstream"`) ||
-		!strings.Contains(lines[1], `"workstream-end"`) {
-		t.Fatalf("ledger = %q, want the two appended events in order", string(raw))
+	var stored struct {
+		Plan struct {
+			Items []struct {
+				Decisions []struct {
+					Kind string `json:"kind"`
+				} `json:"decisions"`
+			} `json:"items"`
+		} `json:"plan"`
+	}
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("plan section is not readable: %v (%s)", err, raw)
+	}
+	if len(stored.Plan.Items) != 1 || len(stored.Plan.Items[0].Decisions) != 2 {
+		t.Fatalf("plan section = %s, want one row with the two decisions in order", raw)
+	}
+	kinds := []string{stored.Plan.Items[0].Decisions[0].Kind, stored.Plan.Items[0].Decisions[1].Kind}
+	if kinds[0] != "workstream" || kinds[1] != "workstream-end" {
+		t.Fatalf("plan decisions = %v, want workstream then workstream-end", kinds)
+	}
+	// The line file is a predecessor now: a declaration never creates it again.
+	if _, err := os.Stat(filepath.Join(root, ".ai-specs", "plan-ledger.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("a declaration wrote the retired line file (stat err = %v)", err)
 	}
 
 	// Nothing is open any more, so a second `--end` names the fact instead of
@@ -156,8 +174,8 @@ func TestChangesWorkstreamDeclaresAndEnds(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr, "no workstream declaration is open") {
 		t.Fatalf("second end = (%d, %q), want the refusal", code, stderr)
 	}
-	if raw, _ := os.ReadFile(ledger); strings.Count(string(raw), "\n") != 2 {
-		t.Fatalf("ledger = %q, want no third event", string(raw))
+	if raw, _ := os.ReadFile(ledgerFile); strings.Count(string(raw), `"kind"`) != 2 {
+		t.Fatalf("ledger = %q, want no third decision", string(raw))
 	}
 }
 
@@ -207,5 +225,89 @@ func TestChangesWorkstreamArgumentContract(t *testing.T) {
 	code, stdout, stderr := runChangesCLI(t, "changes", "workstream", "--help")
 	if code != 0 || stderr != "" || !strings.Contains(stdout, "changes workstream") {
 		t.Fatalf("--help = (%d, %q, %q), want the usage on stdout", code, stdout, stderr)
+	}
+}
+
+// The declaration belongs to the checkout, not to the branch name (T6b R1-001): once
+// it is ended, renaming the branch must not bring it back, and the report keeps naming
+// the branch it now runs on.
+func TestChangesWorkstreamSurvivesABranchRename(t *testing.T) {
+	root := workstreamRepo(t)
+	if code, _, stderr := runChangesCLI(t, "changes", "workstream", "--root", root,
+		"--reason", "audit of the release"); code != 0 || stderr != "" {
+		t.Fatalf("declare = (%d, %q), want it recorded", code, stderr)
+	}
+	if code, _, stderr := runChangesCLI(t, "changes", "workstream", "--root", root, "--end"); code != 0 || stderr != "" {
+		t.Fatalf("end = (%d, %q), want the declaration ended", code, stderr)
+	}
+	workstreamGit(t, root, "branch", "-m", "feat/renamed")
+
+	report := workstreamReport(t, root)
+	if report.Declared {
+		t.Fatalf("report = %+v, want no declaration after the rename", report)
+	}
+	if report.Branch != "feat/renamed" {
+		t.Fatalf("branch = %q, want the branch the worktree runs on now", report.Branch)
+	}
+	// The ended declaration is still the answer, so a second end names the fact instead
+	// of recording a third event.
+	code, _, stderr := runChangesCLI(t, "changes", "workstream", "--root", root, "--end")
+	if code != 1 || !strings.Contains(stderr, "no workstream declaration is open") {
+		t.Fatalf("second end = (%d, %q), want the refusal", code, stderr)
+	}
+}
+
+// A worktree git recreates under a reused admin name is a different checkout: the
+// declaration of the removed one must not come back with the folder.
+func TestChangesWorkstreamDoesNotInheritAReusedWorktreeName(t *testing.T) {
+	root := workstreamRepo(t)
+	wt := filepath.Join(root, ".worktrees", "d")
+	workstreamGit(t, root, "worktree", "add", "-q", "-b", "feat/d", wt)
+	if code, _, stderr := runChangesCLI(t, "changes", "workstream", "--root", wt,
+		"--reason", "audit of the release"); code != 0 || stderr != "" {
+		t.Fatalf("declare = (%d, %q), want it recorded", code, stderr)
+	}
+	if report := workstreamReport(t, wt); !report.Declared {
+		t.Fatalf("report = %+v, want the declaration in the linked worktree", report)
+	}
+
+	// The same folder and the same admin name, recreated by git.
+	workstreamGit(t, root, "worktree", "remove", "--force", wt)
+	workstreamGit(t, root, "worktree", "add", "-q", "-b", "feat/d-again", wt)
+
+	report := workstreamReport(t, wt)
+	if report.Declared {
+		t.Fatalf("report = %+v, want a clean worktree: the removed one's declaration came back "+
+			"because git reused the admin directory name", report)
+	}
+	if report.Reason != "" {
+		t.Fatalf("reason = %q, want nothing carried over", report.Reason)
+	}
+}
+
+// A ledger nobody can read is named by the verb too, not only by the gate: the report
+// path keeps grading the facts and says on stderr why no declaration came back, and
+// `--end` refuses instead of claiming there is nothing to end.
+func TestChangesWorkstreamNamesAnUnreadableLedger(t *testing.T) {
+	root := workstreamRepo(t)
+	ledger := filepath.Join(root, ".git", "ai-specs", "ledger", "state.json")
+	if err := os.MkdirAll(filepath.Dir(ledger), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ledger, []byte("{ corrupt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, stderr := runChangesCLI(t, "changes", "workstream", "--root", root)
+	if code != 0 {
+		t.Fatalf("report = %d, want the facts still graded", code)
+	}
+	if !strings.Contains(stderr, "cannot read the plan ledger") {
+		t.Fatalf("stderr = %q, want it naming the unreadable ledger", stderr)
+	}
+
+	code, _, stderr = runChangesCLI(t, "changes", "workstream", "--root", root, "--end")
+	if code != 1 || !strings.Contains(stderr, "cannot read the plan ledger") {
+		t.Fatalf("end = (%d, %q), want the read failure named and the verb to refuse", code, stderr)
 	}
 }
