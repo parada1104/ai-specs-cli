@@ -240,6 +240,8 @@ _GATE_HELP_LINE = ("  worktree-gate [gate args...]  Run the worktree gate "
                    "(arguments passed through unchanged)\n")
 _CHANGES_START_HELP_LINE = ("  changes start --none --root <planning-root>  "
                             "Deprecated: the tier is inferred from the artifacts\n")
+_CHANGES_WORKSTREAM_HELP_LINE = ("  changes workstream --root <repo-root>  Report a change or a "
+                                 "workstream, or declare the workstream (--reason, --end)\n")
 _TRACKER_LEDGER_ERROR_RE = re.compile(
     r"^(  ERROR  tracker-ledger   ).*the tracker ledger is failing open.*$",
     re.MULTILINE)
@@ -255,6 +257,12 @@ def _norm_changes_start_help_line(text: str, ctx: dict) -> str:
     if tuple(ctx.get("argv") or ())[:1] != ("help",):
         return text
     return text.replace(_CHANGES_START_HELP_LINE, "")
+
+
+def _norm_changes_workstream_help_line(text: str, ctx: dict) -> str:
+    if tuple(ctx.get("argv") or ())[:1] != ("help",):
+        return text
+    return text.replace(_CHANGES_WORKSTREAM_HELP_LINE, "")
 
 
 def _norm_tracker_ledger_probe(text: str, ctx: dict) -> str:
@@ -540,6 +548,14 @@ NORMALIZATIONS = (
         justification="odd-align S19: `changes start --none` is a new verb the "
                       "frozen legacy goldens predate. Scoped to that exact line.",
         fn=_norm_changes_start_help_line,
+    ),
+    Normalization(
+        rule_id="N17-changes-workstream-help-verb",
+        surfaces=("stdout",),
+        description="Drop the `changes workstream` verb line from `ai-specs help`.",
+        justification="change-ledger-v2 T3: `changes workstream` is a new verb the "
+                      "frozen legacy goldens predate. Scoped to that exact line.",
+        fn=_norm_changes_workstream_help_line,
     ),
     Normalization(
         rule_id="N15-tracker-ledger-probe",

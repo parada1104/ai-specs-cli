@@ -479,6 +479,11 @@ func parityHelpSnapshot(stdout string) string {
 	const startLine = "  changes start --none --root <planning-root>  " +
 		"Deprecated: the tier is inferred from the artifacts\n"
 	stdout = strings.ReplaceAll(stdout, startLine, "")
+	// N17 in tests/parity/parity.py: `changes workstream` is the other verb the
+	// frozen legacy goldens predate (change-ledger-v2 T3).
+	const workstreamLine = "  changes workstream --root <repo-root>  Report a change or a " +
+		"workstream, or declare the workstream (--reason, --end)\n"
+	stdout = strings.ReplaceAll(stdout, workstreamLine, "")
 	const hubPrefix = "  hub [path] Interactive status + command menu (also bare "
 	const helpAnchor = "\n  help Show this help"
 	if start := strings.Index(stdout, hubPrefix); start >= 0 {
@@ -611,7 +616,8 @@ func changesCeremonyValue(t *testing.T, root, branch string) (string, bool) {
 
 // changesStartNotice is the verb's one deprecation line, verbatim.
 const changesStartNotice = "changes start: deprecated — the tier is inferred from the change's " +
-	"artifacts, so this verb no longer affects any gate, and it records nothing.\n"
+	"artifacts, so this verb no longer affects any gate, and it records nothing. A worktree that is " +
+	"not a change is classified from facts; run 'ai-specs changes workstream --help'.\n"
 
 // The verb still runs for one version, prints its deprecation notice, exits 0
 // and records nothing the gate reads.
