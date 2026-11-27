@@ -44,27 +44,27 @@ the immediate predecessor and must be read before touching the ledger.
   decision from the plan section) and the tracker facts (open/closed row, card,
   exemption, conflict, opt-outs) are collected once and never defaulted; a fact the
   environment cannot answer is `unknown` with its reason, never `false`. Specs: S3,
-  S16. route: worker. commit: pending.
+  S16. route: worker. commit: c91f566b.
 - T7.2 — `changes status`: the human rendering, the `--json` shape and `--explain`,
   with `--ledger worktree|plan|tracker` narrowing to one capability. Exit 0 for a
   resolved phase, 2 when the facts refuse the requested step, 3 when a fact the
   answer needs is `unknown`. The `workstream` phase renders the facts that decided it
   and the exit («when product paths change, this becomes a change»). Specs: S3, S4,
-  S16. route: worker. commit: pending.
+  S16. route: worker. commit: c91f566b.
 - T7.3 — The review receipt: consumed from gentle-ai for the candidate SHA, with
   `unknown` when no receipt exists, and never inferred from a commit message or a
-  file on disk. Specs: S12. route: worker. commit: pending.
+  file on disk. Specs: S12. route: worker. commit: c91f566b.
 - T7.4 — The store notes surface here, once and per ledger: rows absorbed from a
   pre-split predecessor, rows that differ in place, an unreadable predecessor, a
   backup that could not be written. Today only a direct `worktree-gate` invocation
   prints them; `tracker-card-gate`, `doctor` and the cleanup path discard them, so a
   note can be lost and can mask the real error of a bind. Specs: S3, S14. route:
-  worker. commit: pending.
+  worker. commit: c91f566b (status, workstream) + a94c4731 (tracker-card-gate).
 - T7.5 — Validation: the real-flow scenario that walks a temp repo through
   `workstream → open → planned → merged → cleaned`, asserting the reported phase, the
   `next` line and the exit code at each step; `--json` shape stability; exit 3 with an
   `unknown` fact; both Go modules; `ledger_cleanup_flow.sh`; the full Python suite.
-  Specs: S3, S4, S12, S14, S16. route: worker. commit: pending.
+  Specs: S3, S4, S12, S14, S16. route: worker. commit: c91f566b (flow test); evidence in L6.
 
 ## Allowed edit surfaces
 
@@ -186,3 +186,25 @@ the immediate predecessor and must be read before touching the ledger.
      too — T6b note a); `tracker-card-gate` relays the note and reports the real
      error instead of the first stderr line. Outside a git checkout, status reports
      the checkout as `unknown` and exits 3 (T6b note b).
+- **L6** — Evidence at `a94c4731` (scratch `/private/tmp/change-ledger-v2/t7`):
+  real flow `flow.sh` with the branch binary over one temp repo: workstream, open,
+  planned, merged (non-ff local merge), cleaned (row opened and closed through
+  `worktree-gate --write`), each exit 0 with its `phase`/`next` line; `.git`
+  byte-identical across `status` and `status --json` (no row, no token); exit 3 with no
+  base ref and outside a git checkout; RED: the base binary (`3ecc2e9d`) answers
+  `ai-specs changes: unknown subcommand 'status'`, exit 2 — `FLOW OK`. On this repo
+  with `GENTLE_AI_BIN` pointing at gentle-pi's binary: `planned`, receipt
+  `consumed=false review_due=true (high_risk) risk=high`, the 14 absorbed ledger rows
+  noted once, state byte-identical. Workers' REDs: unknown subcommand, a read minting
+  `ai-specs-created`, the store note printed twice, `UntrackedKnown` undefined,
+  `PlanIdentityReadAt`/`ProveMerged` undefined, a store note standing in for a refused
+  bind. Suites: gofmt clean; root `go vet` clean; root `go test` fails only
+  `TestDifferentialSmoke`, `TestRecipeConfigureDifferentialAgainstScript` and
+  `TestSkillsAddDifferentialAgainstShell` — the frozen oracles still say 0.28.0 while
+  `VERSION` is 0.29.0, identical on the base archive (a T6 release leftover, not T7);
+  gate module vet + test clean; `ledger_cleanup_flow.sh` 7/7; Python 1933 tests, only
+  the pre-existing `test_skill_never_recommends_delete_branch`.
+  Reservations for T8: `--rebuild` (L5-5); notes relayed per gate invocation, so a
+  grade followed by a bind prints a non-empty note twice; note recognition in
+  `tracker-card-gate` matches `StoreReport.Note`'s message tails; the three stale
+  differential oracles.
