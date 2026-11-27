@@ -375,3 +375,21 @@ plan, design and audit live in `odd/tasks/change-ledger-v2.md` and
   an ordered pair of PRs — the first carries the v2 single-file production change plus the
   full gate-suite adaptation (green), the second carries the scenario's per-section
   assertions, the `internal/cli` seeds and the three real-store probes as its evidence.
+- **L16** — T6a delivered as `abf4e50e` (net against `b6e160dc`: 22 files, +2941
+  /-1548). Delivery shape decision: **one PR, not two**. A two-PR split was considered
+  and rejected on evidence, not preference: a Go API change does not compile in halves, so
+  the runner and `internal/cli` fixtures (the root module's `go vet`) and the scenario's
+  per-capability assertions must ride with the shape change or nothing builds. What is
+  splittable is capability, and capability here is one change. The size exception is
+  therefore stated in the PR body instead of hidden by a fake slice.
+  Evidence at delivery: gate module 394 tests with `-count=1`, root `go build`/`go vet`
+  clean, `internal/cli` ledger and tracker-card tests, `ledger_cleanup_flow.sh` 7/7
+  identical to the base, `-race` and `gofmt` clean, and three parent-run probes over
+  copies of the real 14-row store (v1 only; v1 plus T5's mixed tracker file; a T5 file
+  holding a single open row) proving the no-row-lost, close-in-the-worktree-section,
+  byte-identical-predecessor and backup properties. Native review remains impossible at
+  this candidate size (`lens_context_budget_exceeded` with every lens set tried), so it
+  goes to Robert with `LISTO REVISAR-T6`. Remaining known gaps, named rather than buried:
+  the shadow advisory repeats on every invocation while a predecessor file exists (the
+  master plan assigns the report-once behaviour to T7/T8), and a concurrent older binary
+  is excluded by the shared `<store>.lock` name but was not exercised.
