@@ -159,6 +159,10 @@ func (l StoreLocation) Load() (LedgerFile, StoreReport, error) {
 		l.absorbMigration(&base, &report)
 		if added := mergeLegacyMissing(&base, *stale); added > 0 {
 			report.Absorbed += added
+		}
+		if report.LegacyRows == "" {
+			// Name the file the rows actually came from: a corrupt source keeps the
+			// name absorbMigration reported, never the ledger's own path (L19).
 			report.LegacyRows = l.Path
 		}
 		settleCloses(&base)
@@ -428,17 +432,25 @@ func sameRecord(a, b Item) bool {
 // a stale v1 file contributes when T5's newer tracker file is the base (L17 ALTO-1): it
 // never overrides a newer status, card or close.
 func mergeLegacyMissing(file *LedgerFile, legacy LegacyStore) (absorbed int) {
-	seenWorktree := make(map[string]bool, len(file.Worktree.Items))
-	for _, row := range file.Worktree.Items {
-		seenWorktree[row.ID] = true
+	worktreeAt := make(map[string]int, len(file.Worktree.Items))
+	for i, row := range file.Worktree.Items {
+		worktreeAt[row.ID] = i
 	}
 	seenTracker := make(map[string]bool, len(file.Tracker.Items))
 	for _, item := range file.Tracker.Items {
 		seenTracker[item.ID] = true
 	}
 	for _, row := range legacy.Items {
-		if share := worktreeShare(row); !seenWorktree[share.ID] && (share.Status != "" || len(share.Decisions) > 0) {
-			seenWorktree[share.ID] = true
+		share := worktreeShare(row)
+		if at, ok := worktreeAt[share.ID]; ok {
+			// The newer file owns the record and the status, but a close 0.28.0 wrote
+			// after T5 copied the row is still terminal (D17): merge it and let
+			// settleCloses act. Nothing else is taken from the stale row.
+			if mergeCloses(&file.Worktree.Items[at], share.Decisions) > 0 {
+				absorbed++
+			}
+		} else if share.Status != "" || len(share.Decisions) > 0 {
+			worktreeAt[share.ID] = len(file.Worktree.Items)
 			file.Worktree.Items = append(file.Worktree.Items, share)
 			absorbed++
 		}
@@ -447,6 +459,22 @@ func mergeLegacyMissing(file *LedgerFile, legacy LegacyStore) (absorbed int) {
 			seenTracker[record.ID] = true
 			file.Tracker.Items = append(file.Tracker.Items, record)
 		}
+	}
+	// A scoped opt-out is a human decision that exists in no other file, so it is
+	// merged exactly as the primary merge does — without it the upgrade answers
+	// needs-item where 0.28.0 answered opt-out (L19).
+	seenOptOut := make(map[string]bool, len(file.Tracker.OptOuts))
+	for _, optOut := range file.Tracker.OptOuts {
+		seenOptOut[optOutKey(optOut)] = true
+	}
+	for _, optOut := range legacy.OptOuts {
+		key := optOutKey(optOut)
+		if seenOptOut[key] {
+			continue
+		}
+		seenOptOut[key] = true
+		file.Tracker.OptOuts = append(file.Tracker.OptOuts, optOut)
+		absorbed++
 	}
 	return absorbed
 }
