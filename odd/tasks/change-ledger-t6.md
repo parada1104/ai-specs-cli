@@ -215,3 +215,36 @@ plan, design and audit live in `odd/tasks/change-ledger-v2.md` and
   decisions 0/15, `status` only in the worktree ledger and `item_id` only in the
   tracker, 14/14 historical rows still answering by identity, and the pre-split file
   byte-identical (`63535f2c…`). Log: `/private/tmp/change-ledger-v2/t6/`.
+- **L11** — Confirmed blockers on `f946d882` (independent verification; all real). The
+  root cause is one missing migration step: T5's `ledgers/tracker.json` **is** the
+  immediate predecessor of the field split, and it still carries `status` and the close
+  decisions. T6 treated only `state.json` as its legacy source, so a repository upgraded
+  straight from T5 loses its lifecycle to the candidate:
+  1. A baseline T5 `bind` writes the mixed `tracker.json`; the candidate then grades
+     `needs-item` and an explicit close exits 2 «ledger: no open item for identity»,
+     because only `state.json` is a worktree fallback and nothing reads the T5 row's
+     status.
+  2. T5's close decisions survive inside the tracker file, so a close lives in
+     `tracker.json` and the worktree ledger never sees it (S3(a) violated on upgrade).
+  3. An immediate candidate rebind duplicated the item id: `uniqueItemID` consults only
+     the worktree file, which is empty in exactly that upgrade state.
+  4. `--store …/ledgers/worktree.json` aliases both ledgers onto one file, so a
+     successful bind silently loses the lifecycle.
+  5. The `legacyOnly` downgrade turns a corrupt v1-only store from «unevaluable, bind
+     exits 2» into a successful synthetic bind — it masks corruption.
+  6. The shell scenario's fallback now requires *zero* closes in the single legacy file
+     where it previously required a close, so it can no longer detect a regression.
+  The fix, decided here so the correction does not invent a second design: **the
+  worktree ledger absorbs its share from both legacy sources — `state.json` and T5's
+  `tracker.json`** — and a close is never dropped from `tracker.json` until
+  `worktree.json` demonstrably holds it. Concretely: the tracker ledger reads its own
+  file normalized (status and close decisions filtered in memory); the worktree ledger
+  absorbs the status/close share of both legacy files; and a write that would persist
+  the tracker rows without their close decisions first persists the worktree rows that
+  carry them, and refuses (fail closed) rather than dropping a close it cannot place.
+  Ids are unique across **both** ledgers. `--store` names one ledger and derives the
+  other canonical file without ever aliasing one file onto itself. The `legacyOnly`
+  downgrade is removed so a corrupt store stays unevaluable and fails closed. The
+  scenario's fallback keeps its assertion strength. Validation must include the
+  upgrade the probe missed: a store pair written by the T5 shape (mixed `tracker.json`
+  plus `state.json`), driven through bind, close and grade by the candidate.
