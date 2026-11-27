@@ -393,3 +393,41 @@ plan, design and audit live in `odd/tasks/change-ledger-v2.md` and
   the shadow advisory repeats on every invocation while a predecessor file exists (the
   master plan assigns the report-once behaviour to T7/T8), and a concurrent older binary
   is excluded by the shared `<store>.lock` name but was not exercised.
+- **L17** — Cody's independent review of T6a: **no aprobar todavía**. Two blockers and
+  three mediums, all reproduced with real binaries over copies of the 14 rows. Fix list,
+  in the reviewer's own terms:
+  - **ALTO-1 (blocking) — the newest form must win.** With `Path` v1 and T5's
+    `ledgers/tracker.json` present, the stale v1 was taken as «the file's version» and T5's
+    newer file became a shadow, so a row T5 re-linked and closed came back `open` with the
+    old card, the link was lost, and the next close duplicated (`[open,link,close,close]`).
+    T5 never writes `state.json`; its tracker file is the newest superset. Fix: when `Path`
+    is v1 and a migration source exists, the base is the **normalised tracker file** (T5
+    semantics) and v1 only contributes the rows it lacks; when `Path` is already v2, the
+    current order stands. The exact scenario 0.28.0 `bind` card-A -> T5 relink card-B and
+    `close` -> T6a must be a test: grade sees `closed`/card-B with
+    `[open,link,link,close]`, and a further close must not duplicate.
+  - **ALTO-2 (blocking) — an absorbed close closes the row.** A close is terminal (D17),
+    so any row carrying one is `closed`, whatever the source order; today the close is
+    added and the status left behind, which is the same «allow on an already closed item»
+    symptom.
+  - **ALTO-3 (blocking) — the Python suites are red.** `tests/test_tracker_ledger_parity.py`
+    and `tests/test_worktree_cleanup.py` read T5's layout directly; base 49/49, branch
+    4 FAIL + 1 ERROR. They must read through the CLI or the new layout, and the full
+    Python suite runs before the commit — the L16 evidence line claimed them without
+    running them, which is my error, not the reviewer's.
+  - **MEDIO-2 — a stale backup and a write that proceeds without one.** The one-shot
+    backup is skipped because T5 already made one (14 rows) while v1 had grown to 15, and
+    `Save` writes even when the backup failed while the message claims «untouched». Fix:
+    back up the bytes actually being replaced (fresh content or a name of its own) and fail
+    closed when the backup cannot be written; the message must not claim anything false.
+  - **MEDIO-3 — a corrupt migration source must not invalidate the ledger.** A corrupt
+    `tracker.json` today makes the whole ledger unevaluable, so cleanup's close fails and
+    merged worktrees stay, unrecoverable because T6a never rewrites that file. Restore
+    T5's semantics: report the unreadable source and let the v2 file answer.
+  - **LOW, fix now because they are cheap:** a row differing in both sections is counted
+    twice (reported «2 differ» for one row); the lock comment claims T5 exclusion when the
+    real exclusion is with 0.28.0 (`state.json.lock`) and T5 needs none because it never
+    writes the same file; `WorktreeDecision` drops `choice`/`note`/`scope` from a close.
+  - **Do not touch MEDIO-1.** v2 overwriting `state.json` means an installed 0.28.0 can no
+    longer read it: that is Robert's compatibility decision, not mine. Current state stays
+    and the options are described to him.
