@@ -460,6 +460,39 @@ func TestRefuteNotesARefutationItCouldNotApply(t *testing.T) {
 	}
 }
 
+// writeRepo is a committed repository whose base branch is main and whose HEAD is
+// feat/thing, so WriteRefutations resolves a base ref and grades later commits.
+func writeRepo(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	gitRun(t, root, "init", "-q", "-b", "main")
+	gitRun(t, root, "config", "user.email", "test@example.invalid")
+	gitRun(t, root, "config", "user.name", "test")
+	writeFile(t, filepath.Join(root, "README.md"), "# base\n")
+	for rel, content := range files {
+		writeFile(t, filepath.Join(root, filepath.FromSlash(rel)), content)
+	}
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-q", "-m", "base")
+	gitRun(t, root, "checkout", "-q", "-b", "feat/thing")
+	return root
+}
+
+// R2 grades the pending write, not only the paths the branch already changed:
+// on a clean branch the first write to a declared high-risk path is refused
+// before it happens.
+func TestWriteRefutationsGradeThePendingHighRiskTarget(t *testing.T) {
+	root := writeRepo(t, map[string]string{
+		"ai-specs/ai-specs.toml": "[recipes.plan-build-flow.config]\nmode = \"odd\"\n" +
+			"high_risk_paths = [\"src/**\"]\n",
+	})
+	blockers := WriteFactsFor(root, planbuild.ModeOdd, "thing", "src/app.go").Verdict().Blockers
+	if len(blockers) != 1 || blockers[0].Rule != "R2" ||
+		!strings.Contains(blockers[0].Message, "src/app.go") {
+		t.Fatalf("Blockers = %q, want one R2 blocker naming the pending path", blockers)
+	}
+}
+
 // The pre-archive stage grades the same refutations: a canonical spec edit with
 // no delta is a promotion bypass there too.
 func TestCheckPrearchiveBlocksACanonicalSpecEditWithoutADelta(t *testing.T) {
@@ -475,4 +508,21 @@ func TestCheckPrearchiveBlocksACanonicalSpecEditWithoutADelta(t *testing.T) {
 		t.Fatalf("Result = %+v, want R-a to block the pre-archive stage", result)
 	}
 	assertBlockerContains(t, result, "R-a:")
+}
+
+// R2 is graded even in a workstream: a declared high-risk path owes its evidence
+// whatever S16 exempts, and the fact layer is what says the worktree is one.
+func TestWriteRefutationsGradeAHighRiskTargetInAWorkstream(t *testing.T) {
+	root := writeRepo(t, map[string]string{
+		"ai-specs/ai-specs.toml": "[recipes.plan-build-flow.config]\nmode = \"odd\"\n" +
+			"high_risk_paths = [\"docs/**\"]\n",
+	})
+	facts := WriteFactsFor(root, planbuild.ModeOdd, "thing", "docs/deploy.md")
+	if !facts.Workstream {
+		t.Fatalf("Facts = %+v, want the fixture to be a workstream", facts)
+	}
+	blockers := facts.Verdict().Blockers
+	if len(blockers) != 1 || blockers[0].Rule != "R2" {
+		t.Fatalf("Blockers = %q, want one R2 blocker for the workstream target", blockers)
+	}
 }

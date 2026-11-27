@@ -76,6 +76,26 @@ func DiffEntries(root, base string) ([]DiffEntry, bool) {
 	return entries, true
 }
 
+// UntrackedPaths lists the files of the working tree git does not track and no
+// ignore rule covers. DiffEntries compares the merge base against the working
+// tree, so it already reports an uncommitted edit to a tracked file; a file the
+// branch never added is the divergence only this answers. The second result is
+// false on any git failure, so no caller can mistake an unanswered list for an
+// empty one.
+func UntrackedPaths(root string) ([]string, bool) {
+	out, err := gitText(root, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return nil, false
+	}
+	var paths []string
+	for _, path := range strings.Split(out, "\x00") {
+		if path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths, true
+}
+
 // CommitsWithRiskTrailer reports whether any commit of base..HEAD carries a
 // `Risk: item N (<reason>)` trailer. Git supplies the values, so only a trailer
 // can satisfy it, never prose. Any git error is false.

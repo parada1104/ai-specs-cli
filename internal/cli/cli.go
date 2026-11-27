@@ -56,6 +56,7 @@ const (
 	routeChanges                            // native: the `changes` family remainder — usage/help/unknown (I5/P4)
 	routeChangesArchive                     // native: `changes archive`, the mechanical pre-merge archive (I5/P4)
 	routeChangesStart                       // native: `changes start --none`, the local no-plan declaration (T14/S19)
+	routeChangesWorkstream                  // native: `changes workstream`, the report and the S16 decision (change-ledger-v2 T3)
 	routeGates                              // native: the `gates` family remainder — usage/help/unknown (GO-20 U2e U-B)
 	routeGatesPremerge                      // native: `gates premerge`, port of lib/_internal/premerge_guardian.py (GO-20 U2e U-B)
 	routeTracker                            // native: the `tracker` family remainder — usage/help/unknown (GO-20 U2e U-C)
@@ -199,16 +200,20 @@ func Route(args []string) route {
 		}
 		return route{kind: routeSpecs}
 	}
-	// `changes archive` (I5/P4) and `changes start` (T14/S19) are the family's
-	// verbs; the root dispatcher has no `archive` or `start` of its own, and
-	// every remaining arm of the family (bare `changes`, `--help|-h|help`,
-	// unknown subcommands) resolves to the native family remainder.
+	// `changes archive` (I5/P4), `changes start` (T14/S19) and `changes
+	// workstream` (change-ledger-v2 T3) are the family's verbs; the root dispatcher
+	// has no `archive`, `start` or `workstream` of its own, and every remaining arm
+	// of the family (bare `changes`, `--help|-h|help`, unknown subcommands) resolves
+	// to the native family remainder.
 	if args[0] == "changes" {
 		if len(args) > 1 && args[1] == "archive" {
 			return route{kind: routeChangesArchive}
 		}
 		if len(args) > 1 && args[1] == "start" {
 			return route{kind: routeChangesStart}
+		}
+		if len(args) > 1 && args[1] == "workstream" {
+			return route{kind: routeChangesWorkstream}
 		}
 		return route{kind: routeChanges}
 	}
@@ -404,6 +409,9 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 	case routeChangesStart:
 		// args[0]=changes, args[1]=start: the verb's own grammar sees args[2:].
 		return runChangesStart(args[2:], stdout, stderr)
+	case routeChangesWorkstream:
+		// args[0]=changes, args[1]=workstream: the verb's own grammar sees args[2:].
+		return runChangesWorkstream(args[2:], stdout, stderr)
 	case routeGates:
 		// args[0]=gates: the family remainder sees the subcommand slot.
 		return runGatesDispatch(args[1:], stdout, stderr)

@@ -28,6 +28,12 @@ import (
 // GitPRRecipeID is the recipe whose config declares the project base branch.
 const GitPRRecipeID = "git-pr-flow"
 
+// ProductDirs is the write gate's graded production scope; ProductDirsEnv overrides it.
+const (
+	ProductDirs    = "src lib catalog"
+	ProductDirsEnv = "PLAN_BUILD_GATE_PATHS"
+)
+
 // HighRiskPaths reads the project's explicit high-risk list from
 // [recipes.plan-build-flow.config] high_risk_paths in ai-specs/ai-specs.toml at
 // the trusted base revision the diff is graded against, never the working tree,
@@ -122,9 +128,29 @@ func Refutations(repoRoot, mode, change string, base *string) (blockers, notes [
 			"no usable answer (a shallow clone, or no such history in this root), so there is no diff to "+
 			"grade. Fetch the base branch, or pass `--base <ref>` naming a ref that resolves.", baseRef)}
 	}
-	blockers = append(blockers, canonicalSpecRefutation(repoRoot, mode, change, diff)...)
-	blockers = append(blockers, highRiskRefutation(repoRoot, mode, change, baseRef, diff)...)
+	blockers = append(blockers, canonicalSpecRefutation(repoRoot, mode, change, diff, "R-a")...)
+	blockers = append(blockers, highRiskRefutation(repoRoot, mode, change, baseRef, diff, "R-b", "")...)
 	return blockers, nil
+}
+
+// CanonicalSpecRefusal is R1's message body for a hand write to a canonical
+// spec, naming the missing delta and the promotion exit. change is empty when
+// no branch can be paired. The rule id is carried by the Refutation, not by the
+// text, so `--explain` and the refusal cannot disagree about it.
+func CanonicalSpecRefusal(mode, change, specPath string) string {
+	changes := "openspec/changes/"
+	if mode == planbuild.ModeOdd {
+		changes = "odd/changes/"
+	}
+	if change == "" {
+		return fmt.Sprintf("`%s` is written by promotion, not by hand, and the current branch "+
+			"cannot be resolved (detached HEAD), so no delta can back it. Run the write from the "+
+			"change's branch, or promote the delta instead of editing the canonical tree.", specPath)
+	}
+	return fmt.Sprintf("`%s` is written by promotion, not by hand, and the change `%s` carries "+
+		"no delta under `%s%s/specs/`. Write the delta there and run `ai-specs specs promote`, or "+
+		"promote from the change folder that owns the rule. Writing under `%s` is never blocked.",
+		specPath, change, changes, change, changes)
 }
 
 // unresolvedBaseNote names a base the caller supplied that does not resolve.
@@ -134,9 +160,9 @@ func unresolvedBaseNote(base string) string {
 		"(`git rev-parse --verify %s`) or omit `--base` to use the project's base branch.", base, base)
 }
 
-// canonicalSpecRefutation is R-a: a changed canonical spec with no delta this
+// canonicalSpecRefutation is R-a/R1: a changed canonical spec with no delta this
 // diff contributes, so an archive left by an earlier change proves nothing.
-func canonicalSpecRefutation(repoRoot, mode, change string, diff []planbuild.DiffEntry) []string {
+func canonicalSpecRefutation(repoRoot, mode, change string, diff []planbuild.DiffEntry, rule string) []string {
 	first, count := firstMatch(diff, func(entry planbuild.DiffEntry) bool {
 		return isCanonicalSpec(entry.Path)
 	})
@@ -144,33 +170,39 @@ func canonicalSpecRefutation(repoRoot, mode, change string, diff []planbuild.Dif
 		return nil
 	}
 	delta := repoRelative(repoRoot, filepath.Join(planbuild.ChangeFolder(repoRoot, mode, change), "specs"))
-	return []string{fmt.Sprintf("R-a: the branch modifies the canonical spec `%s`%s but the change `%s` "+
+	return []string{fmt.Sprintf("%s: the branch modifies the canonical spec `%s`%s but the change `%s` "+
 		"carries no delta — changing a canonical spec without a delta is a promotion bypass. "+
 		"Write the delta under `%s/` and run `ai-specs specs promote`.",
-		first, andMore(count), change, delta)}
+		rule, first, andMore(count), change, delta)}
 }
 
-// highRiskRefutation is R-b: a changed path the project declares as high-risk,
-// answered per mode — a plan this diff contributes in openspec, a Risk trailer in
-// odd.
-func highRiskRefutation(repoRoot, mode, change, base string, diff []planbuild.DiffEntry) []string {
+// highRiskRefutation is R-b/R2: a changed path the project declares as
+// high-risk, answered per mode — a plan this diff contributes in openspec, a
+// Risk trailer in odd.
+func highRiskRefutation(repoRoot, mode, change, base string, diff []planbuild.DiffEntry, rule, pending string) []string {
 	patterns := HighRiskPaths(repoRoot, base)
 	if len(patterns) == 0 {
 		return nil
 	}
-	first, count := firstMatch(diff, func(entry planbuild.DiffEntry) bool {
+	matches := func(rel string) bool {
 		for _, pattern := range patterns {
-			if matchesHighRisk(pattern, entry.Path) {
+			if matchesHighRisk(pattern, rel) {
 				return true
 			}
 		}
 		return false
-	})
+	}
+	first, count := firstMatch(diff, func(entry planbuild.DiffEntry) bool { return matches(entry.Path) })
+	// The pending write is graded before it happens, so a clean branch cannot
+	// write a declared high-risk path without its evidence.
+	if first == "" && pending != "" && matches(pending) {
+		first, count = pending, 1
+	}
 	if first == "" {
 		return nil
 	}
-	found := fmt.Sprintf("R-b: the branch modifies the high-risk path `%s`%s, declared by the project in "+
-		"ai-specs/ai-specs.toml", first, andMore(count))
+	found := fmt.Sprintf("%s: the branch modifies the high-risk path `%s`%s, declared by the project in "+
+		"ai-specs/ai-specs.toml", rule, first, andMore(count))
 	if mode == planbuild.ModeOdd {
 		if planbuild.CommitsWithRiskTrailer(repoRoot, base) {
 			return nil

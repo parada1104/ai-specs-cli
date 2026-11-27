@@ -404,7 +404,7 @@ func TestGatesPremergeResolvesTheChangeWithoutASlug(t *testing.T) {
 	if code != 0 || !strings.HasPrefix(stderr, gatesNotePrefix) {
 		t.Fatalf("archived: exit = %d, stderr = %q; want 0 and the note", code, stderr)
 	}
-	if stdout != "premerge-guardian: OK (odd)\n" {
+	if stdout != "premerge-guardian: OK (light)\n" {
 		t.Errorf("stdout = %q, want the OK verdict", stdout)
 	}
 }
