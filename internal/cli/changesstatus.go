@@ -20,6 +20,7 @@ import (
 	"io"
 	"strings"
 
+	"ai-specs.dev/ai-specs/internal/config"
 	"ai-specs.dev/ai-specs/internal/gates"
 	"ai-specs.dev/ai-specs/internal/planbuild"
 	"ai-specs.dev/ai-specs/internal/planledger"
@@ -28,15 +29,17 @@ import (
 	"ai-specs.dev/worktree-gate/runner"
 )
 
-// The phase vocabulary of L5 item 1. A phase is derived, never stored: nothing in a
-// ledger carries a writable status field that could disagree with the facts.
+// The phase vocabulary of L5 item 1, plus the integration line (L8-2). A phase is
+// derived, never stored: nothing in a ledger carries a writable status field that
+// could disagree with the facts.
 const (
-	statusWorkstream = "workstream"
-	statusOpen       = "open"
-	statusPlanned    = "planned"
-	statusMerged     = "merged"
-	statusCleaned    = "cleaned"
-	statusUnknown    = "unknown"
+	statusWorkstream  = "workstream"
+	statusOpen        = "open"
+	statusPlanned     = "planned"
+	statusMerged      = "merged"
+	statusCleaned     = "cleaned"
+	statusIntegration = "integration"
+	statusUnknown     = "unknown"
 )
 
 // changesStatusUsage is the verb's own usage.
@@ -46,11 +49,13 @@ Report what this worktree is, what it owes and what it can do next, composed fro
 three capability ledgers and the review receipt. It is read-only: it writes no ledger
 file, no backup, no creation token and no declaration.
 
-The phase is derived from the facts, first match wins: cleaned (the lifecycle row is
-closed and none is open) -> merged (the local merge proof the cleanup owns holds and the
-work is real) -> planned (a plan or a delta) -> open (a change with neither) -> workstream
-(no artifact and no product-path divergence, so it owes nothing). A squash merge the
-local proof cannot see stays planned or open, and the next line says so.
+The phase is derived from the facts, first match wins: unknown (git cannot name the
+checkout) -> integration (this checkout is on the integration branch, so it is the
+line changes merge into, not a change worktree) -> cleaned (the lifecycle row is
+closed and none is open) -> merged (the local merge proof the cleanup owns holds and
+the work is real) -> planned (a plan or a delta) -> open (a change with neither) ->
+workstream (no artifact and no product-path divergence, so it owes nothing). A squash
+merge the local proof cannot see stays planned or open, and the next line says so.
 
 Exit: 0 a resolved phase; 2 the facts refuse the pending write (the verdict carries
 blockers); 3 a fact the answer needs is unknown, because git or a ledger could not
@@ -169,6 +174,10 @@ type statusReport struct {
 	report *ledger.StoreReport
 	// ledgerErr is a ledger section that could not be read at all.
 	ledgerErr error
+	// scopeNotes names a product-scope declaration the predicate could not read. It is
+	// printed once on stderr and never persisted: a scope that changed because its
+	// declaration could not be read must never be silent (L8-1).
+	scopeNotes []string
 }
 
 // statusEvidence is the resolved fact set the phase is derived from: one field per
@@ -188,6 +197,9 @@ type statusEvidence struct {
 	ClosedRow       bool
 	Merged          bool
 	Workstream      bool
+	// Integration names the integration branch this checkout sits on, "" when it is
+	// not one: the integration line is never a workstream (L8-2).
+	Integration string
 }
 
 // resolveStatusPhase is L5 item 1: first match wins, and nothing is guessed. A phase
@@ -198,6 +210,9 @@ func resolveStatusPhase(evidence statusEvidence) (phase, why string) {
 	switch {
 	case !evidence.Checkout:
 		return statusUnknown, "git cannot name this checkout, so no fact of the worktree can be read"
+	case evidence.Integration != "":
+		return statusIntegration, "this checkout is on the integration branch " + evidence.Integration +
+			", the line changes merge into, so it is not a change worktree"
 	case !evidence.OpenRow && evidence.ClosedRow:
 		return statusCleaned, "the lifecycle row for this branch is closed and none is open, so the work is cleaned"
 	case evidence.Merged && (evidence.Plan || evidence.Delta || evidence.OpenRow):
@@ -233,6 +248,10 @@ func statusNext(report statusReport) string {
 	case statusCleaned:
 		return "nothing — the work is closed"
 	case statusMerged:
+		return "ai-specs worktree-cleanup"
+	case statusIntegration:
+		// The cleanup runs from the main checkout; from the integration line itself it
+		// is the one step left.
 		return "ai-specs worktree-cleanup"
 	case statusPlanned, statusOpen:
 		if mergeProof := statusFind(report.Worktree, "merge-proof"); mergeProof != nil &&
@@ -283,6 +302,9 @@ func runChangesStatus(args []string, stdout, stderr io.Writer) int {
 		// differs in place, a source nobody could read, a backup that could not be kept.
 		report.report.Note(stderr, "changes status")
 	}
+	for _, note := range report.scopeNotes {
+		fmt.Fprintf(stderr, "changes status: note: %s\n", note)
+	}
 	if request.explain {
 		explainStatusFacts(report, stderr)
 	}
@@ -312,6 +334,9 @@ const (
 	statusSourceReceipts  = "the ledger worktree section"
 	statusSourceTracker   = "the ledger tracker section"
 	statusSourcePlan      = "the ledger plan section"
+	// statusSourceTrackerRecipe names the two declarations the tracker capability's
+	// provider comes from: the witness sync wrote and the manifest's own enable bit.
+	statusSourceTrackerRecipe = "the tracker witness and [recipes.<id>].enabled in ai-specs/ai-specs.toml"
 )
 
 // collectStatus collects every capability's facts once. It is the read form end to end:
@@ -322,16 +347,16 @@ func collectStatus(root, narrow string) statusReport {
 	// The blocker and unknown lists are always arrays, never null: a host reads them as
 	// lists, and an empty list is an answer ("nothing blocks", "nothing is unknown").
 	report := statusReport{root: root, Blockers: []string{}, Unknown: []string{}}
-
 	mode := planbuild.ResolveRepo(root)
 	branch := planbuild.Branch(root)
 	change, _ := planbuild.ChangeFromBranch(branch)
 	facts := gates.WriteFactsFor(root, mode, change, "")
+	report.scopeNotes = facts.Scope.Notes
 	// The untracked listing is collected here, once, and written back into the collected
 	// facts, so the report and the workstream predicate cannot disagree about whether git
 	// answered it (L5 item 8).
 	untracked, untrackedOK := planbuild.UntrackedPaths(root)
-	facts.Untracked, facts.UntrackedKnown = statusProductPaths(untracked), untrackedOK
+	facts.Untracked, facts.UntrackedKnown = statusProductPaths(untracked, facts.Scope), untrackedOK
 
 	loaded, ledgerErr := planledger.Load(root)
 	if ledgerErr != nil {
@@ -358,6 +383,7 @@ func collectStatus(root, narrow string) statusReport {
 		ClosedRow:       closedRow != nil,
 		Merged:          proof.Merged,
 		Workstream:      facts.Workstream,
+		Integration:     statusIntegrationBranch(root, branch, facts.Base),
 	}
 	report.Phase, report.Why = resolveStatusPhase(evidence)
 
@@ -368,7 +394,7 @@ func collectStatus(root, narrow string) statusReport {
 	report.Worktree, report.needed = statusWorktreeFacts(facts, loaded.Ident, branch, proof, openRow, closedRow,
 		ledgerErr, report.needed)
 	report.Plan = statusPlanFacts(facts, verdict, loaded, ledgerErr, report.needed)
-	report.Tracker = statusTrackerFacts(view, openRow, closedRow)
+	report.Tracker = statusTrackerFacts(root, loaded.Ident.CommonDir, view, openRow, closedRow)
 	for _, needed := range report.needed {
 		report.Unknown = append(report.Unknown, needed.Name+": "+needed.Reason)
 	}
@@ -397,12 +423,38 @@ func statusNarrow(narrow string, report statusReport) (worktree, plan, tracker [
 	return report.Worktree, report.Plan, report.Tracker
 }
 
-// statusProductPaths keeps the listing's production paths: divergence is product work,
-// and an untracked note or a scratch file is not a change.
-func statusProductPaths(paths []string) []string {
+// statusLegacyTrackerRecipe mirrors ledger_bridge.LEGACY_RECIPE_ID (and doctor's
+// legacyTrackerRecipeID): the provider a witness-less project is checked against, so a
+// fresh clone with no sync still reports the tracker it enables.
+const statusLegacyTrackerRecipe = "trello-mcp-workflow"
+
+// statusIntegrationBranch names the integration line this checkout sits on, "" when it
+// is not one. The two names are the repo's own: the resolved base (BaseRef's answer, so
+// the configured base_branch with its main/master fallbacks) and the worktree-flow
+// integration branch declaration.
+func statusIntegrationBranch(root, branch, base string) string {
+	if branch == "" {
+		return ""
+	}
+	names := []string{gates.IntegrationBranch(root)}
+	if base != "" {
+		names = append(names, strings.TrimPrefix(base, "origin/"))
+	}
+	for _, name := range names {
+		if name != "" && name == branch {
+			return branch
+		}
+	}
+	return ""
+}
+
+// statusProductPaths keeps the listing's product paths: divergence is product work,
+// and an untracked note or a scratch file is not a change. It reads the same predicate
+// the gate grades, so the report and the gate cannot disagree.
+func statusProductPaths(paths []string, scope gates.ProductScope) []string {
 	var product []string
 	for _, path := range paths {
-		if gates.ProductPath(path) {
+		if scope.Path(path) {
 			product = append(product, path)
 		}
 	}
@@ -558,10 +610,17 @@ func statusPlanFacts(facts gates.WriteFacts, verdict gates.Verdict, loaded planl
 	return []statusFact{tierFact, artifacts, planPath, deltaPath, declaration, refutations}
 }
 
-// statusTrackerFacts is the tracker capability's fact set: the row, the card it is bound
-// to, its exemption, its conflict and the archive-close opt-out. A branch with no row is
-// `none`, which is an answer and not an unknown.
-func statusTrackerFacts(view ledger.View, openRow, closedRow *ledger.Item) []statusFact {
+// statusTrackerFacts is the tracker capability's fact set: the provider recipe the
+// project enables, the row, the card it is bound to, its exemption, its conflict and
+// the archive-close opt-out. A branch with no row is `none`, which is an answer and not
+// an unknown, and whether that is even applicable is the project's own declaration
+// (L8-3): a tracker recipe enabled with no row names the real state, never
+// `not-applicable`.
+func statusTrackerFacts(root, commonDir string, view ledger.View, openRow, closedRow *ledger.Item) []statusFact {
+	recipe := knownFact("recipe", "none", statusSourceTrackerRecipe)
+	if enabled := statusTrackerRecipe(root, commonDir); enabled != "" {
+		recipe = knownFact("recipe", enabled, statusSourceTrackerRecipe)
+	}
 	row, card := knownFact("row", "none", statusSourceTracker), knownFact("card", "none", statusSourceTracker)
 	exemption := knownFact("exemption", "none", statusSourceTracker)
 	conflict := knownFact("conflict", "none", statusSourceTracker)
@@ -571,7 +630,7 @@ func statusTrackerFacts(view ledger.View, openRow, closedRow *ledger.Item) []sta
 		item = closedRow
 	}
 	if item == nil {
-		return []statusFact{row, card, exemption, conflict, optOut}
+		return []statusFact{recipe, row, card, exemption, conflict, optOut}
 	}
 	state := "closed"
 	if openRow != nil {
@@ -592,7 +651,36 @@ func statusTrackerFacts(view ledger.View, openRow, closedRow *ledger.Item) []sta
 		covered = "yes"
 	}
 	optOut = knownFact("opt-out", covered, statusSourceTracker)
-	return []statusFact{row, card, exemption, conflict, optOut}
+	return []statusFact{recipe, row, card, exemption, conflict, optOut}
+}
+
+// statusTrackerRecipe names the tracker provider this project enables, "" when it
+// enables none. It reuses the detection doctor's ledger check reads: the recipe the
+// witness bound the tracker capability to (the legacy provider literal when the witness
+// names none), kept only when [recipes.<id>].enabled is a real true in the manifest.
+func statusTrackerRecipe(root, commonDir string) string {
+	recipe := statusLegacyTrackerRecipe
+	if commonDir != "" {
+		if bound := ledger.ReadBinding(ledger.WitnessPath(commonDir)).RecipeID; bound != "" {
+			recipe = bound
+		}
+	}
+	manifest, err := config.LoadManifest(planbuild.ManifestPath(root))
+	if err != nil {
+		return ""
+	}
+	recipes, ok := manifest.Table("recipes")
+	if !ok || recipes == nil {
+		return ""
+	}
+	entry, ok := recipes.Table(recipe)
+	if !ok || entry == nil {
+		return ""
+	}
+	if enabled, isBool := entry.Bool("enabled"); isBool && enabled {
+		return recipe
+	}
+	return ""
 }
 
 // statusReviewFacts consumes the review receipt for the candidate the base SHA names
@@ -703,12 +791,17 @@ func statusDivergenceLine(facts []statusFact) string {
 	return "product paths diverging: " + divergence
 }
 
-// statusTrackerLine renders the tracker capability as one line, naming only the fields
-// that carry a value: a branch with no row is not-applicable, never a blocker.
+// statusTrackerLine renders the tracker capability as one line: `not-applicable` only
+// when the project enables no tracker recipe, otherwise the real state and the fields
+// that carry a value. What to do about a missing binding is T9's, so this line never
+// adds a step of its own.
 func statusTrackerLine(facts []statusFact) string {
 	row := statusFactValue(facts, "row")
 	if row == "none" {
-		return "not-applicable (no lifecycle row for this branch)"
+		if statusFactValue(facts, "recipe") == "none" {
+			return "not-applicable (no tracker recipe enabled)"
+		}
+		return "no item bound, card: none"
 	}
 	parts := []string{row, "card: " + statusFactValue(facts, "card")}
 	if exemption := statusFactValue(facts, "exemption"); exemption != "none" {

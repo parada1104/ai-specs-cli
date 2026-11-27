@@ -28,11 +28,28 @@ import (
 // GitPRRecipeID is the recipe whose config declares the project base branch.
 const GitPRRecipeID = "git-pr-flow"
 
-// ProductDirs is the write gate's graded production scope; ProductDirsEnv overrides it.
-const (
-	ProductDirs    = "src lib catalog"
-	ProductDirsEnv = "PLAN_BUILD_GATE_PATHS"
-)
+// WorktreeFlowRecipeID is the recipe whose config declares the integration branch.
+const WorktreeFlowRecipeID = "worktree-flow"
+
+// IntegrationBranch is the integration line the project declares:
+// [recipes.worktree-flow.config] integration_branch in ai-specs/ai-specs.toml, ""
+// when it declares none. The base ref resolution below is the other name the repo
+// already has, so a caller that wants "the branch changes merge into" reads both.
+func IntegrationBranch(root string) string {
+	manifest, err := config.LoadManifest(planbuild.ManifestPath(root))
+	if err != nil {
+		return ""
+	}
+	_, _, cfg := config.RecipeConfigState(manifest, WorktreeFlowRecipeID)
+	value, ok := config.LookupNestedConfig(cfg, "integration_branch")
+	if !ok {
+		return ""
+	}
+	if declared, isString := value.(string); isString {
+		return strings.TrimSpace(declared)
+	}
+	return ""
+}
 
 // HighRiskPaths reads the project's explicit high-risk list from
 // [recipes.plan-build-flow.config] high_risk_paths in ai-specs/ai-specs.toml at

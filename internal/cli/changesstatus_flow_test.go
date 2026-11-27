@@ -36,6 +36,17 @@ func statusFlowRun(t *testing.T, bin, repo string, args ...string) (string, stri
 	return flowRun(t, bin, repo, "", append([]string{"changes", "status", "--root", repo}, args...)...)
 }
 
+// flowCommitManifest commits the manifest flowRepo leaves uncommitted, so the manifest
+// is not itself the product divergence a test is about.
+func flowCommitManifest(t *testing.T, repo string) {
+	t.Helper()
+	flowGit(t, repo, "add", "-A")
+	flowGit(t, repo, "commit", "-q", "-m", "docs: the manifest")
+	flowGit(t, repo, "checkout", "-q", "main")
+	flowGit(t, repo, "merge", "-q", "--ff-only", "feat/thing")
+	flowGit(t, repo, "checkout", "-q", "feat/thing")
+}
+
 // TestChangesStatusFlow walks one repository through every phase L5 item 1 names:
 // workstream -> open -> planned -> merged -> cleaned, asserting the reported phase and the
 // exit code at each step.
@@ -45,6 +56,7 @@ func TestChangesStatusFlow(t *testing.T) {
 	// the honest answer here, and it keeps the flow hermetic.
 	t.Setenv("GENTLE_AI_BIN", t.TempDir()+"/gentle-ai-absent")
 	repo := flowRepo(t, "odd", nil)
+	flowCommitManifest(t, repo)
 
 	t.Run("workstream", func(t *testing.T) {
 		stdout, stderr, code := statusFlowRun(t, bin, repo)
@@ -190,4 +202,83 @@ func TestChangesStatusFlow(t *testing.T) {
 			}
 		}
 	})
+}
+
+// L8-1: one product predicate. A change that only touches internal/ is a change
+// (open), not a workstream, and the report names the diverging path — the folder
+// list that ignored internal/ and cmd/ is gone.
+func TestChangesStatusFlowCountsInternalAsProduct(t *testing.T) {
+	bin, _ := smokeSetup(t)
+	t.Setenv("GENTLE_AI_BIN", t.TempDir()+"/gentle-ai-absent")
+	repo := flowRepo(t, "odd", nil)
+	flowCommitManifest(t, repo)
+	flowWrite(t, repo, "internal/gates/gates.go", "package gates\n")
+	flowGit(t, repo, "add", "-A")
+	flowGit(t, repo, "commit", "-q", "-m", "feat: internal work")
+
+	stdout, stderr, code := statusFlowRun(t, bin, repo)
+	if code != 0 || stderr != "" {
+		t.Fatalf("status = (%d, %q, %q), want a silent report", code, stdout, stderr)
+	}
+	for _, want := range []string{"phase:    open", "product paths diverging: internal/gates/gates.go"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("report %q does not contain %q", stdout, want)
+		}
+	}
+	if strings.Contains(stdout, "phase:    workstream") {
+		t.Errorf("report %q calls a change to internal/ a workstream", stdout)
+	}
+}
+
+// L8-1: the project's own product_exclude globs narrow that same predicate for the
+// report and the gate: an excluded tree is not product work and does not owe a change.
+func TestChangesStatusFlowAppliesTheProductExclude(t *testing.T) {
+	bin, _ := smokeSetup(t)
+	t.Setenv("GENTLE_AI_BIN", t.TempDir()+"/gentle-ai-absent")
+	repo := flowRepo(t, "odd", nil)
+	flowWrite(t, repo, "ai-specs/ai-specs.toml", "[recipes.plan-build-flow]\nenabled = true\n\n"+
+		"[recipes.plan-build-flow.config]\nmode = \"odd\"\nproduct_exclude = [\"internal/**\"]\n")
+	flowCommitManifest(t, repo)
+	flowWrite(t, repo, "internal/gates/gates.go", "package gates\n")
+	flowGit(t, repo, "add", "-A")
+	flowGit(t, repo, "commit", "-q", "-m", "feat: internal work")
+
+	stdout, stderr, code := statusFlowRun(t, bin, repo)
+	if code != 0 || stderr != "" {
+		t.Fatalf("status = (%d, %q, %q), want a silent report", code, stdout, stderr)
+	}
+	for _, want := range []string{"phase:    workstream", "no product-path divergence"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("report %q does not contain %q", stdout, want)
+		}
+	}
+	// The same tree written while it is excluded owes no product checkpoint.
+	if _, stderr, code := flowRun(t, bin, repo, flowEvent(repo, "internal/gates/gates.go"),
+		"plan-build-gate", "--explain"); code != 0 ||
+		stderr != "plan-build-gate: tier none; refutations none\n" {
+		t.Fatalf("gate = (%d, %q), want the silent none tier", code, stderr)
+	}
+}
+
+// L8-2: a checkout on the integration branch is the integration line itself, not a
+// workstream and not a change: it reports the phase, exits 0 and names the cleanup.
+func TestChangesStatusFlowReportsTheIntegrationBranch(t *testing.T) {
+	bin, _ := smokeSetup(t)
+	t.Setenv("GENTLE_AI_BIN", t.TempDir()+"/gentle-ai-absent")
+	repo := flowRepo(t, "odd", nil)
+	flowGit(t, repo, "checkout", "-q", "main")
+
+	stdout, stderr, code := statusFlowRun(t, bin, repo)
+	if code != 0 || stderr != "" {
+		t.Fatalf("status = (%d, %q, %q), want a silent report", code, stdout, stderr)
+	}
+	for _, want := range []string{"phase:    integration", "integration branch",
+		"next:     ai-specs worktree-cleanup"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("report %q does not contain %q", stdout, want)
+		}
+	}
+	if strings.Contains(stdout, "phase:    workstream") {
+		t.Errorf("report %q calls the integration branch a workstream", stdout)
+	}
 }

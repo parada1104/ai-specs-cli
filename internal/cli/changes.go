@@ -384,11 +384,12 @@ func workstreamViewOf(facts gates.WriteFacts, branch, ledgerPath string) workstr
 }
 
 // workstreamDivergence is the product-path divergence actually observed: the diff
-// against the base plus the untracked files, deduplicated.
+// against the base plus the untracked files, deduplicated. The product predicate is
+// the one the gate reads, so the report and the gate cannot disagree.
 func workstreamDivergence(facts gates.WriteFacts) []string {
 	paths := append([]string(nil), facts.Untracked...)
 	for _, entry := range facts.Diff {
-		if gates.ProductPath(entry.Path) {
+		if facts.Scope.Path(entry.Path) {
 			paths = append(paths, entry.Path)
 		}
 	}

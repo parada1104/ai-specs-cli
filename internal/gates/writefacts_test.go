@@ -79,17 +79,20 @@ func TestWriteVerdictAllowsACommittedCanonicalEditOnceTheDeltaExists(t *testing.
 }
 
 // A workstream owes no diff-based evidence: a committed high-risk edit it cannot
-// answer never traps an unrelated later write.
+// answer never traps an unrelated later write. The declaration is what makes the
+// worktree a workstream once product paths diverge (L8-1).
 func TestWriteFactsDoesNotGradeAWorkstreamDiffForHighRisk(t *testing.T) {
 	root := writeRepo(t, map[string]string{
 		"ai-specs/ai-specs.toml": "[recipes.plan-build-flow.config]\nmode = \"odd\"\n" +
 			"high_risk_paths = [\"docs/secret/**\"]\n",
 	})
 	commitPath(t, root, "docs/secret/runbook.md", "docs: a runbook edit")
+	workstreamWrite(t, root, ".ai-specs/plan-ledger.jsonl",
+		`{"event":"workstream","at":"2026-01-01T00:00:00Z","reason":"audit of the ledger"}`+"\n")
 
 	facts := WriteFactsFor(root, planbuild.ModeOdd, "thing", "README.md")
 	if !facts.Workstream {
-		t.Fatalf("Facts = %+v, want a workstream", facts)
+		t.Fatalf("Facts = %+v, want a declared workstream", facts)
 	}
 	if verdict := facts.Verdict(); !verdict.Allowed() {
 		t.Fatalf("Verdict = %+v, want no diff-based refutation for a workstream", verdict)

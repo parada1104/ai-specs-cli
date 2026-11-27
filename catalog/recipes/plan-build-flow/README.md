@@ -235,6 +235,17 @@ requires `## Log` with `L1`; light keeps it optional.
   migration message. `--base <ref>` pins the diff the refutations grade; without
   it the guardian uses the project's `[recipes.git-pr-flow.config] base_branch`,
   tried as `origin/<base>`, `<base>`, then `main` or `master`.
+- **Product scope is one predicate, not a folder list:** product work is any
+  graded path — so never agent configuration and never the planning artifacts —
+  outside the planning trees `odd/` and `openspec/`. The write gate's
+  `work-start` checkpoint, the workstream discriminator, the divergence list and
+  `ai-specs changes status` all read it, so a change that only touches
+  `internal/` or `cmd/` is a change like any other. A project that generates,
+  vendors or otherwise does not own a tree names it in `[recipes.plan-build-flow.
+  config] product_exclude` of `ai-specs/ai-specs.toml` — an array of path globs
+  where `**` covers any number of segments and `*` stays inside one, written by
+  hand like `high_risk_paths`. A malformed value is reported as a note and never
+  applied, so the scope never changes silently.
 
 ## Third assurance layer: pull-request CI
 

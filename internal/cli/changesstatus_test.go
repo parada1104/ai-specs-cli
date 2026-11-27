@@ -80,6 +80,11 @@ func TestStatusPhasePrecedence(t *testing.T) {
 			want:     statusWorkstream,
 		},
 		{
+			name:     "a checkout on the integration branch is the integration line",
+			evidence: statusEvidence{Checkout: true, Base: "main", Integration: "main", Workstream: true, DivergenceKnown: true},
+			want:     statusIntegration,
+		},
+		{
 			name: "an unanswered divergence cannot separate a change from a workstream",
 			// Without the diff git could not answer, "no artifact" is compatible with
 			// both remaining phases; reporting either one would be a guess.
@@ -452,5 +457,74 @@ func TestChangesStatusRelaysTheReviewReceipt(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "review:   unknown (") {
 		t.Fatalf("report = %q, want the unknown receipt with its reason", stdout)
+	}
+}
+
+// L8-2: the integration line is the repo's own declaration — the worktree-flow
+// integration_branch and the resolved base — never a hardcoded name.
+func TestStatusIntegrationBranchUsesTheRepoDeclaration(t *testing.T) {
+	root := workstreamRepo(t)
+	changesWrite(t, filepath.Join(root, "ai-specs", "ai-specs.toml"),
+		"[recipes.worktree-flow]\nenabled = true\n\n"+
+			"[recipes.worktree-flow.config]\nintegration_branch = \"trunk\"\n\n"+
+			"[recipes.git-pr-flow.config]\nbase_branch = \"trunk\"\n")
+	for _, tc := range []struct {
+		name, branch, base, want string
+	}{
+		{"the declared integration branch", "trunk", "origin/trunk", "trunk"},
+		{"a change branch", "feat/thing", "origin/trunk", ""},
+		{"a detached checkout", "", "origin/trunk", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := statusIntegrationBranch(root, tc.branch, tc.base); got != tc.want {
+				t.Fatalf("statusIntegrationBranch(%q, %q) = %q, want %q", tc.branch, tc.base, got, tc.want)
+			}
+		})
+	}
+}
+
+// L8-3: `not-applicable` is only the answer when the project enables no tracker
+// recipe. With one enabled and no row, the report names the real state (no item
+// bound, card none) and adds no step of its own: what to do about it is T9's.
+func TestChangesStatusTrackerNotApplicableOnlyWithoutARecipe(t *testing.T) {
+	plain := workstreamRepo(t)
+	if _, stdout, stderr := runChangesCLI(t, "changes", "status", "--root", plain); stderr != "" ||
+		!strings.Contains(stdout, "tracker:  not-applicable (no tracker recipe enabled)") {
+		t.Fatalf("report = (%q, %q), want the no-recipe not-applicable line", stdout, stderr)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		enabled string
+		want    string
+	}{
+		{"enabled", "true", "tracker:  no item bound, card: none"},
+		{"disabled", "false", "tracker:  not-applicable (no tracker recipe enabled)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := workstreamRepo(t)
+			changesWrite(t, filepath.Join(root, "ai-specs", "ai-specs.toml"),
+				"[recipes.plan-build-flow]\nenabled = true\n\n[recipes.plan-build-flow.config]\nmode = \"odd\"\n\n"+
+					"[recipes.trello-mcp-workflow]\nenabled = "+tc.enabled+"\n")
+			workstreamGit(t, root, "add", "-A")
+			workstreamGit(t, root, "commit", "-q", "-m", "docs: the tracker recipe")
+
+			code, stdout, stderr := runChangesCLI(t, "changes", "status", "--root", root)
+			if code != 0 || stderr != "" {
+				t.Fatalf("status = (%d, %q, %q), want a silent report", code, stdout, stderr)
+			}
+			if !strings.Contains(stdout, tc.want) {
+				t.Fatalf("report %q does not contain %q", stdout, tc.want)
+			}
+			// The tracker is reported, never graded: the next step stays the plan's.
+			for _, line := range strings.Split(stdout, "\n") {
+				if strings.HasPrefix(line, "next:") && strings.Contains(line, "tracker") {
+					t.Fatalf("next line %q asks for the tracker", line)
+				}
+			}
+			if tc.enabled == "true" && strings.Contains(stdout, "not-applicable") {
+				t.Fatalf("report %q calls an enabled tracker not-applicable", stdout)
+			}
+		})
 	}
 }

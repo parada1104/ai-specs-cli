@@ -101,21 +101,83 @@ func TestPlanBuildGateAllowsWithActivePlan(t *testing.T) {
 	}
 }
 
-// PLAN_BUILD_GATE_PATHS is scope only: it replaces the graded production
-// directories, and a whitespace-only value falls back to the default. In scope a
-// write with no plan and no product change is allowed.
-func TestPlanBuildGateHonorsProductionPaths(t *testing.T) {
+// planBuildWriteManifest writes the project manifest the gate reads.
+func planBuildWriteManifest(t *testing.T, root, body string) {
+	t.Helper()
+	path := filepath.Join(root, "ai-specs", "ai-specs.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// L8-1: one product predicate. Every graded tree outside the planning folders is
+// production work — internal/ and cmd/ are not a special case — so the work-start
+// checkpoint grades them exactly like src/.
+func TestPlanBuildGateGradesEveryTreeOutsideThePlanningFolders(t *testing.T) {
+	repo, common, branch := trackerGateFixtureRepo(t)
+	bindTrackerLedger(t, common, branch, false)
+	t.Setenv("TRACKER_LEDGER_MODE", "always")
+	for _, target := range []string{"internal/gates/gates.go", "cmd/ai-specs/main.go",
+		"docs/runtime-hooks.md", "tests/run.sh"} {
+		code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", target))
+		if code != 2 || !strings.Contains(stderr, "blocked at work-start") {
+			t.Errorf("write to %s = (%d, %q, %q), want the work-start block", target, code, stdout, stderr)
+		}
+	}
+}
+
+// L8-1: the planning folders are never product work, and the canonical spec tree
+// under odd/ stays graded (R1) without being a product write.
+func TestPlanBuildGateNeverGradesAPlanningPathAsProduct(t *testing.T) {
+	repo, common, branch := trackerGateFixtureRepo(t)
+	bindTrackerLedger(t, common, branch, false)
+	t.Setenv("TRACKER_LEDGER_MODE", "always")
+	for _, target := range []string{"odd/tasks/thing.md", "odd/changes/thing/specs/cap/spec.md",
+		"openspec/changes/thing/tasks.md"} {
+		code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", target))
+		if strings.Contains(stderr, "blocked at work-start") {
+			t.Errorf("write to %s = (%d, %q, %q), want no product checkpoint", target, code, stdout, stderr)
+		}
+	}
+	code, _, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "odd/specs/cap/spec.md"))
+	if code != 2 || !strings.Contains(stderr, "R1:") || strings.Contains(stderr, "blocked at work-start") {
+		t.Fatalf("canonical spec write = (%d, %q), want R1 without the product checkpoint", code, stderr)
+	}
+}
+
+// L8-1: the project's own product_exclude globs take a path out of the scope, and
+// a sibling path stays in it. `**` covers a tree.
+func TestPlanBuildGateExcludesTheProjectsProductExclude(t *testing.T) {
+	repo, common, branch := trackerGateFixtureRepo(t)
+	bindTrackerLedger(t, common, branch, false)
+	t.Setenv("TRACKER_LEDGER_MODE", "always")
+	planBuildWriteManifest(t, repo, "[recipes.plan-build-flow.config]\nmode = \"odd\"\n"+
+		"product_exclude = [\"internal/**\", \"docs/*.md\"]\n")
+	for _, target := range []string{"internal/gates/gates.go", "docs/deploy.md"} {
+		if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", target)); code != 0 || stdout != "" || stderr != "" {
+			t.Errorf("excluded write to %s = (%d, %q, %q), want silence", target, code, stdout, stderr)
+		}
+	}
+	if code, _, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/app.go")); code != 2 || !strings.Contains(stderr, "blocked at work-start") {
+		t.Fatalf("sibling write = (%d, %q), want it still product", code, stderr)
+	}
+}
+
+// L8-1: a product_exclude that cannot be read is reported as a note, never
+// silently applied or silently dropped.
+func TestPlanBuildGateReportsAMalformedProductExclude(t *testing.T) {
 	repo := sharedRealPath(newGateFixture(t))
-	t.Setenv("PLAN_BUILD_GATE_PATHS", "src")
-	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "lib/x.go")); code != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("lib outside scope = (%d, %q, %q), want silence", code, stdout, stderr)
+	planBuildWriteManifest(t, repo, "[recipes.plan-build-flow.config]\nmode = \"openspec\"\n"+
+		"product_exclude = \"internal\"\n")
+	code, stdout, stderr := runPlanBuildGateArgs(t, repo, planBuildGateEvent(repo, "Write", "src/app.go"), "--explain")
+	if code != 0 || stdout != "" {
+		t.Fatalf("gate = (%d, %q), want the write allowed", code, stdout)
 	}
-	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "src/x.go")); code != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("src in scope = (%d, %q, %q), want silence", code, stdout, stderr)
-	}
-	t.Setenv("PLAN_BUILD_GATE_PATHS", "   ")
-	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "lib/x.go")); code != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("blank scope = (%d, %q, %q), want silence", code, stdout, stderr)
+	if !strings.Contains(stderr, "product_exclude") {
+		t.Fatalf("stderr = %q, want a note naming the malformed product_exclude", stderr)
 	}
 }
 
@@ -151,7 +213,6 @@ func TestPlanBuildGateDoesNotGateAPlanningWriteWithTheLedger(t *testing.T) {
 	repo, common, branch := trackerGateFixtureRepo(t)
 	bindTrackerLedger(t, common, branch, false)
 	t.Setenv("TRACKER_LEDGER_MODE", "always")
-	t.Setenv("PLAN_BUILD_GATE_PATHS", "odd")
 	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "odd/tasks/thing.md")); code != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("gate = (%d, %q, %q), want silence", code, stdout, stderr)
 	}

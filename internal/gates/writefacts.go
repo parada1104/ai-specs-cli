@@ -17,7 +17,6 @@ package gates
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -46,8 +45,12 @@ type WriteFacts struct {
 	// against, so an absent base is not a fact the gate failed to observe.
 	Base   string
 	Unborn bool
-	// Production reports whether Target is inside the graded production scope.
+	// Production reports whether Target is product work: the one product predicate,
+	// loaded once for this collection and shared with the workstream fact and the
+	// divergence list.
 	Production bool
+	// Scope is that predicate: the planning trees and the project's own exclusions.
+	Scope ProductScope
 	// HasPlan and HasDelta are the change's artifacts: they make the tier and they
 	// are the exits R1 and R2 name.
 	HasPlan  bool
@@ -86,13 +89,16 @@ type WriteFacts struct {
 // WriteFactsFor collects every fact of one pending write, once.
 func WriteFactsFor(repoRoot, mode, change, target string) WriteFacts {
 	facts := WriteFacts{
-		Mode:       mode,
-		Change:     change,
-		Target:     target,
-		Production: ProductPath(target),
-		Base:       BaseRef(repoRoot, nil),
-		Unborn:     !planbuild.RefExists(repoRoot, "HEAD"),
+		Mode:   mode,
+		Change: change,
+		Target: target,
+		Base:   BaseRef(repoRoot, nil),
+		Unborn: !planbuild.RefExists(repoRoot, "HEAD"),
 	}
+	// One product predicate per root: the target, the workstream fact and every
+	// consumer of the collected facts read the same scope.
+	facts.Scope = LoadProductScope(repoRoot)
+	facts.Production = facts.Scope.Path(target)
 	if change != "" {
 		facts.HasPlan = planbuild.PlanIsValidForMode(repoRoot, mode, change)
 		facts.HasDelta = planbuild.HasDelta(repoRoot, mode, change)
@@ -179,7 +185,9 @@ func (f WriteFacts) Verdict() Verdict {
 // notes names the facts the collection could not observe, so a rule that could not
 // run is never indistinguishable from a rule that found nothing.
 func (f WriteFacts) notes() []string {
-	var notes []string
+	// A declaration the scope could not read is a note like any other: the product
+	// scope it would have changed is reported, never silently applied.
+	notes := append([]string(nil), f.Scope.Notes...)
 	if f.DeclaredErr != nil {
 		// The declaration is a fact this collection could not observe. Naming the file
 		// is what separates "this worktree is a change" from "the ledger the decision
@@ -210,8 +218,8 @@ func (f WriteFacts) notes() []string {
 // Agent configuration and planning artifacts are not graded — the gitignored
 // `.claude` files, the change trees and the plan documents — and everything else is,
 // including the canonical spec tree, which promotion writes and a hand write may not.
-// It is the one scope predicate: the pending target and the diff are both read
-// through it, while the work-start checkpoint keys off ProductPath alone.
+// It is the rule half of the scope: the pending target and the diff are both read
+// through it, and ProductScope is the product half the work-start checkpoint keys off.
 func GradedPath(rel string) bool {
 	if AgentConfigPath(rel) {
 		return false
@@ -246,22 +254,6 @@ func AgentConfigPath(rel string) bool {
 	return false
 }
 
-// ProductPath reports whether a repository-relative path is inside the graded
-// production scope, which PLAN_BUILD_GATE_PATHS overrides.
-func ProductPath(rel string) bool {
-	dirs := os.Getenv(ProductDirsEnv)
-	if strings.ReplaceAll(dirs, " ", "") == "" {
-		dirs = ProductDirs
-	}
-	first, _, _ := strings.Cut(rel, "/")
-	for _, dir := range strings.Fields(dirs) {
-		if first == dir {
-			return true
-		}
-	}
-	return false
-}
-
 // observeWorkstream reads the two facts a diff cannot answer: the standing
 // declaration in the plan ledger, and the product paths the branch never added.
 // The untracked call is paid only when no other fact already says "change" (T3
@@ -283,7 +275,7 @@ func (f *WriteFacts) observeWorkstream(repoRoot string) {
 		return
 	}
 	for _, path := range untracked {
-		if ProductPath(path) {
+		if f.Scope.Path(path) {
 			f.Untracked = append(f.Untracked, path)
 		}
 	}
@@ -305,7 +297,7 @@ func (f WriteFacts) isWorkstream() bool {
 		return false
 	}
 	for _, entry := range f.Diff {
-		if ProductPath(entry.Path) {
+		if f.Scope.Path(entry.Path) {
 			return false
 		}
 	}
