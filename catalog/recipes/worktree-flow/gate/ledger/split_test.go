@@ -175,7 +175,7 @@ func TestPreSplitLedgerIsBackedUpOnceAndRewrittenAsV2(t *testing.T) {
 	if file.V != LedgerVersion {
 		t.Fatalf("loaded version = %d, want %d in memory", file.V, LedgerVersion)
 	}
-	if _, err := loc.Save(file); err != nil {
+	if _, err := loc.Save(file, SectionWorktree, SectionTracker, SectionPlan); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	if got := rawBytes(t, loc.Path+".v1-backup"); string(got) != string(legacyBytes) {
@@ -200,7 +200,7 @@ func TestPreSplitLedgerIsBackedUpOnceAndRewrittenAsV2(t *testing.T) {
 
 	// Changing the source bytes between attempts must not replace the backup.
 	writeLegacyFixture(t, loc.Path, closedHistory(1))
-	if _, err := loc.Save(file); err != nil {
+	if _, err := loc.Save(file, SectionWorktree, SectionTracker, SectionPlan); err != nil {
 		t.Fatalf("second Save: %v", err)
 	}
 	if got := rawBytes(t, loc.Path+".v1-backup"); string(got) != string(legacyBytes) {
@@ -244,7 +244,7 @@ func TestNextWriteCarriesMigratedRows(t *testing.T) {
 // stays empty, and no separate plan file is created.
 func TestPlanSectionIsDeclaredWithoutARow(t *testing.T) {
 	loc := StoreAt(ledgerPath(t))
-	if _, err := loc.Save(EmptyLedger()); err != nil {
+	if _, err := loc.Save(EmptyLedger(), SectionWorktree, SectionTracker, SectionPlan); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	var onDisk struct {

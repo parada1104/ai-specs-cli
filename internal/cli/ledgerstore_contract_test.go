@@ -10,14 +10,27 @@ import (
 )
 
 // ledgerStoreAPIs are the only ways to reach the ledger store files. Nothing
-// outside the store package, the gate that calls it, and this entrypoint may name
-// them (S14): the on-disk layout is an implementation detail, so a consumer that
-// opens those paths itself either breaks on the next layout or resurrects rows
-// the CLI already migrated.
+// outside the store package, the gate that calls it, the plan port, and this
+// entrypoint may name them (S14): the on-disk layout is an implementation detail,
+// so a consumer that opens those paths itself either breaks on the next layout or
+// resurrects rows the CLI already migrated. The last three carry no path in their
+// name, so a caller that builds a location in memory and only loads or saves it
+// used to be invisible to the path literals below.
 var ledgerStoreAPIs = []string{
 	"TrackerLocation(", "StoreAt(",
 	"TrackerStorePath(", "StorePath(",
 	"LoadStore(", "SaveStore(",
+	"LedgerAt(", ".Load()", ".Save(",
+}
+
+// ledgerStoreImports are the import paths that reach the store API itself. A new
+// caller can skip every string above by importing the package and calling
+// ledger.LedgerAt(root).Load(), so an importer outside the owned prefixes is a
+// finding on its own; the quoted form keeps the base import apart from a
+// subpackage, and both appear once per offender.
+var ledgerStoreImports = []string{
+	`"ai-specs.dev/worktree-gate/ledger"`,
+	`"ai-specs.dev/worktree-gate/ledger/`,
 }
 
 // ledgerStorePathLiterals are the on-disk names a script would need to open the
@@ -26,11 +39,18 @@ var ledgerStoreAPIs = []string{
 var ledgerStorePathLiterals = []string{"ledger/state.json", "ledgers/tracker.json", "ledgers/"}
 
 // entrypointOwnedPrefixes are the packages allowed to name the store surface:
-// the store itself, the gate that runs inside the CLI process, and the CLI.
+// the store itself, the gate that runs inside the CLI process, the CLI, and the
+// plan port. internal/planledger is the CLI's port to the plan section: the one
+// place outside the gate that may reach the ledger, and it is reachable only from
+// internal/cli. gate/shared is no exception to the contract but a neighbour of it:
+// it is compiled into the gate that the CLI runs in-process and imports the ledger
+// package for the witness schema and the witness path, never for a store call.
 var entrypointOwnedPrefixes = []string{
 	filepath.Join("catalog", "recipes", "worktree-flow", "gate", "ledger") + string(filepath.Separator),
 	filepath.Join("catalog", "recipes", "worktree-flow", "gate", "runner") + string(filepath.Separator),
+	filepath.Join("catalog", "recipes", "worktree-flow", "gate", "shared") + string(filepath.Separator),
 	filepath.Join("internal", "cli") + string(filepath.Separator),
+	filepath.Join("internal", "planledger") + string(filepath.Separator),
 }
 
 // TestOnlyTheEntrypointReachesTheLedgerStore is the S14 contract: the ledger store
@@ -68,6 +88,11 @@ func TestOnlyTheEntrypointReachesTheLedgerStore(t *testing.T) {
 			return err
 		}
 		body := string(data)
+		for _, imp := range ledgerStoreImports {
+			if strings.Contains(body, imp) {
+				offenders = append(offenders, rel+" imports "+strings.Trim(imp, `"`))
+			}
+		}
 		for _, api := range ledgerStoreAPIs {
 			if strings.Contains(body, api) {
 				offenders = append(offenders, rel+" names "+api)

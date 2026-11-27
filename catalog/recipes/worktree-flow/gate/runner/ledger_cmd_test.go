@@ -91,7 +91,7 @@ func saveLedgerStore(t *testing.T, common, branch, itemID string, mutate func(*l
 	}
 	file.Worktree, file.Tracker = view.Worktree, view.Tracker
 	path := ledger.StorePath(common)
-	if _, err := ledger.StoreAt(path).Save(file); err != nil {
+	if _, err := ledger.StoreAt(path).Save(file, ledger.SectionWorktree, ledger.SectionTracker, ledger.SectionPlan); err != nil {
 		t.Fatal(err)
 	}
 	return path

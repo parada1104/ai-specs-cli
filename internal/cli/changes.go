@@ -169,8 +169,8 @@ can never disagree about what this worktree is.
 
 Options:
   --root <path>       Resolved repository root. Required.
-  --reason <text>     Declare this worktree a workstream, appending the decision to
-                      .ai-specs/plan-ledger.jsonl. Refused when the worktree
+  --reason <text>     Declare this worktree a workstream, recording the decision in
+                      the plan section of the CLI's ledger. Refused when the worktree
                       carries a plan or a delta: that is a change (S16). A text
                       starting with '-' needs the --reason=<text> form.
   --end               Close a standing declaration; the worktree returns to the
@@ -267,7 +267,13 @@ func runChangesWorkstream(args []string, stdout, stderr io.Writer) int {
 
 	if request.end || request.reasonSet {
 		if request.end {
-			if declared, _ := planledger.Workstream(root); !declared {
+			declared, _, err := planledger.Declared(root)
+			if err != nil {
+				fmt.Fprintf(stderr, "changes workstream: cannot read the plan ledger (%s): %s\n",
+					planledger.Store(root), err)
+				return 1
+			}
+			if !declared {
 				fmt.Fprintf(stderr, "changes workstream: no workstream declaration is open for %s; "+
 					"nothing to end\n", workstreamBranch(branch))
 				return 1
@@ -287,14 +293,14 @@ func runChangesWorkstream(args []string, stdout, stderr io.Writer) int {
 			Event: event, At: time.Now().UTC().Format(time.RFC3339), Reason: request.reason,
 		}); err != nil {
 			fmt.Fprintf(stderr, "changes workstream: cannot record the decision in %s: %s\n",
-				planledger.Path, err)
+				planledger.Store(root), err)
 			return 1
 		}
 		facts = collect()
 		if !request.asJSON && !request.end {
 			fmt.Fprintf(stdout, "changes workstream: declared %s a workstream — recorded in %s "+
 				"(reason: %s). Nothing is owed until 'changes workstream --end'.\n",
-				workstreamBranch(branch), planledger.Path, request.reason)
+				workstreamBranch(branch), planledger.Store(root), request.reason)
 		}
 		if !request.asJSON && request.end {
 			fmt.Fprintf(stdout, "changes workstream: ended the declaration for %s — the worktree returns "+
@@ -302,7 +308,7 @@ func runChangesWorkstream(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	view := workstreamViewOf(facts, branch)
+	view := workstreamViewOf(facts, branch, planledger.Store(root))
 	if request.asJSON {
 		encoded, err := json.Marshal(view)
 		if err != nil {
@@ -334,7 +340,7 @@ type workstreamView struct {
 	Ledger         string   `json:"ledger"`
 }
 
-func workstreamViewOf(facts gates.WriteFacts, branch string) workstreamView {
+func workstreamViewOf(facts gates.WriteFacts, branch, ledgerPath string) workstreamView {
 	view := workstreamView{
 		Classification: "change",
 		Mode:           facts.Mode,
@@ -346,7 +352,7 @@ func workstreamViewOf(facts gates.WriteFacts, branch string) workstreamView {
 		Reason:         facts.DeclaredReason,
 		Divergence:     workstreamDivergence(facts),
 		Note:           workstreamNote(facts),
-		Ledger:         planledger.Path,
+		Ledger:         ledgerPath,
 	}
 	if facts.HasPlan {
 		view.Plan = facts.PlanPath

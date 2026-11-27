@@ -92,8 +92,8 @@ func TestChangesWorkstreamReportsAFreshWorktree(t *testing.T) {
 	if report.Declared || len(report.Divergence) != 0 || report.Plan != "" || report.Delta {
 		t.Fatalf("report = %+v, want no declaration, no divergence and no artifact", report)
 	}
-	if report.Ledger != ".ai-specs/plan-ledger.jsonl" {
-		t.Fatalf("Ledger = %q, want the plan ledger", report.Ledger)
+	if !strings.HasSuffix(report.Ledger, filepath.Join("ai-specs", "ledger", "state.json")) {
+		t.Fatalf("Ledger = %q, want the ledger file the plan section lives in", report.Ledger)
 	}
 }
 
@@ -119,7 +119,7 @@ func TestChangesWorkstreamReportsAChange(t *testing.T) {
 // returns the worktree to the facts.
 func TestChangesWorkstreamDeclaresAndEnds(t *testing.T) {
 	root := workstreamRepo(t)
-	ledger := filepath.Join(root, ".ai-specs", "plan-ledger.jsonl")
+	ledgerFile := filepath.Join(root, ".git", "ai-specs", "ledger", "state.json")
 
 	code, stdout, stderr := runChangesCLI(t, "changes", "workstream", "--root", root,
 		"--reason", "audit of the ledger")
@@ -140,14 +140,32 @@ func TestChangesWorkstreamDeclaresAndEnds(t *testing.T) {
 		t.Fatalf("report = %+v, want a change once the declaration ended", report)
 	}
 
-	raw, err := os.ReadFile(ledger)
+	raw, err := os.ReadFile(ledgerFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if len(lines) != 2 || !strings.Contains(lines[0], `"workstream"`) ||
-		!strings.Contains(lines[1], `"workstream-end"`) {
-		t.Fatalf("ledger = %q, want the two appended events in order", string(raw))
+	var stored struct {
+		Plan struct {
+			Items []struct {
+				Decisions []struct {
+					Kind string `json:"kind"`
+				} `json:"decisions"`
+			} `json:"items"`
+		} `json:"plan"`
+	}
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("plan section is not readable: %v (%s)", err, raw)
+	}
+	if len(stored.Plan.Items) != 1 || len(stored.Plan.Items[0].Decisions) != 2 {
+		t.Fatalf("plan section = %s, want one row with the two decisions in order", raw)
+	}
+	kinds := []string{stored.Plan.Items[0].Decisions[0].Kind, stored.Plan.Items[0].Decisions[1].Kind}
+	if kinds[0] != "workstream" || kinds[1] != "workstream-end" {
+		t.Fatalf("plan decisions = %v, want workstream then workstream-end", kinds)
+	}
+	// The line file is a predecessor now: a declaration never creates it again.
+	if _, err := os.Stat(filepath.Join(root, ".ai-specs", "plan-ledger.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("a declaration wrote the retired line file (stat err = %v)", err)
 	}
 
 	// Nothing is open any more, so a second `--end` names the fact instead of
@@ -156,8 +174,8 @@ func TestChangesWorkstreamDeclaresAndEnds(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr, "no workstream declaration is open") {
 		t.Fatalf("second end = (%d, %q), want the refusal", code, stderr)
 	}
-	if raw, _ := os.ReadFile(ledger); strings.Count(string(raw), "\n") != 2 {
-		t.Fatalf("ledger = %q, want no third event", string(raw))
+	if raw, _ := os.ReadFile(ledgerFile); strings.Count(string(raw), `"kind"`) != 2 {
+		t.Fatalf("ledger = %q, want no third decision", string(raw))
 	}
 }
 

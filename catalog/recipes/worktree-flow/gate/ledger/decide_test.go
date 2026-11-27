@@ -86,8 +86,17 @@ func TestPersistDecisionClearsCurrentConflictSnapshot(t *testing.T) {
 	path := locs.Path
 	key := ident("").Key()
 	snapshot := Conflict{Sides: Evidence{Local: "local", Remote: "remote"}, RecordedAt: vtNow.Format(time.RFC3339)}
-	if err := PersistConflict(path, key, snapshot); err != nil {
-		t.Fatalf("PersistConflict: %v", err)
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seeded, _, err := locs.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seeded.Tracker.Items[0].Conflict = raw
+	if _, err := locs.Save(seeded, SectionWorktree, SectionTracker, SectionPlan); err != nil {
+		t.Fatalf("seed the conflict snapshot: %v", err)
 	}
 	item, err := mustLoad(t, path).View().Primary(key)
 	if err != nil {
@@ -211,18 +220,6 @@ func TestPersistWithoutPrimaryStaysClosedForUnrecordableAnswers(t *testing.T) {
 	}
 	if file := mustLoad(t, locs.Path); len(file.Tracker.OptOuts) != 0 {
 		t.Fatalf("opt_outs = %+v, want nothing recorded for an unrecordable answer", file.Tracker.OptOuts)
-	}
-}
-
-// TestPersistConflictFailsClosedForCollision pins that a collided identity cannot
-// silently attach a conflict to one of the open items.
-func TestPersistConflictFailsClosedForCollision(t *testing.T) {
-	f := newFixture()
-	f.openItem(ident(""), "p", t0)
-	f.openItem(ident(""), "p", t0)
-	path := f.write(t, ledgerPath(t)).Path
-	if err := PersistConflict(path, ident("").Key(), Conflict{Sides: Evidence{Local: "a", Remote: "b"}}); !errors.Is(err, ErrMultipleOpen) {
-		t.Fatalf("PersistConflict error = %v, want ErrMultipleOpen", err)
 	}
 }
 

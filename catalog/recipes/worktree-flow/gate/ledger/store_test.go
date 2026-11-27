@@ -61,7 +61,7 @@ func (f *fixture) view() View { return f.File.View() }
 func (f *fixture) write(t *testing.T, path string) StoreLocation {
 	t.Helper()
 	loc := StoreAt(path)
-	if _, err := loc.Save(f.File); err != nil {
+	if _, err := loc.Save(f.File, SectionWorktree, SectionTracker, SectionPlan); err != nil {
 		t.Fatalf("save ledger: %v", err)
 	}
 	return loc
@@ -169,7 +169,7 @@ func TestSaveStoreAtomicRenameLeavesNoTempResidue(t *testing.T) {
 	f := newFixture()
 	f.openItem(ident("tracker-ledger-foundation"), "trello-mcp-workflow", t0)
 	loc := StoreAt(path)
-	if _, err := loc.Save(f.File); err != nil {
+	if _, err := loc.Save(f.File, SectionWorktree, SectionTracker, SectionPlan); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
@@ -190,7 +190,7 @@ func TestSaveStoreAtomicRenameLeavesNoTempResidue(t *testing.T) {
 	}
 
 	// A later save replaces the file rather than appending to it.
-	if _, err := loc.Save(EmptyLedger()); err != nil {
+	if _, err := loc.Save(EmptyLedger(), SectionWorktree, SectionTracker, SectionPlan); err != nil {
 		t.Fatal(err)
 	}
 	if replaced := loadFile(t, loc); len(replaced.Tracker.Items) != 0 || len(replaced.Worktree.Items) != 0 {
@@ -199,7 +199,7 @@ func TestSaveStoreAtomicRenameLeavesNoTempResidue(t *testing.T) {
 
 	// A store with no items still writes a JSON array, not null.
 	empty := filepath.Join(t.TempDir(), ".git", "ai-specs", "ledger", "state.json")
-	if _, err := StoreAt(empty).Save(EmptyLedger()); err != nil {
+	if _, err := StoreAt(empty).Save(EmptyLedger(), SectionWorktree, SectionTracker, SectionPlan); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(empty)
@@ -447,7 +447,7 @@ func TestItemCoreFieldsAreProviderNeutral(t *testing.T) {
 	}
 
 	path := StorePath(filepath.Join(t.TempDir(), ".git"))
-	if _, err := StoreAt(path).Save(LedgerFile{V: LedgerVersion, Tracker: Store{Items: []Item{item}}}); err != nil {
+	if _, err := StoreAt(path).Save(LedgerFile{V: LedgerVersion, Tracker: Store{Items: []Item{item}}}, SectionWorktree, SectionTracker, SectionPlan); err != nil {
 		t.Fatal(err)
 	}
 	loaded := loadFile(t, StoreAt(path)).Tracker
@@ -592,7 +592,7 @@ func TestAdvisoryCeilingDoesNotCompact(t *testing.T) {
 	if len(f.File.Tracker.Items) != MaxItems+8 {
 		t.Fatalf("prepared items = %d", len(f.File.Tracker.Items))
 	}
-	if _, err := StoreAt(path).Save(f.File); err != nil {
+	if _, err := StoreAt(path).Save(f.File, SectionWorktree, SectionTracker, SectionPlan); err != nil {
 		t.Fatal(err)
 	}
 	loaded := loadFile(t, StoreAt(path)).Tracker
@@ -601,55 +601,6 @@ func TestAdvisoryCeilingDoesNotCompact(t *testing.T) {
 	}
 	if !loaded.OverCeiling() {
 		t.Fatal("loaded over-ceiling store must report over the ceiling")
-	}
-}
-
-// TestAppendDecisionToPrimaryFailsClosed pins the locked append's fail-closed
-// behavior: a missing or collided primary (and an unknown decision kind) writes
-// nothing to the store.
-func TestAppendDecisionToPrimaryFailsClosed(t *testing.T) {
-	path := StorePath(filepath.Join(t.TempDir(), ".git"))
-	id := ident("slug")
-	d := Decision{At: "2026-09-13T01:00:00Z", Checkpoint: "apply-start", Kind: DecisionOptOut, Choice: "continue"}
-
-	// No primary: a missing store is not created by a failed persist.
-	if err := AppendDecisionToPrimary(path, id.Key(), d); !errors.Is(err, ErrNoPrimary) {
-		t.Fatalf("missing primary error = %v, want ErrNoPrimary", err)
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("a failed persist must not create a store (stat err = %v)", err)
-	}
-
-	// Two open rows: a collision is not a pick, and the store is untouched.
-	collided := newFixture()
-	collided.openItem(id, "p", t0)
-	collided.openItem(id, "p", t0)
-	if _, err := StoreAt(path).Save(collided.File); err != nil {
-		t.Fatal(err)
-	}
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := AppendDecisionToPrimary(path, id.Key(), d); !errors.Is(err, ErrMultipleOpen) {
-		t.Fatalf("collision error = %v, want ErrMultipleOpen", err)
-	}
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(before) != string(after) {
-		t.Fatal("a failed persist must not modify the store")
-	}
-
-	// An unknown kind is rejected before any write.
-	single := newFixture()
-	single.openItem(id, "p", t0)
-	if _, err := StoreAt(path).Save(single.File); err != nil {
-		t.Fatal(err)
-	}
-	if err := AppendDecisionToPrimary(path, id.Key(), Decision{At: "x", Kind: "invented"}); !errors.Is(err, ErrUnknownDecisionKind) {
-		t.Fatalf("unknown kind error = %v, want ErrUnknownDecisionKind", err)
 	}
 }
 
@@ -662,7 +613,7 @@ func TestConcurrentAppendDoesNotLoseDecisions(t *testing.T) {
 
 	f := newFixture()
 	f.openItem(id, "trello-mcp-workflow", t0)
-	if _, err := StoreAt(path).Save(f.File); err != nil {
+	if _, err := StoreAt(path).Save(f.File, SectionWorktree, SectionTracker, SectionPlan); err != nil {
 		t.Fatal(err)
 	}
 
@@ -672,13 +623,9 @@ func TestConcurrentAppendDoesNotLoseDecisions(t *testing.T) {
 		wg.Add(1)
 		go func(i int, checkpoint string) {
 			defer wg.Done()
-			d := Decision{
-				At:         t0.Add(time.Duration(i) * time.Minute).Format(time.RFC3339),
-				Checkpoint: checkpoint,
-				Kind:       DecisionOptOut,
-				Choice:     "continue",
-			}
-			if err := AppendDecisionToPrimary(path, id.Key(), d); err != nil {
+			if _, err := PersistDecision(StoreAt(path), id.Key(), DecisionRequest{
+				Checkpoint: checkpoint, Kind: DecisionOptOut, Choice: "continue",
+			}, t0.Add(time.Duration(i)*time.Minute)); err != nil {
 				t.Errorf("append %s: %v", checkpoint, err)
 			}
 		}(i, checkpoint)

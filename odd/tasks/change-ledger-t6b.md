@@ -130,3 +130,116 @@ immediate predecessor and must be read before touching the ledger.
      against the trust root, not the version string, and refresh the launcher when they
      differ.
   Both matter for T12 (release) and for any unit that ships a binary change.
+- **L5** — Baseline before any change, on `306691d8`: the gate module
+  (`catalog/recipes/worktree-flow/gate`) builds, vets and tests clean and the root
+  module builds and vets clean (`go test ./ledger/... ./runner/... -count=1`: both ok,
+  3.8 s and 44 s). Log: `/private/tmp/change-ledger-v2/t6b/baseline.log`.
+- **L6** — The plan section's shape and the identity it is keyed by. `PlanSection`
+  stops being `[]json.RawMessage` (T6a shipped it shape-only, L15.1) and becomes
+  `{items:[{identity, decisions:[{at, kind, checkpoint, choice, note, reason}]}]}`,
+  with `kind` one of `workstream` / `workstream-end` for this unit (a later unit adds
+  `plan-exempt` and `archive`). One refinement of L8, decided here and stated for the
+  reviewer: the row carries the **existing `ItemIdentity`** (`common_dir`, `branch`,
+  `change`) instead of L8's bare `change` slug, because the ledger file is shared by
+  every worktree of the clone (`<git-common-dir>/ai-specs/ledger/state.json`) while a
+  workstream declaration is per-checkout (T3 chose a per-checkout file for exactly
+  that reason: «a worktree carries its own declaration and its siblings cannot inherit
+  it»). Keying by identity keeps that property in one shared file and reuses the
+  identity type the other two rows already use; a workstream row is written with an
+  empty `change`, because a workstream by definition has no change. No new key, no new
+  identity scheme.
+- **L7** — Seeding, and why the JSONL becomes a predecessor instead of a second
+  writer. `.ai-specs/plan-ledger.jsonl` is read **on load** by `StoreLocation`, through
+  a new `PlanSource{Path, Key}` field that names the checkout's JSONL and the work
+  identity that owns it; every event it holds becomes one `PlanDecision` for that
+  identity, in file order, so no event is lost. It contributes **only when the plan
+  section has no row for that identity**, which is the same rule T6a settled for the
+  tracker and for the same reason (L17 ALTO-1: a newer file wins over an older binary's
+  append; the alternative is `close,open`-style resurrection of a decision that was
+  already superseded). A one-shot copy of the JSONL is kept by the same
+  `backupPredecessor` discipline before the first write that supersedes it, and an
+  unreadable or unparseable JSONL is reported through `StoreReport.LegacyUnreadable`
+  without disabling the ledger (L17 MEDIO-3, now applied to the third source). Reads
+  fold last-event-wins exactly as `planledger.Workstream` does today, so the
+  declaration's meaning does not change; unknown event names are still skipped.
+- **L8** — T6b.2, decided. «Whatever still writes a whole store without going through
+  a capability section» is `StoreLocation.Save(LedgerFile)`: the only export that
+  writes all three sections at once, and the reason a caller could put a row in a
+  ledger it does not own. It is not deleted but made incapable of that: `Save` takes
+the sections the caller owns (`Save(file, SectionWorktree, SectionTracker)`) and
+  re-reads every section it was not given from disk before writing, so an unowned
+  section cannot be overwritten even by a hand-built `LedgerFile`. Deleting it
+  outright was the alternative and was rejected on evidence: four cross-package
+  fixtures (`internal/cli`, `gate/runner`) seed a file the production mutators cannot
+  construct (a pinned item id, a collided pair, an adjudication history), so the
+  export would have to be re-added as a seeding helper with a different name; the
+  ownership contract gives the published invariant instead, and it is testable. Plus
+  the two dead writers and their now-unreachable helper: `PersistConflict`
+  (`decide.go:123`), `AppendDecisionToPrimary` (`store.go:592`) and `setConflict`.
+- **L9** — T6b.4, decided: the contract test stops matching a string list and starts
+  naming the API. Detection becomes (a) the existing forbidden literals and (b) any
+  shipped source outside the owned prefixes that imports `worktree-gate/ledger` or
+  `worktree-gate/ledger/...`, plus the store entrypoints that have no string form
+  (`LedgerAt(`, `.Load()`, `.Save(`). `internal/planledger/` joins the owned prefixes,
+  because it is now the CLI's port to the plan section — the one place outside the
+  gate that may reach the ledger, and it is reachable only from `internal/cli`. RED is
+  a new file under a non-owned package calling `ledger.LedgerAt(...).Load()`, which the
+  test must name; the same file must be deleted afterwards, so the RED proof is
+  recorded as the failure text in this Log.
+- **L10** — T6b.1 and T6b.2 landed with their tests first. RED for the plan section, on
+  `306691d8` with the tests written and the API absent: `go vet ./ledger/` →
+  `ledger/plan_test.go:31:46: ledger.LedgerAt(ident.CommonDir).WithPlanSource undefined
+  (type ledger.StoreLocation has no field or method WithPlanSource)`
+  (`/private/tmp/change-ledger-v2/t6b/red-t6b1.log`). GREEN: `go test ./ledger/ -count=1`
+  passes with nine new plan tests — the decision lands only in the plan section, every
+  JSONL event is absorbed in order, the file answers over a stale append, the first
+  write absorbs the predecessor and keeps its one-shot copy, a sibling checkout inherits
+  nothing, an unreadable predecessor is reported and not fatal, unparseable lines stay
+  skipped, and the writer refuses an identity it cannot name.
+  Deleted: `PersistConflict`, `AppendDecisionToPrimary` and their now-unreachable
+  `setConflict`; `TestPersistConflictFailsClosedForCollision` and
+  `TestAppendDecisionToPrimaryFailsClosed` went with them, and
+  `TestConcurrentAppendDoesNotLoseDecisions` was **retargeted to a live writer**
+  (`PersistDecision`) rather than deleted, so the atomic-replace-and-lock pin survives.
+  `Save` now names its sections: a write that names none is refused, and every section
+  it was not given is re-read from disk, pinned by
+  `TestSaveCannotWriteASectionItDoesNotOwn` (a tracker-only write that hands over a
+  stolen lifecycle row and a stolen plan row writes neither).
+- **L11** — A real defect the new tests found, and its fix. An unreadable predecessor
+  (a directory where a ledger file belongs) made **every** write fail closed: `Save`
+  treats a predecessor it cannot copy as a failed backup, which is right for a regular
+  file with unreadable bytes and wrong for a path that holds no predecessor bytes at
+  all. Reproduced by two new tests (`TestUnreadableMigrationSourceDoesNotDisableWrites`,
+  `TestUnreadablePlanSourceDoesNotDisableWrites`) failing with «refusing to write …
+  without a predecessor backup: read …: is a directory». Fixed in `location.go` with
+  `predecessorBytes`, which reports an absent or non-regular path as «nothing to copy»
+  while a regular file whose bytes cannot be read still fails the save closed (the
+  existing `TestWriteFailsClosedWhenTheBackupCannotBeWritten` keeps passing, unweakened).
+- **L12** — T6b.4 delivered, with one prefix decision taken here. The contract test now
+  detects the API, not only its string forms: `LedgerAt(`, `.Load()` and `.Save(` joined
+  the forbidden entrypoints, and an import of `ai-specs.dev/worktree-gate/ledger` (or a
+  subpackage) outside the owned prefixes is a finding on its own. `internal/planledger/`
+  joined the prefixes, and so did `catalog/recipes/worktree-flow/gate/shared/` — the one
+  change to L9's list, taken on evidence the worker escalated rather than silently
+  fixing: `witness.go` there imports the ledger package for the witness schema and
+  `WitnessPath`, never for a store call, and it is compiled into the gate the CLI runs
+  in-process. Widening to the whole gate module (the alternative) was rejected because
+  it would license any future gate subpackage to reach the store. Parent-verified RED,
+  with a compiling probe at `internal/tier/zz_contract_red.go` that names no path and
+  only calls the API:
+  «`internal/tier/zz_contract_red.go imports ai-specs.dev/worktree-gate/ledger` /
+  `internal/tier/zz_contract_red.go names LedgerAt(` / `… names .Load()`» — three
+  independent detections for one caller, green again once the probe was deleted
+  (`/private/tmp/change-ledger-v2/t6b/red-t6b4.log`).
+- **L13** — Real-flow probe over copies of the real 14-row store, built binary, no
+  fabricated rows (`/private/tmp/change-ledger-v2/t6b/probe.sh`, log beside it): **PASS**.
+  With a three-event JSONL predecessor beside the real v1 file, a read absorbs the
+  declaration and leaves both files byte-identical; `--reason` writes v2 with 14
+  worktree and 14 tracker rows, one plan row carrying
+  `[workstream, workstream-end, workstream, workstream]` with each reason preserved, ids
+  joined across sections, `status` only in the worktree section and no `close` in the
+  tracker, and both predecessors keep a one-shot `.v1-backup` and their own bytes;
+  `--end` appends to the same plan row; the same rows as T5 left them (`ledgers/tracker.json`
+  only) migrate to v2 with the plan decision beside them and T5's file byte-identical; a
+  lifecycle opt-out written into the real rows survives into `tracker.opt_outs`; and a
+  corrupt ledger refuses the write with the file byte-identical.

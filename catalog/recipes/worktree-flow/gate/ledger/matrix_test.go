@@ -100,7 +100,7 @@ func matrixLayouts() []struct {
 		}},
 		{"v2", func(t *testing.T, cell matrixCell, ident ItemIdentity) {
 			file := legacyAsLedger(matrixHistory(ident))
-			if _, err := cell.loc.Save(file); err != nil {
+			if _, err := cell.loc.Save(file, SectionWorktree, SectionTracker, SectionPlan); err != nil {
 				t.Fatal(err)
 			}
 		}},
