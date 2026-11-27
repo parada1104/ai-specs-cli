@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"ai-specs.dev/ai-specs/internal/planbuild"
+	"ai-specs.dev/ai-specs/internal/planledger"
 	"ai-specs.dev/ai-specs/internal/tier"
 )
 
@@ -63,6 +64,14 @@ type WriteFacts struct {
 	// RiskTrailer reports a `Risk: item N` trailer in Base..HEAD (odd mode only,
 	// and only when a high-risk pattern is declared).
 	RiskTrailer bool
+	// Declared reports the standing `changes workstream` decision recorded in the
+	// plan ledger, and DeclaredReason is the reason that decision carries.
+	Declared       bool
+	DeclaredReason string
+	// Untracked is the product-path divergence the diff cannot see: a file the
+	// branch never added. It is collected only when nothing else already says
+	// "change", so a graded worktree pays no extra git call.
+	Untracked []string
 	// Workstream reports that this worktree is not a change (S16).
 	Workstream bool
 }
@@ -103,6 +112,9 @@ func WriteFactsFor(repoRoot, mode, change, target string) WriteFacts {
 	if mode == planbuild.ModeOdd && len(facts.HighRisk) > 0 {
 		facts.RiskTrailer = planbuild.CommitsWithRiskTrailer(repoRoot, facts.Base)
 	}
+	// The explicit decision is a fact of the worktree itself, so it is read on every
+	// collection: a standing declaration silences the change evidence until it ends.
+	facts.observeWorkstream(repoRoot)
 	facts.Workstream = facts.isWorkstream()
 	return facts
 }
@@ -234,11 +246,40 @@ func ProductPath(rel string) bool {
 	return false
 }
 
-// isWorkstream is the S16 fact: a worktree with no artifact and no product-path
-// divergence is not a change at all. It is conservative — any divergence, an
-// unpaired branch or a diff git could not answer keeps the worktree graded.
+// observeWorkstream reads the two facts a diff cannot answer: the standing
+// declaration in the plan ledger, and the product paths the branch never added.
+// The untracked call is paid only when no other fact already says "change" (T3
+// L4), and an unreadable index is not an empty one: silence keeps the worktree
+// graded.
+func (f *WriteFacts) observeWorkstream(repoRoot string) {
+	f.Declared, f.DeclaredReason = planledger.Workstream(repoRoot)
+	if f.Change == "" || f.HasPlan || f.HasDelta || f.Declared || !f.DiffKnown {
+		return
+	}
+	untracked, ok := planbuild.UntrackedPaths(repoRoot)
+	if !ok {
+		return
+	}
+	for _, path := range untracked {
+		if ProductPath(path) {
+			f.Untracked = append(f.Untracked, path)
+		}
+	}
+}
+
+// isWorkstream is the S16 fact: a worktree with no artifact, no product-path
+// divergence and no standing declaration is not a change at all. It is
+// conservative — an unpaired branch, an unanswerable diff, any product divergence
+// keeps the worktree graded — and an artifact outranks the declaration, so no
+// recorded decision can hide a plan or a delta.
 func (f WriteFacts) isWorkstream() bool {
-	if f.Change == "" || f.HasPlan || f.HasDelta || !f.DiffKnown {
+	if f.Change == "" || f.HasPlan || f.HasDelta {
+		return false
+	}
+	if f.Declared {
+		return true
+	}
+	if !f.DiffKnown {
 		return false
 	}
 	for _, entry := range f.Diff {
@@ -246,7 +287,7 @@ func (f WriteFacts) isWorkstream() bool {
 			return false
 		}
 	}
-	return true
+	return len(f.Untracked) == 0
 }
 
 // canonicalSpecBlockers is R1: the canonical spec tree is written by promotion,
