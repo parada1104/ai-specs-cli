@@ -452,3 +452,21 @@ plan, design and audit live in `odd/tasks/change-ledger-v2.md` and
   and treat `state.json` as a read-only predecessor, exactly as T5 did, which preserves
   the «never rewrite an older binary's file» rule at the cost of carrying a retired file
   as a read-only source until it is dropped.
+- **L19** — Second review of `860a0c77`: the three fixes hold, one blocking regression is
+  new. **Blocking:** with `state.json` still v1, `Load` no longer takes `legacyAsLedger`
+  and `mergeLegacyMissing` merges rows but never `legacy.OptOuts`, so a human opt-out goes
+  from `allow/opt-out` (0.28.0 and `161c0d70`) to `block/needs-item`, and the first write
+  persists `tracker.opt_outs: []` — the decision is gone except in the backup. That is the
+  most common upgrade (0.28.0 -> branch, no `tracker.json`), and the 14 real rows hold no
+  opt-out, which is why no probe caught it. Fix: merge opt-outs by `optOutKey` in
+  `mergeLegacyMissing`, exactly as `mergeLegacy` already does, with a test that reproduces
+  the regression (RED on `860a0c77`). Cheap lows to take with it: the note must name the
+  file that is actually unreadable (`mergeLegacyMissing` overwrites `LegacyRows` after
+  `absorbMigration` set it, so a corrupt `tracker.json` is reported as `state.json`); and a
+  close that 0.28.0 wrote into v1 after T5 copied the row is ignored because the newer file
+  wins — since a close is terminal (D17) and nothing can reopen a row, merging v1's closes
+  in `mergeLegacyMissing` and letting `settleCloses` act is safe and cheap. Numbered
+  `tracker.json.v1-backup.N` files stay unbounded while a T5 keeps writing: documented, not
+  fixed, because T5 has no release. Confirmado asimismo por el revisor: upgrade desde T5,
+  Python 49/49, backup imposible que falla cerrado, backup fresco numerado, `tracker.json`
+  corrupto que no inutiliza el ledger, y solo-v1 con 0 diferencias.
