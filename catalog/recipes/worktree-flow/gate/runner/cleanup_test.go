@@ -582,7 +582,7 @@ func cleanupCommonLedgerPath(t *testing.T, root string) string {
 // readCleanupLedger loads the seeded store, failing the test on error.
 func readCleanupLedger(t *testing.T, path string) ledger.Store {
 	t.Helper()
-	store, err := ledger.StoreAt(path).Load()
+	store, _, err := ledger.StoreAt(path).Load()
 	if err != nil {
 		t.Fatalf("LoadStore(%s): %v", path, err)
 	}

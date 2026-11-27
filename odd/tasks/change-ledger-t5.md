@@ -236,3 +236,43 @@ one-version v1→v2 double read (S11, S14). Master plan, design and audit live i
   (`git archive 2204f43f` → `base/`, `python3 tests/parity/run.py` → «fixtures: 35,
   failing: 28»), so the runner aborts before its unittest leg and the suites above
   were run directly.
+- **L11 — Cody's independent review and the three reservations, fixed.** His review of
+  `a5ec02fd` (`/Users/robert/.orca/bots/cody-2/scripts/t5-review-cody.md`) is APPROVE
+  WITH RESERVATIONS, and each reservation was a real gap:
+  - **H1 (HIGH).** `tests/scenarios/ledger_cleanup_flow.sh:256` still read the pre-split
+    file by a fixed path, so the scenario was 0/7 on this branch. It now reads whichever
+    store the binary under test wrote (split store first, pre-split as the fallback),
+    with the reason and the follow-up in a comment: the file remains a test seam because
+    no CLI read verb exists until `changes status` (T7). Back to **7/7**.
+  - **H2 (MEDIUM).** The released CLI 0.28.0 that the hooks still run writes the
+    pre-split store with its own lock, and after the handoff the split store never saw
+    those rows — silently. The double read now **absorbs** the rows the split store does
+    not have (items by id, opt-outs by record) and **reports** every divergence through
+    `StoreReport` on stderr: rows absorbed, rows both files have with different content
+    (`Shadowed`: an older ai-specs decided on a row this build already wrote — the split
+    store's version answers and the difference is stated), and an unreadable pre-split
+    store. **Why absorb instead of only detecting:** those rows are real decisions — a
+    human opt-out, an item already opened — and ignoring them can open a second item for
+    an identity that already has one or drop a human answer, which is exactly the loss
+    S11 exists to prevent. The merge is idempotent and the next write carries the
+    absorbed rows into the split store, so the divergence heals instead of recurring; a
+    same-id disagreement is deliberately **not** rewritten in place, because a row this
+    build wrote must not be silently replaced by an older binary's version. A corrupt
+    pre-split file never takes the split rows down.
+  - **LOW.** A backup that cannot be written is reported (`BackupFailed`) instead of
+    swallowed; the split write still succeeds, and the pre-split store is untouched
+    either way.
+  Tests: four new unit tests (absorption with the pre-split store gaining a row and an
+  opt-out after the handoff, a row changed in place, an unreadable pre-split store, a
+  failed backup) plus the report's one-line-per-problem contract;
+  `TestSplitRowsWinAndLegacyOnlyRowsAreAdded` replaces the older "prefers the split
+  file" test, because the intended read is now split-plus-absorbed and the old
+  expectation was the defect.
+  Validation after the fixes: `go vet` + `go test ./... -count=1` green in both modules;
+  `tests/scenarios/ledger_cleanup_flow.sh` **7/7**; the real flow is now **19 checks
+  FLOW OK**, including a repository where the *baseline* binary keeps writing the
+  pre-split store after the handoff (its row is reported, the next write carries it into
+  the split store, and the pre-split file it owns is never rewritten); the Python suites
+  are 70 + 43 ok; `./tests/validate.sh` exits 1 only in its parity leg, and the failing
+  fixture set is **byte-identical on the untouched base tree** (28/35, the
+  `/private<TEMP>` normalisation: the two lists of failing fixture names diff empty).

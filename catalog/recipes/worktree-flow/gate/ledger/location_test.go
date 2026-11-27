@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -78,7 +79,7 @@ func TestTrackerStoreReadsTheLegacyStoreBeforeTheFirstDecision(t *testing.T) {
 	legacy, _ := seedLegacy(t, root, closedHistory(14))
 	split := TrackerStorePath(root)
 
-	store, err := TrackerLocation(root).Load()
+	store, _, err := TrackerLocation(root).Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -117,7 +118,7 @@ func TestTrackerStoreHandsTheLegacyRowsForwardOnTheFirstDecision(t *testing.T) {
 		t.Fatalf("historical rows are not byte-identical in the split store:\n got %s\nwant %s", got, want)
 	}
 
-	store, err := TrackerLocation(root).Load()
+	store, _, err := TrackerLocation(root).Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -161,23 +162,30 @@ func TestTrackerStoreHandsTheLegacyRowsForwardOnTheFirstDecision(t *testing.T) {
 	}
 }
 
-func TestTrackerStorePrefersTheSplitFileOverTheLegacyOne(t *testing.T) {
+// The split store wins for every row it already has — its version is the one that
+// answers — and the rows only the pre-split store has are added, so an older
+// binary's decisions are neither lost nor able to overwrite the newer file.
+func TestSplitRowsWinAndLegacyOnlyRowsAreAdded(t *testing.T) {
 	root := t.TempDir()
 	seedLegacy(t, root, closedHistory(14))
-	split := TrackerStorePath(root)
-	if err := TrackerLocation(root).Save(closedHistory(2)); err != nil {
+	splitRows := closedHistory(2)
+	splitRows.Items[0].ItemID = "from-the-split-store"
+	if _, err := TrackerLocation(root).Save(splitRows); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if _, err := os.Stat(split); err != nil {
-		t.Fatalf("split store missing: %v", err)
-	}
 
-	store, err := TrackerLocation(root).Load()
+	store, report, err := TrackerLocation(root).Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(store.Items) != 2 {
-		t.Fatalf("items = %d, want the 2 of the split store", len(store.Items))
+	if len(store.Items) != 14 {
+		t.Fatalf("items = %d, want the split store's 2 plus the 12 rows only the pre-split store has", len(store.Items))
+	}
+	if report.Absorbed != 12 {
+		t.Fatalf("absorbed = %d, want the 12 rows the split store lacks", report.Absorbed)
+	}
+	if store.Items[0].ItemID != "from-the-split-store" {
+		t.Fatalf("row %q carries %q, want the split store's version", store.Items[0].ID, store.Items[0].ItemID)
 	}
 }
 
@@ -192,7 +200,7 @@ func TestTrackerStoreReportsACorruptSplitStoreWithoutResurrectingLegacyRows(t *t
 		t.Fatalf("corrupt split store: %v", err)
 	}
 
-	store, err := TrackerLocation(root).Load()
+	store, _, err := TrackerLocation(root).Load()
 	var corrupt *StoreCorruptError
 	if !errors.As(err, &corrupt) {
 		t.Fatalf("error = %v, want a *StoreCorruptError", err)
@@ -215,7 +223,7 @@ func TestTrackerStoreReportsACorruptLegacyStore(t *testing.T) {
 		t.Fatalf("corrupt legacy store: %v", err)
 	}
 
-	store, err := TrackerLocation(root).Load()
+	store, _, err := TrackerLocation(root).Load()
 	var corrupt *StoreCorruptError
 	if !errors.As(err, &corrupt) {
 		t.Fatalf("error = %v, want a *StoreCorruptError, never an empty store", err)
@@ -298,5 +306,225 @@ func TestExplicitStoreUnderALedgersDirKeepsNoLegacyFallback(t *testing.T) {
 				t.Fatalf("the explicit store path grew the backup %q", legacy+".v1-backup")
 			}
 		})
+	}
+}
+
+// An ai-specs older than this build — the installed CLI the hooks still run until
+// the release — keeps writing the pre-split store after the handoff. Its rows are
+// real decisions: dropping them would ignore a human opt-out or let a second item
+// be opened for an identity that already has one.
+func TestTrackerStoreAbsorbsRowsAnOlderBinaryWroteAfterTheHandoff(t *testing.T) {
+	root := t.TempDir()
+	legacy, _ := seedLegacy(t, root, closedHistory(14))
+	key := ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/fresh"}.Key()
+
+	if _, err := PersistDecision(TrackerLocation(root), key+"-1", DecisionRequest{
+		Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "local",
+	}, time.Now()); err != nil {
+		t.Fatalf("first PersistDecision: %v", err)
+	}
+
+	// The older binary opens a row and records an opt-out in the pre-split store.
+	old, err := LoadStore(legacy)
+	if err != nil {
+		t.Fatalf("LoadStore(legacy): %v", err)
+	}
+	old.Items = append(old.Items, Item{
+		ID:       "row-from-the-old-binary",
+		Identity: ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/old"},
+		Status:   StatusOpen,
+		ItemID:   "card-old",
+	})
+	old.OptOuts = append(old.OptOuts, ScopedOptOut{
+		Key: key + "-old", Checkpoint: CheckpointApplyStart, Scope: ScopeLifecycle,
+		Choice: "local", At: "2026-11-27T00:00:00Z",
+	})
+	if err := SaveStore(legacy, old); err != nil {
+		t.Fatalf("SaveStore(legacy): %v", err)
+	}
+	legacyBytes, err := os.ReadFile(legacy)
+	if err != nil {
+		t.Fatalf("read legacy: %v", err)
+	}
+
+	store, report, err := TrackerLocation(root).Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if report.Absorbed != 2 {
+		t.Fatalf("absorbed = %d, want the 1 row and the 1 opt-out the split store lacks", report.Absorbed)
+	}
+	if report.LegacyRows != legacy {
+		t.Fatalf("report names %q, want %q", report.LegacyRows, legacy)
+	}
+	if len(store.Items) != 15 {
+		t.Fatalf("items = %d, want the 14 historical rows plus the one the older binary opened", len(store.Items))
+	}
+	if len(store.OptOuts) != 2 {
+		t.Fatalf("opt_outs = %d, want this build's decision and the older binary's", len(store.OptOuts))
+	}
+	open := store.OpenItems(ItemIdentity{CommonDir: "/repo/.git", Branch: "feat/old"}.Key())
+	if len(open) != 1 || open[0].ItemID != "card-old" {
+		t.Fatalf("the older binary's row is not visible to the read: %+v", open)
+	}
+	if !store.HasScopedOptOut(key+"-old", CheckpointApplyStart) {
+		t.Fatalf("the older binary's opt-out is not visible to the read")
+	}
+
+	// The next write carries the absorbed rows into the split store, so the
+	// divergence heals instead of recurring, and the pre-split file is untouched.
+	if _, err := PersistDecision(TrackerLocation(root), key+"-2", DecisionRequest{
+		Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "local",
+	}, time.Now()); err != nil {
+		t.Fatalf("second PersistDecision: %v", err)
+	}
+	reloaded, report, err := TrackerLocation(root).Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if report.Absorbed != 0 {
+		t.Fatalf("absorbed = %d after the write carried them over, want 0", report.Absorbed)
+	}
+	if len(reloaded.Items) != 15 || len(reloaded.OptOuts) != 3 {
+		t.Fatalf("split store = %d items / %d opt_outs, want 15 / 3", len(reloaded.Items), len(reloaded.OptOuts))
+	}
+	if got, err := os.ReadFile(legacy); err != nil || string(got) != string(legacyBytes) {
+		t.Fatalf("the pre-split store was rewritten (%v); the older binary owns it", err)
+	}
+}
+
+// A corrupt pre-split store must not take the split store's rows down with it, and
+// must not be silent either.
+func TestTrackerStoreReportsAnUnreadableLegacyWithoutDroppingSplitRows(t *testing.T) {
+	root := t.TempDir()
+	if _, err := TrackerLocation(root).Save(closedHistory(2)); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(StorePath(root)), 0o755); err != nil {
+		t.Fatalf("mkdir legacy: %v", err)
+	}
+	if err := os.WriteFile(StorePath(root), []byte("not json"), 0o600); err != nil {
+		t.Fatalf("corrupt legacy: %v", err)
+	}
+
+	store, report, err := TrackerLocation(root).Load()
+	if err != nil {
+		t.Fatalf("Load: %v, want the split store to answer despite the unreadable fallback", err)
+	}
+	if len(store.Items) != 2 {
+		t.Fatalf("items = %d, want the split store's 2 rows", len(store.Items))
+	}
+	if report.LegacyUnreadable == nil {
+		t.Fatalf("the unreadable pre-split store was not reported")
+	}
+}
+
+// The one-shot backup is a safety net, so a copy that cannot be written must be
+// reported rather than swallowed — and must not block the split write either.
+func TestTrackerStoreReportsAFailedBackup(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a read-only directory cannot be simulated as root")
+	}
+	root := t.TempDir()
+	seedLegacy(t, root, closedHistory(14))
+	legacyDir := filepath.Dir(StorePath(root))
+	if err := os.Chmod(legacyDir, 0o500); err != nil {
+		t.Fatalf("chmod legacy dir: %v", err)
+	}
+	defer os.Chmod(legacyDir, 0o755)
+
+	report, err := TrackerLocation(root).Save(closedHistory(1))
+	if err != nil {
+		t.Fatalf("Save: %v, want the split write to succeed where it lives", err)
+	}
+	if report.BackupFailed == nil {
+		t.Fatalf("a backup that could not be written was not reported")
+	}
+	if _, err := os.Stat(StorePath(root) + ".v1-backup"); err == nil {
+		t.Fatalf("a backup appeared in a directory that could not be written")
+	}
+}
+
+// Every problem in a report is one visible line; a plain read or write says
+// nothing at all, so a clean repository stays silent.
+func TestStoreReportNotesOnlyWhatHappened(t *testing.T) {
+	var clean strings.Builder
+	StoreReport{}.Note(&clean, "worktree-gate")
+	if clean.String() != "" {
+		t.Fatalf("a clean report wrote %q", clean.String())
+	}
+
+	var absorbed strings.Builder
+	StoreReport{Absorbed: 2, LegacyRows: "/repo/.git/ai-specs/ledger/state.json"}.Note(&absorbed, "worktree-gate")
+	if lines := strings.Count(absorbed.String(), "\n"); lines != 1 {
+		t.Fatalf("absorbed report wrote %d lines, want 1: %q", lines, absorbed.String())
+	}
+	for _, want := range []string{"2 ledger row(s)", "ledger/state.json", "next write carries them"} {
+		if !strings.Contains(absorbed.String(), want) {
+			t.Fatalf("absorbed report %q does not name %q", absorbed.String(), want)
+		}
+	}
+
+	var unreadable strings.Builder
+	StoreReport{LegacyUnreadable: errors.New("permission denied")}.Note(&unreadable, "worktree-gate")
+	if !strings.Contains(unreadable.String(), "unreadable") || !strings.Contains(unreadable.String(), "permission denied") {
+		t.Fatalf("unreadable report = %q", unreadable.String())
+	}
+
+	var backup strings.Builder
+	StoreReport{BackupFailed: errors.New("disk full")}.Note(&backup, "worktree-gate")
+	if !strings.Contains(backup.String(), "backup") || !strings.Contains(backup.String(), "disk full") {
+		t.Fatalf("backup report = %q", backup.String())
+	}
+
+	var shadowed strings.Builder
+	StoreReport{Shadowed: 1, LegacyRows: "/repo/.git/ai-specs/ledger/state.json"}.Note(&shadowed, "worktree-gate")
+	if lines := strings.Count(shadowed.String(), "\n"); lines != 1 {
+		t.Fatalf("shadowed report wrote %d lines, want 1: %q", lines, shadowed.String())
+	}
+	for _, want := range []string{"1 ledger row(s) differ", "split store's version answers"} {
+		if !strings.Contains(shadowed.String(), want) {
+			t.Fatalf("shadowed report %q does not name %q", shadowed.String(), want)
+		}
+	}
+}
+
+// A row the older binary changed in place cannot be absorbed without rewriting a
+// row this build already wrote, so the split store's version answers and the
+// disagreement is reported. Silence here would let the two files drift apart.
+func TestTrackerStoreReportsRowsAnOlderBinaryChangedInPlace(t *testing.T) {
+	root := t.TempDir()
+	history := closedHistory(14)
+	legacy, _ := seedLegacy(t, root, history)
+	if _, err := TrackerLocation(root).Save(history); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	changed, err := LoadStore(legacy)
+	if err != nil {
+		t.Fatalf("LoadStore(legacy): %v", err)
+	}
+	changed.Items[0].Decisions = append(changed.Items[0].Decisions, Decision{
+		At: "2026-11-27T00:00:00Z", Checkpoint: CheckpointArchiveClose, Kind: DecisionLink,
+	})
+	if err := SaveStore(legacy, changed); err != nil {
+		t.Fatalf("SaveStore(legacy): %v", err)
+	}
+
+	store, report, err := TrackerLocation(root).Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if report.Absorbed != 0 {
+		t.Fatalf("absorbed = %d, want 0: the row already exists in the split store", report.Absorbed)
+	}
+	if report.Shadowed != 1 {
+		t.Fatalf("shadowed = %d, want the 1 row the older binary changed", report.Shadowed)
+	}
+	if len(store.Items) != 14 {
+		t.Fatalf("items = %d, want the 14 rows the split store already had", len(store.Items))
+	}
+	if got := len(store.Items[0].Decisions); got != 1 {
+		t.Fatalf("row %q carries %d decisions, want the split store's 1", store.Items[0].ID, got)
 	}
 }

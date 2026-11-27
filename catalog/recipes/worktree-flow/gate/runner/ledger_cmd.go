@@ -104,7 +104,15 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 	}
 
 	binding := ledger.ReadBinding(witnessPath)
-	store, storeErr := loc.Load()
+	store, storeReport, storeErr := loc.Load()
+	if storeErr == nil {
+		storeReport.Note(stderr, "worktree-gate")
+	}
+	if opts.write != "" || opts.decide != "" {
+		// A backup that cannot be written is reported, never silent. The copy is
+		// one-shot, so this is a no-op once it exists.
+		ledger.StoreReport{BackupFailed: loc.BackupLegacy()}.Note(stderr, "worktree-gate")
+	}
 
 	// The effective mode is the explicit --ledger-mode when given (an explicit
 	// normalized mode, unchanged for existing callers); otherwise Go resolves it
@@ -131,7 +139,7 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "worktree-gate: ledger --decide failed: %v\n", err)
 			return 2
 		}
-		store, storeErr = loc.Load()
+		store, _, storeErr = loc.Load()
 	}
 
 	// A write is explicit, so it is attempted whenever it was asked for: the
@@ -156,7 +164,7 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 			return 2
 		}
 		writeOutcome = &outcome
-		store, storeErr = loc.Load()
+		store, _, storeErr = loc.Load()
 		// The explicit slug a write just recorded is the stored slug: the re-grade
 		// must select the item that write created, not a stale ambiguous identity.
 		ident = ledgerIdentityWithStoredSlug(ident, store, storeErr, dir, facts)

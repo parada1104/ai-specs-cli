@@ -68,7 +68,7 @@ func PersistDecision(loc StoreLocation, key string, req DecisionRequest, now tim
 	stamp := rfc3339Stamp(now)
 	persisted := newDecision(req, stamp)
 	err := withStoreLock(loc.Path, func() error {
-		store, err := loc.Load()
+		store, _, err := loc.Load()
 		if err != nil {
 			return err
 		}
@@ -81,7 +81,8 @@ func PersistDecision(loc StoreLocation, key string, req DecisionRequest, now tim
 				Key: key, Checkpoint: persisted.Checkpoint, Scope: persisted.Scope,
 				Choice: persisted.Choice, At: persisted.At,
 			})
-			return loc.Save(store)
+			_, saveErr := loc.Save(store)
+			return saveErr
 		}
 		if err != nil {
 			return err
@@ -95,7 +96,8 @@ func PersistDecision(loc StoreLocation, key string, req DecisionRequest, now tim
 			// exemption (DW1): file removal never revokes the store record.
 			clearExemption(&store, item.ID)
 		}
-		return loc.Save(store)
+		_, saveErr := loc.Save(store)
+		return saveErr
 	})
 	if err != nil {
 		return Decision{}, err
