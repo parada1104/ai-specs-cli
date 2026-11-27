@@ -77,7 +77,15 @@ func WriteFactsFor(repoRoot, mode, change, target string) WriteFacts {
 		facts.PlanPath = repoRelative(repoRoot, planbuild.TasksPath(repoRoot, mode, change))
 	}
 	if facts.Base != "" {
-		facts.Diff, facts.DiffKnown = planbuild.DiffEntries(repoRoot, facts.Base)
+		entries, ok := planbuild.DiffEntries(repoRoot, facts.Base)
+		facts.DiffKnown = ok
+		// The diff is read through the same scope the pending target is: an artifact
+		// the gate never grades cannot answer, or require, a refutation.
+		for _, entry := range entries {
+			if GradedPath(entry.Path) {
+				facts.Diff = append(facts.Diff, entry)
+			}
+		}
 	}
 	facts.HighRisk = HighRiskPaths(repoRoot, facts.Base)
 	// The trailer is evidence only for a declared high-risk path, so the git call
@@ -132,6 +140,20 @@ func (f WriteFacts) Verdict() Verdict {
 	}
 	verdict.Blockers = append(f.canonicalSpecBlockers(), f.highRiskBlockers()...)
 	return verdict
+}
+
+// GradedPath reports whether the write gate grades a repository-relative path.
+// Planning artifacts are not graded — the change trees and the plan documents — and
+// everything else is, including the canonical spec tree, which promotion writes and
+// a hand write may not. It is the one scope predicate: the pending target and the
+// diff are both read through it.
+func GradedPath(rel string) bool {
+	for _, planning := range []string{"odd/changes", "odd/tasks", "openspec/changes"} {
+		if rel == planning || strings.HasPrefix(rel, planning+"/") {
+			return false
+		}
+	}
+	return true
 }
 
 // ProductPath reports whether a repository-relative path is inside the graded
@@ -244,10 +266,15 @@ func (f WriteFacts) highRiskBlockers() []Refutation {
 	if planInDiff(f.Change, f.Diff) {
 		return nil
 	}
-	plan := f.PlanPath
-	return []Refutation{{Rule: "R2", Message: found + fmt.Sprintf(", but the change `%s` carries no "+
-		"plan — in openspec the plan is where the verification evidence of a high-risk change lives. "+
-		"Write `%s` (tier light), commit it and retry.", f.Change, plan)}}
+	if f.Change != "" {
+		plan := f.PlanPath
+		return []Refutation{{Rule: "R2", Message: found + fmt.Sprintf(", but the change `%s` carries no "+
+			"plan — in openspec the plan is where the verification evidence of a high-risk change lives. "+
+			"Write `%s` (tier light), commit it and retry.", f.Change, plan)}}
+	}
+	return []Refutation{{Rule: "R2", Message: found + ", but this branch pairs no change (a detached " +
+		"HEAD or an unpaired branch name), so no plan of its own can carry that evidence. Run the " +
+		"write from the change's branch, or provide the evidence this project requires for that path."}}
 }
 
 // highRiskOddExit is the odd-mode exit R2 advertises: the trailer, and the six

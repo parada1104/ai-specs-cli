@@ -159,3 +159,17 @@ The code those tests cover is expected to be replaced by the seam, not extended.
   now says the plan must be committed, because only a plan this diff contributes counts.
   Evidence: four new tests, `go test ./...` green, and the real-flow matrix is
   byte-identical to the pre-correction run.
+- **L8** — The corrected candidate is a fresh target, so the fix was reviewed as
+  `review-601dd5b074549a01` (the provider reported the corrected tree `unrelated` and
+  offered `fresh_target_ready`). It returned three more blockers, all of the same
+  family: the graded scope still had two owners. Fixed in one bounded correction
+  (plan: 180 diff lines): `gates.GradedPath(rel)` is now the one scope predicate for
+  both the pending target and the diff, so an ungraded plan file can neither answer
+  nor require a refutation; the work-start checkpoint moved ahead of the planning
+  exemption and is keyed on the production scope alone, so it fires for a planning
+  write inside `PLAN_BUILD_GATE_PATHS` in either mode; and R2's openspec exit names an
+  unpaired branch instead of printing an empty plan path. Its two non-blocking notes:
+  the unpaired-branch message covers the second, and the first — the workstream
+  discriminator does not read *uncommitted* product divergence — is T3's own scope
+  ("product-path divergence from the integration base, committed or uncommitted"), so
+  it ships there with the shared discriminator.

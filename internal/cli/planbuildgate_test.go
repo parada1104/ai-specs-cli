@@ -144,6 +144,19 @@ func TestPlanBuildGateLedgerBlockComesFirst(t *testing.T) {
 	}
 }
 
+// The work-start checkpoint guards the project's production scope, not the kind of
+// file: a planning write inside that scope still owes it.
+func TestPlanBuildGateKeepsWorkStartForAPlanningWriteInTheProductionScope(t *testing.T) {
+	repo, common, branch := trackerGateFixtureRepo(t)
+	bindTrackerLedger(t, common, branch, false)
+	t.Setenv("TRACKER_LEDGER_MODE", "always")
+	t.Setenv("PLAN_BUILD_GATE_PATHS", "odd")
+	want := "plan-build-gate: blocked at work-start — needs-item\n"
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "odd/tasks/thing.md")); code != 2 || stdout != "" || stderr != want {
+		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+	}
+}
+
 // The default (warn) mode is not blocking and prints nothing for a needs-item
 // outcome, and the write has nothing to grade, so it stays silent.
 func TestPlanBuildGateLedgerWarnStaysSilent(t *testing.T) {

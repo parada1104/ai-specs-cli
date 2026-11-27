@@ -140,25 +140,25 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 	rel := planBuildGateRel(repoRoot, abs)
 	// The execution mode is resolved once.
 	mode := planbuild.Resolve(repoRoot, planBuildGateCommonDir(target.Probe))
-	// Machine configuration and planning artifacts are never graded; the canonical
-	// spec tree always is, before the change-tree exemption below.
-	if planBuildGateAgentConfig(rel) || !planBuildGateGraded(repoRoot, mode, abs) {
-		if explain {
-			fmt.Fprintf(stderr, "%s: not graded — the target is agent configuration or a "+
-				"planning artifact, so no rule applies\n", planBuildGateName)
-		}
-		return 0
+	// Machine configuration is machine setup, never a graded write. The work-start
+	// checkpoint guards the project's production scope, not the kind of file, so it
+	// fires before the planning-artifact exemption below.
+	if planBuildGateAgentConfig(rel) {
+		return planBuildGateNotGraded(explain, stderr)
+	}
+	if gates.ProductPath(rel) && !planBuildGateGradeLedger(repoRoot, stderr) {
+		return 2
+	}
+	// Planning artifacts are never graded; the canonical spec tree always is.
+	if !gates.GradedPath(rel) {
+		return planBuildGateNotGraded(explain, stderr)
 	}
 	change := ""
 	if name, ok := planbuild.ChangeFromBranch(planbuild.Branch(target.Probe)); ok {
 		change = name
 	}
-	// One fact collection per write. Work-start fires before the first production
-	// write, whether or not a change folder exists.
+	// One fact collection per write.
 	facts := gates.WriteFactsFor(repoRoot, mode, change, rel)
-	if facts.Production && !planBuildGateGradeLedger(repoRoot, stderr) {
-		return 2
-	}
 	// The refusal and --explain are one verdict: no path prints one and skips the
 	// other, and no rule decides its own applicability.
 	verdict := facts.Verdict()
@@ -178,26 +178,15 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 	return 0
 }
 
-// planBuildGateGraded reports whether the write is graded at all. The change trees
-// and the plan documents are planning artifacts and are never graded; the canonical
-// spec tree always is, in either mode, because promotion is its only writer. The
-// rest of the odd tree is graded, so a project that declares one of its paths
-// high-risk is graded too.
-func planBuildGateGraded(repoRoot, mode, abs string) bool {
-	if planBuildGateUnder(planbuild.SpecsBase(repoRoot, mode), abs) {
-		return true
+// planBuildGateNotGraded allows a write the gate never grades, and says so when it
+// was asked to explain, so an exempt write is never confused with an event the
+// hook did not evaluate.
+func planBuildGateNotGraded(explain bool, stderr io.Writer) int {
+	if explain {
+		fmt.Fprintf(stderr, "%s: not graded — the target is agent configuration or a "+
+			"planning artifact, so no rule applies\n", planBuildGateName)
 	}
-	planning := []string{
-		filepath.Join(repoRoot, "openspec", "changes"),
-		filepath.Join(repoRoot, "odd", "changes"),
-		filepath.Join(repoRoot, "odd", "tasks"),
-	}
-	for _, folder := range planning {
-		if planBuildGateUnder(folder, abs) {
-			return false
-		}
-	}
-	return true
+	return 0
 }
 
 // planBuildGateCommonDir resolves git's common directory against the probe

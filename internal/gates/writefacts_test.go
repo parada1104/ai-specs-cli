@@ -94,3 +94,38 @@ func TestWriteFactsDoesNotGradeAWorkstreamDiffForHighRisk(t *testing.T) {
 		t.Fatalf("Verdict = %+v, want no diff-based refutation for a workstream", verdict)
 	}
 }
+
+// An artifact the gate never grades cannot require a refutation either: a committed
+// plan that matches a declared pattern is not high-risk evidence the change owes.
+func TestWriteFactsIgnoresPlanningPathsForHighRisk(t *testing.T) {
+	root := writeRepo(t, map[string]string{
+		"ai-specs/ai-specs.toml": "[recipes.plan-build-flow.config]\nmode = \"odd\"\n" +
+			"high_risk_paths = [\"odd/**\"]\n",
+	})
+	commitPath(t, root, "odd/tasks/thing.md", "docs: the plan of this change")
+
+	facts := WriteFactsFor(root, planbuild.ModeOdd, "thing", "src/app.go")
+	if facts.Workstream {
+		t.Fatalf("Facts = %+v, want a change once it carries a plan", facts)
+	}
+	if verdict := facts.Verdict(); !verdict.Allowed() {
+		t.Fatalf("Verdict = %+v, want no refutation from an ungraded plan file", verdict)
+	}
+}
+
+// R2's openspec exit must be usable on a branch that pairs no change: it names
+// that fact instead of an empty plan path.
+func TestWriteVerdictNamesTheUnpairedBranchForAHighRiskTarget(t *testing.T) {
+	root := writeRepo(t, map[string]string{
+		"ai-specs/ai-specs.toml": "[recipes.plan-build-flow.config]\nmode = \"openspec\"\n" +
+			"high_risk_paths = [\"docs/**\"]\n",
+	})
+	verdict := WriteFactsFor(root, planbuild.ModeOpenspec, "", "docs/deploy.md").Verdict()
+	if len(verdict.Blockers) != 1 || verdict.Blockers[0].Rule != "R2" {
+		t.Fatalf("Blockers = %q, want one R2 blocker", verdict.Blockers)
+	}
+	message := verdict.Blockers[0].Message
+	if !strings.Contains(message, "pairs no change") || strings.Contains(message, "carries no") {
+		t.Fatalf("Message = %q, want the unpaired branch named instead of an empty plan path", message)
+	}
+}
