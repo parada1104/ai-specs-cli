@@ -243,3 +243,61 @@ the sections the caller owns (`Save(file, SectionWorktree, SectionTracker)`) and
   only) migrate to v2 with the plan decision beside them and T5's file byte-identical; a
   lifecycle opt-out written into the real rows survives into `tracker.opt_outs`; and a
   corrupt ledger refuses the write with the file byte-identical.
+- **L14** — Native review and the independent verifier both rejected `13fd0b27`, and Robert
+  took the decisions. The review (`correction_required`, lineage `review-5c09336a1626d7ad`,
+  budget 200 diff lines, unconsumed) reported R1-001 (a branch rename resurrects an ended
+  workstream), R1-002 (malformed JSONL lines are dropped in silence), R3-001 (an absent
+  predecessor is reported as unreadable) and R3-002 (a regular, unreadable predecessor blocks
+  every write); the verifier reproduced four more: `keepUnowned` does not absorb the plan, an
+  all-section `Save` replaces a corrupt file, seeding over an empty row duplicates it, and a
+  repository without a commit gets a misleading `--end` message and an empty `ledger` field.
+  What held: both Go modules green, `gofmt` clean, the Python suite identical to the base,
+  `ledger_cleanup_flow.sh` 7/7, sibling branches isolated, the real 14-row migration intact,
+  the dead writers gone, and the S14 contract catching an API-only caller.
+  **Cody's decisions (technical, recorded as his, not the parent's):**
+  1. R1-001 → **option A**: the plan row is keyed by the checkout (`common_dir` + the
+     worktree root), with the branch kept as data so a report can name it. Migration rule, as
+     proposed: rekey only the current checkout's row. Tests for the branch rename and for
+     moving the worktree folder.
+  2. R3-002 → **fail closed stays** (readings 1+3): a regular, unreadable predecessor blocks
+     the write with a clear message. Document the asymmetry in the L17 lineage and add the
+     mode-`000` test the verifier showed was missing.
+  3. All mechanical findings to be fixed: R1-002 (report discarded JSONL lines through
+     `LegacyUnreadable` without changing what is absorbed), R3-001 (absent is not unreadable),
+     V-1 and V-2 (one full read per write), V-3 (seed inside the existing row even when it is
+     empty), V-4 (the ledger path and the `--end` message in a repository without a commit).
+  4. **Do not spend the single correction shot**: a new commit and a new native review lineage.
+     If it gets stuck on size, `LISTO REVISAR-T6b` and Robert reviews it.
+  The full findings record, with reproductions and the design comparison, is at
+  `/Users/robert/.orca/bots/cody-2/scripts/t6b-hallazgos.md` (outside the repository, as asked).
+- **L15** — L14 applied as its own commit, not as the review's correction slot. **R1-001**:
+  `PlanIdentity{CommonDir, Root, Branch}` replaces the item identity in the plan section —
+  the row is keyed by the checkout (`common_dir` + the worktree root) and the branch
+  travels as data. `PlanIdentityAt` derives it without requiring a commit, so a
+  declaration can be recorded on a branch that has none, and `realPath` keeps the key
+  stable across a symlinked root. `rekeyPlanRows` covers the three migrations in one
+  place: a row of this checkout under another branch name has its branch data refreshed
+  (the key already matches), a row whose root no longer exists is rekeyed to the root it
+  now answers for (the checkout moved), and a row written before the key moved carries no
+  root and is adopted by the checkout whose common dir and branch it names. A row of
+  another **live** checkout is never touched, which is what keeps two worktrees of one
+  clone apart. **R3-002**: fail-closed stays, and the missing test exists now
+  (`predecessorBytes` keeps returning the read error for a regular file, `location.go`
+  still refuses the save); the asymmetry is documented in L17's lineage — a path that
+  holds no predecessor bytes is not a failed backup, a regular file nobody can read is.
+  **Mechanical findings, all fixed**: R1-002 (`decodePlanEvents` counts the lines nobody
+  could read and the count is reported through `LegacyUnreadable`, while the read stays
+  lenient and an event without a timestamp is still kept, because dropping it lost a real
+  end); R3-001 (an absent predecessor is ordinary absence and no longer overwrites
+  another source's diagnostic); V-1 and V-2 (`keepUnowned` does one full `Load` per write,
+  so absorbed rows ride along as `Absorbed` promises and an all-section write cannot
+  replace a ledger nobody can read); V-3 (a row that exists but is empty is filled
+  instead of duplicated); V-4 (`Store` needs no branch, so a repository without a commit
+  names its ledger, and `--end` says it cannot read the ledger only when it truly cannot).
+  A non-regular predecessor is reported without being read, which also stops a FIFO from
+  blocking the invocation. Tests added: the branch rename (at the ledger and, end to end,
+  in `internal/cli`), the moved checkout plus its live sibling, the absent predecessor, the
+  unreadable-line report, the empty row, the tracker write that keeps an absorbed plan row,
+  and the all-section save over a corrupt ledger. Evidence: both Go modules build, vet and
+  test clean; `gofmt` clean; `ledger_cleanup_flow.sh` 7/7; the real-store probe PASS again;
+  the Python suite rerun before the commit.

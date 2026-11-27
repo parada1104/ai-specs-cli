@@ -34,24 +34,23 @@ type Event struct {
 // File is the predecessor's absolute path for a repository root.
 func File(root string) string { return filepath.Join(root, filepath.FromSlash(Path)) }
 
-// work is the checkout's ledger and the identity its rows are keyed by. The key is
-// the common dir plus the branch and never the change slug: a workstream has no
-// change, and the ledger file is shared by every worktree while a declaration
-// belongs to exactly one of them.
-func work(root string) (ledger.StoreLocation, ledger.ItemIdentity, error) {
-	ident := ledger.DeriveIdentity(ledger.IdentityOptions{Dir: root})
-	if ident.CommonDir == "" || ident.Branch == "" {
-		return ledger.StoreLocation{}, ledger.ItemIdentity{},
-			errors.New("plan ledger: cannot name this work (detached HEAD, unborn branch, or no Git common dir)")
+// work is the checkout's ledger and the plan identity its rows are keyed by. The key
+// is the common dir plus the worktree root: a declaration belongs to the worktree, so a
+// renamed branch neither loses it nor brings it back, and the branch travels as data
+// (R1-001).
+func work(root string) (ledger.StoreLocation, ledger.PlanIdentity, error) {
+	ident := ledger.PlanIdentityAt(root, nil)
+	if ident.CommonDir == "" || ident.Root == "" {
+		return ledger.StoreLocation{}, ledger.PlanIdentity{},
+			errors.New("plan ledger: cannot name this checkout (no Git common dir)")
 	}
-	row := ledger.ItemIdentity{CommonDir: ident.CommonDir, Branch: ident.Branch}
-	return ledger.LedgerAt(ident.CommonDir).WithPlanSource(File(root), row), row, nil
+	return ledger.LedgerAt(ident.CommonDir).WithPlanSource(File(root), ident), ident, nil
 }
 
-// Store is the ledger file the plan section lives in, for the messages a verb
-// prints. It is "" when Git cannot name the work.
+// Store is the ledger file the plan section lives in, for the messages a verb prints.
+// It needs no branch, so a repository without a commit still names its ledger.
 func Store(root string) string {
-	ident := ledger.DeriveIdentity(ledger.IdentityOptions{Dir: root})
+	ident := ledger.PlanIdentityAt(root, nil)
 	if ident.CommonDir == "" {
 		return ""
 	}

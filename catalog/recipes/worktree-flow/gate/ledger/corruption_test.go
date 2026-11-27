@@ -56,13 +56,19 @@ func corruptionWriters() []corruptionCase {
 			name: "RecordPlanDecision",
 			write: func(t *testing.T, loc StoreLocation, id ItemIdentity) error {
 				t.Helper()
-				_, err := RecordPlanDecision(loc, id, PlanDecision{
+				_, err := RecordPlanDecision(loc, planKey(id), PlanDecision{
 					At: "2026-11-27T11:00:00Z", Kind: PlanKindWorkstream, Reason: "corrupt ledger",
 				})
 				return err
 			},
 		},
 	}
+}
+
+// planKey is the plan row identity of a fixture's checkout: the plan row is keyed by
+// the worktree, not by the branch (Cody's R1-001 decision).
+func planKey(id ItemIdentity) PlanIdentity {
+	return PlanIdentity{CommonDir: id.CommonDir, Root: filepath.Join(filepath.Dir(id.CommonDir), "checkout"), Branch: id.Branch}
 }
 
 // TestEveryWriterFailsClosedOnACorruptLedger is T6b.3's first half: each capability's
@@ -151,7 +157,7 @@ func TestUnreadablePlanSourceDoesNotDisableWrites(t *testing.T) {
 	source := filepath.Join(root, ".ai-specs", "plan-ledger.jsonl")
 	seed := newFixture()
 	seed.File.Plan.Items = append(seed.File.Plan.Items, PlanItem{
-		Identity:  id,
+		Identity:  planKey(id),
 		Decisions: []PlanDecision{{At: "2026-11-20T09:00:00Z", Kind: PlanKindWorkstream, Reason: "spike"}},
 	})
 	if _, err := StoreAt(StorePath(common)).Save(seed.File, SectionWorktree, SectionTracker, SectionPlan); err != nil {
@@ -161,7 +167,7 @@ func TestUnreadablePlanSourceDoesNotDisableWrites(t *testing.T) {
 	if err := os.MkdirAll(source, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	loc := LedgerAt(common).WithPlanSource(source, id)
+	loc := LedgerAt(common).WithPlanSource(source, planKey(id))
 
 	file, report, err := loc.Load()
 	if err != nil {
@@ -176,11 +182,11 @@ func TestUnreadablePlanSourceDoesNotDisableWrites(t *testing.T) {
 	if report.Absorbed != 0 {
 		t.Fatalf("Absorbed = %d, want nothing: an unreadable predecessor is reported, not read as empty", report.Absorbed)
 	}
-	if declared, reason := file.Plan.Workstream(id.Key()); !declared || reason != "spike" {
+	if declared, reason := file.Plan.Workstream(planKey(id).Key()); !declared || reason != "spike" {
 		t.Fatalf("Workstream() = %v, %q; want the ledger file's own row to answer", declared, reason)
 	}
 
-	if _, err := RecordPlanDecision(loc, id, PlanDecision{
+	if _, err := RecordPlanDecision(loc, planKey(id), PlanDecision{
 		At: "2026-11-27T11:00:00Z", Kind: PlanKindWorkstreamEnd,
 	}); err != nil {
 		t.Fatalf("RecordPlanDecision over an unreadable predecessor: %v", err)
@@ -197,7 +203,7 @@ func TestUnreadablePlanSourceDoesNotDisableWrites(t *testing.T) {
 	if len(decisions) != 2 || decisions[1].Kind != PlanKindWorkstreamEnd {
 		t.Fatalf("decisions = %+v, want the seeded row and the new end", decisions)
 	}
-	if declared, _ := after.Plan.Workstream(id.Key()); declared {
+	if declared, _ := after.Plan.Workstream(planKey(id).Key()); declared {
 		t.Fatal("the workstream is still declared after the end was recorded")
 	}
 }
@@ -222,7 +228,7 @@ func TestCorruptLedgerIsNeverSeededFromThePredecessor(t *testing.T) {
 	if err := os.WriteFile(source, append(event, '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	loc := LedgerAt(common).WithPlanSource(source, id)
+	loc := LedgerAt(common).WithPlanSource(source, planKey(id))
 	if err := os.MkdirAll(filepath.Dir(loc.Path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +238,7 @@ func TestCorruptLedgerIsNeverSeededFromThePredecessor(t *testing.T) {
 	fileBefore := rawBytes(t, loc.Path)
 	sourceBefore := rawBytes(t, source)
 
-	if _, err := RecordPlanDecision(loc, id, PlanDecision{
+	if _, err := RecordPlanDecision(loc, planKey(id), PlanDecision{
 		At: "2026-11-27T11:00:00Z", Kind: PlanKindWorkstreamEnd,
 	}); err == nil {
 		t.Fatal("a plan write over a corrupt ledger succeeded")

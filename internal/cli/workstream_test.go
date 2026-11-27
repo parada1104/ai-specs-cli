@@ -227,3 +227,32 @@ func TestChangesWorkstreamArgumentContract(t *testing.T) {
 		t.Fatalf("--help = (%d, %q, %q), want the usage on stdout", code, stdout, stderr)
 	}
 }
+
+// The declaration belongs to the checkout, not to the branch name (T6b R1-001): once
+// it is ended, renaming the branch must not bring it back, and the report keeps naming
+// the branch it now runs on.
+func TestChangesWorkstreamSurvivesABranchRename(t *testing.T) {
+	root := workstreamRepo(t)
+	if code, _, stderr := runChangesCLI(t, "changes", "workstream", "--root", root,
+		"--reason", "audit of the release"); code != 0 || stderr != "" {
+		t.Fatalf("declare = (%d, %q), want it recorded", code, stderr)
+	}
+	if code, _, stderr := runChangesCLI(t, "changes", "workstream", "--root", root, "--end"); code != 0 || stderr != "" {
+		t.Fatalf("end = (%d, %q), want the declaration ended", code, stderr)
+	}
+	workstreamGit(t, root, "branch", "-m", "feat/renamed")
+
+	report := workstreamReport(t, root)
+	if report.Declared {
+		t.Fatalf("report = %+v, want no declaration after the rename", report)
+	}
+	if report.Branch != "feat/renamed" {
+		t.Fatalf("branch = %q, want the branch the worktree runs on now", report.Branch)
+	}
+	// The ended declaration is still the answer, so a second end names the fact instead
+	// of recording a third event.
+	code, _, stderr := runChangesCLI(t, "changes", "workstream", "--root", root, "--end")
+	if code != 1 || !strings.Contains(stderr, "no workstream declaration is open") {
+		t.Fatalf("second end = (%d, %q), want the refusal", code, stderr)
+	}
+}

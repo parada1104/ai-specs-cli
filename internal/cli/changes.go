@@ -269,8 +269,12 @@ func runChangesWorkstream(args []string, stdout, stderr io.Writer) int {
 		if request.end {
 			declared, _, err := planledger.Declared(root)
 			if err != nil {
-				fmt.Fprintf(stderr, "changes workstream: cannot read the plan ledger (%s): %s\n",
-					planledger.Store(root), err)
+				where := planledger.Store(root)
+				if where == "" {
+					where = "a repository Git cannot name"
+				}
+				fmt.Fprintf(stderr, "changes workstream: cannot read the plan ledger in %s: %s\n",
+					where, err)
 				return 1
 			}
 			if !declared {

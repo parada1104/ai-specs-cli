@@ -136,11 +136,10 @@ func (l StoreLocation) Load() (LedgerFile, StoreReport, error) {
 		return EmptyLedger(), report, nil
 	}
 
-	file, stale, err := l.loadFile(&report)
+	file, err := l.loadFile(&report)
 	if err != nil {
 		return EmptyLedger(), report, err
 	}
-	_ = stale
 	l.absorbPlanSource(&file, &report)
 	settleCloses(&file)
 	return file, report, nil
@@ -148,17 +147,17 @@ func (l StoreLocation) Load() (LedgerFile, StoreReport, error) {
 
 // loadFile reads Path and every predecessor except the plan source, which the caller
 // absorbs after it, so the seeding happens once on every read path.
-func (l StoreLocation) loadFile(report *StoreReport) (LedgerFile, *LegacyStore, error) {
+func (l StoreLocation) loadFile(report *StoreReport) (LedgerFile, error) {
 	switch err := statExact(l.Path); {
 	case err == nil:
 		file, stale, err := readLedgerFile(l.Path)
 		if err != nil {
-			return EmptyLedger(), nil, err
+			return EmptyLedger(), err
 		}
 		if stale == nil {
 			// Already v2: its own version answers, and a source only adds what it lacks.
 			l.absorbMigration(&file, report)
-			return file, nil, nil
+			return file, nil
 		}
 		// Path is still v1, so it is a stale predecessor: 0.28.0 wrote it and T5 never
 		// did. T5's mixed tracker file is the newest superset, so it is the base and
@@ -173,13 +172,13 @@ func (l StoreLocation) loadFile(report *StoreReport) (LedgerFile, *LegacyStore, 
 			// name absorbMigration reported, never the ledger's own path (L19).
 			report.LegacyRows = l.Path
 		}
-		return base, stale, nil
+		return base, nil
 	case errors.Is(err, fs.ErrNotExist):
 		file := EmptyLedger()
 		l.absorbMigration(&file, report)
-		return file, nil, nil
+		return file, nil
 	default:
-		return EmptyLedger(), nil, &StoreCorruptError{Path: l.Path, Err: err}
+		return EmptyLedger(), &StoreCorruptError{Path: l.Path, Err: err}
 	}
 }
 
@@ -253,11 +252,10 @@ func (l StoreLocation) keepUnowned(file LedgerFile, own []Section) (LedgerFile, 
 	for _, section := range own {
 		owned[section] = true
 	}
-	if owned[SectionWorktree] && owned[SectionTracker] && owned[SectionPlan] {
-		return file, nil
-	}
-	var report StoreReport
-	onDisk, _, err := l.loadFile(&report)
+	// One full read per write, whatever the caller names: the sections it does not own
+	// come from disk, the rows it absorbed on load ride along as the report promises,
+	// and a ledger nobody can read is never replaced, even by an all-section write.
+	onDisk, _, err := l.Load()
 	if err != nil {
 		return LedgerFile{}, err
 	}
