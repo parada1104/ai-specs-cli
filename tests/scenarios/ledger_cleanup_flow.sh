@@ -92,6 +92,42 @@ fail() {
     exit 1
 }
 
+# ledger_section <file> <name>: the JSON text of one capability's section of the
+# single ledger file. The sections are top-level keys, so a sed range is exact enough
+# for these assertions and keeps the scenario plain bash.
+ledger_section() {
+    local file="$1" name="$2"
+    case "$name" in
+        worktree) sed -n '/"worktree": {/,/"tracker": {/p' "$file" | sed '$d' ;;
+        tracker) sed -n '/"tracker": {/,/"plan": {/p' "$file" | sed '$d' ;;
+        *) fail "ledger_section: unknown section $name" ;;
+    esac
+}
+
+# assert_close_recorded <check>: the close is recorded in the lifecycle section, and a
+# tracker section exists in the same file to prove it stayed out of. A file still in
+# the v1 shape has no sections yet (an older binary wrote it), so the single store is
+# both capabilities and the close is proven once, in the file that owns it.
+assert_close_recorded() {
+    local check="$1"
+    if grep -q '"worktree": {' "$LEDGER"; then
+        [ "$(ledger_section "$LEDGER" worktree | grep -c '"kind": "close"')" -ge 1 ] ||
+            fail "$check the close decision is not recorded in the worktree section" "$LEDGER"
+        [ "$(ledger_section "$LEDGER" tracker | grep -c '"kind": "close"')" = 0 ] ||
+            fail "$check the close decision landed in the tracker section too" "$LEDGER"
+        return 0
+    fi
+    grep -q '"kind": "close"' "$LEDGER" ||
+        fail "$check the close decision is not recorded in the ledger" "$LEDGER"
+}
+
+# assert_no_close_anywhere <check>: before a close, nothing carries one.
+assert_no_close_anywhere() {
+    local check="$1"
+    [ "$(grep -c '"kind": "close"' "$LEDGER")" = 0 ] ||
+        fail "$check a close decision appeared before any close" "$LEDGER"
+}
+
 case "$MERGE_STRATEGY" in
     "") RUN="merge ff rebase squash" ;;
     merge | ff | rebase | squash) RUN="$MERGE_STRATEGY" ;;
@@ -253,27 +289,28 @@ EOF
     [ "$rc" -eq 0 ] ||
         fail "(5) tracker-card-gate exited $rc; the Tracker gate is advisory and must exit 0" \
             "$S/apply.err" "$S/apply.out"
-    # The store file is an implementation detail, never a contract (S14): read
-    # whichever file the binary under test wrote, so this scenario holds for the
-    # split layout and for an older binary that still writes the pre-split one. A
-    # CLI read verb (`changes status`) replaces this seam when it lands (T7).
-    LEDGER="$P/.git/ai-specs/ledgers/tracker.json"
-    [ -f "$LEDGER" ] || LEDGER="$P/.git/ai-specs/ledger/state.json"
+    # The ledger file is an implementation detail, never a contract (S14): read the
+    # file the binary under test wrote. Each capability owns its own section (L14), so
+    # the lifecycle is asserted in the worktree section and the provider record in the
+    # tracker section of that one file. A CLI read verb (`changes status`) replaces
+    # this seam when it lands (T7).
+    LEDGER="$P/.git/ai-specs/ledger/state.json"
     [ -f "$LEDGER" ] ||
-        fail "(5) apply-start wrote no ledger store, so the change was never registered" \
+        fail "(5) apply-start wrote no ledger, so the change was never registered" \
             "$S/apply.err" "$S/apply.out"
     [ "$(grep -c . "$S/apply.err")" = 1 ] ||
         fail "(5) apply-start did not report exactly one actionable line" "$S/apply.err"
     grep -q "bound card $CARD_ID at apply-start" "$S/apply.err" ||
         fail "(5) apply-start did not report binding card $CARD_ID" "$S/apply.err"
-    grep -q "\"item_id\": \"$CARD_ID\"" "$LEDGER" ||
-        fail "(5) the ledger row is not bound to card $CARD_ID" "$LEDGER"
-    grep -q '"branch": "change/feat"' "$LEDGER" ||
-        fail "(5) the ledger row is not keyed to branch change/feat" "$LEDGER"
-    grep -q '"status": "open"' "$LEDGER" ||
-        fail "(5) the ledger row is not open" "$LEDGER"
-    [ "$(grep -c '"kind": "open"' "$LEDGER")" = 1 ] ||
+    ledger_section "$LEDGER" tracker | grep -q "\"item_id\": \"$CARD_ID\"" ||
+        fail "(5) the tracker section is not bound to card $CARD_ID" "$LEDGER"
+    ledger_section "$LEDGER" worktree | grep -q '"branch": "change/feat"' ||
+        fail "(5) the worktree row is not keyed to branch change/feat" "$LEDGER"
+    ledger_section "$LEDGER" worktree | grep -q '"status": "open"' ||
+        fail "(5) the worktree row is not open" "$LEDGER"
+    [ "$(ledger_section "$LEDGER" tracker | grep -c '"kind": "open"')" = 1 ] ||
         fail "(5) apply-start did not open exactly one ledger item" "$LEDGER"
+    assert_no_close_anywhere "(5)"
     pass "(5) apply-start bound one open ledger row to $CARD_ID"
 }
 
@@ -368,20 +405,19 @@ run_strategy() {
     grep -q '^would remove feat$' "$S/dry.log" ||
         fail "(7) the dry-run did not report the worktree as removable" "$S/dry.log"
     [ -d "$W" ] || fail "(7) the dry-run removed the worktree" "$S/dry.log"
-    grep -q '"status": "open"' "$LEDGER" ||
-        fail "(7) the dry-run mutated the ledger row" "$LEDGER"
+    ledger_section "$LEDGER" worktree | grep -q '"status": "open"' ||
+        fail "(7) the dry-run mutated the worktree row" "$LEDGER"
     (cd "$P" && "$BIN" worktree-cleanup) >"$S/cleanup.log" 2>&1 ||
         fail "(7) worktree-cleanup failed" "$S/cleanup.log"
     [ -e "$W" ] && fail "(7) the worktree .worktrees/feat still exists" "$S/cleanup.log"
     [ -n "$(cd "$P" && git branch --list change/feat)" ] &&
         fail "(7) the local branch change/feat still exists" "$S/cleanup.log"
-    grep -q '"status": "closed"' "$LEDGER" ||
-        fail "(7) the ledger row was not closed" "$LEDGER" "$S/cleanup.log"
-    grep -q '"kind": "close"' "$LEDGER" ||
-        fail "(7) the ledger row carries no close decision" "$LEDGER"
-    grep -q '"checkpoint": "archive-close"' "$LEDGER" ||
+    ledger_section "$LEDGER" worktree | grep -q '"status": "closed"' ||
+        fail "(7) the worktree row was not closed" "$LEDGER" "$S/cleanup.log"
+    assert_close_recorded "(7)"
+    ledger_section "$LEDGER" worktree | grep -q '"checkpoint": "archive-close"' ||
         fail "(7) the close decision is not recorded at archive-close" "$LEDGER"
-    grep -q '"branch": "change/feat"' "$LEDGER" ||
+    ledger_section "$LEDGER" worktree | grep -q '"branch": "change/feat"' ||
         fail "(7) the closed row is no longer keyed to change/feat" "$LEDGER"
     (cd "$P" && git show main:src/app.go | grep -q 'func feat') ||
         fail "(7) main does not contain the change's content" "$S/cleanup.log"
@@ -391,7 +427,7 @@ run_strategy() {
 
     say "== (8) a second cleanup removes nothing and does not double-close"
     local closes_before
-    closes_before="$(grep -c '"kind": "close"' "$LEDGER")"
+    closes_before="$(ledger_section "$LEDGER" worktree | grep -c '"kind": "close"')"
     (cd "$P" && "$BIN" worktree-cleanup) >"$S/cleanup2.log" 2>"$S/cleanup2.err"
     rc=$?
     [ "$rc" -eq 0 ] ||
@@ -400,7 +436,7 @@ run_strategy() {
     if grep -q 'closed ledger item' "$S/cleanup2.log"; then
         fail "(8) the second cleanup closed a ledger item again" "$S/cleanup2.log"
     fi
-    [ "$(grep -c '"kind": "close"' "$LEDGER")" = "$closes_before" ] ||
+    [ "$(ledger_section "$LEDGER" worktree | grep -c '"kind": "close"')" = "$closes_before" ] ||
         fail "(8) the second cleanup appended another close decision" "$LEDGER"
     [ -z "$(cd "$P" && git status --porcelain)" ] ||
         fail "(8) the second cleanup left the repository dirty" "$S/cleanup2.log"
@@ -432,13 +468,12 @@ run_hook_flow() {
         fail "(9) the hook did not remove the worktree .worktrees/feat" "$S/hook.log"
     [ -n "$(cd "$P" && git branch --list change/feat)" ] &&
         fail "(9) the hook did not remove the local branch change/feat" "$S/hook.log"
-    grep -q '"status": "closed"' "$LEDGER" ||
-        fail "(9) the hook did not close the ledger row" "$LEDGER" "$S/hook.log"
-    grep -q '"kind": "close"' "$LEDGER" ||
-        fail "(9) the closed ledger row carries no close decision" "$LEDGER"
-    grep -q '"checkpoint": "archive-close"' "$LEDGER" ||
+    ledger_section "$LEDGER" worktree | grep -q '"status": "closed"' ||
+        fail "(9) the hook did not close the worktree row" "$LEDGER" "$S/hook.log"
+    assert_close_recorded "(9)"
+    ledger_section "$LEDGER" worktree | grep -q '"checkpoint": "archive-close"' ||
         fail "(9) the close decision is not recorded at archive-close" "$LEDGER"
-    [ "$(grep -c '"kind": "close"' "$LEDGER")" = 1 ] ||
+    [ "$(ledger_section "$LEDGER" worktree | grep -c '"kind": "close"')" = 1 ] ||
         fail "(9) the hook recorded something other than exactly one close decision" "$LEDGER"
     (cd "$P" && git rev-parse -q --verify main^2 >/dev/null) ||
         fail "(9) main's tip is not a --no-ff merge commit" "$S/hook.log"
@@ -462,13 +497,12 @@ assert_hook_cleanup() {
     [ -e "$W" ] && fail "$label did not remove the worktree .worktrees/feat" "$log"
     [ -n "$(cd "$P" && git branch --list change/feat)" ] &&
         fail "$label did not remove the local branch change/feat" "$log"
-    grep -q '"status": "closed"' "$LEDGER" ||
-        fail "$label did not close the ledger row" "$LEDGER" "$log"
-    grep -q '"kind": "close"' "$LEDGER" ||
-        fail "$label closed row carries no close decision" "$LEDGER"
-    grep -q '"checkpoint": "archive-close"' "$LEDGER" ||
+    ledger_section "$LEDGER" worktree | grep -q '"status": "closed"' ||
+        fail "$label did not close the worktree row" "$LEDGER" "$log"
+    assert_close_recorded "$label"
+    ledger_section "$LEDGER" worktree | grep -q '"checkpoint": "archive-close"' ||
         fail "$label close decision is not recorded at archive-close" "$LEDGER"
-    [ "$(grep -c '"kind": "close"' "$LEDGER")" = 1 ] ||
+    [ "$(ledger_section "$LEDGER" worktree | grep -c '"kind": "close"')" = 1 ] ||
         fail "$label recorded something other than exactly one close decision" "$LEDGER"
     (cd "$P" && git show main:src/app.go | grep -q 'func feat') ||
         fail "$label main does not contain the change's content" "$log"

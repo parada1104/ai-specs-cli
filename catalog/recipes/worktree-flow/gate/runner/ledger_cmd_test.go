@@ -74,20 +74,50 @@ func writeLedgerWitness(t *testing.T, common, state, recipeID string) string {
 	return path
 }
 
-// saveLedgerStore writes a store with one open item carrying itemID.
-func saveLedgerStore(t *testing.T, common, branch, itemID string, mutate func(*ledger.Store)) string {
+// saveLedgerStore seeds the ledger file the CLI writes: one open row in each
+// section, carrying itemID on the tracker row. mutate runs on the composed view, so
+// a test can add a second open row the way a second open would.
+func saveLedgerStore(t *testing.T, common, branch, itemID string, mutate func(*ledger.View)) string {
 	t.Helper()
-	path := ledger.TrackerStorePath(common)
-	store := ledger.Store{V: ledger.StoreVersion}
-	store.OpenItem(ledger.ItemIdentity{CommonDir: common, Branch: branch}, "trello-mcp-workflow", ledgerT0)
-	store.Items[len(store.Items)-1].ItemID = itemID
-	if mutate != nil {
-		mutate(&store)
+	ident := ledger.ItemIdentity{CommonDir: common, Branch: branch}
+	file := ledger.EmptyLedger()
+	view := file.View()
+	if _, _, err := view.OpenIfAbsent(ident, "trello-mcp-workflow", ledgerT0); err != nil {
+		t.Fatal(err)
 	}
-	if err := ledger.SaveStore(path, store); err != nil {
+	view.Tracker.Items[len(view.Tracker.Items)-1].ItemID = itemID
+	if mutate != nil {
+		mutate(&view)
+	}
+	file.Worktree, file.Tracker = view.Worktree, view.Tracker
+	path := ledger.StorePath(common)
+	if _, err := ledger.StoreAt(path).Save(file); err != nil {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// openViewRow appends a second open row to a seeded view, the way a collided
+// ledger holds two: the test fixture writes the pair directly, refusing nothing,
+// so the collision is what the command under test must detect.
+func openViewRow(v *ledger.View, ident ledger.ItemIdentity, providerID string, at time.Time) string {
+	stamp := at.UTC().Format(time.RFC3339)
+	id := ledger.NewItemID(ident.Key(), stamp+"-collision")
+	v.Worktree.Items = append(v.Worktree.Items, ledger.WorktreeItem{
+		ID: id, Identity: ident, Status: ledger.StatusOpen, Decisions: []ledger.WorktreeDecision{}})
+	v.Tracker.Items = append(v.Tracker.Items, ledger.Item{
+		ID: id, Identity: ident, ProviderID: providerID,
+		Decisions: []ledger.Decision{{At: stamp, Kind: ledger.DecisionOpen}}})
+	return id
+}
+
+// closeViewRow closes one seeded row exactly as the close verb does: the status
+// and the close decision land in the worktree ledger, never in the tracker row.
+func closeViewRow(v *ledger.View, index int, at time.Time) {
+	row := &v.Worktree.Items[index]
+	row.Status = ledger.StatusClosed
+	row.Decisions = append(row.Decisions,
+		ledger.WorktreeDecision{At: at.UTC().Format(time.RFC3339), Kind: ledger.DecisionClose})
 }
 
 // writeLedgerEvidence writes an evidence file (remote/code/git sides).
@@ -326,7 +356,7 @@ func TestLedgerDecidePersistsThenRegradeAllows(t *testing.T) {
 func TestLedgerEmptyStoreAskOptOutPersistsAndAllows(t *testing.T) {
 	dir, common, _ := ledgerRepo(t)
 	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
-	storePath := ledger.TrackerStorePath(common)
+	storePath := ledger.StorePath(common)
 	base := []string{"--ledger", "--checkpoint", "apply-start", "--ledger-mode", "ask", "--project-root", dir}
 
 	code, stdout, _ := runCLI(t, base...)
@@ -350,15 +380,16 @@ func TestLedgerEmptyStoreAskOptOutPersistsAndAllows(t *testing.T) {
 		t.Fatalf("post-decision = %v/%v, want allow/opt-out", post["decision"], post["reason"])
 	}
 
-	store, _, err := ledger.StoreAt(storePath).Load()
+	file, _, err := ledger.StoreAt(storePath).Load()
+	view := file.View()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(store.Items) != 0 {
-		t.Fatalf("items = %+v, want no synthesized tracked item", store.Items)
+	if len(view.Tracker.Items) != 0 {
+		t.Fatalf("items = %+v, want no synthesized tracked item", view.Tracker.Items)
 	}
-	if len(store.OptOuts) != 1 || store.OptOuts[0].Checkpoint != "apply-start" || store.OptOuts[0].Scope != ledger.ScopeLifecycle {
-		t.Fatalf("opt_outs = %+v, want one lifecycle-scoped opt-out answered at apply-start", store.OptOuts)
+	if len(view.Tracker.OptOuts) != 1 || view.Tracker.OptOuts[0].Checkpoint != "apply-start" || view.Tracker.OptOuts[0].Scope != ledger.ScopeLifecycle {
+		t.Fatalf("opt_outs = %+v, want one lifecycle-scoped opt-out answered at apply-start", view.Tracker.OptOuts)
 	}
 
 	code, stdout, _ = runCLI(t, "--ledger", "--checkpoint", "pre-merge", "--ledger-mode", "ask", "--project-root", dir)
@@ -451,12 +482,59 @@ func TestLedgerIdentityUnavailableModes(t *testing.T) {
 	}
 }
 
+// TestLedgerCloseStdoutKeepsTheCloseInTheDecisionHistory pins L12.2: the reported
+// item carries the tracker's decisions plus the worktree row's close, in stored
+// order, and a bare close leaves the tracker ledger untouched because no snapshot
+// changed.
+func TestLedgerCloseStdoutKeepsTheCloseInTheDecisionHistory(t *testing.T) {
+	dir, common, branch := ledgerRepo(t)
+	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
+	storePath := saveLedgerStore(t, common, branch, "card-1", nil)
+	trackerBefore, err := json.Marshal(loadLedgerFile(t, storePath).Tracker)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base := []string{"--ledger", "--checkpoint", "archive-close", "--ledger-mode", "always", "--project-root", dir}
+	code, stdout, stderr := ledgerWriteRun(t, base, `{"kind":"close"}`)
+	if code != 0 {
+		t.Fatalf("close exit = %d, want 0; stderr: %s", code, stderr)
+	}
+	out := decodeLedgerOut(t, stdout)
+	item, ok := out["item"].(map[string]any)
+	if !ok {
+		t.Fatalf("post-close item = %v, want the just-closed row", out["item"])
+	}
+	decisions, ok := item["decisions"].([]any)
+	if !ok {
+		t.Fatalf("item decisions = %v, want a list", item["decisions"])
+	}
+	kinds := make([]string, 0, len(decisions))
+	for _, d := range decisions {
+		entry, ok := d.(map[string]any)
+		if !ok {
+			t.Fatalf("decision = %v, want an object", d)
+		}
+		kinds = append(kinds, entry["kind"].(string))
+	}
+	if got, want := strings.Join(kinds, ","), "open,close"; got != want {
+		t.Fatalf("reported decision history = %q, want %q (the close keeps its place)", got, want)
+	}
+	after, err := json.Marshal(loadLedgerFile(t, storePath).Tracker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(trackerBefore) {
+		t.Fatalf("a bare close changed the tracker section:\nbefore=%s\nafter=%s", trackerBefore, after)
+	}
+}
+
 // TestLedgerTwoOpenItemsConflict pins the collision as a conflict, not a pick.
 func TestLedgerTwoOpenItemsConflict(t *testing.T) {
 	dir, common, branch := ledgerRepo(t)
 	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
-	saveLedgerStore(t, common, branch, "card-local", func(s *ledger.Store) {
-		s.OpenItem(ledger.ItemIdentity{CommonDir: common, Branch: branch}, "trello-mcp-workflow", ledgerT0)
+	saveLedgerStore(t, common, branch, "card-local", func(v *ledger.View) {
+		openViewRow(v, ledger.ItemIdentity{CommonDir: common, Branch: branch}, "trello-mcp-workflow", ledgerT0.Add(time.Minute))
 	})
 	code, stdout, _ := runCLI(t, "--ledger", "--checkpoint", "apply-start", "--ledger-mode", "always", "--project-root", dir)
 	if code != 2 {
@@ -527,11 +605,12 @@ func TestLedgerConflictReachesVerdictAndDecideClearsIt(t *testing.T) {
 // recordedConflict reads the primary item's current conflict snapshot, if any.
 func recordedConflict(t *testing.T, storePath, key string) *ledger.Conflict {
 	t.Helper()
-	store, _, err := ledger.StoreAt(storePath).Load()
+	file, _, err := ledger.StoreAt(storePath).Load()
+	view := file.View()
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := store.Primary(key)
+	item, err := view.Primary(key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -577,6 +656,16 @@ func ledgerWriteRun(t *testing.T, prefix []string, payload string) (int, string,
 	return runCLI(t, args...)
 }
 
+// loadLedgerFile reads the ledger file, failing the test on error.
+func loadLedgerFile(t *testing.T, path string) ledger.LedgerFile {
+	t.Helper()
+	file, _, err := ledger.StoreAt(path).Load()
+	if err != nil {
+		t.Fatalf("Load(%s): %v", path, err)
+	}
+	return file
+}
+
 // ledgerStoreBytes reads the store file, or nil when it does not exist.
 func ledgerStoreBytes(t *testing.T, path string) []byte {
 	t.Helper()
@@ -607,7 +696,7 @@ func ledgerStoreMtime(t *testing.T, path string) time.Time {
 func TestLedgerWriteOpenThenIdempotentRetryViaCLI(t *testing.T) {
 	dir, common, _ := ledgerRepo(t)
 	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
-	storePath := ledger.TrackerStorePath(common)
+	storePath := ledger.StorePath(common)
 	base := []string{"--ledger", "--checkpoint", "apply-start", "--ledger-mode", "warn", "--project-root", dir}
 
 	code, stdout, stderr := ledgerWriteRun(t, base, `{"kind":"open"}`)
@@ -635,12 +724,13 @@ func TestLedgerWriteOpenThenIdempotentRetryViaCLI(t *testing.T) {
 	if side["applied"] != false || side["reason"] != "already-open" {
 		t.Fatalf("retried open sidecar = %v, want applied=false/already-open", side)
 	}
-	store, _, err := ledger.StoreAt(storePath).Load()
+	file, _, err := ledger.StoreAt(storePath).Load()
+	view := file.View()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(store.Items) != 1 {
-		t.Fatalf("items = %d, want exactly one", len(store.Items))
+	if len(view.Tracker.Items) != 1 {
+		t.Fatalf("items = %d, want exactly one", len(view.Tracker.Items))
 	}
 }
 
@@ -651,7 +741,7 @@ func TestLedgerWriteOpenThenIdempotentRetryViaCLI(t *testing.T) {
 func TestLedgerWriteBindSeedsOpenLinkViaCLI(t *testing.T) {
 	dir, common, _ := ledgerRepo(t)
 	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
-	storePath := ledger.TrackerStorePath(common)
+	storePath := ledger.StorePath(common)
 	base := []string{"--ledger", "--checkpoint", "apply-start", "--ledger-mode", "always", "--project-root", dir}
 	payload := `{"kind":"bind","item_id":"card-bind","url":"https://example.invalid/c/bind","native_type":"card","state":"in-progress","provider":{"list":"In Progress"}}`
 
@@ -689,15 +779,16 @@ func TestLedgerWriteBindSeedsOpenLinkViaCLI(t *testing.T) {
 		t.Fatal("an idempotent bind retry must leave the store byte-identical")
 	}
 
-	store, _, err := ledger.StoreAt(storePath).Load()
+	file, _, err := ledger.StoreAt(storePath).Load()
+	view := file.View()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(store.Items) != 1 {
-		t.Fatalf("items = %d, want exactly one opened-and-linked row", len(store.Items))
+	if len(view.Tracker.Items) != 1 {
+		t.Fatalf("items = %d, want exactly one opened-and-linked row", len(view.Tracker.Items))
 	}
 	opens, links := 0, 0
-	for _, d := range store.Items[0].Decisions {
+	for _, d := range view.Tracker.Items[0].Decisions {
 		switch d.Kind {
 		case ledger.DecisionOpen:
 			opens++
@@ -706,7 +797,7 @@ func TestLedgerWriteBindSeedsOpenLinkViaCLI(t *testing.T) {
 		}
 	}
 	if opens != 1 || links != 1 {
-		t.Fatalf("decisions = %+v, want exactly one open and one link", store.Items[0].Decisions)
+		t.Fatalf("decisions = %+v, want exactly one open and one link", view.Tracker.Items[0].Decisions)
 	}
 }
 
@@ -723,7 +814,7 @@ func TestLedgerWriteBindIsBranchLevelForAChangeAmbiguousIdentityViaCLI(t *testin
 			t.Fatal(err)
 		}
 	}
-	storePath := ledger.TrackerStorePath(common)
+	storePath := ledger.StorePath(common)
 
 	code, stdout, stderr := ledgerWriteRun(t, ledgerWritePrefixMode(dir, "always"), `{"kind":"bind","item_id":"card-ambiguous"}`)
 	if code != 0 {
@@ -736,12 +827,13 @@ func TestLedgerWriteBindIsBranchLevelForAChangeAmbiguousIdentityViaCLI(t *testin
 	if side, ok := out["write"].(map[string]any); !ok || side["kind"] != "bind" || side["applied"] != true {
 		t.Fatalf("ambiguous branch bind sidecar = %v, want bind/applied", out["write"])
 	}
-	store, _, err := ledger.StoreAt(storePath).Load()
+	file, _, err := ledger.StoreAt(storePath).Load()
+	view := file.View()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(store.Items) != 1 || store.Items[0].Identity.Change != "" || store.Items[0].ItemID != "card-ambiguous" {
-		t.Fatalf("store items = %+v, want one branch-only bound item", store.Items)
+	if len(view.Tracker.Items) != 1 || view.Tracker.Items[0].Identity.Change != "" || view.Tracker.Items[0].ItemID != "card-ambiguous" {
+		t.Fatalf("store items = %+v, want one branch-only bound item", view.Tracker.Items)
 	}
 
 	// A retried branch bind is idempotent and byte-stable.
@@ -763,14 +855,15 @@ func TestLedgerWriteBindIsBranchLevelForAChangeAmbiguousIdentityViaCLI(t *testin
 	if code != 0 {
 		t.Fatalf("explicit-slug bind exit = %d, want 0; stderr: %s", code, stderr)
 	}
-	store, _, err = ledger.StoreAt(storePath).Load()
+	file, _, err = ledger.StoreAt(storePath).Load()
 	if err != nil {
 		t.Fatal(err)
 	}
+	view = file.View()
 	var openSlugs []string
-	for _, item := range store.Items {
-		if item.Status == ledger.StatusOpen {
-			openSlugs = append(openSlugs, item.Identity.Change)
+	for _, row := range view.Worktree.Items {
+		if row.Status == ledger.StatusOpen {
+			openSlugs = append(openSlugs, row.Identity.Change)
 		}
 	}
 	if len(openSlugs) != 2 || openSlugs[0] != "" || openSlugs[1] != "alpha-change" {
@@ -791,7 +884,7 @@ func TestLedgerWriteCloseWithSnapshotThenRetryViaCLI(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "openspec", "changes", "tracker-reconcile-adoption"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	storePath := ledger.TrackerStorePath(common)
+	storePath := ledger.StorePath(common)
 
 	bindPayload := `{"kind":"bind","item_id":"close-test-card","url":"https://example.invalid/close-test-card","native_type":"card","state":"in-progress","provider":{"list":"In Progress"}}`
 	if code, stdout, stderr := ledgerWriteRun(t, ledgerWritePrefixMode(dir, "always"), bindPayload); code != 0 {
@@ -846,12 +939,13 @@ func TestLedgerWriteCloseWithSnapshotThenRetryViaCLI(t *testing.T) {
 	if side["applied"] != false || side["reason"] != "already-closed" {
 		t.Fatalf("close retry sidecar = %v, want applied=false/already-closed", side)
 	}
-	store, _, err := ledger.StoreAt(storePath).Load()
+	file, _, err := ledger.StoreAt(storePath).Load()
+	view := file.View()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(store.Items) != 1 || store.Items[0].Status != ledger.StatusClosed {
-		t.Fatalf("close retry must keep one closed row: %+v", store.Items)
+	if len(view.Worktree.Items) != 1 || view.Worktree.Items[0].Status != ledger.StatusClosed {
+		t.Fatalf("close retry must keep one closed row: %+v", view.Worktree.Items)
 	}
 }
 
@@ -937,7 +1031,7 @@ func TestLedgerWriteCloseRetryRecoversStoredSlugViaCLI(t *testing.T) {
 func TestLedgerWriteLinkPersistsNativeFieldsViaCLI(t *testing.T) {
 	dir, common, _ := ledgerRepo(t)
 	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
-	storePath := ledger.TrackerStorePath(common)
+	storePath := ledger.StorePath(common)
 	base := []string{"--ledger", "--checkpoint", "apply-start", "--ledger-mode", "warn", "--project-root", dir}
 
 	if code, _, stderr := ledgerWriteRun(t, base, `{"kind":"open"}`); code != 0 {
@@ -951,11 +1045,12 @@ func TestLedgerWriteLinkPersistsNativeFieldsViaCLI(t *testing.T) {
 	if side := decodeLedgerOut(t, stdout)["write"].(map[string]any); side["applied"] != true {
 		t.Fatalf("link sidecar = %v, want applied", side)
 	}
-	store, _, err := ledger.StoreAt(storePath).Load()
+	file, _, err := ledger.StoreAt(storePath).Load()
+	view := file.View()
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := store.Primary(ledger.IdentityKey(common, ledgerGit(t, dir, "symbolic-ref", "--quiet", "--short", "HEAD"), ""))
+	item, err := view.Primary(ledger.IdentityKey(common, ledgerGit(t, dir, "symbolic-ref", "--quiet", "--short", "HEAD"), ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1046,7 +1141,7 @@ func TestLedgerWriteFlagParseFailsOpenButValidationFailsClosed(t *testing.T) {
 func TestLedgerWriteExemptHonoredAtEveryCheckpointViaCLI(t *testing.T) {
 	dir, common, _ := ledgerRepo(t)
 	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
-	storePath := ledger.TrackerStorePath(common)
+	storePath := ledger.StorePath(common)
 
 	code, stdout, stderr := ledgerWriteRun(t, ledgerWritePrefixMode(dir, "always"), `{"kind":"exempt","reason":"no tracker for this spike"}`)
 	if code != 0 {
@@ -1056,12 +1151,13 @@ func TestLedgerWriteExemptHonoredAtEveryCheckpointViaCLI(t *testing.T) {
 		t.Fatalf("exempt sidecar = %v, want applied", side)
 	}
 
-	store, _, err := ledger.StoreAt(storePath).Load()
+	file, _, err := ledger.StoreAt(storePath).Load()
+	view := file.View()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(store.Items) != 1 || store.Items[0].Exemption != "no tracker for this spike" {
-		t.Fatalf("store = %+v, want one exempt item with the persisted reason", store.Items)
+	if len(view.Tracker.Items) != 1 || view.Tracker.Items[0].Exemption != "no tracker for this spike" {
+		t.Fatalf("store = %+v, want one exempt item with the persisted reason", view.Tracker.Items)
 	}
 
 	for _, cp := range ledger.Checkpoints {
@@ -1088,7 +1184,7 @@ func TestLedgerWriteChangeAmbiguousRefusesViaCLI(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	storePath := ledger.TrackerStorePath(common)
+	storePath := ledger.StorePath(common)
 
 	code, stdout, stderr := ledgerWriteRun(t, ledgerWritePrefix(dir), `{"kind":"open"}`)
 	if code != 2 {
@@ -1105,12 +1201,13 @@ func TestLedgerWriteChangeAmbiguousRefusesViaCLI(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("explicit-slug write exit = %d, want 0; stderr: %s", code, stderr)
 	}
-	store, _, err := ledger.StoreAt(storePath).Load()
+	file, _, err := ledger.StoreAt(storePath).Load()
+	view := file.View()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(store.Items) != 1 || store.Items[0].Identity.Change != "alpha-change" {
-		t.Fatalf("store items = %+v, want one item under the explicit slug", store.Items)
+	if len(view.Tracker.Items) != 1 || view.Tracker.Items[0].Identity.Change != "alpha-change" {
+		t.Fatalf("store items = %+v, want one item under the explicit slug", view.Tracker.Items)
 	}
 	if decodeLedgerOut(t, stdout)["item"] == nil {
 		t.Fatal("the post-write grade must select the freshly opened item")
@@ -1123,7 +1220,7 @@ func TestLedgerWriteChangeAmbiguousRefusesViaCLI(t *testing.T) {
 func TestLedgerWriteUsesTheOwnerProjectRootOrCwd(t *testing.T) {
 	dir, common, _ := ledgerRepo(t)
 	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
-	storePath := ledger.TrackerStorePath(common)
+	storePath := ledger.StorePath(common)
 
 	t.Chdir(dir)
 	code, stdout, stderr := ledgerWriteRun(t, []string{"--ledger", "--checkpoint", "apply-start"}, `{"kind":"open"}`)
@@ -1142,12 +1239,13 @@ func TestLedgerWriteUsesTheOwnerProjectRootOrCwd(t *testing.T) {
 		t.Fatalf("project-root write sidecar = %v, want applied", side)
 	}
 
-	store, _, err := ledger.StoreAt(storePath).Load()
+	file, _, err := ledger.StoreAt(storePath).Load()
+	view := file.View()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(store.Items) != 1 || store.Items[0].ItemID != "card-cwd" {
-		t.Fatalf("store items = %+v, want one item linked through the same store", store.Items)
+	if len(view.Tracker.Items) != 1 || view.Tracker.Items[0].ItemID != "card-cwd" {
+		t.Fatalf("store items = %+v, want one item linked through the same store", view.Tracker.Items)
 	}
 }
 
@@ -1160,7 +1258,9 @@ func TestLedgerWriteLeavesNoTempResidueViaCLI(t *testing.T) {
 	if code, _, stderr := ledgerWriteRun(t, ledgerWritePrefix(dir), `{"kind":"open"}`); code != 0 {
 		t.Fatalf("write exit = %d, want 0; stderr: %s", code, stderr)
 	}
-	residue, err := filepath.Glob(filepath.Join(common, "ai-specs", "ledger", "state.json.tmp.*"))
+	// The names actually written are the two split ledgers, so the residue check
+	// covers that directory and every temp name in it (L12.6).
+	residue, err := filepath.Glob(filepath.Join(common, "ai-specs", "ledgers", "*.tmp.*"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1174,7 +1274,7 @@ func TestLedgerWriteLeavesNoTempResidueViaCLI(t *testing.T) {
 func TestLedgerGradeNeverWritesStore(t *testing.T) {
 	dir, common, branch := ledgerRepo(t)
 	writeLedgerWitness(t, common, "bound", "trello-mcp-workflow")
-	storePath := ledger.TrackerStorePath(common)
+	storePath := ledger.StorePath(common)
 
 	for _, cp := range ledger.Checkpoints {
 		code, stdout, stderr := runCLI(t, "--ledger", "--checkpoint", cp, "--ledger-mode", "always", "--project-root", dir)
@@ -1232,10 +1332,10 @@ func assertLedgerConflictGradeIsPure(t *testing.T, dir, storePath string) {
 	if !ledgerStoreMtime(t, storePath).Equal(beforeMtime) {
 		t.Fatal("a conflicting grade must not touch the store at all")
 	}
-	if _, err := os.Stat(storePath + ".lock"); !os.IsNotExist(err) {
-		t.Fatalf("a conflicting grade created the store lock: %v", err)
+	if _, err := os.Stat(ledger.LockPath(storePath)); !os.IsNotExist(err) {
+		t.Fatalf("a conflicting grade created the ledger lock: %v", err)
 	}
-	residue, err := filepath.Glob(filepath.Join(filepath.Dir(storePath), "state.json.tmp.*"))
+	residue, err := filepath.Glob(filepath.Join(filepath.Dir(storePath), "*.tmp.*"))
 	if err != nil {
 		t.Fatal(err)
 	}

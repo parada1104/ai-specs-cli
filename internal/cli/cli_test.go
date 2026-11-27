@@ -283,18 +283,25 @@ func TestWorktreeGateRoutePinnedContracts(t *testing.T) {
 	if err := os.WriteFile(witness, []byte(`{"v":1,"capability":"tracker","state":"bound","recipe_id":"trello-mcp-workflow","candidates":[],"written_at":"2026-09-13T00:00:00Z"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	storePath := ledger.TrackerStorePath(common)
+	storePath := ledger.StorePath(common)
 	identity := ledger.DeriveIdentity(ledger.IdentityOptions{Dir: ledgerRepo})
-	store := ledger.Store{V: ledger.StoreVersion}
-	item := store.OpenItem(ledger.ItemIdentity{CommonDir: identity.CommonDir, Branch: identity.Branch}, "trello-mcp-workflow", time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC))
-	item.ID = "fixture-item"
-	item.ItemID = "card-local"
-	item.Decisions = append(item.Decisions, ledger.Decision{
-		At: "2026-09-13T12:30:00Z", Checkpoint: "pre-merge",
-		Kind: ledger.DecisionAdjudicate, Choice: "local",
+	ident := ledger.ItemIdentity{CommonDir: identity.CommonDir, Branch: identity.Branch}
+	// One ledger file, one section per capability (L14): the lifecycle in the worktree
+	// section, the provider record and its decisions in the tracker section, joined by
+	// the id both rows carry. The CLI still emits the joined item with its status.
+	file := ledger.EmptyLedger()
+	file.Worktree.Items = append(file.Worktree.Items, ledger.WorktreeItem{
+		ID: "fixture-item", Identity: ident, Status: ledger.StatusOpen,
+		Decisions: []ledger.WorktreeDecision{},
 	})
-	store.Items[len(store.Items)-1] = item
-	if err := ledger.SaveStore(storePath, store); err != nil {
+	file.Tracker.Items = append(file.Tracker.Items, ledger.Item{
+		ID: "fixture-item", Identity: ident, ItemID: "card-local", ProviderID: "trello-mcp-workflow",
+		Decisions: []ledger.Decision{
+			{At: time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC).Format(time.RFC3339), Kind: ledger.DecisionOpen},
+			{At: "2026-09-13T12:30:00Z", Checkpoint: "pre-merge", Kind: ledger.DecisionAdjudicate, Choice: "local"},
+		},
+	})
+	if _, err := ledger.StoreAt(storePath).Save(file); err != nil {
 		t.Fatal(err)
 	}
 	evidence := filepath.Join(t.TempDir(), "evidence.json")

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The flow ledger is now one versioned file with a section per capability
+  (`worktree`, `tracker`, `plan`) instead of one record mixing lifecycle and
+  tracker state. A close lands in the worktree section and nowhere else; a
+  binding, an opt-out and an adjudication land in the tracker section; the plan
+  section waits for its own store. Every read and write still goes through the
+  CLI entrypoint, and the reported item keeps its exact stdout shape.
+- Reading a ledger written by an older binary migrates it in memory and rewrites
+  the file as version 2 on the first write, keeping a one-shot backup of every
+  predecessor. Rows, opt-outs and terminal closes from both the pre-split store
+  and the `ledgers/tracker.json` an intermediate build wrote are absorbed, and
+  the newest form wins.
+
+### Upgrade notes
+- **A binary older than this release stops reading the ledger once this release
+  writes it** (it reports `unsupported store version 2`). Writes from the old
+  binary are refused without damaging the file, grading falls back to its
+  inherited fail-open posture, and its `worktree-cleanup` can no longer close a
+  merged worktree row. That is the deliberate cost of one versioned file with a
+  per-capability layout, so this change ships with its release immediately: run
+  `ai-specs upgrade` everywhere the merge hook runs before the next merge.
+
 ## [0.28.0] — 2026-11-27
 
 ### Added

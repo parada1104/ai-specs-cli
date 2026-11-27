@@ -42,6 +42,47 @@ type ledgerIdentJSON struct {
 	Key       string  `json:"key"`
 }
 
+// ledgerItemJSON is the item as a host sees it: the tracker record plus the
+// worktree lifecycle status the tracker ledger does not store. The files stay
+// split (L8); the stdout contract keeps answering exactly what it always answered,
+// with status in the position it always had, because hosts and parity pin these
+// bytes.
+type ledgerItemJSON struct {
+	ID         string              `json:"id"`
+	Identity   ledger.ItemIdentity `json:"identity"`
+	Status     string              `json:"status"`
+	ItemID     string              `json:"item_id"`
+	ProviderID string              `json:"provider_id"`
+	NativeType string              `json:"native_type"`
+	URL        string              `json:"url"`
+	State      string              `json:"state"`
+	Provider   json.RawMessage     `json:"provider"`
+	Exemption  string              `json:"exemption"`
+	Conflict   json.RawMessage     `json:"conflict"`
+	Decisions  []ledger.Decision   `json:"decisions"`
+}
+
+// itemWithStatus is the joined item as the host sees it.
+func itemWithStatus(item *ledger.Item, status string) *ledgerItemJSON {
+	if item == nil {
+		return nil
+	}
+	return &ledgerItemJSON{
+		ID:         item.ID,
+		Identity:   item.Identity,
+		Status:     status,
+		ItemID:     item.ItemID,
+		ProviderID: item.ProviderID,
+		NativeType: item.NativeType,
+		URL:        item.URL,
+		State:      item.State,
+		Provider:   item.Provider,
+		Exemption:  item.Exemption,
+		Conflict:   item.Conflict,
+		Decisions:  item.Decisions,
+	}
+}
+
 // ledgerOut is the design stdout contract consumed by hosts, doctor and parity.
 // Write is the DW4 sidecar: present only on a --write invocation that succeeded.
 type ledgerOut struct {
@@ -52,7 +93,7 @@ type ledgerOut struct {
 	Decision   string               `json:"decision"`
 	Reason     string               `json:"reason"`
 	Identity   ledgerIdentJSON      `json:"identity"`
-	Item       *ledger.Item         `json:"item"`
+	Item       *ledgerItemJSON      `json:"item"`
 	Conflict   *ledger.Conflict     `json:"conflict"`
 	Prompt     *ledger.Prompt       `json:"prompt"`
 	Doctor     ledger.DoctorFinding `json:"doctor"`
@@ -95,23 +136,28 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 	if witnessPath == "" && common != "" {
 		witnessPath = ledger.WitnessPath(common)
 	}
-	// An explicit --store names one file: it is read and written as given, with no
-	// pre-split fallback. Only the repository-derived location carries the
-	// one-version double read (S11).
+	// --store names THE ledger file. The repository-derived location also reads T5's
+	// tracker file as its second migration source (L14).
 	loc := ledger.StoreAt(opts.store)
 	if opts.store == "" && common != "" {
-		loc = ledger.TrackerLocation(common)
+		loc = ledger.LedgerAt(common)
 	}
 
 	binding := ledger.ReadBinding(witnessPath)
-	store, storeReport, storeErr := loc.Load()
+	file, storeReport, storeErr := loc.Load()
+	view := file.View()
 	if storeErr == nil {
 		storeReport.Note(stderr, "worktree-gate")
 	}
 	if opts.write != "" || opts.decide != "" {
-		// A backup that cannot be written is reported, never silent. The copy is
-		// one-shot, so this is a no-op once it exists.
-		ledger.StoreReport{BackupFailed: loc.BackupLegacy()}.Note(stderr, "worktree-gate")
+		// A predecessor that cannot be backed up must not be replaced: the write fails
+		// closed here, before anything is persisted (L17 MEDIO-2).
+		backup := loc.Backup()
+		if backup.BackupFailed != nil {
+			backup.Note(stderr, "worktree-gate")
+			fmt.Fprintf(stderr, "worktree-gate: ledger write refused: the predecessor backup failed\n")
+			return 2
+		}
 	}
 
 	// The effective mode is the explicit --ledger-mode when given (an explicit
@@ -132,14 +178,15 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 	ident := ledger.DeriveIdentity(ledger.IdentityOptions{Dir: dir, PlanningRoot: dir, Facts: facts})
 	// A stored slug survives its folder being archived mid-item (A11): when the
 	// open item already names a change, that slug wins over re-derivation.
-	ident = ledgerIdentityWithStoredSlug(ident, store, storeErr, dir, facts)
+	ident = ledgerIdentityWithStoredSlug(ident, view, storeErr, dir, facts)
 
 	if opts.decide != "" && binding.Active() {
 		if err := persistLedgerDecision(loc, ident.Key, opts.checkpoint, opts.decide); err != nil {
 			fmt.Fprintf(stderr, "worktree-gate: ledger --decide failed: %v\n", err)
 			return 2
 		}
-		store, _, storeErr = loc.Load()
+		file, _, storeErr = loc.Load()
+		view = file.View()
 	}
 
 	// A write is explicit, so it is attempted whenever it was asked for: the
@@ -156,7 +203,7 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 			// A close targets the row an earlier open created, so its stored slug
 			// is recovered even from a closed row; this is close-only and never
 			// lets that row become primary for new work (D17).
-			ident = ledgerIdentityForClose(ident, store, storeErr, dir, facts)
+			ident = ledgerIdentityForClose(ident, view, storeErr, dir, facts)
 		}
 		outcome, err := applyLedgerWrite(loc, ident, binding, opts.checkpoint, opts.write)
 		if err != nil {
@@ -164,12 +211,13 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 			return 2
 		}
 		writeOutcome = &outcome
-		store, _, storeErr = loc.Load()
+		file, _, storeErr = loc.Load()
+		view = file.View()
 		// The explicit slug a write just recorded is the stored slug: the re-grade
 		// must select the item that write created, not a stale ambiguous identity.
-		ident = ledgerIdentityWithStoredSlug(ident, store, storeErr, dir, facts)
+		ident = ledgerIdentityWithStoredSlug(ident, view, storeErr, dir, facts)
 		if outcome.Kind == ledger.WriteClose {
-			if closed, ok := store.LatestClosed(ident.Key); ok {
+			if closed, ok := view.LatestClosed(ident.Key); ok {
 				reportItem = &closed
 			}
 		}
@@ -188,7 +236,7 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 		Mode:       mode,
 		Binding:    binding,
 		Identity:   ident,
-		Store:      store,
+		View:       view,
 		StoreErr:   storeErr,
 		Evidence:   ev,
 		Now:        now,
@@ -206,7 +254,7 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 		reconcileOut = reconcileSidecar(dir, binding, verdict, opts.reconcile, opts.reconcileEvent, now)
 	}
 
-	payload, err := json.Marshal(newLedgerOut(verdict, writeOutcome, reconcileOut))
+	payload, err := json.Marshal(newLedgerOut(verdict, writeOutcome, reconcileOut, view))
 	if err != nil {
 		fmt.Fprintf(stderr, "worktree-gate: ledger: %v\n", err)
 		return 0
@@ -217,7 +265,11 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 
 // newLedgerOut maps a verdict onto the exact stdout contract. The DW4 write and
 // the reconciliation sidecars are omitted entirely when they were not requested.
-func newLedgerOut(v ledger.Verdict, write *ledger.WriteOutcome, reconcile *ledgerReconcileJSON) ledgerOut {
+func newLedgerOut(v ledger.Verdict, write *ledger.WriteOutcome, reconcile *ledgerReconcileJSON, view ledger.View) ledgerOut {
+	var item *ledgerItemJSON
+	if v.Item != nil {
+		item = itemWithStatus(v.Item, view.Status(v.Item.ID))
+	}
 	out := ledgerOut{
 		Capability: ledger.CapabilityTracker,
 		Active:     v.Active,
@@ -225,7 +277,7 @@ func newLedgerOut(v ledger.Verdict, write *ledger.WriteOutcome, reconcile *ledge
 		Mode:       v.Mode,
 		Decision:   v.Decision,
 		Reason:     v.Reason,
-		Item:       v.Item,
+		Item:       item,
 		Conflict:   v.Conflict,
 		Prompt:     v.Prompt,
 		Doctor:     v.Doctor,
@@ -250,11 +302,11 @@ func newLedgerOut(v ledger.Verdict, write *ledger.WriteOutcome, reconcile *ledge
 // becomes the stored slug so the re-grade selects what the write recorded. A
 // branch-level bind deliberately stores an empty slug; that is still a found row
 // and must not fall back to the planning tree's current slug.
-func ledgerIdentityWithStoredSlug(ident ledger.Identity, store ledger.Store, storeErr error, dir string, facts ledger.Facts) ledger.Identity {
+func ledgerIdentityWithStoredSlug(ident ledger.Identity, view ledger.View, storeErr error, dir string, facts ledger.Facts) ledger.Identity {
 	if !ident.Available() || storeErr != nil {
 		return ident
 	}
-	slug, found := storedLedgerSlug(store, ident.CommonDir, ident.Branch)
+	slug, found := storedLedgerSlug(view, ident.CommonDir, ident.Branch)
 	if !found || (slug == ident.Change && ident.Collision == "") {
 		return ident
 	}
@@ -270,9 +322,9 @@ func ledgerIdentityWithStoredSlug(ident ledger.Identity, store ledger.Store, sto
 // storedLedgerSlug returns the change slug already recorded on the single open
 // item for the common dir and branch, plus whether a row was found. The boolean
 // distinguishes a deliberate branch-level empty slug from no open row (A11).
-func storedLedgerSlug(store ledger.Store, common, branch string) (string, bool) {
+func storedLedgerSlug(view ledger.View, common, branch string) (string, bool) {
 	var changes []string
-	for _, item := range store.Items {
+	for _, item := range view.Worktree.Items {
 		if item.Status != ledger.StatusOpen {
 			continue
 		}
@@ -295,13 +347,13 @@ func storedLedgerSlug(store ledger.Store, common, branch string) (string, bool) 
 // work (D17). An idempotent close retry therefore still targets the row a prior
 // close persisted after its change folder was archived, or while several active
 // change folders make the fresh identity ambiguous.
-func ledgerIdentityForClose(ident ledger.Identity, store ledger.Store, storeErr error, dir string, facts ledger.Facts) ledger.Identity {
+func ledgerIdentityForClose(ident ledger.Identity, view ledger.View, storeErr error, dir string, facts ledger.Facts) ledger.Identity {
 	if !ident.Available() || storeErr != nil {
 		return ident
 	}
-	slug, found := storedLedgerSlug(store, ident.CommonDir, ident.Branch)
+	slug, found := storedLedgerSlug(view, ident.CommonDir, ident.Branch)
 	if !found {
-		slug = latestClosedSlug(store, ident.CommonDir, ident.Branch)
+		slug = latestClosedSlug(view, ident.CommonDir, ident.Branch)
 	}
 	if slug == ident.Change && ident.Collision == "" {
 		return ident
@@ -319,9 +371,9 @@ func ledgerIdentityForClose(ident ledger.Identity, store ledger.Store, storeErr 
 // row for the common dir and branch, so a close retry after an archive still
 // targets the row the original close persisted. It is read-only and only ever
 // consulted by the explicit close path.
-func latestClosedSlug(store ledger.Store, common, branch string) string {
-	for i := len(store.Items) - 1; i >= 0; i-- {
-		item := store.Items[i]
+func latestClosedSlug(view ledger.View, common, branch string) string {
+	for i := len(view.Worktree.Items) - 1; i >= 0; i-- {
+		item := view.Worktree.Items[i]
 		if item.Status != ledger.StatusClosed {
 			continue
 		}
@@ -434,15 +486,18 @@ func ledgerWriteSelftest() error {
 	// first one is the single primary.
 	ident := ledger.ItemIdentity{CommonDir: "/selftest/.git", Branch: "selftest"}
 	stamp := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	var store ledger.Store
-	if _, created, err := store.OpenIfAbsent(ident, "selftest", stamp); err != nil || !created {
+	var view ledger.View
+	if _, created, err := view.OpenIfAbsent(ident, "selftest", stamp); err != nil || !created {
 		return fmt.Errorf("first open: created=%v err=%v", created, err)
 	}
-	if _, created, err := store.OpenIfAbsent(ident, "selftest", stamp); err != nil || created {
+	if _, created, err := view.OpenIfAbsent(ident, "selftest", stamp); err != nil || created {
 		return fmt.Errorf("retried open must be a no-op: created=%v err=%v", created, err)
 	}
-	if open := store.OpenItems(ident.Key()); len(open) != 1 {
-		return fmt.Errorf("open items = %d, want exactly one", len(open))
+	if _, err := view.Primary(ident.Key()); err != nil {
+		return fmt.Errorf("open must leave exactly one primary: %v", err)
+	}
+	if len(view.Tracker.Items) != 1 {
+		return fmt.Errorf("tracker rows = %d, want the one open recorded", len(view.Tracker.Items))
 	}
 	return nil
 }
@@ -474,7 +529,7 @@ func ledgerSelftest() error {
 		Branch:    "selftest",
 		Key:       ledger.IdentityKey("/selftest/.git", "selftest", ""),
 	}
-	empty := ledger.Store{V: ledger.StoreVersion}
+	empty := ledger.View{}
 
 	dormant := ledger.Grade(ledger.Input{
 		Checkpoint: ledger.CheckpointWorkStart, Mode: ledger.ModeWarn,
@@ -486,7 +541,7 @@ func ledgerSelftest() error {
 
 	warned := ledger.Grade(ledger.Input{
 		Checkpoint: ledger.CheckpointApplyStart, Mode: ledger.ModeWarn,
-		Binding: bound, Identity: ident, Store: empty,
+		Binding: bound, Identity: ident, View: empty,
 	})
 	if warned.Decision != ledger.DecisionAllow || warned.ExitCode() != 0 {
 		return fmt.Errorf("warn graded %q (exit %d), want allow/0", warned.Decision, warned.ExitCode())
@@ -494,7 +549,7 @@ func ledgerSelftest() error {
 
 	blocked := ledger.Grade(ledger.Input{
 		Checkpoint: ledger.CheckpointApplyStart, Mode: ledger.ModeAlways,
-		Binding: bound, Identity: ident, Store: empty,
+		Binding: bound, Identity: ident, View: empty,
 	})
 	if blocked.Decision != ledger.DecisionBlock || blocked.Reason != ledger.ReasonNeedsItem || blocked.ExitCode() != 2 {
 		return fmt.Errorf("always graded %q/%q (exit %d), want block/needs-item/2", blocked.Decision, blocked.Reason, blocked.ExitCode())
@@ -502,7 +557,7 @@ func ledgerSelftest() error {
 
 	asked := ledger.Grade(ledger.Input{
 		Checkpoint: ledger.CheckpointPreMerge, Mode: ledger.ModeAsk,
-		Binding: bound, Identity: ident, Store: empty,
+		Binding: bound, Identity: ident, View: empty,
 	})
 	if asked.Decision != ledger.DecisionAsk || asked.ExitCode() != 0 {
 		return fmt.Errorf("ask graded %q (exit %d), want ask/0", asked.Decision, asked.ExitCode())
