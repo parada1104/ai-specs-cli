@@ -356,7 +356,7 @@ func ApplyWrite(storePath string, req ApplyWriteRequest, now time.Time) (WriteOu
 
 	out := WriteOutcome{Kind: write.Kind}
 	err := withStoreLock(storePath, func() error {
-		store, err := LoadStore(storePath)
+		store, err := LoadTrackerStore(storePath)
 		if err != nil {
 			return err
 		}
@@ -368,7 +368,7 @@ func ApplyWrite(storePath string, req ApplyWriteRequest, now time.Time) (WriteOu
 			out.Reason = reason
 			return nil
 		}
-		if err := SaveStore(storePath, store); err != nil {
+		if err := SaveTrackerStore(storePath, store); err != nil {
 			return err
 		}
 		out.Applied = true
@@ -547,7 +547,7 @@ func CloseBranchItem(storePath, commonDir, branch, checkpoint string, now time.T
 
 	out := WriteOutcome{Kind: WriteClose}
 	err := withStoreLock(storePath, func() error {
-		store, err := LoadStore(storePath)
+		store, err := LoadTrackerStore(storePath)
 		if err != nil {
 			return err
 		}
@@ -560,7 +560,7 @@ func CloseBranchItem(storePath, commonDir, branch, checkpoint string, now time.T
 			if err := store.CloseItem(matching[0].ID, Decision{At: rfc3339Stamp(now), Checkpoint: checkpoint}); err != nil {
 				return err
 			}
-			if err := SaveStore(storePath, store); err != nil {
+			if err := SaveTrackerStore(storePath, store); err != nil {
 				return err
 			}
 			out.Applied = true

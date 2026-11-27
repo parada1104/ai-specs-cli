@@ -214,7 +214,7 @@ binding works with no SDD/ODD/OpenSpec artifact. A `bind` that names the change 
 the slug-keyed identity. A retried `bind` reports `unchanged` instead of duplicating,
 and a closed row is never reopened — a later explicit `bind` opens a distinct new
 primary (D17). Authoritative state stays in the existing Go
-ledger at `<git-common-dir>/ai-specs/ledger/state.json`; the command writes nothing
+ledger at `<git-common-dir>/ai-specs/ledgers/tracker.json`; the command writes nothing
 into the repository tree.
 
 The explicit verbs remain available when a caller wants to control each step:
@@ -262,7 +262,7 @@ writes at `<git-common-dir>/ai-specs/ledger/witness.json` (`bound` / `ambiguous`
 `unbound` / `declared-not-bound`). Only `bound` activates the ledger; a missing or
 unreadable witness is dormant (`witness-missing`) and no provider is ever guessed.
 The per-identity record lives at
-`<git-common-dir>/ai-specs/ledger/state.json`, written atomically; a branch reused
+`<git-common-dir>/ai-specs/ledgers/tracker.json`, written atomically; a branch reused
 after its item closed opens a new item.
 
 Dormancy is visible through **`doctor` only** — the `tracker-ledger` check renders

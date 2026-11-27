@@ -51,7 +51,7 @@ worktree-gate --ledger --checkpoint apply-start --ledger-mode <mode> --project-r
   --write '{"kind":"bind","item_id":"<24-hex>","url":"https://trello.com/c/...","native_type":"card","state":"in-progress","provider":{"list":"<list name>"}}'
 ```
 
-A retried `bind` reports `unchanged` and a closed row is never reopened (D17). The write needs no `openspec/`/SDD/ODD artifact and makes no provider call; state lives in `<git-common-dir>/ai-specs/ledger/state.json`.
+A retried `bind` reports `unchanged` and a closed row is never reopened (D17). The write needs no `openspec/`/SDD/ODD artifact and makes no provider call; state lives in `<git-common-dir>/ai-specs/ledgers/state.json`.
 
 At a delivery, review, or merge lifecycle transition the agent/provider adapter reads the card through MCP (`trello_get_card`), produces the closed observation payload, and calls `worktree-gate --ledger --reconcile <observation> --reconcile-event <event>`. The closed payload has exactly `provider_id`, `scope`, `item_id`, `observed_at`, `event`, and `properties`. **Only `agree` is provider-backed compliance**; every other outcome is a pending decision. The Go ledger stays **provider-neutral** and performs **no provider write** — provider calls live only in the adapter.
 

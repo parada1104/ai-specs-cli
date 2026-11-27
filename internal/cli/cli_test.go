@@ -283,7 +283,7 @@ func TestWorktreeGateRoutePinnedContracts(t *testing.T) {
 	if err := os.WriteFile(witness, []byte(`{"v":1,"capability":"tracker","state":"bound","recipe_id":"trello-mcp-workflow","candidates":[],"written_at":"2026-09-13T00:00:00Z"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	storePath := filepath.Join(filepath.Dir(witness), "state.json")
+	storePath := ledger.TrackerStorePath(common)
 	identity := ledger.DeriveIdentity(ledger.IdentityOptions{Dir: ledgerRepo})
 	store := ledger.Store{V: ledger.StoreVersion}
 	item := store.OpenItem(ledger.ItemIdentity{CommonDir: identity.CommonDir, Branch: identity.Branch}, "trello-mcp-workflow", time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC))

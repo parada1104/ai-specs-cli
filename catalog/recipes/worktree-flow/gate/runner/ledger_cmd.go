@@ -97,11 +97,11 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 	}
 	storePath := opts.store
 	if storePath == "" && common != "" {
-		storePath = ledger.StorePath(common)
+		storePath = ledger.TrackerStorePath(common)
 	}
 
 	binding := ledger.ReadBinding(witnessPath)
-	store, storeErr := ledger.LoadStore(storePath)
+	store, storeErr := ledger.LoadTrackerStore(storePath)
 
 	// The effective mode is the explicit --ledger-mode when given (an explicit
 	// normalized mode, unchanged for existing callers); otherwise Go resolves it
@@ -128,7 +128,7 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "worktree-gate: ledger --decide failed: %v\n", err)
 			return 2
 		}
-		store, storeErr = ledger.LoadStore(storePath)
+		store, storeErr = ledger.LoadTrackerStore(storePath)
 	}
 
 	// A write is explicit, so it is attempted whenever it was asked for: the
@@ -153,7 +153,7 @@ func runLedger(opts ledgerOptions, stdout, stderr io.Writer) int {
 			return 2
 		}
 		writeOutcome = &outcome
-		store, storeErr = ledger.LoadStore(storePath)
+		store, storeErr = ledger.LoadTrackerStore(storePath)
 		// The explicit slug a write just recorded is the stored slug: the re-grade
 		// must select the item that write created, not a stale ambiguous identity.
 		ident = ledgerIdentityWithStoredSlug(ident, store, storeErr, dir, facts)

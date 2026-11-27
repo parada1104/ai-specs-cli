@@ -207,7 +207,7 @@ which closes the matching open
 ignoring any stored change slug) **before** removing a provably merged worktree or
 local branch. The close is idempotent and never reopens a closed row (D17), and it
 performs no provider or network call — it writes only the local ledger store under
-`<git-common-dir>/ai-specs/ledger/`.
+`<git-common-dir>/ai-specs/ledgers/`.
 
 The hook is fail-open for the merge itself: it reports cleanup failures on stderr
 and exits `0`, so it never changes the already-sealed merge outcome. The

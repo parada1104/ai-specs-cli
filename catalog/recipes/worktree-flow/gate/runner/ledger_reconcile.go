@@ -219,7 +219,7 @@ func corroboratedClosedItemID(ident ledger.Identity, observedID string) string {
 	if observedID == "" || !ident.Available() || ident.CommonDir == "" {
 		return ""
 	}
-	store, err := ledger.LoadStore(ledger.StorePath(ident.CommonDir))
+	store, err := ledger.LoadTrackerStore(ledger.TrackerStorePath(ident.CommonDir))
 	if err != nil {
 		return ""
 	}

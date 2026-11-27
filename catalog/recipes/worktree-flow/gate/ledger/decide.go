@@ -68,7 +68,7 @@ func PersistDecision(storePath, key string, req DecisionRequest, now time.Time) 
 	stamp := rfc3339Stamp(now)
 	persisted := newDecision(req, stamp)
 	err := withStoreLock(storePath, func() error {
-		store, err := LoadStore(storePath)
+		store, err := LoadTrackerStore(storePath)
 		if err != nil {
 			return err
 		}
@@ -81,7 +81,7 @@ func PersistDecision(storePath, key string, req DecisionRequest, now time.Time) 
 				Key: key, Checkpoint: persisted.Checkpoint, Scope: persisted.Scope,
 				Choice: persisted.Choice, At: persisted.At,
 			})
-			return SaveStore(storePath, store)
+			return SaveTrackerStore(storePath, store)
 		}
 		if err != nil {
 			return err
@@ -95,7 +95,7 @@ func PersistDecision(storePath, key string, req DecisionRequest, now time.Time) 
 			// exemption (DW1): file removal never revokes the store record.
 			clearExemption(&store, item.ID)
 		}
-		return SaveStore(storePath, store)
+		return SaveTrackerStore(storePath, store)
 	})
 	if err != nil {
 		return Decision{}, err
@@ -123,7 +123,7 @@ func PersistConflict(storePath, key string, c Conflict) error {
 		return err
 	}
 	return withStoreLock(storePath, func() error {
-		store, err := LoadStore(storePath)
+		store, err := LoadTrackerStore(storePath)
 		if err != nil {
 			return err
 		}
@@ -132,7 +132,7 @@ func PersistConflict(storePath, key string, c Conflict) error {
 			return err
 		}
 		setConflict(&store, item.ID, raw)
-		return SaveStore(storePath, store)
+		return SaveTrackerStore(storePath, store)
 	})
 }
 

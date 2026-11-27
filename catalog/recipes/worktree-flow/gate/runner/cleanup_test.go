@@ -576,13 +576,13 @@ func cleanupCommonLedgerPath(t *testing.T, root string) string {
 	if common == "" {
 		t.Fatal("test fixture has no git common dir")
 	}
-	return ledger.StorePath(common)
+	return ledger.TrackerStorePath(common)
 }
 
 // readCleanupLedger loads the seeded store, failing the test on error.
 func readCleanupLedger(t *testing.T, path string) ledger.Store {
 	t.Helper()
-	store, err := ledger.LoadStore(path)
+	store, err := ledger.LoadTrackerStore(path)
 	if err != nil {
 		t.Fatalf("LoadStore(%s): %v", path, err)
 	}
@@ -594,7 +594,7 @@ func readCleanupLedger(t *testing.T, path string) ledger.Store {
 func seedCleanupLedger(t *testing.T, root, branch, change string) string {
 	t.Helper()
 	common := RealPath(gitCommon(root))
-	path := ledger.StorePath(common)
+	path := ledger.TrackerStorePath(common)
 	var store ledger.Store
 	store.OpenItem(ledger.ItemIdentity{CommonDir: common, Branch: branch, Change: change}, "test-recipe", time.Now())
 	if err := ledger.SaveStore(path, store); err != nil {
