@@ -278,3 +278,31 @@ func TestPlanBuildGateGradesADeclaredHighRiskPathInTheOddTree(t *testing.T) {
 		t.Fatalf("gate = (%d, %q), want exit 2 naming R2 and the pending target", code, stderr)
 	}
 }
+
+// Agent configuration is machine setup: it is never graded, even while the diff
+// carries an active refutation against the change itself.
+func TestPlanBuildGateExemptsAgentConfigWhileTheDiffIsBlocked(t *testing.T) {
+	bin, _ := smokeSetup(t)
+	repo := t.TempDir()
+	flowGit(t, repo, "init", "-b", "main")
+	flowGit(t, repo, "config", "user.email", "flow@example.invalid")
+	flowGit(t, repo, "config", "user.name", "flow")
+	flowWrite(t, repo, "ai-specs/ai-specs.toml", "[recipes.plan-build-flow]\nenabled = true\n\n"+
+		"[recipes.plan-build-flow.config]\nmode = \"odd\"\nhigh_risk_paths = [\"docs/**\"]\n")
+	flowGit(t, repo, "add", "-A")
+	flowGit(t, repo, "commit", "-m", "base")
+	flowGit(t, repo, "checkout", "-b", "feat/thing")
+	// A change with a plan, and a committed high-risk path without its evidence:
+	// R2 is live against the diff.
+	flowWrite(t, repo, "odd/tasks/thing.md", "## Specs\n\n- **S1** — x\n\n## Tasks\n\n- T1 — y\n")
+	flowWrite(t, repo, "docs/deploy.md", "run it\n")
+	flowGit(t, repo, "add", "-A")
+	flowGit(t, repo, "commit", "-m", "docs: the plan and a runbook")
+
+	for _, target := range []string{".claude/settings.local.json", ".claude/hooks/pre-tool.sh"} {
+		stdout, stderr, code := flowRun(t, bin, repo, flowEvent(repo, target), "plan-build-gate")
+		if code != 0 || stdout != "" || stderr != "" {
+			t.Fatalf("%s = (%d, %q, %q), want a silent allow", target, code, stdout, stderr)
+		}
+	}
+}

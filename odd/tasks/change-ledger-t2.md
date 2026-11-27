@@ -208,3 +208,14 @@ The code those tests cover is expected to be replaced by the seam, not extended.
 - **Preexisting, out of T2** (Cody's report): `ODD/Specs/…` with different capitalisation is not
   caught by `isCanonicalSpec` — the baseline behaves the same, so it is not a T2 regression and
   belongs to the unit that owns canonical-path matching.
+- **L11** — Cody's second re-review of `85ea5935` (`/private/tmp/t2-review-cody-2.md`): the six
+  points are resolved, and one regression is real — that commit dropped
+  `planBuildGateAgentConfig` without moving the exemption into `GradedPath` (a partial apply
+  lost exactly that edit pick), so `.claude/settings*.json` and `.claude/hooks/*` were graded
+  again while the help and the `--explain` text still promised they never are. Restored as
+  `gates.AgentConfigPath`, called from `GradedPath`: the matcher moved out of the CLI into the
+  predicate that owns the scope, so the promise and the code agree again. RED observed before
+  the fix: `GradedPath(".claude/settings.json") = true` and the real-flow repro exiting 2 with
+  R2; after it, both agent-config targets are silent while the same repository still refuses
+  the graded high-risk path. Learned: a partial apply has to be read as a failure of the whole
+  edit set, and that class of gap compiles.

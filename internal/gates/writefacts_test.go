@@ -175,3 +175,18 @@ func TestWriteVerdictReportsAnUnresolvedBase(t *testing.T) {
 		t.Fatalf("Verdict = %+v, want a note to never block", verdict)
 	}
 }
+
+// Agent configuration is machine setup in either role: never a target the gate
+// grades, and never a path a rule may fire on.
+func TestGradedPathExemptsAgentConfiguration(t *testing.T) {
+	for _, rel := range []string{".claude/settings.json", ".claude/settings.local.json", "pkg/.claude/hooks/x.sh"} {
+		if GradedPath(rel) {
+			t.Errorf("GradedPath(%q) = true, want agent configuration exempt", rel)
+		}
+	}
+	for _, rel := range []string{"src/app.go", "docs/deploy.md", "odd/specs/cap/spec.md"} {
+		if !GradedPath(rel) {
+			t.Errorf("GradedPath(%q) = false, want it graded", rel)
+		}
+	}
+}

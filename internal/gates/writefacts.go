@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"ai-specs.dev/ai-specs/internal/planbuild"
@@ -138,7 +139,7 @@ func (v Verdict) Rules() string {
 	}
 	rules := make([]string, 0, len(v.Blockers))
 	for _, blocker := range v.Blockers {
-		if !slicesContain(rules, blocker.Rule) {
+		if !slices.Contains(rules, blocker.Rule) {
 			rules = append(rules, blocker.Rule)
 		}
 	}
@@ -178,17 +179,43 @@ func (f WriteFacts) notes() []string {
 }
 
 // GradedPath reports whether the write gate grades a repository-relative path.
-// Planning artifacts are not graded — the change trees and the plan documents — and
-// everything else is, including the canonical spec tree, which promotion writes and
-// a hand write may not. It is the one scope predicate: the pending target and the
-// diff are both read through it.
+// Agent configuration and planning artifacts are not graded — the gitignored
+// `.claude` files, the change trees and the plan documents — and everything else is,
+// including the canonical spec tree, which promotion writes and a hand write may not.
+// It is the one scope predicate: the pending target and the diff are both read
+// through it, while the work-start checkpoint keys off ProductPath alone.
 func GradedPath(rel string) bool {
+	if AgentConfigPath(rel) {
+		return false
+	}
 	for _, planning := range []string{"odd/changes", "odd/tasks", "openspec/changes"} {
 		if rel == planning || strings.HasPrefix(rel, planning+"/") {
 			return false
 		}
 	}
 	return true
+}
+
+// AgentConfigPath reports the gitignored agent configuration the shell host always
+// allowed: `<any>/.claude/settings*.json` and `<any>/.claude/hooks/*`. It is machine
+// setup, so no refutation of the change may ever reach it.
+func AgentConfigPath(rel string) bool {
+	parts := strings.Split(rel, "/")
+	for i, part := range parts {
+		if part != ".claude" || i+1 >= len(parts) {
+			continue
+		}
+		next := parts[i+1]
+		if next == "hooks" && i+2 < len(parts) {
+			return true
+		}
+		if i+2 == len(parts) {
+			if matched, err := filepath.Match("settings*.json", next); err == nil && matched {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ProductPath reports whether a repository-relative path is inside the graded
@@ -321,14 +348,4 @@ func highRiskOddExit(base string) string {
 		"cannot be rebuilt, 2 security, 3 contracts others already consume, 4 concurrency, "+
 		"5 delivery or environment, 6 no test would catch a regression. "+
 		"Add the trailer to one commit of the range and retry.", base)
-}
-
-// slicesContain reports whether values holds one value.
-func slicesContain(values []string, value string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
 }
