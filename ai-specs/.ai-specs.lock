@@ -6,8 +6,8 @@
 # detection; recipe/skill content hashes are not tracked.
 
 [meta]
-cli_version = "0.27.1"
-synced_at = "2026-11-26T18:56:35Z"
+cli_version = "0.28.0"
+synced_at = "2026-11-27T04:17:42Z"
 
 [managed.".claude/commands/pr-create.md"]
 sha256 = "709a703204ad4437a24f7f5a4bc9ca47e2101ca6e6f081c9c96916813dda963d"
