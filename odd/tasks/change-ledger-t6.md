@@ -325,3 +325,33 @@ plan, design and audit live in `odd/tasks/change-ledger-v2.md` and
   name>`) x every operation (grade, open, bind, close), asserting invariant M and that the
   pre-split file is byte-identical. That matrix is the deliverable: it is what makes the
   next review cheap, and its absence is why two verification rounds still found holes.
+- **L14** — Delivery decision, Robert, 2026-11-27: **logical split in one file; physical
+  separation later.** Three verification rounds kept producing new defects of one class —
+  the combinatorial surface of layouts x entry points x operations x odd filesystems on a
+  two-file migration — so the split stays (S3: one ledger per capability, conversing, not
+  mixing state) and the file separation goes, which S14 allows: «cada ledger con su propio
+  archivo está bien siempre que todo pase por el entrypoint» makes the layout a preference,
+  not a contract.
+  **Layout.** One file, `<common>/ai-specs/ledger/state.json`, `{"v":2,"worktree":{"items":
+  […]}, "tracker":{"items":[…],"opt_outs":[…]}, "plan":{"items":[…]}}`. Each capability
+  writes only its own section, so no capability can write another's row.
+  **Migration, on read, never two halves.** A v1 file at that path is normalized into
+  sections in memory (worktree share and tracker share, the same functions that already
+  exist), a one-shot atomic backup of the v1 bytes is kept, and the first write rewrites the
+  file as v2. T5's `ledgers/tracker.json` stays a **read-only** source for the rows the v2
+  file lacks, is never rewritten, and reports what it contributed. Only `fs.ErrNotExist`
+  means absent: any other read error is corruption, the ledger is unevaluable, and writes
+  fail closed — a symlink loop or a permission error can never become «empty and writable».
+  **Deleted with the pair machinery**: `Inherit`, the two-location `Ledgers`, the pair save
+  with its best-effort rollback, the per-directory lock, and `--store`'s derived sibling.
+  `--store` names THE file; one atomic rename per write; the lock is `<store>.lock`, the
+  name T5 already uses, so two versions of the binary exclude each other.
+  **Decision history** is the tracker's decisions in stored order followed by the worktree
+  section's close decisions in stored order — the close terminates the row, so it is last
+  by construction and no timestamp sorting is involved (that sorting is what printed
+  `close,open`).
+  Ids are unique across sections. Kept and reused: `WorktreeItem`, `WorktreeStore`, the
+  share functions, `View`, the per-capability routing, the L11 tests (adapted) and the
+  scenario's per-capability assertions. `ledgers/{worktree,plan}.json` becomes its own
+  future unit with an explicit `ai-specs ledger migrate` verb and preconditions; nothing in
+  T6a may create or read those files as primary state.
