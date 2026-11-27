@@ -171,12 +171,17 @@ Options:
   --root <path>       Resolved repository root. Required.
   --reason <text>     Declare this worktree a workstream, appending the decision to
                       .ai-specs/plan-ledger.jsonl. Refused when the worktree
-                      carries a plan or a delta: that is a change (S16).
+                      carries a plan or a delta: that is a change (S16). A text
+                      starting with '-' needs the --reason=<text> form.
   --end               Close a standing declaration; the worktree returns to the
                       facts. Refused when no declaration is open.
   --json              Print one JSON object with the classification and the facts.
   --help, -h          Show this help
 `
+
+// optionShaped reports a token that is an option rather than a value, so a
+// misplaced separator (`--reason --end`) is never read as the reason it names.
+func optionShaped(arg string) bool { return strings.HasPrefix(arg, "-") && arg != "-" }
 
 // changesWorkstreamArgs is the verb's parsed request.
 type changesWorkstreamArgs struct {
@@ -203,7 +208,7 @@ func parseChangesWorkstream(args []string, stdout, stderr io.Writer) (changesWor
 			fmt.Fprint(stdout, changesWorkstreamUsage)
 			return request, 0, true
 		case arg == "--root":
-			if i+1 >= len(args) {
+			if i+1 >= len(args) || optionShaped(args[i+1]) {
 				return usageError("ERROR: --root requires a value")
 			}
 			i++
@@ -211,7 +216,7 @@ func parseChangesWorkstream(args []string, stdout, stderr io.Writer) (changesWor
 		case strings.HasPrefix(arg, "--root="):
 			request.root = strings.TrimPrefix(arg, "--root=")
 		case arg == "--reason":
-			if i+1 >= len(args) {
+			if i+1 >= len(args) || optionShaped(args[i+1]) {
 				return usageError("ERROR: --reason requires a value")
 			}
 			request.reasonSet = true

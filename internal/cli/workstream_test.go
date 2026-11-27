@@ -188,12 +188,21 @@ func TestChangesWorkstreamArgumentContract(t *testing.T) {
 	for _, args := range [][]string{
 		{"changes", "workstream", "--root", root, "--reason", "audit", "--end"},
 		{"changes", "workstream", "--root", root, "--reason", ""},
+		// An option is never a value: `--reason --end` must not record a declaration
+		// out of a misplaced separator, and `--reason --json` must not record the
+		// option name as the reason.
+		{"changes", "workstream", "--root", root, "--reason", "--end"},
+		{"changes", "workstream", "--root", root, "--reason", "--json"},
+		{"changes", "workstream", "--root", "--json"},
 		{"changes", "workstream", "--root", root, "--nope"},
 		{"changes", "workstream"},
 	} {
 		if code, _, _ := runChangesCLI(t, args...); code != 2 {
 			t.Errorf("%v = %d, want the usage exit", args, code)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".ai-specs", "plan-ledger.jsonl")); err == nil {
+		t.Fatal("a refused invocation must record nothing")
 	}
 	code, stdout, stderr := runChangesCLI(t, "changes", "workstream", "--help")
 	if code != 0 || stderr != "" || !strings.Contains(stdout, "changes workstream") {
