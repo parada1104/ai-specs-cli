@@ -373,7 +373,7 @@ func trackerGateGrade(home, checkpoint, root, slug string, stderr io.Writer) {
 		extra = append(extra, "--evidence", evidence)
 		defer done()
 	}
-	out, predicateErr, rc := trackerGateLedger(home, checkpoint, root, extra...)
+	out, predicateErr, rc := trackerGateLedger(home, checkpoint, root, stderr, extra...)
 	if out == "" {
 		// A deliberately disabled ledger stays silent; anything else that produced no
 		// verdict (unresolved mode, usage error, lock timeout, corrupt store) is
@@ -457,13 +457,10 @@ func trackerGateDocumentPath(root, path string) string {
 }
 
 // trackerGateLedger runs `worktree-gate --ledger` in process and returns its
-// verdict JSON and exit code. The predicate's own stderr is discarded, exactly
-// as the shell host discarded it.
-// trackerGateLedger runs `worktree-gate --ledger` in process and returns its
-// verdict JSON, the first line of the predicate's own stderr, and the exit code.
-// The caller keeps the predicate's diagnostics: swallowing them turned a refused
-// grade into silence.
-func trackerGateLedger(home, checkpoint, root string, extra ...string) (string, string, int) {
+// verdict JSON, the predicate's own error line, and the exit code. The caller
+// keeps the predicate's diagnostics: swallowing them turned a refused grade into
+// silence.
+func trackerGateLedger(home, checkpoint, root string, stderr io.Writer, extra ...string) (string, string, int) {
 	args := []string{
 		"--ledger",
 		"--checkpoint", checkpoint,
@@ -473,7 +470,57 @@ func trackerGateLedger(home, checkpoint, root string, extra ...string) (string, 
 	args = append(args, extra...)
 	var out, errOut bytes.Buffer
 	rc := runner.Run(args, strings.NewReader(""), &out, &errOut, "unknown")
-	return out.String(), firstLine(errOut.String()), rc
+	errLine, notes := trackerGateStderr(errOut.String())
+	trackerGateRelayNotes(stderr, notes)
+	return out.String(), errLine, rc
+}
+
+// trackerGateStderr splits the predicate's stderr into the store notes it prints
+// first and its own diagnostics. The notes are not errors, so a note can never be
+// reported as the reason a write failed; the caller relays them instead.
+func trackerGateStderr(raw string) (string, []string) {
+	var errLine string
+	var notes []string
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if trackerGateStoreNote(trimmed) {
+			notes = append(notes, trimmed)
+			continue
+		}
+		if errLine == "" {
+			errLine = trimmed
+		}
+	}
+	return errLine, notes
+}
+
+// trackerGateStoreNote recognises a ledger.StoreReport.Note line by the exact tail
+// of each of its four messages (catalog/recipes/worktree-flow/gate/ledger
+// location.go). Everything the gate prints after a note is a real diagnostic.
+func trackerGateStoreNote(line string) bool {
+	for _, tail := range []string{
+		"are part of this answer; the next write carries them into the ledger file",
+		"the ledger file's version answers",
+		"its rows are missing from this answer",
+		"the ledger was not written, so nothing was replaced",
+	} {
+		if strings.HasSuffix(line, tail) {
+			return true
+		}
+	}
+	return false
+}
+
+// trackerGateRelayNotes forwards the predicate's store notes verbatim, under the
+// label that printed them: they are part of the answer, so dropping them is what
+// S3 forbids.
+func trackerGateRelayNotes(stderr io.Writer, notes []string) {
+	for _, note := range notes {
+		fmt.Fprintf(stderr, "%s\n", note)
+	}
 }
 
 // trackerGateMode reads the legacy gate_mode hint from the sync snapshot (S2).
@@ -543,7 +590,7 @@ func trackerGateAsk(home, checkpoint, root string, verdict trackerGateVerdict, s
 	switch strings.TrimSpace(answer) {
 	case "y", "Y", "yes", "YES", "Yes":
 		decide := fmt.Sprintf(`{"checkpoint":%q,"kind":"opt-out","choice":"continue"}`, checkpoint)
-		if rc := trackerGateDecide(home, checkpoint, root, decide); rc == 0 {
+		if rc := trackerGateDecide(home, checkpoint, root, decide, stderr); rc == 0 {
 			fmt.Fprintf(stderr, "%s: opt-out recorded for %s; proceeding.\n", trackerGateName, checkpoint)
 			return
 		}
@@ -566,28 +613,34 @@ func trackerGateApplyStartBind(home, checkpoint, root, slug string, verdict trac
 	if err != nil || !ok {
 		return false
 	}
-	fmt.Fprintf(stderr, "%s\n", trackerGateBind(home, checkpoint, root, item, trackerGateIdentity(verdict)))
+	fmt.Fprintf(stderr, "%s\n", trackerGateBind(home, checkpoint, root, item, trackerGateIdentity(verdict), stderr))
 	return true
 }
 
 // trackerGateDecide persists the human answer through the predicate's own
 // --decide vehicle, forwarding the raw stamped hint so Go re-resolves the mode
-// it graded with.
-func trackerGateDecide(home, checkpoint, root, decide string) int {
-	return runner.Run([]string{
+// it graded with. Its store notes are relayed; the rest of its stderr is not, and
+// the caller only needs the exit code.
+func trackerGateDecide(home, checkpoint, root, decide string, stderr io.Writer) int {
+	var errOut bytes.Buffer
+	rc := runner.Run([]string{
 		"--ledger",
 		"--checkpoint", checkpoint,
 		"--ledger-gate-mode", trackerGateMode(home, root),
 		"--project-root", root,
 		"--decide", decide,
-	}, strings.NewReader(""), io.Discard, io.Discard, "unknown")
+	}, strings.NewReader(""), io.Discard, &errOut, "unknown")
+	_, notes := trackerGateStderr(errOut.String())
+	trackerGateRelayNotes(stderr, notes)
+	return rc
 }
 
 // trackerGateBind issues the apply-start bind write through the same native
 // surface trackerGateDecide uses and returns the one stderr line describing it.
 // A failure keeps the remediation and names the write error, so a refused bind is
-// diagnosable instead of just empty.
-func trackerGateBind(home, checkpoint, root string, item tracker.ProviderItem, identity string) string {
+// diagnosable instead of just empty; the store note the write prints first is
+// relayed, never mistaken for that error.
+func trackerGateBind(home, checkpoint, root string, item tracker.ProviderItem, identity string, stderr io.Writer) string {
 	payload, err := json.Marshal(map[string]string{
 		"kind":        "bind",
 		"item_id":     item.CardID,
@@ -607,13 +660,15 @@ func trackerGateBind(home, checkpoint, root string, item tracker.ProviderItem, i
 	}
 	var out, errOut bytes.Buffer
 	rc := runner.Run(args, strings.NewReader(""), &out, &errOut, "unknown")
+	errLine, notes := trackerGateStderr(errOut.String())
+	trackerGateRelayNotes(stderr, notes)
 	var result struct {
 		Write *struct {
 			Applied bool `json:"applied"`
 		} `json:"write"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &result); rc != 0 || err != nil || result.Write == nil {
-		return trackerGateBindFailed(checkpoint, identity, firstLine(errOut.String()))
+		return trackerGateBindFailed(checkpoint, identity, errLine)
 	}
 	if result.Write.Applied {
 		return fmt.Sprintf("%s: bound card %s at %s (ledger row recorded).",
@@ -631,16 +686,6 @@ func trackerGateBindFailed(checkpoint, identity, reason string) string {
 		line += " (" + reason + ")"
 	}
 	return line + " — needs-item; link or create the tracker item, or record the exemption (Tracker advisory)."
-}
-
-// firstLine returns the first non-empty line of s, trimmed, or "".
-func firstLine(s string) string {
-	for _, line := range strings.Split(s, "\n") {
-		if trimmed := strings.TrimSpace(line); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }
 
 // trackerGateIdentity names the graded identity: its change slug when one is
