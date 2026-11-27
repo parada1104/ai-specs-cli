@@ -176,8 +176,9 @@ artifact contract.
   `unbound` / `declared-not-bound`). Only `bound` activates the ledger; a missing or
   unreadable witness is dormant, never guessed.
 - **Store**: one record per work identity (Git common dir + branch, optionally the
-  active change slug) at `<git-common-dir>/ai-specs/ledger/state.json`, written
-  atomically. A branch reused after its item closed opens a new item; two open items
+  active change slug) at `<git-common-dir>/ai-specs/ledgers/tracker.json`, written
+  atomically (the pre-split `ledger/state.json` stays readable for one release).
+  A branch reused after its item closed opens a new item; two open items
   are a human conflict.
 - **Five checkpoints**: `work-start`, `apply-start`, `pr-review`, `pre-merge`,
   `archive-close` all reach the same predicate and exit `0`/`2` (block only).

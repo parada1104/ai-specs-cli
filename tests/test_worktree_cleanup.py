@@ -9,6 +9,7 @@ have uncommitted changes or unmerged branches.
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,11 +20,9 @@ CLEANUP_SCRIPT = (
     ROOT / "catalog" / "recipes" / "worktree-flow" / "templates" / "worktree-cleanup.sh"
 )
 ENABLED_WORKTREE_FLOW_MANIFEST = "[recipes.worktree-flow]\nenabled = true\n"
-import sys as _sys
-from pathlib import Path as _Path
-_sys.path.insert(0, str(_Path(__file__).resolve().parent))
-from gate_cli import gate_command
-from test_repo_topology import make_super_with_submodule
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gate_cli import gate_command  # noqa: E402  (needs the path above)
+from test_repo_topology import make_super_with_submodule  # noqa: E402
 
 
 def git(repo: Path, *args: str) -> str:
@@ -844,9 +843,7 @@ class WorktreeCleanupTests(unittest.TestCase):
         """
         repo = self._make_repo()
         base_sha = git(repo, "rev-parse", "main").strip()
-        feature_sha = self._fast_import_linear_commits(
-            repo, "feat-huge", base_sha, 2000
-        )
+        self._fast_import_linear_commits(repo, "feat-huge", base_sha, 2000)
 
         result = subprocess.run(
             [str(self.CLEANUP_BINARY), "--cleanup", "--dry-run", "--base", "main"],
@@ -1230,14 +1227,29 @@ class WorktreeCleanupTests(unittest.TestCase):
         git(repo, "merge", "-q", "--no-ff", "-m", "merge", "feat-ledger")
         # The stored identity carries a change slug; cleanup only sees the branch.
         store_path = self._seed_ledger(repo, "feat-ledger", "some-change-slug")
+        seeded = store_path.read_bytes()
 
         out = self._run_cleanup(repo)
 
         self.assertFalse(wt.exists(), "merged worktree should be removed")
-        item = json.loads(store_path.read_text())["items"][0]
-        self.assertEqual(item["status"], "closed")
-        self.assertEqual(item["decisions"][-1]["kind"], "close")
-        self.assertEqual(item["decisions"][-1]["checkpoint"], "archive-close")
+        # One ledger file with a section per capability (L14): the close lands in the
+        # worktree section and never in the tracker section of the same file.
+        ledger = json.loads(store_path.read_text())
+        self.assertEqual(ledger["v"], 2)
+        row = ledger["worktree"]["items"][0]
+        self.assertEqual(row["status"], "closed")
+        self.assertEqual(row["decisions"][-1]["kind"], "close")
+        self.assertEqual(row["decisions"][-1]["checkpoint"], "archive-close")
+        self.assertEqual(
+            [d for item in ledger["tracker"]["items"] for d in item["decisions"] if d["kind"] == "close"],
+            [],
+            "the close decision must stay out of the tracker section",
+        )
+        # The predecessor bytes are kept as the one-shot backup, never lost.
+        self.assertEqual(
+            (store_path.parent / "state.json.v1-backup").read_bytes(), seeded,
+            "the predecessor bytes must be backed up before the v2 rewrite",
+        )
         self.assertIn("closed ledger item for feat-ledger", out.stdout)
 
     def test_dry_run_never_mutates_ledger(self):

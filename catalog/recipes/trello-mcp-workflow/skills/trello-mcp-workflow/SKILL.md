@@ -193,7 +193,7 @@ open row for the same common dir and branch regardless of its stored slug, refus
 branch-only item, so external binding needs no artifact. A `bind` that carries an
 explicit `change` keeps the slug-keyed identity. A retried `bind` reports `unchanged`
 instead of duplicating, and a closed row is never reopened (D17). State stays in the
-existing Go ledger at `<git-common-dir>/ai-specs/ledger/state.json`, and nothing is
+existing Go ledger at `<git-common-dir>/ai-specs/ledgers/tracker.json`, and nothing is
 written into the repository tree.
 
 For `tracker.none`,

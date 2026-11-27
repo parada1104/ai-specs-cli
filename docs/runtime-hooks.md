@@ -284,7 +284,7 @@ and exits `2` with **no** stdout JSON.
 checkpoint, in any mode, opens or mutates an item because a `## Tracker` section
 parses. Exactly two writers record lifecycle locally: the generic machine write
 surface above, and the VCS-boundary `archive-close` writer run by the verified
-worktree cleanup. Both write only `<git-common-dir>/ai-specs/ledger/state.json`,
+worktree cleanup. Both write only `<git-common-dir>/ai-specs/ledgers/tracker.json`,
 perform no provider MCP/API call and no network I/O, and are never reached from a
 grade path. Opening is therefore **not** agent-only.
 
@@ -325,7 +325,7 @@ change (python3 did not need the CLI); it is fail open, never a block.
 
 The verdict is computed from the durable binding witness at
 `<git-common-dir>/ai-specs/ledger/witness.json` and the per-identity store at
-`<git-common-dir>/ai-specs/ledger/state.json`. Only a `bound` witness activates the
+`<git-common-dir>/ai-specs/ledgers/tracker.json`. Only a `bound` witness activates the
 ledger; missing, unreadable, or unknown-version witnesses stay dormant
 (`witness-missing`) and never guess a provider. Mode comes from project config at
 `recipes.<witness recipe_id>.config`: the tracker `ledger_mode`

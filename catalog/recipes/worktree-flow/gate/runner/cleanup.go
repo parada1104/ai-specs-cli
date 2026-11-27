@@ -321,7 +321,11 @@ func closeLedgerBeforeRemoval(repoRoot, branch string, cfg cleanupConfig, out io
 	if common == "" {
 		return fmt.Errorf("worktree-cleanup: ledger identity unavailable for %q; refusing removal", branch)
 	}
-	outcome, err := ledger.CloseBranchItem(ledger.StorePath(common), common, branch, ledger.CheckpointArchiveClose, time.Now())
+	outcome, reports, err := ledger.CloseBranchItem(ledger.LedgerAt(common), common, branch, ledger.CheckpointArchiveClose, time.Now())
+	// The migration and backup warnings are part of the close's answer: a row that
+	// was handed forward, or a backup that could not be written, is reported rather
+	// than silently discarded (L12.7).
+	reports.Note(out, "worktree-cleanup")
 	if err != nil {
 		return fmt.Errorf("worktree-cleanup: ledger close for %q failed: %w", branch, err)
 	}

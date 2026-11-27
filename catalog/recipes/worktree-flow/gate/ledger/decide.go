@@ -50,52 +50,55 @@ func (r DecisionRequest) Validate() error {
 }
 
 // PersistDecision appends the human answer to the single open item for key and
-// clears its current conflict snapshot, all under the store lock. An opt-out is
-// the one answer that does not need an existing item (A5): a fresh binding
-// records it as a scoped opt-out instead of inventing a tracked item. It
-// otherwise fails closed on a missing key, a collided identity, a corrupt store,
-// or an invalid request, so the CLI can exit 2.
-func PersistDecision(storePath, key string, req DecisionRequest, now time.Time) (Decision, error) {
+// clears its current conflict snapshot, all under the ledger lock. An opt-out is the
+// one answer that does not need an existing item (A5): a fresh binding records it as
+// a scoped opt-out instead of inventing a tracked item. It otherwise fails closed on
+// a missing key, a collided identity, a corrupt ledger, or an invalid request, so the
+// CLI can exit 2.
+//
+// The answer is the tracker section's row; the file is written once (L14).
+func PersistDecision(loc StoreLocation, key string, req DecisionRequest, now time.Time) (Decision, error) {
 	req = req.Normalize()
 	if err := req.Validate(); err != nil {
 		return Decision{}, err
 	}
-	// An identity-less answer has no durable key and is never recorded: the host
-	// reports identity_unavailable instead of asking (A2/A5).
+	// An identity-less answer has no durable key and is never recorded (A2/A5).
 	if key == "" {
 		return Decision{}, fmt.Errorf("%w: empty identity key", ErrInvalidDecision)
 	}
 	stamp := rfc3339Stamp(now)
 	persisted := newDecision(req, stamp)
-	err := withStoreLock(storePath, func() error {
-		store, err := LoadStore(storePath)
+	err := withStoreLock(loc.Path, func() error {
+		file, _, err := loc.Load()
 		if err != nil {
 			return err
 		}
-		item, err := store.Primary(key)
+		view := file.View()
+		item, err := view.Primary(key)
 		if errors.Is(err, ErrNoPrimary) && req.Kind == DecisionOptOut {
-			// A fresh binding has no item yet (A5): record the explicit human
-			// opt-out on its own, without inventing an item that `always` would
-			// then treat as satisfied.
-			store.OptOuts = append(store.OptOuts, ScopedOptOut{
+			// A fresh binding has no item yet (A5): record the explicit human opt-out
+			// on its own, without inventing an item `always` would then call satisfied.
+			file.Tracker.OptOuts = append(file.Tracker.OptOuts, ScopedOptOut{
 				Key: key, Checkpoint: persisted.Checkpoint, Scope: persisted.Scope,
 				Choice: persisted.Choice, At: persisted.At,
 			})
-			return SaveStore(storePath, store)
+			_, saveErr := loc.Save(file)
+			return saveErr
 		}
 		if err != nil {
 			return err
 		}
-		if err := store.AppendDecision(item.ID, persisted); err != nil {
+		if err := file.Tracker.AppendDecision(item.ID, persisted); err != nil {
 			return err
 		}
-		clearConflict(&store, item.ID)
+		clearConflict(&file.Tracker, item.ID)
 		if req.Kind == DecisionAdjudicate {
 			// An adjudication is the one human act that clears a tracker.none
 			// exemption (DW1): file removal never revokes the store record.
-			clearExemption(&store, item.ID)
+			clearExemption(&file.Tracker, item.ID)
 		}
-		return SaveStore(storePath, store)
+		_, saveErr := loc.Save(file)
+		return saveErr
 	})
 	if err != nil {
 		return Decision{}, err
@@ -105,8 +108,8 @@ func PersistDecision(storePath, key string, req DecisionRequest, now time.Time) 
 
 // newDecision builds the append-only record for a human answer. An opt-out is
 // lifecycle-scoped: the decline covers the current identity/change, so later
-// checkpoints do not re-prompt, while its answered checkpoint is kept as the
-// audit trail. An adjudication stays checkpoint-scoped.
+// checkpoints do not re-prompt, while its answered checkpoint is kept as the audit
+// trail. An adjudication stays checkpoint-scoped.
 func newDecision(req DecisionRequest, stamp string) Decision {
 	d := Decision{At: stamp, Checkpoint: req.Checkpoint, Kind: req.Kind, Choice: req.Choice, Note: req.Note}
 	if req.Kind == DecisionOptOut {
@@ -123,16 +126,18 @@ func PersistConflict(storePath, key string, c Conflict) error {
 		return err
 	}
 	return withStoreLock(storePath, func() error {
-		store, err := LoadStore(storePath)
+		loc := StoreAt(storePath)
+		file, _, err := loc.Load()
 		if err != nil {
 			return err
 		}
-		item, err := store.Primary(key)
+		item, err := file.View().Primary(key)
 		if err != nil {
 			return err
 		}
-		setConflict(&store, item.ID, raw)
-		return SaveStore(storePath, store)
+		setConflict(&file.Tracker, item.ID, raw)
+		_, err = loc.Save(file)
+		return err
 	})
 }
 

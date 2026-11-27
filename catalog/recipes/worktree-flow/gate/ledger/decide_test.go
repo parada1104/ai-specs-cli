@@ -47,26 +47,23 @@ func TestDecisionChoiceEnumPinned(t *testing.T) {
 // choice is appended, the conflict is no longer current, and the next grade of
 // the same input allows.
 func TestPersistDecisionThenRegradeAllows(t *testing.T) {
-	path := StorePath(filepath.Join(t.TempDir(), ".git"))
-	if err := SaveStore(path, storeWithOpenItem("local")); err != nil {
-		t.Fatal(err)
-	}
+	locs := openFixture("local").write(t, ledgerPath(t))
 	key := ident("").Key()
 	in := Input{Checkpoint: CheckpointPreMerge, Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(),
-		Store: mustLoad(t, path), Evidence: Evidence{Local: "local", Remote: "remote"}, Now: vtNow}
+		View: loadView(t, locs), Evidence: Evidence{Local: "local", Remote: "remote"}, Now: vtNow}
 	if got := Grade(in); got.Decision != DecisionAsk {
 		t.Fatalf("pre-decision grade = %q, want ask", got.Decision)
 	}
 
-	if _, err := PersistDecision(path, key, DecisionRequest{Checkpoint: CheckpointPreMerge, Kind: DecisionAdjudicate, Choice: "local"}, vtNow); err != nil {
+	if _, err := PersistDecision(locs, key, DecisionRequest{Checkpoint: CheckpointPreMerge, Kind: DecisionAdjudicate, Choice: "local"}, vtNow); err != nil {
 		t.Fatalf("PersistDecision: %v", err)
 	}
 
-	in.Store = mustLoad(t, path)
+	in.View = loadView(t, locs)
 	got := Grade(in)
 	assertVerdict(t, "post-decision", got, vWant{DecisionAllow, ReasonAdjudicated, 0, SeverityOK, true})
 
-	item, err := in.Store.Primary(key)
+	item, err := in.View.Primary(key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,16 +82,14 @@ func TestPersistDecisionThenRegradeAllows(t *testing.T) {
 // TestPersistDecisionClearsCurrentConflictSnapshot pins that an adjudication
 // clears the item's current conflict snapshot (A6), so doctor stops warning.
 func TestPersistDecisionClearsCurrentConflictSnapshot(t *testing.T) {
-	path := StorePath(filepath.Join(t.TempDir(), ".git"))
-	if err := SaveStore(path, storeWithOpenItem("local")); err != nil {
-		t.Fatal(err)
-	}
+	locs := openFixture("local").write(t, ledgerPath(t))
+	path := locs.Path
 	key := ident("").Key()
 	snapshot := Conflict{Sides: Evidence{Local: "local", Remote: "remote"}, RecordedAt: vtNow.Format(time.RFC3339)}
 	if err := PersistConflict(path, key, snapshot); err != nil {
 		t.Fatalf("PersistConflict: %v", err)
 	}
-	item, err := mustLoad(t, path).Primary(key)
+	item, err := mustLoad(t, path).View().Primary(key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,10 +101,10 @@ func TestPersistDecisionClearsCurrentConflictSnapshot(t *testing.T) {
 		t.Fatalf("stored conflict sides = %+v, want %+v", recorded.Sides, snapshot.Sides)
 	}
 
-	if _, err := PersistDecision(path, key, DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "remote"}, vtNow); err != nil {
+	if _, err := PersistDecision(locs, key, DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "remote"}, vtNow); err != nil {
 		t.Fatalf("PersistDecision: %v", err)
 	}
-	item, err = mustLoad(t, path).Primary(key)
+	item, err = loadView(t, locs).Primary(key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,50 +121,44 @@ func TestPersistDecisionClearsCurrentConflictSnapshot(t *testing.T) {
 // must exit 2 rather than pretend the human answer was recorded.
 func TestPersistDecisionFailsClosed(t *testing.T) {
 	dir := t.TempDir()
-	good := StorePath(filepath.Join(dir, ".git"))
-	if err := SaveStore(good, storeWithOpenItem("local")); err != nil {
-		t.Fatal(err)
-	}
-	key := ident("").Key()
-
-	corrupt := filepath.Join(t.TempDir(), "state.json")
-	if err := os.WriteFile(corrupt, []byte("{not json"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	blocker := filepath.Join(dir, "blocker")
 	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	twoOpen := StorePath(filepath.Join(dir, "two", ".git"))
-	s := Store{V: StoreVersion}
-	s.OpenItem(ident(""), "p", t0)
-	s.OpenItem(ident(""), "p", t0)
-	if err := SaveStore(twoOpen, s); err != nil {
+	good := openFixture("local").write(t, filepath.Join(dir, "good", ".git", "ai-specs", "ledger", "state.json"))
+	key := ident("").Key()
+
+	corruptPath := filepath.Join(t.TempDir(), "ai-specs", "ledger", "state.json")
+	if err := os.MkdirAll(filepath.Dir(corruptPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(corruptPath, []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	empty := StorePath(filepath.Join(dir, "empty", ".git"))
-	if err := SaveStore(empty, Store{V: StoreVersion}); err != nil {
-		t.Fatal(err)
-	}
+	twoOpen := newFixture()
+	twoOpen.openItem(ident(""), "p", t0)
+	twoOpen.openItem(ident(""), "p", t0)
+	twoOpenLocs := twoOpen.write(t, filepath.Join(dir, "two", ".git", "ai-specs", "ledger", "state.json"))
+
+	empty := newFixture().write(t, filepath.Join(dir, "empty", ".git", "ai-specs", "ledger", "state.json"))
 
 	cases := []struct {
 		name string
-		path string
-		key  string
+		loc  StoreLocation
 		req  DecisionRequest
 	}{
-		{"no primary item", empty, key, DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}},
-		{"missing checkpoint", good, key, DecisionRequest{Choice: "local"}},
-		{"unknown choice", good, key, DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "bogus"}},
-		{"unknown kind", good, key, DecisionRequest{Checkpoint: CheckpointPreMerge, Kind: "bogus", Choice: "local"}},
-		{"two open items", twoOpen, key, DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}},
-		{"corrupt store", corrupt, key, DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}},
-		{"path under a file", filepath.Join(blocker, "state.json"), key, DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}},
+		{"no primary item", empty, DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}},
+		{"missing checkpoint", good, DecisionRequest{Choice: "local"}},
+		{"unknown choice", good, DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "bogus"}},
+		{"unknown kind", good, DecisionRequest{Checkpoint: CheckpointPreMerge, Kind: "bogus", Choice: "local"}},
+		{"two open items", twoOpenLocs, DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}},
+		{"corrupt store", StoreAt(corruptPath), DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}},
+		{"path under a file", StoreAt(filepath.Join(blocker, "state.json")), DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}},
 	}
 	for _, tc := range cases {
-		if _, err := PersistDecision(tc.path, tc.key, tc.req, vtNow); err == nil {
+		if _, err := PersistDecision(tc.loc, key, tc.req, vtNow); err == nil {
 			t.Fatalf("%s: PersistDecision succeeded, want a closed failure", tc.name)
 		}
 	}
@@ -180,16 +169,13 @@ func TestPersistDecisionFailsClosed(t *testing.T) {
 // own, allows its own checkpoint, suppresses the later checkpoints of the same
 // identity/change, and never synthesizes a tracked item.
 func TestPersistScopedOptOutWithoutPrimaryIsLifecycleScoped(t *testing.T) {
-	path := StorePath(filepath.Join(t.TempDir(), ".git"))
-	if err := SaveStore(path, Store{V: StoreVersion}); err != nil {
-		t.Fatal(err)
-	}
+	locs := newFixture().write(t, ledgerPath(t))
 	key := ident("").Key()
-	if _, err := PersistDecision(path, key, DecisionRequest{Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "continue"}, vtNow); err != nil {
+	if _, err := PersistDecision(locs, key, DecisionRequest{Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "continue"}, vtNow); err != nil {
 		t.Fatalf("PersistDecision opt-out without a primary: %v", err)
 	}
 
-	store := mustLoad(t, path)
+	store := loadView(t, locs).Tracker
 	if len(store.Items) != 0 {
 		t.Fatalf("items = %+v, want no synthesized item", store.Items)
 	}
@@ -202,7 +188,7 @@ func TestPersistScopedOptOutWithoutPrimaryIsLifecycleScoped(t *testing.T) {
 		t.Fatalf("scoped opt-out = %+v, want the human answer keyed, stamped, lifecycle-scoped and audited at its checkpoint", got)
 	}
 
-	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), Store: store, Now: vtNow}
+	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), View: loadView(t, locs), Now: vtNow}
 	apply := base
 	apply.Checkpoint = CheckpointApplyStart
 	assertVerdict(t, "apply-start scoped opt-out", Grade(apply), vWant{DecisionAllow, ReasonOptOut, 0, SeverityOK, true})
@@ -216,31 +202,25 @@ func TestPersistScopedOptOutWithoutPrimaryIsLifecycleScoped(t *testing.T) {
 // the scoped opt-out: an adjudication has no item, no conflict snapshot and no
 // sides, and an identity-unavailable key is not durable, so both stay closed.
 func TestPersistWithoutPrimaryStaysClosedForUnrecordableAnswers(t *testing.T) {
-	path := StorePath(filepath.Join(t.TempDir(), ".git"))
-	if err := SaveStore(path, Store{V: StoreVersion}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := PersistDecision(path, ident("").Key(), DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}, vtNow); !errors.Is(err, ErrNoPrimary) {
+	locs := newFixture().write(t, ledgerPath(t))
+	if _, err := PersistDecision(locs, ident("").Key(), DecisionRequest{Checkpoint: CheckpointPreMerge, Choice: "local"}, vtNow); !errors.Is(err, ErrNoPrimary) {
 		t.Fatalf("adjudication without a primary error = %v, want ErrNoPrimary", err)
 	}
-	if _, err := PersistDecision(path, "", DecisionRequest{Checkpoint: CheckpointPreMerge, Kind: DecisionOptOut, Choice: "continue"}, vtNow); err == nil {
+	if _, err := PersistDecision(locs, "", DecisionRequest{Checkpoint: CheckpointPreMerge, Kind: DecisionOptOut, Choice: "continue"}, vtNow); err == nil {
 		t.Fatalf("keyless opt-out succeeded, want a closed failure")
 	}
-	if store := mustLoad(t, path); len(store.OptOuts) != 0 {
-		t.Fatalf("opt_outs = %+v, want nothing recorded for an unrecordable answer", store.OptOuts)
+	if file := mustLoad(t, locs.Path); len(file.Tracker.OptOuts) != 0 {
+		t.Fatalf("opt_outs = %+v, want nothing recorded for an unrecordable answer", file.Tracker.OptOuts)
 	}
 }
 
 // TestPersistConflictFailsClosedForCollision pins that a collided identity cannot
 // silently attach a conflict to one of the open items.
 func TestPersistConflictFailsClosedForCollision(t *testing.T) {
-	path := StorePath(filepath.Join(t.TempDir(), ".git"))
-	s := Store{V: StoreVersion}
-	s.OpenItem(ident(""), "p", t0)
-	s.OpenItem(ident(""), "p", t0)
-	if err := SaveStore(path, s); err != nil {
-		t.Fatal(err)
-	}
+	f := newFixture()
+	f.openItem(ident(""), "p", t0)
+	f.openItem(ident(""), "p", t0)
+	path := f.write(t, ledgerPath(t)).Path
 	if err := PersistConflict(path, ident("").Key(), Conflict{Sides: Evidence{Local: "a", Remote: "b"}}); !errors.Is(err, ErrMultipleOpen) {
 		t.Fatalf("PersistConflict error = %v, want ErrMultipleOpen", err)
 	}
@@ -250,17 +230,14 @@ func TestPersistConflictFailsClosedForCollision(t *testing.T) {
 // persisted decline is remembered for the current change, so the answered
 // checkpoint allows and a later checkpoint no longer asks.
 func TestPersistOptOutIsLifecycleScoped(t *testing.T) {
-	path := StorePath(filepath.Join(t.TempDir(), ".git"))
-	if err := SaveStore(path, storeWithOpenItem("local")); err != nil {
-		t.Fatal(err)
-	}
+	locs := openFixture("local").write(t, ledgerPath(t))
 	key := ident("").Key()
-	if _, err := PersistDecision(path, key, DecisionRequest{Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "continue"}, vtNow); err != nil {
+	if _, err := PersistDecision(locs, key, DecisionRequest{Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "continue"}, vtNow); err != nil {
 		t.Fatalf("PersistDecision opt-out: %v", err)
 	}
 
-	store := mustLoad(t, path)
-	item, err := store.Primary(key)
+	view := loadView(t, locs)
+	item, err := view.Primary(key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +246,7 @@ func TestPersistOptOutIsLifecycleScoped(t *testing.T) {
 		t.Fatalf("persisted opt-out = %+v, want a lifecycle-scoped decision audited at apply-start", last)
 	}
 
-	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), Store: store,
+	base := Input{Mode: ModeAsk, Binding: boundBinding(), Identity: availIdentity(), View: view,
 		Evidence: Evidence{Local: "local", Remote: "remote"}, Now: vtNow}
 	apply := base
 	apply.Checkpoint = CheckpointApplyStart
@@ -284,18 +261,16 @@ func TestPersistOptOutIsLifecycleScoped(t *testing.T) {
 // compatibility: a store written before lifecycle scoping carries no scope field,
 // loads unchanged, and keeps covering only its own checkpoint.
 func TestLegacyOptOutRecordsStayCheckpointScopedOnDisk(t *testing.T) {
-	path := StorePath(filepath.Join(t.TempDir(), ".git"))
 	id := ident("")
-	legacy := Store{V: StoreVersion}
-	legacy.OpenItem(id, "trello-mcp-workflow", t0)
-	legacy.Items[0].ItemID = "local"
-	legacy.Items[0].Decisions = append(legacy.Items[0].Decisions,
+	legacy := newFixture()
+	legacy.openItem(id, "trello-mcp-workflow", t0)
+	legacy.File.Tracker.Items[0].ItemID = "local"
+	legacy.File.Tracker.Items[0].Decisions = append(legacy.File.Tracker.Items[0].Decisions,
 		Decision{At: t0.Format(time.RFC3339), Checkpoint: CheckpointApplyStart, Kind: DecisionOptOut, Choice: "continue"})
-	legacy.OptOuts = append(legacy.OptOuts,
+	legacy.File.Tracker.OptOuts = append(legacy.File.Tracker.OptOuts,
 		ScopedOptOut{Key: id.Key(), Checkpoint: CheckpointApplyStart, Choice: "continue", At: t0.Format(time.RFC3339)})
-	if err := SaveStore(path, legacy); err != nil {
-		t.Fatal(err)
-	}
+	locs := legacy.write(t, ledgerPath(t))
+	path := locs.Path
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -304,12 +279,12 @@ func TestLegacyOptOutRecordsStayCheckpointScopedOnDisk(t *testing.T) {
 		t.Fatalf("a legacy record must not carry a scope field: %s", raw)
 	}
 
-	loaded := mustLoad(t, path)
-	if got := loaded.Items[0].Decisions[len(loaded.Items[0].Decisions)-1].Scope; got != "" {
+	loaded := loadView(t, locs)
+	if got := loaded.Tracker.Items[0].Decisions[len(loaded.Tracker.Items[0].Decisions)-1].Scope; got != "" {
 		t.Fatalf("legacy decision scope = %q, want empty", got)
 	}
-	if loaded.OptOuts[0].Scope != "" {
-		t.Fatalf("legacy scoped opt-out = %+v, want no scope", loaded.OptOuts[0])
+	if loaded.Tracker.OptOuts[0].Scope != "" {
+		t.Fatalf("legacy scoped opt-out = %+v, want no scope", loaded.Tracker.OptOuts[0])
 	}
 	if !loaded.HasOptOut(id.Key(), CheckpointApplyStart) || loaded.HasOptOut(id.Key(), CheckpointPreMerge) {
 		t.Fatal("a legacy item opt-out must stay checkpoint-scoped")
@@ -319,12 +294,12 @@ func TestLegacyOptOutRecordsStayCheckpointScopedOnDisk(t *testing.T) {
 	}
 }
 
-// mustLoad loads a store and fails on error.
-func mustLoad(t *testing.T, path string) Store {
+// mustLoad loads the ledger file and fails on error.
+func mustLoad(t *testing.T, path string) LedgerFile {
 	t.Helper()
-	store, err := LoadStore(path)
+	file, _, err := StoreAt(path).Load()
 	if err != nil {
-		t.Fatalf("LoadStore(%s): %v", path, err)
+		t.Fatalf("Load(%s): %v", path, err)
 	}
-	return store
+	return file
 }
