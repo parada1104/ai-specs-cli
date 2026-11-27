@@ -77,6 +77,7 @@ the immediate predecessor and must be read before touching the ledger.
 - tests/scenarios/
 - tests/
 - odd/tasks/change-ledger-t7.md
+- catalog/recipes/plan-build-flow/   (L8: the product scope config and the hook shim)
 
 ## Verification
 
@@ -208,3 +209,41 @@ the immediate predecessor and must be read before touching the ledger.
   grade followed by a bind prints a non-empty note twice; note recognition in
   `tracker-card-gate` matches `StoreReport.Note`'s message tails; the three stale
   differential oracles.
+- **L7** — Cody's review of `87628db2`, verbatim: «Revisión de Cody sobre T7
+  (87628db2): build y vet limpios; los fallos de go test en internal/cli
+  (TestDifferentialSmoke/version, TestRecipeConfigureDifferentialAgainstScript,
+  TestSkillsAddDifferentialAgainstShell) son idénticos en la base 37414b9d, así que no
+  son de T7. Probé changes status en el repo real: solo lectura (store intacto), compone
+  los tres ledgers y da next. Antes del merge corrige: (1) ALTA: el alcance de producto
+  sigue siendo la lista de carpetas por defecto (src lib catalog, PLAN_BUILD_GATE_PATHS):
+  en este repo, T7 lista como divergentes solo archivos de catalog/ e ignora internal/ y
+  cmd/, así que un change que solo toque internal/ se clasificaría como workstream y no
+  debería nada. Es justo la heurística por carpetas que Robert quiere fuera. Producto
+  debe ser cualquier ruta trackeada fuera de los árboles de planificación (odd/,
+  openspec/), con exclusiones configurables en el toml del proyecto (no por env); el
+  gate y la discriminación de workstream usan el mismo predicado. Test con un change
+  solo en internal/ y RED. (2) MEDIA: en el checkout de development, status dice 'phase:
+  workstream'; la rama de integración no es un workstream: dilo como 'integration
+  branch' con su next (p. ej. limpiar worktrees mergeados). (3) MEDIA: 'tracker:
+  not-applicable' aparece aunque la receta del tracker está activa en este repo;
+  not-applicable solo sin receta; con receta y sin fila, di el estado real (sin card
+  vinculada) y deja el qué hacer para T9. Valida y responde con la línea LISTO
+  REVISAR-T7.»
+- **L8** — Decisions for L7 (parent-owned):
+  1. One product predicate, loaded once per root and used by the write gate's production
+     check, the workstream discriminator, the divergence list and `changes status`: a
+     path is product when it is graded (`GradedPath`, so agent config stays out) and lies
+     outside the planning trees `odd/` and `openspec/`, minus the project's own
+     exclusions. The exclusions live in `ai-specs/ai-specs.toml` as
+     `[recipes.plan-build-flow.config] product_exclude = ["<glob>", …]` (path globs,
+     `**` allowed); a malformed value is reported, never silently widened.
+     `PLAN_BUILD_GATE_PATHS` and the folder list stop deciding anything; every caller,
+     help text and test that names them follows. The canonical spec text in
+     `openspec/specs/plan-build-flow/spec.md` is changed only through promotion and is
+     a reservation for T11.
+  2. A checkout on the integration branch (the resolved base or integration branch,
+     `main`/`development` or the configured one) reports phase `integration`, exit 0,
+     next `ai-specs worktree-cleanup` (from the main checkout), never `workstream`.
+  3. Tracker: `not-applicable` only when no tracker recipe is enabled; with a recipe and
+     no row it reports the real state (`no item bound`, card none); what to do about
+     it is T9's.
