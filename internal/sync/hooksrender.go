@@ -1108,6 +1108,17 @@ func hooksRenderPiExt(h *mcpObj, dir, extImport, adapter, nativeEvent, guardRoot
 		b.WriteString("      try { void Promise.resolve(pi.sendMessage({ customType: \"ai-specs-worktree-gate\", content: res.stdout.trim(), display: false })).catch(() => {}); } catch {}\n")
 		b.WriteString("    }\n")
 	}
+	// S13: a hook that allows the call may still have something to say, and it
+	// writes that on stderr with exit 0. Relay the whole block as one visible
+	// message, best effort. No line is selected: the real producers write a
+	// preamble before the line that matters (the tracker advisory is six lines
+	// ending in the actionable one), so any first-line or filter heuristic drops
+	// exactly what the caller needs.
+	b.WriteString("    const advisory = res.status === 0 ? (res.stderr || \"\").trim() : \"\";\n")
+	b.WriteString("    if (advisory) {\n")
+	b.WriteString("      // Delivery is best effort: the hook already allowed the call.\n")
+	b.WriteString("      try { void Promise.resolve(pi.sendMessage({ customType: \"ai-specs-advisory\", content: advisory, display: true })).catch(() => {}); } catch {}\n")
+	b.WriteString("    }\n")
 	b.WriteString("    // any other exit code: fail-open (allow).\n")
 	b.WriteString("  });\n")
 	b.WriteString("}\n")
