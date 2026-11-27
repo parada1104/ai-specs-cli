@@ -38,7 +38,7 @@ Subcommands:
   archive [<change>] --root <planning-root> [--date YYYY-MM-DD] [--change <name>]
                              Move the change folder into the dated archive
   start --none --root <planning-root>
-                             Deprecated: the tier is inferred; see changes workstream
+                             Deprecated: the tier is inferred from the artifacts
 Run 'ai-specs changes archive --help' for full options.
 Run 'ai-specs changes start --help' for full options.
 `
@@ -51,9 +51,8 @@ standard), so a production write no longer needs a plan, a declaration or an
 authorization. This verb records nothing the gate reads and has no effect.
 
 A worktree that is not a change (an audit, an exploration, a spike) is
-classified from facts; use 'ai-specs changes workstream' to declare the
-deliberate case. The gate ignores any pre-existing
-branch.<branch>.aiSpecsCeremony value.
+classified from facts, so no declaration is needed. The gate ignores any
+pre-existing branch.<branch>.aiSpecsCeremony value.
 
 Options:
   --none              Kept for compatibility. Required.
@@ -139,8 +138,7 @@ func runChangesStart(args []string, stdout, stderr io.Writer) int {
 
 // changesStartDeprecation is the one-line notice the retired verb prints.
 const changesStartDeprecation = "changes start: deprecated — the tier is inferred from the change's " +
-	"artifacts, so this verb no longer affects any gate; a worktree that is not a change is declared " +
-	"with 'ai-specs changes workstream'."
+	"artifacts, so this verb no longer affects any gate, and it records nothing."
 
 // runChangesDispatch is the family remainder: help on stdout, usage on stderr
 // for the bare verb, and the unknown-subcommand pair.

@@ -150,7 +150,7 @@ func TestPlanBuildGateWriteFlow(t *testing.T) {
 	t.Run("a fresh declaration warns and has no effect", func(t *testing.T) {
 		repo := flowRepo(t, "openspec", nil)
 		stdout, stderr, code := flowRun(t, bin, repo, "", "changes", "start", "--none", "--root", repo)
-		if code != 0 || stdout != "" || !strings.Contains(stderr, "deprecated") || !strings.Contains(stderr, "changes workstream") {
+		if code != 0 || stdout != "" || !strings.Contains(stderr, "deprecated") {
 			t.Fatalf("start = (%d, %q, %q), want the deprecation notice", code, stdout, stderr)
 		}
 		if out, _ := exec.Command("git", "-C", repo, "config", "--get", "branch.feat/thing.aiSpecsCeremony").Output(); string(out) != "" {

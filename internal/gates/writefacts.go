@@ -39,8 +39,11 @@ type WriteFacts struct {
 	DeltaPath string
 	// PlanPath is the repository-relative plan the change would carry.
 	PlanPath string
-	// Base is the ref the diff is graded against, "" when no ref resolves.
-	Base string
+	// Base is the ref the diff is graded against, "" when no ref resolves, and
+	// Unborn reports a branch with no commit at all: there is nothing to compare
+	// against, so an absent base is not a fact the gate failed to observe.
+	Base   string
+	Unborn bool
 	// Production reports whether Target is inside the graded production scope.
 	Production bool
 	// HasPlan and HasDelta are the change's artifacts: they make the tier and they
@@ -53,6 +56,9 @@ type WriteFacts struct {
 	// answered it at all: an unknown diff is graded, never exempted.
 	Diff      []planbuild.DiffEntry
 	DiffKnown bool
+	// PlanInDiff reports a plan this diff contributes, read from the whole diff:
+	// it is R2's openspec evidence, not a path a rule may fire on.
+	PlanInDiff bool
 	// RiskTrailer reports a `Risk: item N` trailer in Base..HEAD (odd mode only,
 	// and only when a high-risk pattern is declared).
 	RiskTrailer bool
@@ -68,6 +74,7 @@ func WriteFactsFor(repoRoot, mode, change, target string) WriteFacts {
 		Target:     target,
 		Production: ProductPath(target),
 		Base:       BaseRef(repoRoot, nil),
+		Unborn:     !planbuild.RefExists(repoRoot, "HEAD"),
 	}
 	if change != "" {
 		facts.HasPlan = planbuild.PlanIsValidForMode(repoRoot, mode, change)
@@ -79,8 +86,10 @@ func WriteFactsFor(repoRoot, mode, change, target string) WriteFacts {
 	if facts.Base != "" {
 		entries, ok := planbuild.DiffEntries(repoRoot, facts.Base)
 		facts.DiffKnown = ok
-		// The diff is read through the same scope the pending target is: an artifact
-		// the gate never grades cannot answer, or require, a refutation.
+		// Provenance and trigger scope are different questions: the change's plan is
+		// evidence even though the gate never grades it, so it is read from the whole
+		// diff before the graded filter decides which paths may fire a rule.
+		facts.PlanInDiff = change != "" && planInDiff(change, entries)
 		for _, entry := range entries {
 			if GradedPath(entry.Path) {
 				facts.Diff = append(facts.Diff, entry)
@@ -113,6 +122,10 @@ type Verdict struct {
 	Tier string
 	// Blockers are the refutations the facts prove.
 	Blockers []Refutation
+	// Notes report a fact the gate could not observe. A note never blocks and is
+	// never silent: an unread base ref switches the diff rules off, and the operator
+	// must be able to tell that from "there was nothing to grade".
+	Notes []string
 }
 
 // Allowed reports whether the write passes.
@@ -138,8 +151,30 @@ func (f WriteFacts) Verdict() Verdict {
 	if f.Change != "" {
 		verdict.Tier = tier.Derive(f.HasPlan, f.HasDelta)
 	}
+	verdict.Notes = f.notes()
 	verdict.Blockers = append(f.canonicalSpecBlockers(), f.highRiskBlockers()...)
 	return verdict
+}
+
+// notes names the facts the collection could not observe, so a rule that could not
+// run is never indistinguishable from a rule that found nothing.
+func (f WriteFacts) notes() []string {
+	switch {
+	case f.Base == "" && f.Unborn:
+		// A branch with no commit has nothing to compare against: silence is the
+		// honest answer, not a note about a base the project never had.
+		return nil
+	case f.Base == "":
+		return []string{"the diff was not graded: no base ref resolves in this root (no declared " +
+			"base_branch and none of the integration branch names exists), so there is no diff to grade " +
+			"and no declared high-risk pattern could be read. Fetch the base branch or declare " +
+			"[recipes.git-pr-flow.config] base_branch; the pending target is still graded."}
+	case !f.DiffKnown:
+		return []string{fmt.Sprintf("the diff was not graded: `git diff` against `%s` produced no "+
+			"usable answer (a shallow clone, or no such history in this root). The pending target is "+
+			"still graded.", f.Base)}
+	}
+	return nil
 }
 
 // GradedPath reports whether the write gate grades a repository-relative path.
@@ -263,7 +298,7 @@ func (f WriteFacts) highRiskBlockers() []Refutation {
 	}
 	// A plan from an earlier change never counts: only a plan this diff contributes
 	// is evidence, or a committed plan would answer for every change.
-	if planInDiff(f.Change, f.Diff) {
+	if f.PlanInDiff {
 		return nil
 	}
 	if f.Change != "" {

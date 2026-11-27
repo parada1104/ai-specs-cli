@@ -477,7 +477,7 @@ func parityHelpSnapshot(stdout string) string {
 	// N16 in tests/parity/parity.py: `changes start --none` is a verb the frozen
 	// legacy goldens predate, so the same line is dropped from the Go side.
 	const startLine = "  changes start --none --root <planning-root>  " +
-		"Deprecated: the tier is inferred; see changes workstream\n"
+		"Deprecated: the tier is inferred from the artifacts\n"
 	stdout = strings.ReplaceAll(stdout, startLine, "")
 	const hubPrefix = "  hub [path] Interactive status + command menu (also bare "
 	const helpAnchor = "\n  help Show this help"
@@ -611,8 +611,7 @@ func changesCeremonyValue(t *testing.T, root, branch string) (string, bool) {
 
 // changesStartNotice is the verb's one deprecation line, verbatim.
 const changesStartNotice = "changes start: deprecated — the tier is inferred from the change's " +
-	"artifacts, so this verb no longer affects any gate; a worktree that is not a change is declared " +
-	"with 'ai-specs changes workstream'.\n"
+	"artifacts, so this verb no longer affects any gate, and it records nothing.\n"
 
 // The verb still runs for one version, prints its deprecation notice, exits 0
 // and records nothing the gate reads.

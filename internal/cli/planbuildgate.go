@@ -140,16 +140,9 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 	rel := planBuildGateRel(repoRoot, abs)
 	// The execution mode is resolved once.
 	mode := planbuild.Resolve(repoRoot, planBuildGateCommonDir(target.Probe))
-	// Machine configuration is machine setup, never a graded write. The work-start
-	// checkpoint guards the project's production scope, not the kind of file, so it
-	// fires before the planning-artifact exemption below.
-	if planBuildGateAgentConfig(rel) {
-		return planBuildGateNotGraded(explain, stderr)
-	}
-	if gates.ProductPath(rel) && !planBuildGateGradeLedger(repoRoot, stderr) {
-		return 2
-	}
-	// Planning artifacts are never graded; the canonical spec tree always is.
+	// Planning artifacts and agent configuration are never graded; the canonical spec
+	// tree always is. A planning write never owes the work-start checkpoint either
+	// (Cody, T2 L10): it is not product work.
 	if !gates.GradedPath(rel) {
 		return planBuildGateNotGraded(explain, stderr)
 	}
@@ -168,6 +161,14 @@ func runPlanBuildGate(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 	}
 	if explain {
 		fmt.Fprintf(stderr, "%s: tier %s; refutations %s\n", planBuildGateName, verdict.Tier, verdict.Rules())
+	}
+	for _, note := range verdict.Notes {
+		fmt.Fprintf(stderr, "%s: note: %s\n", planBuildGateName, note)
+	}
+	// Work-start fires before the first production write, and its block keeps
+	// precedence over the refutations below.
+	if facts.Production && !planBuildGateGradeLedger(repoRoot, stderr) {
+		return 2
 	}
 	for _, blocker := range verdict.Blockers {
 		fmt.Fprintf(stderr, "%s: refusing to %s '%s' — %s\n", planBuildGateName, tool, rel, blocker)
@@ -211,27 +212,6 @@ func planBuildGateRel(root, abs string) string {
 		return "."
 	}
 	return strings.TrimPrefix(abs, root+string(filepath.Separator))
-}
-
-// planBuildGateAgentConfig reports the shell host's gitignored-config patterns:
-// `<any>/.claude/settings*.json` and `<any>/.claude/hooks/*`.
-func planBuildGateAgentConfig(rel string) bool {
-	parts := strings.Split(rel, "/")
-	for i, part := range parts {
-		if part != ".claude" || i+1 >= len(parts) {
-			continue
-		}
-		next := parts[i+1]
-		if next == "hooks" && i+2 < len(parts) {
-			return true
-		}
-		if i+2 == len(parts) {
-			if matched, err := filepath.Match("settings*.json", next); err == nil && matched {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // --- Ledger work-start checkpoint -------------------------------------------

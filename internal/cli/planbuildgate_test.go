@@ -144,16 +144,32 @@ func TestPlanBuildGateLedgerBlockComesFirst(t *testing.T) {
 	}
 }
 
-// The work-start checkpoint guards the project's production scope, not the kind of
-// file: a planning write inside that scope still owes it.
-func TestPlanBuildGateKeepsWorkStartForAPlanningWriteInTheProductionScope(t *testing.T) {
+// A planning write never owes the work-start checkpoint, even when the project
+// lists a planning directory in its own production scope: it is not product work
+// (Cody, T2 L10), and gating it would stop the plan the gate may ask for.
+func TestPlanBuildGateDoesNotGateAPlanningWriteWithTheLedger(t *testing.T) {
 	repo, common, branch := trackerGateFixtureRepo(t)
 	bindTrackerLedger(t, common, branch, false)
 	t.Setenv("TRACKER_LEDGER_MODE", "always")
 	t.Setenv("PLAN_BUILD_GATE_PATHS", "odd")
-	want := "plan-build-gate: blocked at work-start — needs-item\n"
-	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "odd/tasks/thing.md")); code != 2 || stdout != "" || stderr != want {
-		t.Fatalf("gate = (%d, %q, %q), want (2, %q, %q)", code, stdout, stderr, "", want)
+	if code, stdout, stderr := runPlanBuildGateCLI(t, repo, planBuildGateEvent(repo, "Write", "odd/tasks/thing.md")); code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("gate = (%d, %q, %q), want silence", code, stdout, stderr)
+	}
+}
+
+// --explain reports the verdict even when the work-start checkpoint blocks first.
+func TestPlanBuildGateExplainsALedgerBlock(t *testing.T) {
+	repo, common, branch := trackerGateFixtureRepo(t)
+	bindTrackerLedger(t, common, branch, false)
+	t.Setenv("TRACKER_LEDGER_MODE", "always")
+	code, stdout, stderr := runPlanBuildGateArgs(t, repo, planBuildGateEvent(repo, "Write", "src/x.go"), "--explain")
+	if code != 2 || stdout != "" {
+		t.Fatalf("gate = (%d, %q), want exit 2", code, stdout)
+	}
+	for _, want := range []string{"tier none; refutations none", "blocked at work-start"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr = %q, want %q", stderr, want)
+		}
 	}
 }
 

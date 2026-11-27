@@ -239,7 +239,7 @@ def _norm_gate_cache_size(text: str, ctx: dict) -> str:
 _GATE_HELP_LINE = ("  worktree-gate [gate args...]  Run the worktree gate "
                    "(arguments passed through unchanged)\n")
 _CHANGES_START_HELP_LINE = ("  changes start --none --root <planning-root>  "
-                            "Deprecated: the tier is inferred; see changes workstream\n")
+                            "Deprecated: the tier is inferred from the artifacts\n")
 _TRACKER_LEDGER_ERROR_RE = re.compile(
     r"^(  ERROR  tracker-ledger   ).*the tracker ledger is failing open.*$",
     re.MULTILINE)

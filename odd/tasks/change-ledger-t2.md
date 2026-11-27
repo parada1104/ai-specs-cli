@@ -188,3 +188,23 @@ The code those tests cover is expected to be replaced by the seam, not extended.
   selector-mismatch". No `approved` receipt is reachable through the facade, and T2
   does not merge without one. Nothing is lost: `feat/change-ledger-t2` holds the unit,
   this plan holds its evidence, and both lineages keep their findings on record.
+- **L10** — Cody's independent review of `54e300f0` (`/private/tmp/t2-review-cody.md`) said NO
+  APROBAR: one blocker and five lesser points, and answered the open question — **«decidí yo
+  que una escritura de planificación nunca pasa por work-start»** (a planning artifact is not
+  product work). Fixes in one commit: (1) *blocker* — R2 in openspec was unsatisfiable because
+  `WriteFactsFor` filtered the diff through `GradedPath`, which drops `openspec/changes/**`,
+  and `planInDiff` then looked for a plan it had just discarded; plan provenance is now its
+  own fact (`PlanInDiff`, read from the whole diff) while the graded filter only decides which
+  paths may fire a rule, with a positive openspec test whose RED reproduced the contradiction
+  (`tier light` next to "carries no plan"); (2) an unread base ref is a reported fact
+  (`Verdict.Notes`, printed on stderr) instead of silent silence, and an unborn HEAD stays
+  silent because there is nothing to compare against; (3) the deprecation notice no longer
+  names `changes workstream`, which does not exist until T3; (4) `--explain` reports the
+  verdict before the work-start block, so no refusal path explains nothing; (5) the dead
+  `WriteRefutations` and `HighRiskRefutation` are gone; (6) the workstream that skips the
+  diff-based R1 stays noted for T3, with the uncommitted-divergence gap. Evidence: full suite
+  green, the real-flow matrix keeps every earlier case and gains the openspec-committed-plan
+  and the no-base cases, pre-merge guardian green. No native review: Cody reviews it himself.
+- **Preexisting, out of T2** (Cody's report): `ODD/Specs/…` with different capitalisation is not
+  caught by `isCanonicalSpec` — the baseline behaves the same, so it is not a T2 regression and
+  belongs to the unit that owns canonical-path matching.

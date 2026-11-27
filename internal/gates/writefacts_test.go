@@ -4,6 +4,7 @@ package gates
 // one verdict that both the refusal and `--explain` are read from.
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -127,5 +128,50 @@ func TestWriteVerdictNamesTheUnpairedBranchForAHighRiskTarget(t *testing.T) {
 	message := verdict.Blockers[0].Message
 	if !strings.Contains(message, "pairs no change") || strings.Contains(message, "carries no") {
 		t.Fatalf("Message = %q, want the unpaired branch named instead of an empty plan path", message)
+	}
+}
+
+// R2's openspec exit is honoured: a plan this branch committed is the evidence,
+// even though the gate never grades the change tree. Before the plan provenance was
+// read apart from the graded scope, R2 asked for a plan it had already discarded.
+func TestWriteVerdictAcceptsACommittedPlanInOpenspec(t *testing.T) {
+	root := writeRepo(t, map[string]string{
+		"ai-specs/ai-specs.toml": "[recipes.plan-build-flow.config]\nmode = \"openspec\"\n" +
+			"high_risk_paths = [\"docs/**\"]\n",
+	})
+	commitPath(t, root, "openspec/changes/thing/tasks.md", "docs: the plan of this change")
+
+	facts := WriteFactsFor(root, planbuild.ModeOpenspec, "thing", "docs/deploy.md")
+	if !facts.HasPlan || !facts.PlanInDiff {
+		t.Fatalf("Facts = %+v, want the committed plan read as evidence", facts)
+	}
+	verdict := facts.Verdict()
+	if !verdict.Allowed() {
+		t.Fatalf("Verdict = %+v, want the committed plan to answer R2", verdict)
+	}
+	if got, want := verdict.Tier, tier.Light; got != want {
+		t.Fatalf("Tier = %q, want %q", got, want)
+	}
+}
+
+// An unread base ref is a fact, not silence: the diff rules did not run, and the
+// verdict says so instead of looking like "nothing to grade".
+func TestWriteVerdictReportsAnUnresolvedBase(t *testing.T) {
+	root := t.TempDir()
+	gitRun(t, root, "init", "-q", "-b", "trunk")
+	gitRun(t, root, "config", "user.email", "test@example.invalid")
+	gitRun(t, root, "config", "user.name", "test")
+	writeFile(t, filepath.Join(root, "ai-specs", "ai-specs.toml"),
+		"[recipes.plan-build-flow.config]\nmode = \"odd\"\nhigh_risk_paths = [\"docs/**\"]\n")
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-q", "-m", "base")
+	gitRun(t, root, "checkout", "-q", "-b", "feat/thing")
+
+	verdict := WriteFactsFor(root, planbuild.ModeOdd, "thing", "docs/deploy.md").Verdict()
+	if len(verdict.Notes) != 1 || !strings.Contains(verdict.Notes[0], "no base ref resolves") {
+		t.Fatalf("Notes = %q, want the unread base reported", verdict.Notes)
+	}
+	if !verdict.Allowed() {
+		t.Fatalf("Verdict = %+v, want a note to never block", verdict)
 	}
 }
