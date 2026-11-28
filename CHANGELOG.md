@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `ai-specs changes status --root <repo> [--json] [--explain] [--ledger
+  worktree|plan|tracker]`: a read-only view of what the worktree is, what it owes and
+  what it can do next, composed from the worktree, plan and tracker ledgers without
+  writing any of them. Phases are `integration`, `cleaned`, `merged`, `planned`, `open`
+  and `workstream`; exit 0 resolves a phase, 2 means the write verdict refuses the
+  step, 3 means a fact the phase needs is unknown. Every fact names its source, and a
+  fact git or a ledger cannot answer is reported as unknown, never as false. The
+  review receipt is read from `gentle-ai review assess` (`$GENTLE_AI_BIN` or `gentle-ai`
+  on PATH) and never decides the exit.
+
+### Changed
+- **Breaking:** the production scope is no longer a folder list. Product is every
+  path the write gate grades outside the planning trees `odd/` and `openspec/`, minus
+  the project's own exclusions in `ai-specs/ai-specs.toml`:
+  `[recipes.plan-build-flow.config] product_exclude = ["<glob>", …]` (path globs,
+  `**` allowed; a malformed value is reported and excludes nothing). One predicate
+  decides for the write gate, the workstream discriminator and `changes status`.
+- `tracker-card-gate` relays ledger store notes on stderr and reports the real error
+  of a refused bind instead of the note printed before it.
+- Reading the plan ledger no longer writes the checkout's creation token; only a
+  recorded decision does.
+
+### Upgrade notes
+- `PLAN_BUILD_GATE_PATHS` is retired and the default `src lib catalog` list is gone:
+  a change that touches only `internal/`, `cmd/`, `docs/` or `tests/` is now a change,
+  and the write gate treats those writes as production. A project that relied on the
+  narrower list moves the paths it wants out of scope to `product_exclude`.
+
 ## [0.29.0] — 2026-11-27
 
 ### Changed
