@@ -489,6 +489,11 @@ func parityHelpSnapshot(stdout string) string {
 	const statusLine = "  changes status --root <repo-root>  Report the phase and what the " +
 		"worktree owes, composed read-only\n"
 	stdout = strings.ReplaceAll(stdout, statusLine, "")
+	// N19 in tests/parity/parity.py: `changes next` is the verb T8 adds, and the frozen
+	// legacy goldens predate it too.
+	const nextLine = "  changes next --root <repo-root>  Print the one next step, its " +
+		"checkpoint and its posture\n"
+	stdout = strings.ReplaceAll(stdout, nextLine, "")
 	const hubPrefix = "  hub [path] Interactive status + command menu (also bare "
 	const helpAnchor = "\n  help Show this help"
 	if start := strings.Index(stdout, hubPrefix); start >= 0 {

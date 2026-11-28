@@ -85,6 +85,9 @@ func StoreAt(path string) StoreLocation { return StoreLocation{Path: path} }
 // Nothing here is fatal: it exists so the CLI can say it out loud instead of
 // dropping rows or a backup in silence. It is never persisted.
 type StoreReport struct {
+	// Path is the ledger file this read or write reached: the file whose version of a
+	// row answers when a source disagrees, so a note can name it (T5 R1).
+	Path string
 	// Absorbed is how many rows and opt-outs a predecessor source carried that the
 	// ledger file did not have. They are part of the answer, and the next write
 	// carries them into the file.
@@ -113,8 +116,14 @@ func (r StoreReport) Note(w io.Writer, prefix string) {
 			prefix, r.Absorbed, r.LegacyRows)
 	}
 	if r.Shadowed > 0 {
-		fmt.Fprintf(w, "%s: %d ledger row(s) differ in %s because an older ai-specs wrote them; the ledger file's version answers\n",
-			prefix, r.Shadowed, r.LegacyRows)
+		// T5 R1: name the file that wins, not just the one that lost, so a reader can
+		// tell which version answered without opening either path.
+		winner := r.Path
+		if winner == "" {
+			winner = "the ledger file"
+		}
+		fmt.Fprintf(w, "%s: %d ledger row(s) differ in %s because an older ai-specs wrote them; %s is the file that answers\n",
+			prefix, r.Shadowed, r.LegacyRows, winner)
 	}
 	if r.LegacyUnreadable != nil {
 		fmt.Fprintf(w, "%s: the predecessor ledger %s is unreadable (%v); its rows are missing from this answer\n",
@@ -131,7 +140,7 @@ func (r StoreReport) Note(w io.Writer, prefix string) {
 // file lacks. Only fs.ErrNotExist means absent — any other read error is corruption,
 // so a permission error or a symlink loop can never become "empty and writable".
 func (l StoreLocation) Load() (LedgerFile, StoreReport, error) {
-	var report StoreReport
+	report := StoreReport{Path: l.Path}
 	if l.Path == "" {
 		return EmptyLedger(), report, nil
 	}

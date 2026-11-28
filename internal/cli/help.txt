@@ -24,6 +24,7 @@ Commands:
   changes archive [<change>] --root <planning-root>  Move a change folder into the dated archive
   changes workstream --root <repo-root>  Report a change or a workstream, or declare the workstream (--reason, --end)
   changes status --root <repo-root>  Report the phase and what the worktree owes, composed read-only
+  changes next --root <repo-root>  Print the one next step, its checkpoint and its posture
   changes start --none --root <planning-root>  Deprecated: the tier is inferred from the artifacts
   worktree-gate [gate args...]  Run the worktree gate (arguments passed through unchanged)
   worktree-cleanup [--dry-run]  Remove merged worktrees and branches (policy from the last sync)

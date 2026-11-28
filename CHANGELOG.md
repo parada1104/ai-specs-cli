@@ -17,8 +17,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fact git or a ledger cannot answer is reported as unknown, never as false. The
   review receipt is read from `gentle-ai review assess` (`$GENTLE_AI_BIN` or `gentle-ai`
   on PATH) and never decides the exit.
+- `ai-specs changes next --root <repo> [--json]`: the one next step, the checkpoint the
+  phase is heading to and its posture, then every blocker and every advice line, with
+  the same exits as `changes status`.
+- Postures and the merge-time refutations. `R3` (the product diff is over the size or
+  module threshold), `R4` (a path declared in `high_risk_paths` is deleted) and `R5`
+  (the plan declares an `S#` without verification evidence) are advice by default and
+  never change the exit. A project opts into refusal per checkpoint with
+  `[recipes.plan-build-flow.config] require = ["merge"]`, and adjusts the CLI defaults
+  (`lines = 1000`, `modules = 5`) with `risk_thresholds = { lines = N, modules = M }`.
+  A workstream has no checkpoint, so no posture applies to it.
 
 ### Changed
+- The ledger note for rows an older ai-specs wrote differently now names the file
+  that answers.
+
 - **Breaking:** the production scope is no longer a folder list. Product is every
   path the write gate grades outside the planning trees `odd/` and `openspec/`, minus
   the project's own exclusions in `ai-specs/ai-specs.toml`:

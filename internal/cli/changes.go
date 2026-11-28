@@ -45,11 +45,14 @@ Subcommands:
                              Report whether this worktree is a change, or declare it a workstream
   status --root <repo-root> [--json] [--explain] [--ledger worktree|plan|tracker]
                              Report the phase, what this worktree owes and what comes next (read-only)
+  next --root <repo-root> [--json]
+                             Print the one next step, its checkpoint and its posture
   start --none --root <planning-root>
                              Deprecated: the tier is inferred from the artifacts
 Run 'ai-specs changes archive --help' for full options.
 Run 'ai-specs changes workstream --help' for full options.
 Run 'ai-specs changes status --help' for full options.
+Run 'ai-specs changes next --help' for full options.
 Run 'ai-specs changes start --help' for full options.
 `
 

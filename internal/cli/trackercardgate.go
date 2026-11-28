@@ -503,7 +503,7 @@ func trackerGateStderr(raw string) (string, []string) {
 func trackerGateStoreNote(line string) bool {
 	for _, tail := range []string{
 		"are part of this answer; the next write carries them into the ledger file",
-		"the ledger file's version answers",
+		"is the file that answers",
 		"its rows are missing from this answer",
 		"the ledger was not written, so nothing was replaced",
 	} {

@@ -58,6 +58,7 @@ const (
 	routeChangesStart                       // native: `changes start --none`, the local no-plan declaration (T14/S19)
 	routeChangesWorkstream                  // native: `changes workstream`, the report and the S16 decision (change-ledger-v2 T3)
 	routeChangesStatus                      // native: `changes status`, the read-only composite (change-ledger-v2 T7)
+	routeChangesNext                        // native: `changes next`, the one next step and its posture (change-ledger-v2 T8)
 	routeGates                              // native: the `gates` family remainder — usage/help/unknown (GO-20 U2e U-B)
 	routeGatesPremerge                      // native: `gates premerge`, port of lib/_internal/premerge_guardian.py (GO-20 U2e U-B)
 	routeTracker                            // native: the `tracker` family remainder — usage/help/unknown (GO-20 U2e U-C)
@@ -202,10 +203,11 @@ func Route(args []string) route {
 		return route{kind: routeSpecs}
 	}
 	// `changes archive` (I5/P4), `changes start` (T14/S19), `changes workstream`
-	// (change-ledger-v2 T3) and `changes status` (change-ledger-v2 T7) are the family's
-	// verbs; the root dispatcher has no `archive`, `start`, `workstream` or `status` of its
-	// own, and every remaining arm of the family (bare `changes`, `--help|-h|help`, unknown
-	// subcommands) resolves to the native family remainder.
+	// (change-ledger-v2 T3), `changes status` (T7) and `changes next` (T8) are the
+	// family's verbs; the root dispatcher has no `archive`, `start`, `workstream`,
+	// `status` or `next` of its own, and every remaining arm of the family (bare
+	// `changes`, `--help|-h|help`, unknown subcommands) resolves to the native family
+	// remainder.
 	if args[0] == "changes" {
 		if len(args) > 1 && args[1] == "archive" {
 			return route{kind: routeChangesArchive}
@@ -218,6 +220,9 @@ func Route(args []string) route {
 		}
 		if len(args) > 1 && args[1] == "status" {
 			return route{kind: routeChangesStatus}
+		}
+		if len(args) > 1 && args[1] == "next" {
+			return route{kind: routeChangesNext}
 		}
 		return route{kind: routeChanges}
 	}
@@ -419,6 +424,9 @@ func Run(args []string, home string, stdin io.Reader, stdout, stderr io.Writer) 
 	case routeChangesStatus:
 		// args[0]=changes, args[1]=status: the verb's own grammar sees args[2:].
 		return runChangesStatus(args[2:], stdout, stderr)
+	case routeChangesNext:
+		// args[0]=changes, args[1]=next: the verb's own grammar sees args[2:].
+		return runChangesNext(args[2:], stdout, stderr)
 	case routeGates:
 		// args[0]=gates: the family remainder sees the subcommand slot.
 		return runGatesDispatch(args[1:], stdout, stderr)

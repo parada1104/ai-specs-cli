@@ -581,11 +581,15 @@ func TestStoreReportNotesOnlyWhatHappened(t *testing.T) {
 	}
 
 	var shadowed strings.Builder
-	StoreReport{Shadowed: 1, LegacyRows: "/repo/.git/ai-specs/ledgers/tracker.json"}.Note(&shadowed, "worktree-gate")
+	StoreReport{Shadowed: 1, LegacyRows: "/repo/.git/ai-specs/ledgers/tracker.json",
+		Path: "/repo/.git/ai-specs/ledger.json"}.Note(&shadowed, "worktree-gate")
 	if lines := strings.Count(shadowed.String(), "\n"); lines != 1 {
 		t.Fatalf("shadowed report wrote %d lines, want 1: %q", lines, shadowed.String())
 	}
-	for _, want := range []string{"1 ledger row(s) differ", "ledger file's version answers"} {
+	// T5 R1: the note names both files, so a reader knows which one wins instead of
+	// being told only that they disagree.
+	for _, want := range []string{"1 ledger row(s) differ", "tracker.json", "ledger.json",
+		"is the file that answers"} {
 		if !strings.Contains(shadowed.String(), want) {
 			t.Fatalf("shadowed report %q does not name %q", shadowed.String(), want)
 		}

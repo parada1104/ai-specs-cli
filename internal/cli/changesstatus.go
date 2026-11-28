@@ -42,6 +42,38 @@ const (
 	statusUnknown     = "unknown"
 )
 
+// The posture a phase's checkpoint is graded under (T8, L5 item 6): advise is the
+// default, require is the project's opt-in per checkpoint, and a phase with no
+// checkpoint has no posture at all — a workstream owes nothing (S16).
+const (
+	statusPostureAdvise  = "advise"
+	statusPostureRequire = "require"
+	statusPostureNone    = "none"
+)
+
+// statusCheckpoint is the checkpoint a phase is heading to, "" when it has none.
+func statusCheckpoint(phase string) string {
+	switch phase {
+	case statusOpen, statusPlanned:
+		// Both are on their way to a merge; the phases that follow it (merged,
+		// integration, cleaned) and the ones no posture governs have no checkpoint.
+		return gates.CheckpointMerge
+	}
+	return ""
+}
+
+// statusPosture is the posture of one checkpoint: `none` when there is no checkpoint
+// to govern, otherwise the project's declaration or the default `advise`.
+func statusPosture(posture gates.Posture, checkpoint string) string {
+	switch {
+	case checkpoint == "":
+		return statusPostureNone
+	case posture.Requires(checkpoint):
+		return statusPostureRequire
+	}
+	return statusPostureAdvise
+}
+
 // changesStatusUsage is the verb's own usage.
 const changesStatusUsage = `Usage: ai-specs changes status --root <repo-root> [--json] [--explain] [--ledger worktree|plan|tracker]
 
@@ -58,15 +90,26 @@ workstream (no artifact and no product-path divergence, so it owes nothing). A s
 merge the local proof cannot see stays planned or open, and the next line says so.
 
 Exit: 0 a resolved phase; 2 the facts refuse the pending write (the verdict carries
-blockers); 3 a fact the answer needs is unknown, because git or a ledger could not
+blockers, or the project requires this checkpoint's posture and a merge-time rule
+fires); 3 a fact the answer needs is unknown, because git or a ledger could not
 answer it. Usage errors keep the family's 2. The review receipt is reported, never
 graded, so it never changes the exit.
 
+The posture is the T8 half: the checkpoint the phase heads to (open and planned head
+to merge; every other phase has none), the posture it is graded under there, and the
+advice it carries. Advise is the default, so the merge-time rules R3 (the size and
+module threshold), R4 (a removed high-risk path) and R5 (a plan whose S# rows carry
+no evidence) are printed as advice lines and never change the exit. A project that
+declares require = ["merge"] in [recipes.plan-build-flow.config] of
+ai-specs/ai-specs.toml turns them into blockers and exit 2. A workstream has no
+checkpoint, so it is never subject to a posture.
+
 Options:
   --root <path>       Resolved repository root. Required.
-  --json              Print one JSON object: the phase and the per-ledger facts.
+  --json              Print one JSON object: the phase, the posture and the per-ledger facts.
   --explain           Print every fact with its source on stderr.
   --ledger <name>     Narrow the report to one capability: worktree, plan or tracker.
+                      The posture and the exit stay the composite's.
   --help, -h          Show this help
 `
 
@@ -153,23 +196,27 @@ func unknownFact(name, source, reason string) statusFact {
 }
 
 // statusReport is the composite answer: the phase and why it won, one fact list per
-// capability, the blocker lines and the unknowns the answer still needs.
+// capability, the blocker lines and the unknowns the answer still needs. The posture
+// fields are the T8 half: the checkpoint the phase heads to, the posture it is graded
+// under there, and the rules that only advise under the default posture.
 type statusReport struct {
-	Phase    string       `json:"phase"`
-	Why      string       `json:"why"`
-	Next     string       `json:"next"`
-	Worktree []statusFact `json:"worktree,omitempty"`
-	Plan     []statusFact `json:"plan,omitempty"`
-	Tracker  []statusFact `json:"tracker,omitempty"`
-	Review   []statusFact `json:"review,omitempty"`
-	Blockers []string     `json:"blockers"`
-	Unknown  []string     `json:"unknown"`
+	Phase      string       `json:"phase"`
+	Why        string       `json:"why"`
+	Next       string       `json:"next"`
+	Checkpoint string       `json:"checkpoint"`
+	Posture    string       `json:"posture"`
+	Worktree   []statusFact `json:"worktree,omitempty"`
+	Plan       []statusFact `json:"plan,omitempty"`
+	Tracker    []statusFact `json:"tracker,omitempty"`
+	Review     []statusFact `json:"review,omitempty"`
+	Blockers   []string     `json:"blockers"`
+	Advice     []string     `json:"advice"`
+	Unknown    []string     `json:"unknown"`
 	// needed are the unknown facts the phase depends on: they decide exit 3 and are
 	// reported in Unknown, never hidden behind a resolved-looking phase.
 	needed []statusFact
 	// root is the resolved root the report was read from, for the next line.
-	root string
-	// report is the ledger's own account of what reading it took. It is printed once on
+	root string // report is the ledger's own account of what reading it took. It is printed once on
 	// stderr and never persisted (T7.4).
 	report *ledger.StoreReport
 	// ledgerErr is a ledger section that could not be read at all.
@@ -178,6 +225,9 @@ type statusReport struct {
 	// printed once on stderr and never persisted: a scope that changed because its
 	// declaration could not be read must never be silent (L8-1).
 	scopeNotes []string
+	// postureNotes names a posture or merge-time declaration that could not be read, in
+	// the same spirit: a rule that could not run is never silent, and never a pass.
+	postureNotes []string
 }
 
 // statusEvidence is the resolved fact set the phase is derived from: one field per
@@ -290,21 +340,7 @@ func runChangesStatus(args []string, stdout, stderr io.Writer) int {
 	report := collectStatus(request.root, request.ledger)
 	report.Next = statusNext(report)
 
-	if report.ledgerErr != nil {
-		where := planledger.Store(request.root)
-		if where == "" {
-			where = "a repository Git cannot name"
-		}
-		fmt.Fprintf(stderr, "changes status: cannot read the ledger for %s: %s\n", where, report.ledgerErr)
-	}
-	if report.report != nil {
-		// The store notes surface here, once (T7.4): a predecessor absorbed, a row that
-		// differs in place, a source nobody could read, a backup that could not be kept.
-		report.report.Note(stderr, "changes status")
-	}
-	for _, note := range report.scopeNotes {
-		fmt.Fprintf(stderr, "changes status: note: %s\n", note)
-	}
+	relayStatusNotes(report, stderr, "changes status")
 	if request.explain {
 		explainStatusFacts(report, stderr)
 	}
@@ -346,7 +382,7 @@ const (
 func collectStatus(root, narrow string) statusReport {
 	// The blocker and unknown lists are always arrays, never null: a host reads them as
 	// lists, and an empty list is an answer ("nothing blocks", "nothing is unknown").
-	report := statusReport{root: root, Blockers: []string{}, Unknown: []string{}}
+	report := statusReport{root: root, Blockers: []string{}, Advice: []string{}, Unknown: []string{}}
 	mode := planbuild.ResolveRepo(root)
 	branch := planbuild.Branch(root)
 	change, _ := planbuild.ChangeFromBranch(branch)
@@ -390,6 +426,22 @@ func collectStatus(root, narrow string) statusReport {
 	verdict := facts.Verdict()
 	for _, blocker := range verdict.Blockers {
 		report.Blockers = append(report.Blockers, blocker.String())
+	}
+	// The posture half (L5 items 6-7): one collection, so `status` and `next` cannot
+	// disagree about which checkpoint the phase heads to or which rules advise. R1/R2
+	// above keep blocking in both postures; R3-R5 advise unless the project requires
+	// this checkpoint.
+	posture := gates.LoadPosture(root)
+	merge := gates.MergeFactsFor(root, facts)
+	report.Checkpoint = statusCheckpoint(report.Phase)
+	report.Posture = statusPosture(posture, report.Checkpoint)
+	report.postureNotes = append(append([]string{}, posture.Notes...), facts.MergeNotes(merge)...)
+	for _, refutation := range facts.MergeRefutations(merge, posture.Thresholds) {
+		if report.Posture == statusPostureRequire {
+			report.Blockers = append(report.Blockers, refutation.String())
+			continue
+		}
+		report.Advice = append(report.Advice, refutation.String())
 	}
 	report.Worktree, report.needed = statusWorktreeFacts(facts, loaded.Ident, branch, proof, openRow, closedRow,
 		ledgerErr, report.needed)
@@ -772,10 +824,39 @@ func statusLines(report statusReport) string {
 		fmt.Fprintf(&out, "review:   %s\n", statusFactValue(report.Review, "receipt"))
 	}
 	fmt.Fprintf(&out, "next:     %s\n", report.Next)
+	if report.Checkpoint != "" {
+		// The human report keeps its ten-column labels; `changes next` prints the same
+		// facts with its own short labels.
+		fmt.Fprintf(&out, "posture:  %s at the %s checkpoint\n", report.Posture, report.Checkpoint)
+	}
 	for _, blocker := range report.Blockers {
 		fmt.Fprintf(&out, "blocked:  %s\n", blocker)
 	}
+	for _, advice := range report.Advice {
+		fmt.Fprintf(&out, "advice:   %s\n", advice)
+	}
 	return out.String()
+}
+
+// relayStatusNotes prints what reading the facts cost, once, under the verb's own
+// prefix: the ledger itself, the store's own report, and the declarations that could
+// not be read. The posture notes go the same way as the scope notes.
+func relayStatusNotes(report statusReport, stderr io.Writer, prefix string) {
+	if report.ledgerErr != nil {
+		where := planledger.Store(report.root)
+		if where == "" {
+			where = "a repository Git cannot name"
+		}
+		fmt.Fprintf(stderr, "%s: cannot read the ledger for %s: %s\n", prefix, where, report.ledgerErr)
+	}
+	if report.report != nil {
+		// The store notes surface here, once (T7.4): a predecessor absorbed, a row that
+		// differs in place, a source nobody could read, a backup that could not be kept.
+		report.report.Note(stderr, prefix)
+	}
+	for _, note := range append(append([]string{}, report.scopeNotes...), report.postureNotes...) {
+		fmt.Fprintf(stderr, "%s: note: %s\n", prefix, note)
+	}
 }
 
 // statusDivergenceLine renders the divergence fact as the sentence the report shows: what
