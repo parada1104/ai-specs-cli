@@ -8,6 +8,7 @@ package planbuild
 import (
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -74,6 +75,36 @@ func DiffEntries(root, base string) ([]DiffEntry, bool) {
 		entries = append(entries, DiffEntry{Status: fields[i][:1], Path: fields[i+1]})
 	}
 	return entries, true
+}
+
+// DiffLines counts the changed lines of every path the branch changes against base:
+// added plus deleted lines from `git diff --numstat` over the same merge base and
+// flags as DiffEntries. A binary file counts zero lines; it still appears, so a
+// caller can count its path. The second result is false on any git failure.
+func DiffLines(root, base string) (map[string]int, bool) {
+	if !validGitRef(base) {
+		return nil, false
+	}
+	mergeBase, err := gitText(root, "merge-base", base, "HEAD")
+	if err != nil || strings.TrimSpace(mergeBase) == "" {
+		return nil, false
+	}
+	out, err := gitText(root, "diff", "--numstat", "-z", "--no-renames", strings.TrimSpace(mergeBase))
+	if err != nil {
+		return nil, false
+	}
+	// -z prints `<added> TAB <deleted> TAB <path> NUL` per entry; `-` marks a binary.
+	lines := map[string]int{}
+	for _, record := range strings.Split(out, "\x00") {
+		parts := strings.SplitN(record, "\t", 3)
+		if len(parts) != 3 || parts[2] == "" {
+			continue
+		}
+		added, _ := strconv.Atoi(parts[0])
+		deleted, _ := strconv.Atoi(parts[1])
+		lines[parts[2]] = added + deleted
+	}
+	return lines, true
 }
 
 // UntrackedPaths lists the files of the working tree git does not track and no

@@ -266,6 +266,8 @@ each unit's own delta lives in its own change folder.
   - risks: cleanup is destructive — a wrong target removes unmerged work; the target
     must be a recorded fact, never guessed at removal time.
   - deps: T8. PR size ~400.
+  - carried from T8 (its L7): `gates premerge` does not apply the `require` posture yet;
+    `changes status`/`next` do. Wire it where this unit touches the merge proof.
 - T9 — Tracker reconciliation: `always|ask|off` per provider and the decision menu
   on disagreement (S6, S7).
   route: worker. commit: none.
@@ -301,6 +303,9 @@ each unit's own delta lives in its own change folder.
   - risks: deleting something still reachable — verify by searching for callers
     before each removal.
   - deps: T2, T3, T6, T9. PR size ~350.
+  - carried from T8 (its L7): a shadowed-row note printed once across invocations
+    (needs a recorded acknowledgement, a write); `--rebuild`; one note owner per gate
+    invocation (a grade followed by a bind prints a note twice).
 - T11 — Real-flow coverage and docs for the composed flow and the workstream
   (S15, S16).
   route: worker. commit: none.
@@ -312,6 +317,9 @@ each unit's own delta lives in its own change folder.
   - tests: the scenarios themselves are the test.
   - risks: docs drift is what caused this audit; tie each doc edit to an S#.
   - deps: T7, T8, T9. PR size ~400.
+  - carried from T8 (its L7): `.ai-specs/` in the managed ignore block; `product_exclude`,
+    `require` and `risk_thresholds` documented (the recipe schema models scalars only);
+    `changes workstream` printing the scope notes.
 - T12 — Repo dogfood sync and CHANGELOG after the release (S15).
   route: inline. commit: none.
   - scope: `ai-specs sync` of this repository with the released CLI, lock-only PR
@@ -321,6 +329,7 @@ each unit's own delta lives in its own change folder.
     workstream.
   - risks: mixing product and project state — isolate in its own branch.
   - deps: T11 merged and released. PR size ~150.
+  - carried from T8 (its L7): refresh the three differential oracles frozen at 0.28.0.
 
 ## Log
 

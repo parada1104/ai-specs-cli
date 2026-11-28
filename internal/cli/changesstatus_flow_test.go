@@ -120,7 +120,7 @@ func TestChangesStatusFlow(t *testing.T) {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
-		want := []string{"blockers", "next", "phase", "plan", "review", "tracker", "unknown", "why", "worktree"}
+		want := []string{"advice", "blockers", "checkpoint", "next", "phase", "plan", "posture", "review", "tracker", "unknown", "why", "worktree"}
 		if strings.Join(keys, ",") != strings.Join(want, ",") {
 			t.Fatalf("--json keys = %v, want %v", keys, want)
 		}
