@@ -15,6 +15,7 @@ func TestChangesWorkstreamFlow(t *testing.T) {
 
 	t.Run("a fresh worktree is a workstream and owes nothing", func(t *testing.T) {
 		repo := flowRepo(t, "odd", nil)
+		flowCommitManifest(t, repo)
 		stdout, stderr, code := flowRun(t, bin, repo, "", "changes", "workstream", "--root", repo)
 		if code != 0 || stderr != "" {
 			t.Fatalf("workstream = (%d, %q, %q), want exit 0 and no refusal", code, stdout, stderr)
@@ -35,6 +36,7 @@ func TestChangesWorkstreamFlow(t *testing.T) {
 
 	t.Run("a product commit makes it a change with tier none", func(t *testing.T) {
 		repo := flowRepo(t, "odd", nil)
+		flowCommitManifest(t, repo)
 		flowWrite(t, repo, "src/app.go", "package src\n")
 		flowGit(t, repo, "add", "-A")
 		flowGit(t, repo, "commit", "-q", "-m", "feat: product work")
@@ -52,6 +54,7 @@ func TestChangesWorkstreamFlow(t *testing.T) {
 
 	t.Run("a declared workstream stays silent until it ends", func(t *testing.T) {
 		repo := flowRepo(t, "odd", nil)
+		flowCommitManifest(t, repo)
 		flowWrite(t, repo, "src/app.go", "package src\n")
 		flowWrite(t, repo, "odd/specs/cap/spec.md", "## Purpose\n")
 		flowGit(t, repo, "add", "-A")

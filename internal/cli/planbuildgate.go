@@ -13,8 +13,9 @@ package cli
 // pure (`Verdict`), so this host cannot print a refusal without also knowing the
 // tier and the rules behind it, and no rule decides its own applicability.
 //
-// One mode: a pre-tool-use event on stdin. A production path write (the
-// PLAN_BUILD_GATE_PATHS scope, default src lib catalog) is graded at the
+// One mode: a pre-tool-use event on stdin. Product work — one predicate, the graded
+// paths outside odd/ and openspec/, minus the project's own
+// [recipes.plan-build-flow.config] product_exclude globs — is graded at the
 // `work-start` ledger checkpoint first.
 //
 // The canonical spec tree (odd/specs/ or openspec/specs/) is the one protected
@@ -52,9 +53,6 @@ const (
 	// planBuildGateName is the program label of every message. The verb replaced
 	// the script of the same name, so the prefix is unchanged.
 	planBuildGateName = "plan-build-gate"
-	// planBuildGateDefaultProdDirs is the graded production scope the help text
-	// names; the predicate itself lives with the facts that read it.
-	planBuildGateDefaultProdDirs = gates.ProductDirs
 	// planBuildGateCheckpoint is the checkpoint this host grades.
 	planBuildGateCheckpoint = "work-start"
 )
@@ -77,6 +75,12 @@ under odd/tasks/** — are never graded, and neither is agent configuration, so 
 high-risk pattern that matches only a planning path has no effect. Every other
 write under odd/ is graded, and R2 grades the pending target wherever it lives.
 
+Product work is every graded path outside the planning trees odd/ and openspec/,
+minus the project's own exclusions: [recipes.plan-build-flow.config]
+product_exclude in ai-specs/ai-specs.toml, a hand-written array of path globs where
+** covers any number of segments. A malformed value is reported as a note and
+never applied, so the scope never changes silently.
+
 The mode is read from [recipes.plan-build-flow.config] mode in
 ai-specs/ai-specs.toml: "auto" (default), "odd" or "openspec". "auto" resolves
 "odd" when the Gentle AI state directory <git-common-dir>/gentle-ai/ exists, and
@@ -86,10 +90,6 @@ Options:
   --explain           Also report the inferred tier and the rules that fired,
                       or that the target is not graded at all
   --help, -h          Show this help
-
-Environment:
-  PLAN_BUILD_GATE_PATHS  Space-separated production directories
-                         (default: ` + planBuildGateDefaultProdDirs + `)
 
 Exit codes:
   0  allow the write

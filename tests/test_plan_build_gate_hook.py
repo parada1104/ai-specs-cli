@@ -307,10 +307,21 @@ class PlanBuildGateHookTests(unittest.TestCase):
         r = self._run(self._event("Write", str(target)))
         self.assertEqual(r.returncode, 0, r.stderr)
 
-    # 4. Non-production path (tests) → allow even without a change folder.
-    def test_allow_non_production_path(self):
+    # 4. Product work is every graded path outside the planning trees: tests/ owes
+    #    the artifact gate like any other tree (L8-1, one product predicate).
+    def test_product_path_outside_the_old_folder_list_blocks(self):
         r = self._run(self._event("Write", str(self.repo / "tests" / "t.py")))
-        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.returncode, 2, r.stderr)
+
+    # 4b. The planning trees are never production work.
+    def test_allow_planning_tree_path(self):
+        for rel in (("odd", "tasks", "thing.md"),
+                    ("openspec", "changes", "archived", "thing", "tasks.md")):
+            with self.subTest(rel=rel):
+                target = self.repo.joinpath(*rel)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                r = self._run(self._event("Write", str(target)))
+                self.assertEqual(r.returncode, 0, r.stderr)
 
     # 5. Gitignored agent config on a production tree → always allow.
     def test_allow_claude_settings(self):
@@ -346,17 +357,17 @@ class PlanBuildGateHookTests(unittest.TestCase):
         )
         self.assertEqual(r.returncode, 2, r.stderr)
 
-    # 11. PLAN_BUILD_GATE_PATHS override redefines production dirs.
-    def test_custom_production_paths_override(self):
-        # 'app' is now production; 'src' is not.
+    # 11. The retired PLAN_BUILD_GATE_PATHS list decides nothing: a product path
+    #     stays product and a planning path stays out of scope whatever it says.
+    def test_retired_production_paths_env_decides_nothing(self):
         blocked = self._run(
-            self._event("Write", str(self.repo / "app" / "x.py")),
-            extra_env={"PLAN_BUILD_GATE_PATHS": "app"},
+            self._event("Write", str(self.repo / "internal" / "gates" / "x.go")),
+            extra_env={"PLAN_BUILD_GATE_PATHS": "nothing-matches"},
         )
         self.assertEqual(blocked.returncode, 2, blocked.stderr)
         allowed = self._run(
-            self._event("Write", str(self.repo / "src" / "x.py")),
-            extra_env={"PLAN_BUILD_GATE_PATHS": "app"},
+            self._event("Write", str(self.repo / "odd" / "tasks" / "thing.md")),
+            extra_env={"PLAN_BUILD_GATE_PATHS": "odd"},
         )
         self.assertEqual(allowed.returncode, 0, allowed.stderr)
 
@@ -511,11 +522,8 @@ class PlanBuildGateHookTests(unittest.TestCase):
 
     def test_changes_lookalike_prefix_is_not_artifact_root(self):
         fx = self._make_super_with_submodule()
-        target = fx["super"] / "openspec" / "changes-archive" / "demo" / "tasks.md"
-        r = self._run(
-            self._event("Write", str(target), cwd=fx["linked"]),
-            extra_env={"PLAN_BUILD_GATE_PATHS": "openspec"},
-        )
+        target = fx["super"] / "src" / "changes-archive" / "demo" / "tasks.md"
+        r = self._run(self._event("Write", str(target), cwd=fx["linked"]))
         self.assertEqual(r.returncode, 2, r.stderr)
 
     def test_outside_repository_path_not_broadened(self):

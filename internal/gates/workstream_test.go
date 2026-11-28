@@ -27,20 +27,21 @@ func workstreamWrite(t *testing.T, root, rel, content string) string {
 
 // L4: `git diff` against the merge base reads the working tree, so an uncommitted
 // edit to a tracked file already showed up; a file the branch never added is the
-// divergence it cannot see. A worktree that added one is a change, and an
-// untracked file outside the production scope still is not.
+// divergence it cannot see. A worktree that added a product file is a change, and an
+// untracked planning file still is not (L8-1: product work is every graded path
+// outside the planning trees).
 func TestWriteFactsSeesUncommittedProductDivergence(t *testing.T) {
 	root := writeRepo(t, nil)
-	workstreamWrite(t, root, "src/new.go", "package src\n")
-	facts := WriteFactsFor(root, planbuild.ModeOdd, "thing", "docs/deploy.md")
+	workstreamWrite(t, root, "internal/gates/new.go", "package gates\n")
+	facts := WriteFactsFor(root, planbuild.ModeOdd, "thing", "odd/tasks/thing.md")
 	if facts.Workstream {
 		t.Fatalf("Facts = %+v, want a change: an untracked product path is divergence", facts)
 	}
 
 	quiet := writeRepo(t, nil)
-	workstreamWrite(t, quiet, "docs/notes.md", "# notes\n")
-	if facts := WriteFactsFor(quiet, planbuild.ModeOdd, "thing", "docs/notes.md"); !facts.Workstream {
-		t.Fatalf("Facts = %+v, want a workstream: docs is not a product path", facts)
+	workstreamWrite(t, quiet, "openspec/changes/thing/tasks.md", "# plan\n")
+	if facts := WriteFactsFor(quiet, planbuild.ModeOdd, "thing", "internal/gates/new.go"); !facts.Workstream {
+		t.Fatalf("Facts = %+v, want a workstream: a planning file is not a product path", facts)
 	}
 }
 
@@ -133,5 +134,20 @@ func TestWriteFactsNamesAnUnreadablePlanLedger(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("Notes = %v, want one naming the ledger", verdict.Notes)
+	}
+}
+
+// L5 item 8 (T3 R2): the untracked listing is a fact, so git answering nothing and
+// git not answering at all are different answers. An empty Untracked with no answer
+// behind it must keep the worktree graded — otherwise a failed `git ls-files` reports
+// uncommitted product work as a workstream that owes nothing.
+func TestWriteFactsKeepsAnUnansweredUntrackedListingGraded(t *testing.T) {
+	facts := WriteFacts{Change: "thing", DiffKnown: true}
+	if facts.isWorkstream() {
+		t.Fatalf("facts = %+v, want the worktree graded: no untracked listing was answered", facts)
+	}
+	facts.UntrackedKnown = true
+	if !facts.isWorkstream() {
+		t.Fatalf("facts = %+v, want a workstream once git answered with no divergence", facts)
 	}
 }

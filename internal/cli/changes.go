@@ -43,10 +43,13 @@ Subcommands:
                              Move the change folder into the dated archive
   workstream --root <repo-root> [--reason <text>] [--end] [--json]
                              Report whether this worktree is a change, or declare it a workstream
+  status --root <repo-root> [--json] [--explain] [--ledger worktree|plan|tracker]
+                             Report the phase, what this worktree owes and what comes next (read-only)
   start --none --root <planning-root>
                              Deprecated: the tier is inferred from the artifacts
 Run 'ai-specs changes archive --help' for full options.
 Run 'ai-specs changes workstream --help' for full options.
+Run 'ai-specs changes status --help' for full options.
 Run 'ai-specs changes start --help' for full options.
 `
 
@@ -267,16 +270,19 @@ func runChangesWorkstream(args []string, stdout, stderr io.Writer) int {
 
 	// The declaration is read once, with its report: what reaching the plan section had to
 	// do — a predecessor absorbed, one that could not be read, a copy that could not be
-	// kept — is said out loud instead of being kept to the ledger.
+	// kept — is said out loud instead of being kept to the ledger. When a write follows, its
+	// own report is the one printed: the read's report would say the same thing twice (T6b
+	// note a).
 	ledgerWhere := planledger.Store(root)
 	if ledgerWhere == "" {
 		ledgerWhere = "a repository Git cannot name"
 	}
+	writes := request.end || request.reasonSet
 	declaration, readErr := planledger.Read(root)
 	if readErr != nil {
 		fmt.Fprintf(stderr, "changes workstream: cannot read the plan ledger in %s: %s\n",
 			ledgerWhere, readErr)
-	} else {
+	} else if !writes {
 		declaration.Report.Note(stderr, "changes workstream")
 	}
 
@@ -378,11 +384,12 @@ func workstreamViewOf(facts gates.WriteFacts, branch, ledgerPath string) workstr
 }
 
 // workstreamDivergence is the product-path divergence actually observed: the diff
-// against the base plus the untracked files, deduplicated.
+// against the base plus the untracked files, deduplicated. The product predicate is
+// the one the gate reads, so the report and the gate cannot disagree.
 func workstreamDivergence(facts gates.WriteFacts) []string {
 	paths := append([]string(nil), facts.Untracked...)
 	for _, entry := range facts.Diff {
-		if gates.ProductPath(entry.Path) {
+		if facts.Scope.Path(entry.Path) {
 			paths = append(paths, entry.Path)
 		}
 	}

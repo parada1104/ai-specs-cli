@@ -9,13 +9,14 @@
 #
 # stdin: normalized JSON {event, tool_name, tool_input, cwd}
 # exit 0: allow; exit 2: block. Malformed or unrelated events fail open.
-# PLAN_BUILD_GATE_PATHS is scope only (default: src lib catalog).
+# Production scope is Go-owned (one predicate, change-ledger-t7 L8-1): product
+# work is every graded path outside the planning trees odd/ and openspec/, minus
+# the project's own [recipes.plan-build-flow.config] product_exclude globs. This
+# host keeps the coarse half — the planning trees and the agent configuration are
+# never production — and decides nothing by environment.
 # The ledger mode is Go-owned: this hook invokes the installed CLI's
 # `worktree-gate --ledger` verb with no mode flag, so Go resolves env, the
 # witness-bound recipe config and the warn default.
-
-prod_dirs="${PLAN_BUILD_GATE_PATHS:-src lib catalog}"
-[ -n "${prod_dirs// /}" ] || prod_dirs="src lib catalog"
 
 input="$(cat)"
 
@@ -71,12 +72,11 @@ esac
 # Artifact writes are unconditional at the nearest repository root.
 is_under "$repo_root/openspec/changes" "$abs" && exit 0
 
-first="${rel%%/*}"
-is_prod=0
-for p in $prod_dirs; do
-  [ "$first" = "$p" ] && is_prod=1 && break
-done
-[ "$is_prod" -eq 1 ] || exit 0
+# The planning trees are never production work, and neither is the repository root
+# itself; every other graded path is product scope for this host.
+case "$rel" in
+  .|odd|odd/*|openspec|openspec/*) exit 0 ;;
+esac
 
 # --- Ledger work-start checkpoint (acquisition + JSON bridge only) ------------
 # The shared Go predicate is reached through the same installed CLI path used

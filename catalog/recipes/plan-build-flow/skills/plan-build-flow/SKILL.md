@@ -568,6 +568,18 @@ No diff computable means no refutation: without a base ref, in a shallow clone
 or outside a repository, the guardian refutes nothing rather than blocking every
 small change. `--base <ref>` pins it, and CI passes the pull request's base sha.
 
+Product scope is one predicate, not a folder list: product work is any graded
+path — never agent configuration, never the planning artifacts — outside the
+planning trees `odd/` and `openspec/`. The write gate's `work-start` checkpoint,
+the workstream discriminator, the divergence list and `ai-specs changes status`
+all read it, so a change that only touches `internal/` or `cmd/` is a change like
+any other. A project that generates, vendors or otherwise does not own a tree
+names it in `[recipes.plan-build-flow.config] product_exclude` of
+`ai-specs/ai-specs.toml`: an array of path globs where `**` covers any number of
+segments and `*` stays inside one, written by hand like `high_risk_paths`
+because the recipe schema only describes scalar fields. A malformed value is
+reported as a note and never applied, so the scope never changes silently.
+
 Tracker item closure (`ai-specs tracker-card-gate --root <root> --checkpoint
 archive-close`) is a separate Tracker-domain checkpoint: it is not this OpenSpec
 archive, it never moves the change folder, and this guardian never grades or

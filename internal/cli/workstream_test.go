@@ -311,3 +311,71 @@ func TestChangesWorkstreamNamesAnUnreadableLedger(t *testing.T) {
 		t.Fatalf("end = (%d, %q), want the read failure named and the verb to refuse", code, stderr)
 	}
 }
+
+// T6b note a: reaching the plan section is reported once per invocation. When a write
+// follows the read, the write's report is the one printed — the read used to print the
+// same note a second time, so an absorbed predecessor was said twice.
+func TestChangesWorkstreamPrintsTheStoreNoteOnce(t *testing.T) {
+	predecessor := func(t *testing.T) string {
+		t.Helper()
+		root := workstreamRepo(t)
+		changesWrite(t, filepath.Join(root, ".ai-specs", "plan-ledger.jsonl"),
+			`{"event":"workstream","at":"2026-01-01T00:00:00Z","reason":"audit of the ledger"}`+"\n")
+		return root
+	}
+
+	t.Run("a write prints its own report only", func(t *testing.T) {
+		root := predecessor(t)
+		code, _, stderr := runChangesCLI(t, "changes", "workstream", "--root", root,
+			"--reason", "audit of the release")
+		if code != 0 {
+			t.Fatalf("declare = (%d, %q), want it recorded", code, stderr)
+		}
+		if got := strings.Count(stderr, "ledger row(s) from"); got != 1 {
+			t.Fatalf("stderr = %q, want the store note once (got %d)", stderr, got)
+		}
+	})
+
+	t.Run("a plain read still prints it", func(t *testing.T) {
+		root := predecessor(t)
+		code, _, stderr := runChangesCLI(t, "changes", "workstream", "--root", root)
+		if code != 0 {
+			t.Fatalf("report = (%d, %q), want the facts graded", code, stderr)
+		}
+		if got := strings.Count(stderr, "ledger row(s) from"); got != 1 {
+			t.Fatalf("stderr = %q, want the store note once (got %d)", stderr, got)
+		}
+	})
+}
+
+// T6b note c (T7/L5 item 6): the plan identity has a read form that reads the creation
+// token and never mints it. A verb that only reports must leave the git admin directory
+// untouched, or the report itself writes state.
+func TestChangesWorkstreamReadNeverMintsTheCreationToken(t *testing.T) {
+	root := workstreamRepo(t)
+	token := filepath.Join(root, ".git", "ai-specs-created")
+	if _, err := os.Stat(token); !os.IsNotExist(err) {
+		t.Fatalf("the fixture already has a creation token (stat err = %v)", err)
+	}
+
+	for _, args := range [][]string{
+		{"changes", "workstream", "--root", root},
+		{"changes", "workstream", "--root", root, "--json"},
+	} {
+		if code, _, stderr := runChangesCLI(t, args...); code != 0 {
+			t.Fatalf("%v = (%d, %q), want a report", args, code, stderr)
+		}
+		if _, err := os.Stat(token); !os.IsNotExist(err) {
+			t.Fatalf("%v minted %s: a read must never write the creation token", args, token)
+		}
+	}
+
+	// The write path still mints it: only the read form stopped writing.
+	if code, _, stderr := runChangesCLI(t, "changes", "workstream", "--root", root,
+		"--reason", "audit of the ledger"); code != 0 {
+		t.Fatalf("declare = (%d, %q), want it recorded", code, stderr)
+	}
+	if _, err := os.Stat(token); err != nil {
+		t.Fatalf("the write path did not mint the token: %v", err)
+	}
+}

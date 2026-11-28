@@ -183,10 +183,12 @@ func TestPlanBuildGateExplainsARefusedWrite(t *testing.T) {
 }
 
 // S16: an inherited canonical-spec edit in a worktree with no plan, no delta and
-// no product divergence is not a change, so the next ordinary write is allowed.
+// no product divergence is not a change, so the next ordinary write is allowed. The
+// canonical tree is graded (R1) but it is not product work (L8-1).
 func TestPlanBuildGateDoesNotGradeAWorkstreamWithACanonicalSpecEdit(t *testing.T) {
 	bin, _ := smokeSetup(t)
 	repo := flowRepo(t, "odd", map[string]string{"src/app.go": "package src\n"})
+	flowCommitManifest(t, repo)
 	flowWrite(t, repo, "odd/specs/widget/spec.md", "x\n")
 	flowGit(t, repo, "add", "-A")
 	flowGit(t, repo, "commit", "-m", "spec: edit the canonical tree")

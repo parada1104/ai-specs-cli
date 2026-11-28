@@ -484,6 +484,11 @@ func parityHelpSnapshot(stdout string) string {
 	const workstreamLine = "  changes workstream --root <repo-root>  Report a change or a " +
 		"workstream, or declare the workstream (--reason, --end)\n"
 	stdout = strings.ReplaceAll(stdout, workstreamLine, "")
+	// N18 in tests/parity/parity.py: `changes status` is the verb T7 adds, and the
+	// frozen legacy goldens predate it too.
+	const statusLine = "  changes status --root <repo-root>  Report the phase and what the " +
+		"worktree owes, composed read-only\n"
+	stdout = strings.ReplaceAll(stdout, statusLine, "")
 	const hubPrefix = "  hub [path] Interactive status + command menu (also bare "
 	const helpAnchor = "\n  help Show this help"
 	if start := strings.Index(stdout, hubPrefix); start >= 0 {
